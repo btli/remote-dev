@@ -3,8 +3,10 @@
 import { useState, useCallback, useEffect } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
+import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useFolderContext } from "@/contexts/FolderContext";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { Terminal as TerminalIcon, Plus, PanelLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -37,6 +39,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [sessionCounter, setSessionCounter] = useState(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [folderSettingsModal, setFolderSettingsModal] = useState<{
+    folderId: string;
+    folderName: string;
+  } | null>(null);
 
   // Folder state from context (persisted in database)
   const {
@@ -48,6 +54,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     toggleFolder,
     moveSessionToFolder,
   } = useFolderContext();
+
+  // Preferences state from context
+  const {
+    activeProject,
+    hasFolderPreferences,
+    currentPreferences,
+  } = usePreferencesContext();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
@@ -105,8 +118,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleQuickNewSession = useCallback(async () => {
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
-    await createSession({ name });
-  }, [createSession, sessionCounter]);
+    // Use active project's preferences for working directory
+    await createSession({
+      name,
+      projectPath: currentPreferences.defaultWorkingDirectory,
+    });
+  }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory]);
 
   const handleCloseSession = useCallback(
     async (sessionId: string) => {
@@ -156,6 +173,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       await toggleFolder(folderId);
     },
     [toggleFolder]
+  );
+
+  const handleFolderSettings = useCallback(
+    (folderId: string, folderName: string) => {
+      setFolderSettingsModal({ folderId, folderName });
+    },
+    []
   );
 
   // Close mobile sidebar when selecting a session
@@ -215,6 +239,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             folders={folders}
             sessionFolders={sessionFolders}
             activeSessionId={activeSessionId}
+            activeFolderId={activeProject.folderId}
+            folderHasPreferences={hasFolderPreferences}
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}
             onSessionRename={handleRenameSession}
@@ -225,6 +251,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderRename={handleRenameFolder}
             onFolderDelete={handleDeleteFolder}
             onFolderToggle={handleToggleFolder}
+            onFolderSettings={handleFolderSettings}
           />
         </div>
       </div>
@@ -318,6 +345,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onCreate={handleCreateSession}
         isGitHubConnected={isGitHubConnected}
       />
+
+      {/* Folder Preferences Modal */}
+      {folderSettingsModal && (
+        <FolderPreferencesModal
+          open={true}
+          onClose={() => setFolderSettingsModal(null)}
+          folderId={folderSettingsModal.folderId}
+          folderName={folderSettingsModal.folderName}
+        />
+      )}
     </div>
   );
 }

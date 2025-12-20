@@ -4,8 +4,10 @@ import { terminalSessions, accounts } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
+import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
+import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
 import { Button } from "@/components/ui/button";
 import { LogOut, Github } from "lucide-react";
 import type { TerminalSession } from "@/types/session";
@@ -75,8 +77,8 @@ export default async function Home() {
             <GitHubConnectButton />
           )}
 
-          {/* User email */}
-          <span className="text-sm text-slate-400">{session.user.email}</span>
+          {/* User settings */}
+          <HeaderUserMenu email={session.user.email || ""} />
 
           {/* Sign out */}
           <form
@@ -99,11 +101,13 @@ export default async function Home() {
       </header>
 
       {/* Main content */}
-      <SessionProvider initialSessions={initialSessions}>
-        <FolderProvider>
-          <SessionManager isGitHubConnected={isGitHubConnected} />
-        </FolderProvider>
-      </SessionProvider>
+      <PreferencesProvider>
+        <SessionProvider initialSessions={initialSessions}>
+          <FolderProvider>
+            <SessionManager isGitHubConnected={isGitHubConnected} />
+          </FolderProvider>
+        </SessionProvider>
+      </PreferencesProvider>
     </div>
   );
 }

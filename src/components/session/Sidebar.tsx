@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import {
-  X, Plus, Pause, Terminal, ChevronRight, ChevronDown,
+  X, Plus, Pause, Terminal, Settings,
   Folder, FolderOpen, MoreHorizontal, Pencil, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -42,6 +43,8 @@ interface SidebarProps {
   folders: SessionFolder[];
   sessionFolders: Record<string, string>; // sessionId -> folderId
   activeSessionId: string | null;
+  activeFolderId: string | null;
+  folderHasPreferences: (folderId: string) => boolean;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
@@ -52,6 +55,7 @@ interface SidebarProps {
   onFolderRename: (folderId: string, newName: string) => void;
   onFolderDelete: (folderId: string) => void;
   onFolderToggle: (folderId: string) => void;
+  onFolderSettings: (folderId: string, folderName: string) => void;
 }
 
 export function Sidebar({
@@ -59,6 +63,8 @@ export function Sidebar({
   folders,
   sessionFolders,
   activeSessionId,
+  activeFolderId,
+  folderHasPreferences,
   onSessionClick,
   onSessionClose,
   onSessionRename,
@@ -69,6 +75,7 @@ export function Sidebar({
   onFolderRename,
   onFolderDelete,
   onFolderToggle,
+  onFolderSettings,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -360,24 +367,44 @@ export function Sidebar({
               </TooltipTrigger>
               <TooltipContent side="bottom">New Folder</TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  onClick={onQuickNewSession}
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                <div className="flex items-center gap-2">
-                  <span>New Session</span>
-                  <kbd className="px-1 py-0.5 text-[10px] bg-slate-700 rounded">⌘↵</kbd>
-                </div>
-              </TooltipContent>
-            </Tooltip>
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      onClick={(e) => {
+                        // If not opening dropdown, do quick session
+                        if (!e.defaultPrevented) {
+                          onQuickNewSession();
+                        }
+                      }}
+                      variant="ghost"
+                      size="icon-sm"
+                      className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <div className="flex items-center gap-2">
+                    <span>New Session</span>
+                    <kbd className="px-1 py-0.5 text-[10px] bg-slate-700 rounded">⌘↵</kbd>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem onClick={onQuickNewSession}>
+                  <Terminal className="w-3.5 h-3.5 mr-2" />
+                  Quick Terminal
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onNewSession}>
+                  <Settings className="w-3.5 h-3.5 mr-2" />
+                  Advanced...
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -442,6 +469,8 @@ export function Sidebar({
                 );
                 const isEditingFolder = editingId === folder.id && editingType === "folder";
                 const isDragOver = dragOverFolderId === folder.id;
+                const isActive = activeFolderId === folder.id;
+                const hasPrefs = folderHasPreferences(folder.id);
 
                 return (
                   <div key={folder.id} className="space-y-0.5">
@@ -450,21 +479,27 @@ export function Sidebar({
                       onDragLeave={handleDragLeave}
                       onDrop={(e) => handleDrop(e, folder.id)}
                       className={cn(
-                        "group flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer",
+                        "group flex items-center gap-1.5 px-2 py-1 rounded-md cursor-pointer",
                         "hover:bg-white/5 transition-all duration-150",
-                        isDragOver && "bg-violet-500/20 border border-violet-500/30"
+                        isDragOver && "bg-violet-500/20 border border-violet-500/30",
+                        isActive && "bg-violet-500/10"
                       )}
                       onClick={() => onFolderToggle(folder.id)}
                     >
                       {folder.collapsed ? (
-                        <ChevronRight className="w-3 h-3 text-slate-500" />
+                        <Folder
+                          className={cn(
+                            "w-3.5 h-3.5 text-violet-400 shrink-0",
+                            isActive && "fill-violet-400/40"
+                          )}
+                        />
                       ) : (
-                        <ChevronDown className="w-3 h-3 text-slate-500" />
-                      )}
-                      {folder.collapsed ? (
-                        <Folder className="w-3.5 h-3.5 text-violet-400" />
-                      ) : (
-                        <FolderOpen className="w-3.5 h-3.5 text-violet-400" />
+                        <FolderOpen
+                          className={cn(
+                            "w-3.5 h-3.5 text-violet-400 shrink-0",
+                            isActive && "fill-violet-400/40"
+                          )}
+                        />
                       )}
 
                       {isEditingFolder ? (
@@ -497,7 +532,19 @@ export function Sidebar({
                             <MoreHorizontal className="w-3 h-3" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-32">
+                        <DropdownMenuContent align="end" className="w-36">
+                          <DropdownMenuItem
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              onFolderSettings(folder.id, folder.name);
+                            }}
+                          >
+                            <Settings className="w-3 h-3 mr-2" />
+                            Preferences
+                            {hasPrefs && (
+                              <span className="ml-auto text-[10px] text-violet-400">Custom</span>
+                            )}
+                          </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={(e: React.MouseEvent) => {
                               e.stopPropagation();
@@ -507,6 +554,7 @@ export function Sidebar({
                             <Pencil className="w-3 h-3 mr-2" />
                             Rename
                           </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={(e: React.MouseEvent) => {
                               e.stopPropagation();
