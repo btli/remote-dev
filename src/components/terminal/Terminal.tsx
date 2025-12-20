@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useCallback } from "react";
-import { Terminal as XTerm } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import "@xterm/xterm/css/xterm.css";
+import type { Terminal as XTermType } from "@xterm/xterm";
+import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ConnectionStatus } from "@/types/terminal";
 
 interface TerminalProps {
@@ -12,6 +10,7 @@ interface TerminalProps {
   tmuxSessionName: string;
   wsUrl?: string;
   onStatusChange?: (status: ConnectionStatus) => void;
+  onWebSocketReady?: (ws: WebSocket | null) => void;
 }
 
 // Tokyo Night theme colors
@@ -44,10 +43,11 @@ export function Terminal({
   tmuxSessionName,
   wsUrl = "ws://localhost:3001",
   onStatusChange,
+  onWebSocketReady,
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<XTerm | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const xtermRef = useRef<XTermType | null>(null);
+  const fitAddonRef = useRef<FitAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -63,138 +63,174 @@ export function Terminal({
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) return;
 
-    const terminal = new XTerm({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      theme: TOKYO_NIGHT_THEME,
-      allowProposedApi: true,
-    });
+    let terminal: XTermType;
+    let fitAddon: FitAddonType;
+    let mounted = true;
 
-    const fitAddon = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
+    // Dynamically import xterm modules (browser-only)
+    async function initTerminal() {
+      const [
+        { Terminal: XTerm },
+        { FitAddon },
+        { WebLinksAddon },
+      ] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+        import("@xterm/addon-web-links"),
+      ]);
 
-    terminal.loadAddon(fitAddon);
-    terminal.loadAddon(webLinksAddon);
+      // Also import CSS
+      await import("@xterm/xterm/css/xterm.css");
 
-    terminal.open(terminalRef.current);
-    fitAddon.fit();
+      if (!mounted || !terminalRef.current) return;
 
-    xtermRef.current = terminal;
-    fitAddonRef.current = fitAddon;
-
-    function connect() {
-      if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
-      updateStatus("connecting");
-
-      const cols = terminal.cols;
-      const rows = terminal.rows;
-      const params = new URLSearchParams({
-        sessionId,
-        tmuxSession: tmuxSessionName,
-        cols: String(cols),
-        rows: String(rows),
+      terminal = new XTerm({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: '"FiraCode Nerd Font", "Fira Code", Menlo, Monaco, "Courier New", monospace',
+        theme: TOKYO_NIGHT_THEME,
+        allowProposedApi: true,
       });
 
-      const ws = new WebSocket(`${wsUrl}?${params.toString()}`);
-      wsRef.current = ws;
+      fitAddon = new FitAddon();
+      const webLinksAddon = new WebLinksAddon();
 
-      ws.onopen = () => {
-        updateStatus("connected");
-        reconnectAttemptsRef.current = 0;
-      };
+      terminal.loadAddon(fitAddon);
+      terminal.loadAddon(webLinksAddon);
 
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          switch (msg.type) {
-            case "output":
-              terminal.write(msg.data);
-              break;
-            case "ready":
-              console.log("Terminal session ready:", msg.sessionId);
-              break;
-            case "session_created":
-              console.log("New tmux session created:", msg.tmuxSessionName);
-              break;
-            case "session_attached":
-              console.log("Attached to existing tmux session:", msg.tmuxSessionName);
-              break;
-            case "exit":
-              terminal.writeln(
-                `\r\n\x1b[33mProcess exited with code ${msg.code}\x1b[0m`
-              );
-              break;
-            case "error":
-              terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
-              break;
+      terminal.open(terminalRef.current);
+      fitAddon.fit();
+
+      xtermRef.current = terminal;
+      fitAddonRef.current = fitAddon;
+
+      function connect() {
+        if (wsRef.current?.readyState === WebSocket.OPEN) return;
+
+        updateStatus("connecting");
+
+        const cols = terminal.cols;
+        const rows = terminal.rows;
+        const params = new URLSearchParams({
+          sessionId,
+          tmuxSession: tmuxSessionName,
+          cols: String(cols),
+          rows: String(rows),
+        });
+
+        const ws = new WebSocket(`${wsUrl}?${params.toString()}`);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          updateStatus("connected");
+          reconnectAttemptsRef.current = 0;
+          onWebSocketReady?.(ws);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            switch (msg.type) {
+              case "output":
+                terminal.write(msg.data);
+                break;
+              case "ready":
+                console.log("Terminal session ready:", msg.sessionId);
+                break;
+              case "session_created":
+                console.log("New tmux session created:", msg.tmuxSessionName);
+                break;
+              case "session_attached":
+                console.log("Attached to existing tmux session:", msg.tmuxSessionName);
+                break;
+              case "exit":
+                terminal.writeln(
+                  `\r\n\x1b[33mProcess exited with code ${msg.code}\x1b[0m`
+                );
+                break;
+              case "error":
+                terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
+                break;
+            }
+          } catch {
+            terminal.write(event.data);
           }
-        } catch {
-          terminal.write(event.data);
+        };
+
+        ws.onclose = () => {
+          updateStatus("disconnected");
+          onWebSocketReady?.(null);
+
+          if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+            updateStatus("reconnecting");
+            reconnectAttemptsRef.current++;
+
+            terminal.writeln(
+              `\r\n\x1b[33mReconnecting (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})...\x1b[0m`
+            );
+
+            reconnectTimeoutRef.current = setTimeout(() => {
+              connect();
+            }, 3000);
+          } else {
+            terminal.writeln(
+              "\r\n\x1b[31mConnection lost. Refresh to reconnect.\x1b[0m"
+            );
+            updateStatus("error");
+          }
+        };
+
+        ws.onerror = () => {
+          console.error("WebSocket error");
+        };
+      }
+
+      connect();
+
+      terminal.onData((data) => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "input", data }));
+        }
+      });
+
+      const handleResize = () => {
+        fitAddon.fit();
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "resize",
+              cols: terminal.cols,
+              rows: terminal.rows,
+            })
+          );
         }
       };
 
-      ws.onclose = () => {
-        updateStatus("disconnected");
+      window.addEventListener("resize", handleResize);
+      // Initial fit after a short delay to ensure container is sized
+      const resizeTimer = setTimeout(handleResize, 100);
 
-        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-          updateStatus("reconnecting");
-          reconnectAttemptsRef.current++;
-
-          terminal.writeln(
-            `\r\n\x1b[33mReconnecting (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})...\x1b[0m`
-          );
-
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
-          }, 3000);
-        } else {
-          terminal.writeln(
-            "\r\n\x1b[31mConnection lost. Refresh to reconnect.\x1b[0m"
-          );
-          updateStatus("error");
-        }
-      };
-
-      ws.onerror = () => {
-        console.error("WebSocket error");
+      // Store cleanup in closure
+      return () => {
+        window.removeEventListener("resize", handleResize);
+        clearTimeout(resizeTimer);
       };
     }
 
-    connect();
+    let cleanup: (() => void) | undefined;
 
-    terminal.onData((data) => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "input", data }));
-      }
+    initTerminal().then((cleanupFn) => {
+      cleanup = cleanupFn;
     });
 
-    const handleResize = () => {
-      fitAddon.fit();
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "resize",
-            cols: terminal.cols,
-            rows: terminal.rows,
-          })
-        );
-      }
-    };
-
-    window.addEventListener("resize", handleResize);
-    // Initial fit after a short delay to ensure container is sized
-    const resizeTimer = setTimeout(handleResize, 100);
-
     return () => {
-      window.removeEventListener("resize", handleResize);
-      clearTimeout(resizeTimer);
+      mounted = false;
+      cleanup?.();
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
       wsRef.current?.close();
-      terminal.dispose();
+      xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
       wsRef.current = null;

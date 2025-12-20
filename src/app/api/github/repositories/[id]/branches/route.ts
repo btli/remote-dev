@@ -9,6 +9,7 @@ interface RouteParams {
 
 /**
  * GET /api/github/repositories/:id/branches - Get branches for a repository
+ * Note: :id is the GitHub repository ID (number), not the internal database ID
  */
 export async function GET(request: Request, { params }: RouteParams) {
   try {
@@ -18,7 +19,16 @@ export async function GET(request: Request, { params }: RouteParams) {
     }
 
     const { id } = await params;
-    const repository = await GitHubService.getRepository(id, session.user.id);
+    const githubId = parseInt(id, 10);
+
+    if (isNaN(githubId)) {
+      return NextResponse.json(
+        { error: "Invalid repository ID" },
+        { status: 400 }
+      );
+    }
+
+    const repository = await GitHubService.getRepositoryByGitHubId(githubId, session.user.id);
 
     if (!repository) {
       return NextResponse.json(

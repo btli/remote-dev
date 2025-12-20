@@ -3,7 +3,9 @@ import { db } from "@/db";
 import { terminalSessions, accounts } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
+import { FolderProvider } from "@/contexts/FolderContext";
 import { SessionManager } from "@/components/session/SessionManager";
+import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
 import { Button } from "@/components/ui/button";
 import { LogOut, Github } from "lucide-react";
 import type { TerminalSession } from "@/types/session";
@@ -70,17 +72,7 @@ export default async function Home() {
               <span className="text-slate-400">GitHub Connected</span>
             </div>
           ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-slate-400 hover:text-white"
-              onClick={() => {
-                window.location.href = "/api/auth/github/link";
-              }}
-            >
-              <Github className="w-4 h-4 mr-2" />
-              Connect GitHub
-            </Button>
+            <GitHubConnectButton />
           )}
 
           {/* User email */}
@@ -108,7 +100,9 @@ export default async function Home() {
 
       {/* Main content */}
       <SessionProvider initialSessions={initialSessions}>
-        <SessionManager isGitHubConnected={isGitHubConnected} />
+        <FolderProvider>
+          <SessionManager isGitHubConnected={isGitHubConnected} />
+        </FolderProvider>
       </SessionProvider>
     </div>
   );
