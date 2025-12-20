@@ -7,14 +7,15 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalProps {
-  onData?: (data: string) => void;
-  onResize?: (cols: number, rows: number) => void;
+  wsUrl?: string;
 }
 
-export function Terminal({ onData, onResize }: TerminalProps) {
+export function Terminal({ wsUrl = "ws://localhost:3001" }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -60,31 +61,90 @@ export function Terminal({ onData, onResize }: TerminalProps) {
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    if (onData) {
-      terminal.onData(onData);
+    terminal.writeln("Remote Dev Terminal");
+    terminal.writeln("Connecting to server...\r\n");
+
+    function connect() {
+      if (wsRef.current?.readyState === WebSocket.OPEN) return;
+
+      const cols = terminal.cols;
+      const rows = terminal.rows;
+      const ws = new WebSocket(`${wsUrl}?cols=${cols}&rows=${rows}`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        terminal.writeln("\r\n\x1b[32mConnected to terminal server\x1b[0m\r\n");
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          switch (msg.type) {
+            case "output":
+              terminal.write(msg.data);
+              break;
+            case "ready":
+              console.log("Terminal session ready:", msg.sessionId);
+              break;
+            case "exit":
+              terminal.writeln(`\r\n\x1b[33mProcess exited with code ${msg.code}\x1b[0m`);
+              break;
+          }
+        } catch {
+          terminal.write(event.data);
+        }
+      };
+
+      ws.onclose = () => {
+        terminal.writeln("\r\n\x1b[31mDisconnected from terminal server\x1b[0m");
+        terminal.writeln("\x1b[33mReconnecting in 3 seconds...\x1b[0m\r\n");
+
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connect();
+        }, 3000);
+      };
+
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+      };
     }
 
-    if (onResize) {
-      terminal.onResize(({ cols, rows }) => onResize(cols, rows));
-    }
+    connect();
 
-    terminal.writeln("Welcome to Remote Dev Terminal");
-    terminal.writeln("Connecting to server...");
-    terminal.write("\r\n$ ");
+    terminal.onData((data) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: "input", data }));
+      }
+    });
 
     const handleResize = () => {
       fitAddon.fit();
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          })
+        );
+      }
     };
 
     window.addEventListener("resize", handleResize);
+    setTimeout(handleResize, 100);
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      wsRef.current?.close();
       terminal.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
+      wsRef.current = null;
     };
-  }, [onData, onResize]);
+  }, [wsUrl]);
 
   return (
     <div
@@ -92,22 +152,4 @@ export function Terminal({ onData, onResize }: TerminalProps) {
       className="h-full w-full bg-[#1a1b26] p-2 rounded-lg"
     />
   );
-}
-
-export function useTerminal() {
-  const terminalRef = useRef<XTerm | null>(null);
-
-  const write = (data: string) => {
-    terminalRef.current?.write(data);
-  };
-
-  const writeln = (data: string) => {
-    terminalRef.current?.writeln(data);
-  };
-
-  const clear = () => {
-    terminalRef.current?.clear();
-  };
-
-  return { terminalRef, write, writeln, clear };
 }

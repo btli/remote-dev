@@ -1,1 +1,1 @@
-export { Terminal, useTerminal } from "./Terminal";
+export { Terminal } from "./Terminal";
