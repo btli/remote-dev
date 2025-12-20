@@ -301,6 +301,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     <TerminalWithKeyboard
                       sessionId={session.id}
                       tmuxSessionName={session.tmuxSessionName}
+                      onSessionExit={() => closeSession(session.id)}
                     />
                   </div>
                 ))}
