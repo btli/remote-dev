@@ -38,7 +38,7 @@ bun run db:seed      # Seed authorized users
 ### Two-Server Model
 The application runs two servers:
 1. **Next.js** (port 3000) - Web UI, authentication, static assets
-2. **Terminal Server** (port 3001) - WebSocket server with PTY processes
+2. **Terminal Server** (port 3001) - WebSocket server with PTY processes (runs via `tsx` for node-pty compatibility)
 
 ### Terminal Flow
 ```
