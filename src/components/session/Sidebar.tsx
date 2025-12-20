@@ -153,23 +153,41 @@ export function Sidebar({
 
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, sessionId: string) => {
-    e.dataTransfer.setData("sessionId", sessionId);
+    e.dataTransfer.setData("text/plain", sessionId);
     e.dataTransfer.effectAllowed = "move";
+    // Add a class to indicate dragging
+    (e.target as HTMLElement).classList.add("opacity-50");
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    (e.target as HTMLElement).classList.remove("opacity-50");
+    setDragOverFolderId(null);
   };
 
   const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
-    setDragOverFolderId(folderId);
+    if (dragOverFolderId !== folderId) {
+      setDragOverFolderId(folderId);
+    }
   };
 
-  const handleDragLeave = () => {
-    setDragOverFolderId(null);
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only clear if leaving to outside the current element
+    const relatedTarget = e.relatedTarget as HTMLElement | null;
+    const currentTarget = e.currentTarget as HTMLElement;
+    if (!relatedTarget || !currentTarget.contains(relatedTarget)) {
+      setDragOverFolderId(null);
+    }
   };
 
   const handleDrop = (e: React.DragEvent, folderId: string | null) => {
     e.preventDefault();
-    const sessionId = e.dataTransfer.getData("sessionId");
+    e.stopPropagation();
+    const sessionId = e.dataTransfer.getData("text/plain");
     if (sessionId) {
       onSessionMove(sessionId, folderId);
     }
@@ -187,13 +205,15 @@ export function Sidebar({
         key={session.id}
         draggable={!isEditing}
         onDragStart={(e) => handleDragStart(e, session.id)}
+        onDragEnd={handleDragEnd}
+        className={!isEditing ? "cursor-grab active:cursor-grabbing" : ""}
       >
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
               onClick={() => !isEditing && onSessionClick(session.id)}
               className={cn(
-                "group relative flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
+                "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
                 "transition-all duration-200",
                 inFolder && "ml-4",
                 isActive
