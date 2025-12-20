@@ -183,21 +183,24 @@ export function Sidebar({
     const currentFolderId = sessionFolders[session.id];
 
     return (
-      <ContextMenu key={session.id}>
-        <ContextMenuTrigger asChild>
-          <div
-            draggable={!isEditing}
-            onDragStart={(e) => handleDragStart(e, session.id)}
-            onClick={() => !isEditing && onSessionClick(session.id)}
-            className={cn(
-              "group relative flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-              "transition-all duration-200",
-              inFolder && "ml-4",
-              isActive
-                ? "bg-gradient-to-r from-violet-500/20 via-purple-500/15 to-blue-500/10 border border-white/10"
-                : "hover:bg-white/5 border border-transparent"
-            )}
-          >
+      <div
+        key={session.id}
+        draggable={!isEditing}
+        onDragStart={(e) => handleDragStart(e, session.id)}
+      >
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              onClick={() => !isEditing && onSessionClick(session.id)}
+              className={cn(
+                "group relative flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
+                "transition-all duration-200",
+                inFolder && "ml-4",
+                isActive
+                  ? "bg-gradient-to-r from-violet-500/20 via-purple-500/15 to-blue-500/10 border border-white/10"
+                  : "hover:bg-white/5 border border-transparent"
+              )}
+            >
             {/* Status indicator */}
             <span
               className={cn(
@@ -309,7 +312,8 @@ export function Sidebar({
             Close Session
           </ContextMenuItem>
         </ContextMenuContent>
-      </ContextMenu>
+        </ContextMenu>
+      </div>
     );
   };
 
