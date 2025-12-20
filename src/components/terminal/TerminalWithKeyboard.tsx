@@ -10,6 +10,7 @@ interface TerminalWithKeyboardProps {
   tmuxSessionName: string;
   wsUrl?: string;
   onStatusChange?: (status: ConnectionStatus) => void;
+  onSessionExit?: (exitCode: number) => void;
 }
 
 export function TerminalWithKeyboard({
@@ -17,6 +18,7 @@ export function TerminalWithKeyboard({
   tmuxSessionName,
   wsUrl = "ws://localhost:3001",
   onStatusChange,
+  onSessionExit,
 }: TerminalWithKeyboardProps) {
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -60,6 +62,7 @@ export function TerminalWithKeyboard({
           wsUrl={wsUrl}
           onStatusChange={onStatusChange}
           onWebSocketReady={handleWebSocketReady}
+          onSessionExit={onSessionExit}
         />
       </div>
       <MobileKeyboard onKeyPress={handleMobileKeyPress} />

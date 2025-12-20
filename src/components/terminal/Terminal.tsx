@@ -11,6 +11,7 @@ interface TerminalProps {
   wsUrl?: string;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
+  onSessionExit?: (exitCode: number) => void;
 }
 
 // Tokyo Night theme colors
@@ -44,6 +45,7 @@ export function Terminal({
   wsUrl = "ws://localhost:3001",
   onStatusChange,
   onWebSocketReady,
+  onSessionExit,
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
@@ -51,6 +53,7 @@ export function Terminal({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const intentionalExitRef = useRef(false);
   const maxReconnectAttempts = 5;
 
   const updateStatus = useCallback(
@@ -145,8 +148,11 @@ export function Terminal({
                 break;
               case "exit":
                 terminal.writeln(
-                  `\r\n\x1b[33mProcess exited with code ${msg.code}\x1b[0m`
+                  `\r\n\x1b[33mSession ended (exit code ${msg.code})\x1b[0m`
                 );
+                // Mark as intentional exit to prevent reconnection
+                intentionalExitRef.current = true;
+                onSessionExit?.(msg.code);
                 break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
@@ -160,6 +166,11 @@ export function Terminal({
         ws.onclose = () => {
           updateStatus("disconnected");
           onWebSocketReady?.(null);
+
+          // Don't reconnect if this was an intentional exit (user typed "exit" or Ctrl+D)
+          if (intentionalExitRef.current) {
+            return;
+          }
 
           if (reconnectAttemptsRef.current < maxReconnectAttempts) {
             updateStatus("reconnecting");
