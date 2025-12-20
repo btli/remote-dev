@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, primaryKey, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 
@@ -75,8 +75,19 @@ export const userSettings = sqliteTable("user_settings", {
     .notNull()
     .unique()
     .references(() => users.id, { onDelete: "cascade" }),
+  // Terminal preferences
   defaultWorkingDirectory: text("default_working_directory"),
+  defaultShell: text("default_shell"),
+  // Appearance preferences
   theme: text("theme").default("tokyo-night"),
+  fontSize: integer("font_size").default(14),
+  fontFamily: text("font_family").default("'JetBrains Mono', monospace"),
+  // Active project tracking
+  activeFolderId: text("active_folder_id"),
+  pinnedFolderId: text("pinned_folder_id"),
+  autoFollowActiveSession: integer("auto_follow_active_session", { mode: "boolean" })
+    .notNull()
+    .default(true),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -136,6 +147,39 @@ export const sessionFolders = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [index("session_folder_user_idx").on(table.userId)]
+);
+
+// Folder-level preference overrides
+export const folderPreferences = sqliteTable(
+  "folder_preferences",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    folderId: text("folder_id")
+      .notNull()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Terminal preferences (all nullable = inherit from user)
+    defaultWorkingDirectory: text("default_working_directory"),
+    defaultShell: text("default_shell"),
+    // Appearance preferences
+    theme: text("theme"),
+    fontSize: integer("font_size"),
+    fontFamily: text("font_family"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("folder_prefs_folder_user_idx").on(table.folderId, table.userId),
+    index("folder_prefs_user_idx").on(table.userId),
+  ]
 );
 
 // Terminal sessions with tmux persistence
