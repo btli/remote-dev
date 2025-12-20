@@ -5,8 +5,9 @@ import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useFolderContext } from "@/contexts/FolderContext";
-import { Terminal as TerminalIcon, Plus } from "lucide-react";
+import { Terminal as TerminalIcon, Plus, PanelLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
@@ -35,6 +36,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [sessionCounter, setSessionCounter] = useState(1);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Folder state from context (persisted in database)
   const {
@@ -156,28 +158,91 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [toggleFolder]
   );
 
+  // Close mobile sidebar when selecting a session
+  const handleSessionClick = useCallback(
+    (sessionId: string) => {
+      setActiveSession(sessionId);
+      setIsMobileSidebarOpen(false);
+    },
+    [setActiveSession]
+  );
+
   return (
-    <div className="flex-1 flex overflow-hidden">
-      {/* Sidebar */}
-      <Sidebar
-        sessions={activeSessions}
-        folders={folders}
-        sessionFolders={sessionFolders}
-        activeSessionId={activeSessionId}
-        onSessionClick={setActiveSession}
-        onSessionClose={handleCloseSession}
-        onSessionRename={handleRenameSession}
-        onSessionMove={handleMoveSession}
-        onNewSession={() => setIsWizardOpen(true)}
-        onQuickNewSession={handleQuickNewSession}
-        onFolderCreate={handleCreateFolder}
-        onFolderRename={handleRenameFolder}
-        onFolderDelete={handleDeleteFolder}
-        onFolderToggle={handleToggleFolder}
-      />
+    <div className="flex-1 flex overflow-hidden relative">
+      {/* Mobile sidebar toggle button */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => setIsMobileSidebarOpen(true)}
+        className={cn(
+          "absolute top-2 left-2 z-20 md:hidden",
+          "bg-slate-800/80 backdrop-blur-sm hover:bg-slate-700/80",
+          "text-slate-300 hover:text-white"
+        )}
+      >
+        <PanelLeft className="w-5 h-5" />
+      </Button>
+
+      {/* Mobile overlay */}
+      {isMobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar - hidden on mobile unless toggled */}
+      <div
+        className={cn(
+          // Desktop: always visible
+          "hidden md:block",
+          // Mobile: slide-in drawer
+          isMobileSidebarOpen && "!block fixed inset-y-0 left-0 z-40"
+        )}
+      >
+        <div className="relative h-full">
+          {/* Mobile close button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsMobileSidebarOpen(false)}
+            className="absolute top-2 right-2 z-50 md:hidden text-slate-400 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+          <Sidebar
+            sessions={activeSessions}
+            folders={folders}
+            sessionFolders={sessionFolders}
+            activeSessionId={activeSessionId}
+            onSessionClick={handleSessionClick}
+            onSessionClose={handleCloseSession}
+            onSessionRename={handleRenameSession}
+            onSessionMove={handleMoveSession}
+            onNewSession={() => setIsWizardOpen(true)}
+            onQuickNewSession={handleQuickNewSession}
+            onFolderCreate={handleCreateFolder}
+            onFolderRename={handleRenameFolder}
+            onFolderDelete={handleDeleteFolder}
+            onFolderToggle={handleToggleFolder}
+          />
+        </div>
+      </div>
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile header bar */}
+        {activeSessions.length > 0 && (
+          <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-white/5 bg-slate-900/50">
+            <span className="text-xs text-slate-400 truncate flex-1">
+              {activeSessions.find((s) => s.id === activeSessionId)?.name || "No session"}
+            </span>
+            <span className="text-[10px] text-slate-500">
+              {activeSessions.length} session{activeSessions.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+        )}
+
         {/* Empty state when no sessions */}
         {!loading && activeSessions.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
