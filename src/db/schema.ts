@@ -115,6 +115,29 @@ export const githubRepositories = sqliteTable(
   ]
 );
 
+// Session folders for organizing terminal sessions
+export const sessionFolders = sqliteTable(
+  "session_folder",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("session_folder_user_idx").on(table.userId)]
+);
+
 // Terminal sessions with tmux persistence
 export const terminalSessions = sqliteTable(
   "terminal_session",
@@ -132,6 +155,9 @@ export const terminalSessions = sqliteTable(
       onDelete: "set null",
     }),
     worktreeBranch: text("worktree_branch"),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
     status: text("status").$type<SessionStatus>().notNull().default("active"),
     tabOrder: integer("tab_order").notNull().default(0),
     lastActivityAt: integer("last_activity_at", { mode: "timestamp_ms" })

@@ -123,3 +123,13 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Hide xterm scrollbar */
+.xterm-viewport {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}

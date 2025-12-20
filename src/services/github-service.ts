@@ -236,7 +236,7 @@ export async function updateLocalPath(
 }
 
 /**
- * Get a repository by ID from the database
+ * Get a repository by internal database ID
  */
 export async function getRepository(
   repoId: string,
@@ -245,6 +245,22 @@ export async function getRepository(
   const repo = await db.query.githubRepositories.findFirst({
     where: and(
       eq(githubRepositories.id, repoId),
+      eq(githubRepositories.userId, userId)
+    ),
+  });
+  return repo ? mapDbRepoToCachedRepository(repo) : null;
+}
+
+/**
+ * Get a repository by GitHub ID from the database
+ */
+export async function getRepositoryByGitHubId(
+  githubId: number,
+  userId: string
+): Promise<CachedGitHubRepository | null> {
+  const repo = await db.query.githubRepositories.findFirst({
+    where: and(
+      eq(githubRepositories.githubId, githubId),
       eq(githubRepositories.userId, userId)
     ),
   });
