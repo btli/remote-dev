@@ -102,7 +102,14 @@ export function Terminal({
       terminal.loadAddon(imageAddon);
 
       terminal.open(terminalRef.current);
-      fitAddon.fit();
+
+      // Wait for fonts to load before fitting to get accurate cell dimensions
+      // This prevents the "dots" issue from incorrect initial sizing
+      const initialFit = async () => {
+        await document.fonts.ready;
+        fitAddon.fit();
+      };
+      initialFit();
 
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
@@ -129,6 +136,19 @@ export function Terminal({
           updateStatus("connected");
           reconnectAttemptsRef.current = 0;
           onWebSocketReadyRef.current?.(ws);
+
+          // Send resize immediately after connection to sync dimensions
+          // The URL params may be stale if container resized during connection
+          requestAnimationFrame(() => {
+            fitAddon.fit();
+            ws.send(
+              JSON.stringify({
+                type: "resize",
+                cols: terminal.cols,
+                rows: terminal.rows,
+              })
+            );
+          });
         };
 
         ws.onmessage = (event) => {
@@ -206,16 +226,19 @@ export function Terminal({
       });
 
       const handleResize = () => {
-        fitAddon.fit();
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(
-            JSON.stringify({
-              type: "resize",
-              cols: terminal.cols,
-              rows: terminal.rows,
-            })
-          );
-        }
+        // Use requestAnimationFrame to ensure DOM is ready
+        requestAnimationFrame(() => {
+          fitAddon.fit();
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({
+                type: "resize",
+                cols: terminal.cols,
+                rows: terminal.rows,
+              })
+            );
+          }
+        });
       };
 
       window.addEventListener("resize", handleResize);
@@ -224,6 +247,8 @@ export function Terminal({
       // This handles the case when switching tabs (hidden -> visible)
       let lastWidth = 0;
       let lastHeight = 0;
+      let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
       const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const { width, height } = entry.contentRect;
@@ -232,7 +257,10 @@ export function Terminal({
           if (width > 0 && height > 0 && (width !== lastWidth || height !== lastHeight)) {
             lastWidth = width;
             lastHeight = height;
-            handleResize();
+
+            // Debounce rapid resize events (e.g., during window drag)
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(handleResize, 16); // ~60fps
           }
         }
       });
@@ -245,6 +273,7 @@ export function Terminal({
       return () => {
         window.removeEventListener("resize", handleResize);
         resizeObserver.disconnect();
+        if (resizeTimeout) clearTimeout(resizeTimeout);
       };
     }
 
@@ -283,26 +312,27 @@ export function Terminal({
     fitAddonRef.current?.fit();
   }, [theme, fontSize, fontFamily]);
 
-  // Encode image as iTerm2 OSC 1337 escape sequence
-  const encodeImageAsOSC1337 = useCallback(
-    async (file: File): Promise<string> => {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(",")[1];
-          const nameBase64 = btoa(file.name);
-          // OSC 1337 format: \x1b]1337;File=name=<base64name>;size=<bytes>;inline=1:<base64data>\x07
-          const sequence = `\x1b]1337;File=name=${nameBase64};size=${file.size};inline=1:${base64}\x07`;
-          resolve(sequence);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    },
-    []
-  );
+  // Upload image to server and return file path
+  const uploadImage = useCallback(async (file: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append("image", file);
 
-  // Send image through WebSocket as terminal input
+    const response = await fetch("/api/images", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "Failed to upload image");
+    }
+
+    const result = await response.json();
+    return result.path;
+  }, []);
+
+  // Send image file path to terminal
+  // Claude Code reads images from file paths, so we upload and paste the path
   const sendImageToTerminal = useCallback(
     async (file: File) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -311,13 +341,14 @@ export function Terminal({
       }
 
       try {
-        const sequence = await encodeImageAsOSC1337(file);
-        wsRef.current.send(JSON.stringify({ type: "input", data: sequence }));
+        const filePath = await uploadImage(file);
+        // Send the file path as terminal input
+        wsRef.current.send(JSON.stringify({ type: "input", data: filePath }));
       } catch (error) {
-        console.error("Failed to encode image:", error);
+        console.error("Failed to upload image:", error);
       }
     },
-    [encodeImageAsOSC1337]
+    [uploadImage]
   );
 
   // Drag and drop handlers
