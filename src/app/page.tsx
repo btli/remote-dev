@@ -63,8 +63,8 @@ export default async function Home() {
           <RecordingProvider>
           <SessionProvider initialSessions={initialSessions}>
           <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-            {/* Header with glassmorphism */}
-            <header className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
+            {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
+            <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
               {/* Logo */}
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
@@ -109,7 +109,10 @@ export default async function Home() {
             </header>
 
             {/* Main content */}
-            <SessionManager isGitHubConnected={isGitHubConnected} />
+            <SessionManager
+              isGitHubConnected={isGitHubConnected}
+              userEmail={session.user.email || ""}
+            />
           </div>
         </SessionProvider>
           </RecordingProvider>
