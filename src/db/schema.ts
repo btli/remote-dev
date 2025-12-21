@@ -31,6 +31,8 @@ export const accounts = sqliteTable(
   },
   (account) => [
     primaryKey({ columns: [account.provider, account.providerAccountId] }),
+    // Index for faster lookup of user's OAuth accounts
+    index("account_user_idx").on(account.userId),
   ]
 );
 

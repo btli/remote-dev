@@ -41,11 +41,22 @@ export function Terminal({
   const intentionalExitRef = useRef(false);
   const maxReconnectAttempts = 5;
 
+  // FIX: Use refs for callbacks to avoid re-creating terminal on callback changes
+  const onStatusChangeRef = useRef(onStatusChange);
+  const onWebSocketReadyRef = useRef(onWebSocketReady);
+  const onSessionExitRef = useRef(onSessionExit);
+
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+    onWebSocketReadyRef.current = onWebSocketReady;
+    onSessionExitRef.current = onSessionExit;
+  }, [onStatusChange, onWebSocketReady, onSessionExit]);
+
   const updateStatus = useCallback(
     (status: ConnectionStatus) => {
-      onStatusChange?.(status);
+      onStatusChangeRef.current?.(status);
     },
-    [onStatusChange]
+    []
   );
 
   useEffect(() => {
@@ -117,7 +128,7 @@ export function Terminal({
         ws.onopen = () => {
           updateStatus("connected");
           reconnectAttemptsRef.current = 0;
-          onWebSocketReady?.(ws);
+          onWebSocketReadyRef.current?.(ws);
         };
 
         ws.onmessage = (event) => {
@@ -142,7 +153,7 @@ export function Terminal({
                 );
                 // Mark as intentional exit to prevent reconnection
                 intentionalExitRef.current = true;
-                onSessionExit?.(msg.code);
+                onSessionExitRef.current?.(msg.code);
                 break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
@@ -155,7 +166,7 @@ export function Terminal({
 
         ws.onclose = () => {
           updateStatus("disconnected");
-          onWebSocketReady?.(null);
+          onWebSocketReadyRef.current?.(null);
 
           // Don't reconnect if this was an intentional exit (user typed "exit" or Ctrl+D)
           if (intentionalExitRef.current) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
@@ -44,6 +44,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     folderName: string;
   } | null>(null);
 
+  // Use ref for sessionCounter to avoid stale closures in keyboard handler
+  const sessionCounterRef = useRef(sessionCounter);
+  useEffect(() => {
+    sessionCounterRef.current = sessionCounter;
+  }, [sessionCounter]);
+
   // Folder state from context (persisted in database)
   const {
     folders,
@@ -68,12 +74,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Keyboard shortcuts
   // Note: Cmd+T and Cmd+W are intercepted by browsers, so we use alternatives
+  // FIX: Uses refs for mutable values to avoid stale closure issues
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Cmd+Enter or Ctrl+Enter for new session (not intercepted by browsers)
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
-        const name = `Terminal ${sessionCounter}`;
+        // Use ref to get current counter value (avoids stale closure)
+        const name = `Terminal ${sessionCounterRef.current}`;
         setSessionCounter((c) => c + 1);
         createSession({ name });
       }
@@ -103,7 +111,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSessionId, activeSessions, setActiveSession, sessionCounter, createSession, closeSession]);
+  }, [activeSessionId, activeSessions, setActiveSession, createSession, closeSession]);
 
   const handleCreateSession = useCallback(
     async (data: {

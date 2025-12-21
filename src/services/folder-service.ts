@@ -151,13 +151,29 @@ export async function deleteFolder(
 }
 
 /**
- * Move a session to a folder (or remove from folder if folderId is null)
+ * Move a session to a folder (or remove from folder if folderId is null).
+ * SECURITY: Validates that both the session and folder belong to the user.
  */
 export async function moveSessionToFolder(
   sessionId: string,
   userId: string,
   folderId: string | null
 ): Promise<boolean> {
+  // SECURITY: Validate folder ownership before assigning
+  if (folderId !== null) {
+    const folder = await db.query.sessionFolders.findFirst({
+      where: and(
+        eq(sessionFolders.id, folderId),
+        eq(sessionFolders.userId, userId)
+      ),
+    });
+
+    if (!folder) {
+      // Folder doesn't exist or doesn't belong to user
+      return false;
+    }
+  }
+
   const result = await db
     .update(terminalSessions)
     .set({ folderId, updatedAt: new Date() })
