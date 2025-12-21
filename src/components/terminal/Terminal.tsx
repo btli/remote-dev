@@ -331,25 +331,21 @@ export function Terminal({
       e.stopPropagation();
       setIsDragging(false);
 
+      // First try dataTransfer.files (works for Finder files, macOS screenshot thumbnails)
       const files = Array.from(e.dataTransfer.files);
       const imageFiles = files.filter((file) => file.type.startsWith("image/"));
 
-      for (const file of imageFiles) {
-        await sendImageToTerminal(file);
+      if (imageFiles.length > 0) {
+        for (const file of imageFiles) {
+          await sendImageToTerminal(file);
+        }
+        return;
       }
-    },
-    [sendImageToTerminal]
-  );
 
-  // Handle paste events for images
-  const handlePaste = useCallback(
-    async (e: React.ClipboardEvent) => {
-      const items = Array.from(e.clipboardData.items);
+      // Fallback: check dataTransfer.items for images dragged from browsers/other apps
+      // These may not appear in files but can be retrieved as blobs via getAsFile()
+      const items = Array.from(e.dataTransfer.items);
       const imageItems = items.filter((item) => item.type.startsWith("image/"));
-
-      if (imageItems.length === 0) return;
-
-      e.preventDefault();
 
       for (const item of imageItems) {
         const file = item.getAsFile();
@@ -361,6 +357,41 @@ export function Terminal({
     [sendImageToTerminal]
   );
 
+  // Handle paste events for images
+  // Note: We use a native event listener in the capture phase because xterm.js
+  // creates its own internal textarea that captures paste events. React's onPaste
+  // on the container div never fires because the event goes to xterm's element.
+  useEffect(() => {
+    const container = terminalRef.current;
+    if (!container) return;
+
+    const handlePaste = async (e: ClipboardEvent) => {
+      if (!e.clipboardData) return;
+
+      const items = Array.from(e.clipboardData.items);
+      const imageItems = items.filter((item) => item.type.startsWith("image/"));
+
+      if (imageItems.length === 0) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (file) {
+          await sendImageToTerminal(file);
+        }
+      }
+    };
+
+    // Use capture phase to intercept before xterm.js processes the paste
+    container.addEventListener("paste", handlePaste, { capture: true });
+
+    return () => {
+      container.removeEventListener("paste", handlePaste, { capture: true });
+    };
+  }, [sendImageToTerminal]);
+
   return (
     <div
       ref={terminalRef}
@@ -371,7 +402,6 @@ export function Terminal({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onPaste={handlePaste}
     >
       {isDragging && (
         <div className="absolute inset-0 bg-blue-500/10 flex items-center justify-center pointer-events-none z-10">
