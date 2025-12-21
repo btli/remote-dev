@@ -124,6 +124,7 @@ export function Terminal({
         fontFamily,
         theme: getTerminalTheme(theme),
         allowProposedApi: true,
+        scrollback: 10000,
       });
 
       fitAddon = new FitAddon();

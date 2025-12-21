@@ -107,6 +107,15 @@ export async function createSession(
   try {
     await execFile("tmux", args);
 
+    // Enable mouse mode for scrollback support
+    await execFile("tmux", [
+      "set-option",
+      "-t",
+      sessionName,
+      "mouse",
+      "on",
+    ]);
+
     // Execute startup command if provided
     if (startupCommand && startupCommand.trim()) {
       await sendKeys(sessionName, startupCommand.trim());
