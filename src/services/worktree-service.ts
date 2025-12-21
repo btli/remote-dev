@@ -238,23 +238,97 @@ export async function createBranchWithWorktree(
   baseBranch?: string,
   worktreePath?: string
 ): Promise<{ branch: string; worktreePath: string }> {
-  // If base branch specified, checkout from it
-  if (baseBranch) {
-    await execFile("git", ["-C", repoPath, "fetch", "origin", baseBranch]);
+  // Validate repo path first
+  if (!(await isGitRepo(repoPath))) {
+    throw new WorktreeServiceError(
+      "Not a git repository",
+      "NOT_GIT_REPO",
+      repoPath
+    );
   }
 
-  // Create worktree with new branch
-  const targetPath = await createWorktree(
-    repoPath,
-    branchName,
-    worktreePath,
-    true // createBranch = true
-  );
+  // If base branch specified, try to fetch it (but don't fail if fetch fails)
+  if (baseBranch) {
+    const fetchResult = await execFileNoThrow("git", [
+      "-C",
+      repoPath,
+      "fetch",
+      "origin",
+      baseBranch,
+    ]);
+    if (fetchResult.exitCode !== 0) {
+      console.warn(
+        `Warning: Could not fetch ${baseBranch} from origin: ${fetchResult.stderr}`
+      );
+      // Continue anyway - the branch might exist locally
+    }
+  }
 
-  return {
-    branch: branchName,
-    worktreePath: targetPath,
-  };
+  // Create worktree with new branch based on the base branch
+  // Build args to specify the start point for the new branch
+  const targetPath =
+    worktreePath ||
+    join(dirname(repoPath), `${basename(repoPath)}-${sanitizeBranchName(branchName)}`);
+
+  // Check if path already exists
+  if (existsSync(targetPath)) {
+    throw new WorktreeServiceError(
+      "Worktree path already exists",
+      "PATH_EXISTS",
+      targetPath
+    );
+  }
+
+  // Create parent directory if needed
+  const parentDir = dirname(targetPath);
+  if (!existsSync(parentDir)) {
+    mkdirSync(parentDir, { recursive: true });
+  }
+
+  // Create worktree with new branch: git worktree add -b <branch> <path> [<start-point>]
+  const args = ["-C", repoPath, "worktree", "add", "-b", branchName, targetPath];
+  if (baseBranch) {
+    // Try origin/baseBranch first, fall back to just baseBranch
+    const remoteRef = `origin/${baseBranch}`;
+    const checkRemote = await execFileNoThrow("git", [
+      "-C",
+      repoPath,
+      "rev-parse",
+      "--verify",
+      remoteRef,
+    ]);
+    if (checkRemote.exitCode === 0) {
+      args.push(remoteRef);
+    } else {
+      // Try local branch
+      const checkLocal = await execFileNoThrow("git", [
+        "-C",
+        repoPath,
+        "rev-parse",
+        "--verify",
+        baseBranch,
+      ]);
+      if (checkLocal.exitCode === 0) {
+        args.push(baseBranch);
+      }
+      // If neither exists, let git use HEAD (no start-point specified)
+    }
+  }
+
+  try {
+    await execFile("git", args);
+    return {
+      branch: branchName,
+      worktreePath: targetPath,
+    };
+  } catch (error) {
+    const err = error as Error & { stderr?: string };
+    throw new WorktreeServiceError(
+      "Failed to create branch with worktree",
+      "CREATE_FAILED",
+      err.stderr || err.message
+    );
+  }
 }
 
 /**

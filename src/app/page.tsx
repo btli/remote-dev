@@ -46,6 +46,7 @@ export default async function Home() {
     projectPath: s.projectPath,
     githubRepoId: s.githubRepoId,
     worktreeBranch: s.worktreeBranch,
+    folderId: s.folderId,
     status: s.status as "active" | "suspended" | "closed",
     tabOrder: s.tabOrder,
     lastActivityAt: new Date(s.lastActivityAt),

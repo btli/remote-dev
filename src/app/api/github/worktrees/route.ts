@@ -42,6 +42,14 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log("Creating worktree:", {
+      repositoryId,
+      branch,
+      createNewBranch,
+      baseBranch,
+      localPath: repository.localPath,
+    });
+
     let worktreePath: string;
 
     if (createNewBranch) {

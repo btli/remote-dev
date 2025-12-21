@@ -219,6 +219,27 @@ export function FolderPreferencesModal({
             </Select>
           </div>
 
+          {/* Startup Command */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-slate-300">Startup Command</Label>
+              {isOverridden("startupCommand") && (
+                <span className="text-xs text-violet-400">Overridden</span>
+              )}
+            </div>
+            <Input
+              value={getValue("startupCommand") || ""}
+              onChange={(e) =>
+                setValue("startupCommand", e.target.value || null)
+              }
+              placeholder={getInherited("startupCommand") ? `Inherit: ${getInherited("startupCommand")}` : "No startup command"}
+              className={cn(
+                "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                isOverridden("startupCommand") && "border-violet-500/50"
+              )}
+            />
+          </div>
+
           {/* Theme */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">

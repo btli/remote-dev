@@ -82,6 +82,12 @@ export async function POST(request: Request) {
       projectPath: validatedPath,
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
+      folderId: body.folderId,
+      // Feature session fields
+      startupCommand: body.startupCommand,
+      featureDescription: body.featureDescription,
+      createWorktree: body.createWorktree,
+      baseBranch: body.baseBranch,
     };
 
     const newSession = await SessionService.createSession(session.user.id, input);

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Pause, Terminal, Settings,
-  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2
+  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -52,6 +52,7 @@ interface SidebarProps {
   onFolderClick: (folderId: string) => void;
   onFolderSettings: (folderId: string, folderName: string) => void;
   onFolderNewSession: (folderId: string) => void;
+  onFolderAdvancedSession: (folderId: string) => void;
 }
 
 export function Sidebar({
@@ -74,6 +75,7 @@ export function Sidebar({
   onFolderClick,
   onFolderSettings,
   onFolderNewSession,
+  onFolderAdvancedSession,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -471,13 +473,11 @@ export function Sidebar({
                         onFolderToggle(folder.id);
                       }}
                     >
-                      {folder.collapsed ? (
+                      {folder.collapsed && !isActive ? (
                         <Folder
                           className={cn(
                             "w-3.5 h-3.5 shrink-0",
-                            isActive
-                              ? "text-violet-300 fill-violet-400"
-                              : "text-violet-400"
+                            "text-violet-400"
                           )}
                         />
                       ) : (
@@ -537,6 +537,15 @@ export function Sidebar({
                           >
                             <Terminal className="w-3 h-3 mr-2" />
                             New Session
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              onFolderAdvancedSession(folder.id);
+                            }}
+                          >
+                            <Sparkles className="w-3 h-3 mr-2" />
+                            Advanced...
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
