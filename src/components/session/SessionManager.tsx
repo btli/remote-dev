@@ -6,6 +6,7 @@ import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
 import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
 import { CommandPalette } from "@/components/CommandPalette";
+import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
@@ -56,6 +57,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     folderName: string;
   } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 
   // Split pane state
   const [splitPaneLayout, setSplitPaneLayout] = useState<PaneNode | null>(null);
@@ -676,6 +678,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onSplitVertical={handleSplitVertical}
         onExitSplitMode={handleExitSplitMode}
         onSaveAsTemplate={() => setIsTemplateModalOpen(true)}
+        onShowKeyboardShortcuts={() => setIsKeyboardShortcutsOpen(true)}
         activeSessionId={activeSessionId}
         activeSessionStatus={activeSessions.find((s) => s.id === activeSessionId)?.status}
         isSplitMode={isSplitMode}
@@ -686,6 +689,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         open={isTemplateModalOpen}
         onClose={() => setIsTemplateModalOpen(false)}
         session={activeSessions.find((s) => s.id === activeSessionId) || null}
+      />
+
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsPanel
+        open={isKeyboardShortcutsOpen}
+        onOpenChange={setIsKeyboardShortcutsOpen}
       />
     </div>
   );
