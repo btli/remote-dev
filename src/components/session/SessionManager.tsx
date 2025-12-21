@@ -200,11 +200,31 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       createWorktree?: boolean;
       baseBranch?: string;
     }) => {
-      // Include wizard folder or active folder if not explicitly provided
-      const effectiveFolderId = data.folderId ?? wizardFolderId ?? activeProject.folderId ?? undefined;
+      // Determine target folder with priority:
+      // 1. Explicit folderId from wizard
+      // 2. wizardFolderId from context
+      // 3. For GitHub repos: folder containing other sessions from same repo
+      // 4. Fall back to active folder
+      let effectiveFolderId: string | null = data.folderId ?? wizardFolderId ?? null;
+
+      // For GitHub repos without explicit folder, find existing repo folder
+      if (!effectiveFolderId && data.githubRepoId) {
+        const existingRepoSession = sessions.find(
+          (s) => s.githubRepoId === data.githubRepoId
+        );
+        if (existingRepoSession) {
+          effectiveFolderId = sessionFolders[existingRepoSession.id] || null;
+        }
+      }
+
+      // Fall back to active folder
+      if (!effectiveFolderId) {
+        effectiveFolderId = activeProject.folderId;
+      }
+
       const sessionData = {
         ...data,
-        folderId: effectiveFolderId,
+        folderId: effectiveFolderId ?? undefined,
       };
       const newSession = await createSession(sessionData);
       // Register session-folder mapping in FolderContext for UI update
@@ -218,7 +238,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       // Clear wizard folder after creation
       setWizardFolderId(null);
     },
-    [createSession, wizardFolderId, activeProject.folderId, setActiveFolder, registerSessionFolder]
+    [createSession, wizardFolderId, sessions, sessionFolders, activeProject.folderId, setActiveFolder, registerSessionFolder]
   );
 
   const handleQuickNewSession = useCallback(async () => {
@@ -252,11 +272,26 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   // Folder handlers now use the context methods directly
+  // When moving a session with a githubRepoId, move ALL sessions for that repo together
+  // This enforces one folder per repository
   const handleMoveSession = useCallback(
     async (sessionId: string, folderId: string | null) => {
-      await moveSessionToFolder(sessionId, folderId);
+      const session = sessions.find((s) => s.id === sessionId);
+
+      if (session?.githubRepoId) {
+        // Find all sessions for this repo and move them together
+        const repoSessions = sessions.filter(
+          (s) => s.githubRepoId === session.githubRepoId
+        );
+        await Promise.all(
+          repoSessions.map((s) => moveSessionToFolder(s.id, folderId))
+        );
+      } else {
+        // No repo association, just move this session
+        await moveSessionToFolder(sessionId, folderId);
+      }
     },
-    [moveSessionToFolder]
+    [sessions, moveSessionToFolder]
   );
 
   const handleReorderSessions = useCallback(
