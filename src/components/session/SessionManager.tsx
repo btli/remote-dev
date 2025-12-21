@@ -14,7 +14,7 @@ import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import { Terminal as TerminalIcon, Plus, PanelLeft, X, Columns, Rows, Maximize2 } from "lucide-react";
+import { Terminal as TerminalIcon, Plus, X, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
@@ -58,6 +58,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [wizardFolderId, setWizardFolderId] = useState<string | null>(null);
   const [sessionCounter, setSessionCounter] = useState(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     // Initialize from localStorage if available
     if (typeof window !== "undefined") {
@@ -66,6 +67,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
     return false;
   });
+
+  // Track mobile state for responsive sidebar behavior
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
   const [folderSettingsModal, setFolderSettingsModal] = useState<{
     folderId: string;
     folderName: string;
@@ -74,6 +83,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
   const [isRecordingsModalOpen, setIsRecordingsModalOpen] = useState(false);
   const [isSaveRecordingModalOpen, setIsSaveRecordingModalOpen] = useState(false);
+  const [mobileEditingName, setMobileEditingName] = useState<string | null>(null);
 
   // Recording state
   const { createRecording } = useRecordingContext();
@@ -647,57 +657,62 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     );
   }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions, handleSessionRestart, handleSessionDelete]);
 
+  // On mobile, sidebar is collapsed when drawer is not open
+  const effectiveCollapsed = isMobile ? !isMobileSidebarOpen : sidebarCollapsed;
+
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      {/* Mobile sidebar toggle button */}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={() => setIsMobileSidebarOpen(true)}
-        className={cn(
-          "absolute top-2 left-2 z-20 md:hidden",
-          "bg-slate-800/80 backdrop-blur-sm hover:bg-slate-700/80",
-          "text-slate-300 hover:text-white"
-        )}
-      >
-        <PanelLeft className="w-5 h-5" />
-      </Button>
-
-      {/* Mobile overlay */}
-      {isMobileSidebarOpen && (
+      {/* Mobile overlay when sidebar is expanded */}
+      {isMobile && isMobileSidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          className="fixed inset-0 bg-black/50 z-30"
           onClick={() => setIsMobileSidebarOpen(false)}
         />
       )}
 
-      {/* Sidebar - hidden on mobile unless toggled */}
+      {/* Sidebar - always visible, collapsed on mobile when drawer is closed */}
       <div
         className={cn(
-          // Desktop: always visible
-          "hidden md:block",
-          // Mobile: slide-in drawer
-          isMobileSidebarOpen && "!block fixed inset-y-0 left-0 z-40"
+          // Mobile: show as drawer when expanded, inline when collapsed
+          isMobile && isMobileSidebarOpen && "fixed inset-y-0 left-0 z-40"
         )}
+        onClick={() => {
+          // On mobile, clicking the collapsed sidebar expands it
+          if (isMobile && !isMobileSidebarOpen) {
+            setIsMobileSidebarOpen(true);
+          }
+        }}
       >
         <div className="relative h-full">
-          {/* Mobile close button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setIsMobileSidebarOpen(false)}
-            className="absolute top-2 right-2 z-50 md:hidden text-slate-400 hover:text-white"
-          >
-            <X className="w-4 h-4" />
-          </Button>
+          {/* Mobile close button - only show when expanded */}
+          {isMobile && isMobileSidebarOpen && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsMobileSidebarOpen(false);
+              }}
+              className="absolute top-2 right-2 z-50 text-slate-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          )}
           <Sidebar
             sessions={activeSessions}
             folders={folders}
             sessionFolders={sessionFolders}
             activeSessionId={activeSessionId}
             activeFolderId={activeProject.folderId}
-            collapsed={sidebarCollapsed}
-            onCollapsedChange={handleSidebarCollapsedChange}
+            collapsed={effectiveCollapsed}
+            onCollapsedChange={(collapsed) => {
+              if (isMobile) {
+                // On mobile, toggling collapsed state controls the drawer
+                setIsMobileSidebarOpen(!collapsed);
+              } else {
+                handleSidebarCollapsedChange(collapsed);
+              }
+            }}
             folderHasPreferences={hasFolderPreferences}
             folderHasRepo={folderHasRepo}
             onSessionClick={handleSessionClick}
@@ -726,9 +741,43 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         {/* Mobile header bar */}
         {activeSessions.length > 0 && (
           <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-white/5 bg-slate-900/50">
-            <span className="text-xs text-slate-400 truncate flex-1">
-              {activeSessions.find((s) => s.id === activeSessionId)?.name || "No session"}
-            </span>
+            {mobileEditingName !== null ? (
+              <input
+                type="text"
+                autoFocus
+                value={mobileEditingName}
+                onChange={(e) => setMobileEditingName(e.target.value)}
+                onBlur={() => {
+                  if (activeSessionId && mobileEditingName.trim()) {
+                    handleRenameSession(activeSessionId, mobileEditingName.trim());
+                  }
+                  setMobileEditingName(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (activeSessionId && mobileEditingName.trim()) {
+                      handleRenameSession(activeSessionId, mobileEditingName.trim());
+                    }
+                    setMobileEditingName(null);
+                  } else if (e.key === "Escape") {
+                    setMobileEditingName(null);
+                  }
+                }}
+                className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
+              />
+            ) : (
+              <span
+                className="text-xs text-slate-400 truncate flex-1 cursor-pointer hover:text-white transition-colors"
+                onClick={() => {
+                  const session = activeSessions.find((s) => s.id === activeSessionId);
+                  if (session) {
+                    setMobileEditingName(session.name);
+                  }
+                }}
+              >
+                {activeSessions.find((s) => s.id === activeSessionId)?.name || "No session"}
+              </span>
+            )}
             <span className="text-[10px] text-slate-500">
               {activeSessions.length} session{activeSessions.length !== 1 ? "s" : ""}
             </span>

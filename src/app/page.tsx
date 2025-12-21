@@ -12,6 +12,7 @@ import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
 import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
 import { Button } from "@/components/ui/button";
 import { LogOut, Github } from "lucide-react";
+import Image from "next/image";
 import type { TerminalSession } from "@/types/session";
 
 export default async function Home() {
@@ -67,9 +68,13 @@ export default async function Home() {
             <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
               {/* Logo */}
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">RD</span>
-                </div>
+                <Image
+                  src="/favicon.svg"
+                  alt="Remote Dev"
+                  width={32}
+                  height={32}
+                  className="rounded-lg"
+                />
                 <h1 className="text-lg font-semibold text-white">Remote Dev</h1>
               </div>
 
