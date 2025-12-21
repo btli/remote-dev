@@ -27,6 +27,8 @@ interface FolderContextValue {
   moveSessionToFolder: (sessionId: string, folderId: string | null) => Promise<void>;
   moveFolderToParent: (folderId: string, parentId: string | null) => Promise<void>;
   refreshFolders: () => Promise<void>;
+  /** Update local sessionFolders state without API call - used for newly created sessions */
+  registerSessionFolder: (sessionId: string, folderId: string | null) => void;
 }
 
 const FolderContext = createContext<FolderContextValue | null>(null);
@@ -160,9 +162,9 @@ export function FolderProvider({ children }: FolderProviderProps) {
     [folders, updateFolder]
   );
 
-  const moveSessionToFolder = useCallback(
-    async (sessionId: string, folderId: string | null) => {
-      // Optimistic update
+  // Update local sessionFolders state without API call - used for newly created sessions
+  const registerSessionFolder = useCallback(
+    (sessionId: string, folderId: string | null) => {
       setSessionFolders((prev) => {
         const next = { ...prev };
         if (folderId) {
@@ -172,6 +174,14 @@ export function FolderProvider({ children }: FolderProviderProps) {
         }
         return next;
       });
+    },
+    []
+  );
+
+  const moveSessionToFolder = useCallback(
+    async (sessionId: string, folderId: string | null) => {
+      // Optimistic update
+      registerSessionFolder(sessionId, folderId);
 
       try {
         const response = await fetch(`/api/sessions/${sessionId}/folder`, {
@@ -189,7 +199,7 @@ export function FolderProvider({ children }: FolderProviderProps) {
         throw error;
       }
     },
-    [refreshFolders]
+    [refreshFolders, registerSessionFolder]
   );
 
   const moveFolderToParent = useCallback(
@@ -232,6 +242,7 @@ export function FolderProvider({ children }: FolderProviderProps) {
         moveSessionToFolder,
         moveFolderToParent,
         refreshFolders,
+        registerSessionFolder,
       }}
     >
       {children}
