@@ -15,16 +15,13 @@ import {
   Plus,
   FolderPlus,
   Settings,
-  Moon,
-  Sun,
-  Palette,
-  Search,
-  Keyboard,
-  GitBranch,
   RefreshCw,
   X,
   Pause,
   Play,
+  Columns,
+  Rows,
+  Maximize2,
 } from "lucide-react";
 
 interface CommandAction {
@@ -45,8 +42,12 @@ interface CommandPaletteProps {
   onSuspendActiveSession?: () => void;
   onResumeActiveSession?: () => void;
   onRefreshSessions?: () => void;
+  onSplitHorizontal?: () => void;
+  onSplitVertical?: () => void;
+  onExitSplitMode?: () => void;
   activeSessionId?: string | null;
   activeSessionStatus?: string;
+  isSplitMode?: boolean;
 }
 
 export function CommandPalette({
@@ -58,8 +59,12 @@ export function CommandPalette({
   onSuspendActiveSession,
   onResumeActiveSession,
   onRefreshSessions,
+  onSplitHorizontal,
+  onSplitVertical,
+  onExitSplitMode,
   activeSessionId,
   activeSessionStatus,
+  isSplitMode,
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
 
@@ -138,6 +143,42 @@ export function CommandPalette({
             icon: <Play className="w-4 h-4" />,
             group: "Active Session",
             onSelect: () => runAction(onResumeActiveSession),
+          },
+        ]
+      : []),
+    // Split pane actions
+    ...(activeSessionId && onSplitHorizontal
+      ? [
+          {
+            id: "split-horizontal",
+            label: "Split Pane Horizontally",
+            icon: <Columns className="w-4 h-4" />,
+            shortcut: "⌘D",
+            group: "Layout",
+            onSelect: () => runAction(onSplitHorizontal),
+          },
+        ]
+      : []),
+    ...(activeSessionId && onSplitVertical
+      ? [
+          {
+            id: "split-vertical",
+            label: "Split Pane Vertically",
+            icon: <Rows className="w-4 h-4" />,
+            shortcut: "⌘⇧D",
+            group: "Layout",
+            onSelect: () => runAction(onSplitVertical),
+          },
+        ]
+      : []),
+    ...(isSplitMode && onExitSplitMode
+      ? [
+          {
+            id: "exit-split-mode",
+            label: "Exit Split Mode",
+            icon: <Maximize2 className="w-4 h-4" />,
+            group: "Layout",
+            onSelect: () => runAction(onExitSplitMode),
           },
         ]
       : []),
