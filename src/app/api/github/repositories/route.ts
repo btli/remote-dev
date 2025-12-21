@@ -38,16 +38,22 @@ export async function GET(request: Request) {
 
     const userId = session.user.id;
 
-    // Cache repositories in database
-    await Promise.all(
+    // Cache repositories in database and get the cached versions with database IDs
+    const cachedRepos = await Promise.all(
       repositories.map((repo) =>
         GitHubService.cacheRepository(userId, repo)
       )
     );
 
-    // Transform to simpler format for frontend
+    // Create a map of GitHub ID to database ID for lookup
+    const githubIdToDbId = new Map(
+      cachedRepos.map((cached) => [cached.githubId, cached.id])
+    );
+
+    // Transform to simpler format for frontend, using database IDs
     const repos = repositories.map((repo) => ({
-      id: repo.id,
+      id: githubIdToDbId.get(repo.id) || String(repo.id), // Use database ID
+      githubId: repo.id, // Keep GitHub ID for reference
       name: repo.name,
       fullName: repo.full_name,
       cloneUrl: repo.clone_url,

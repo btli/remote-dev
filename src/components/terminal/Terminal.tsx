@@ -182,6 +182,9 @@ export function Terminal({
           cols: String(cols),
           rows: String(rows),
         });
+        if (cwd) {
+          params.set("cwd", cwd);
+        }
 
         // Include working directory if specified
         if (projectPath) {
