@@ -37,6 +37,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   } = useSessionContext();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [wizardFolderId, setWizardFolderId] = useState<string | null>(null);
   const [sessionCounter, setSessionCounter] = useState(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [folderSettingsModal, setFolderSettingsModal] = useState<{
@@ -119,25 +120,39 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       projectPath?: string;
       githubRepoId?: string;
       worktreeBranch?: string;
+      folderId?: string;
+      startupCommand?: string;
+      featureDescription?: string;
+      createWorktree?: boolean;
+      baseBranch?: string;
     }) => {
-      await createSession(data);
+      // Include wizard folder or active folder if not explicitly provided
+      const effectiveFolderId = data.folderId ?? wizardFolderId ?? activeProject.folderId ?? undefined;
+      const sessionData = {
+        ...data,
+        folderId: effectiveFolderId,
+      };
+      const newSession = await createSession(sessionData);
+      // If session was created with a folder, set it as active
+      if (sessionData.folderId && newSession) {
+        setActiveFolder(sessionData.folderId);
+      }
+      // Clear wizard folder after creation
+      setWizardFolderId(null);
     },
-    [createSession]
+    [createSession, wizardFolderId, activeProject.folderId, setActiveFolder]
   );
 
   const handleQuickNewSession = useCallback(async () => {
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
-    // Use active project's preferences for working directory
-    const newSession = await createSession({
+    // Pass folderId at creation time so preferences (including startupCommand) are applied
+    await createSession({
       name,
-      projectPath: currentPreferences.defaultWorkingDirectory,
+      projectPath: currentPreferences.defaultWorkingDirectory || undefined,
+      folderId: activeProject.folderId || undefined,
     });
-    // Move to active folder if one is selected
-    if (activeProject.folderId && newSession) {
-      await moveSessionToFolder(newSession.id, activeProject.folderId);
-    }
-  }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory, activeProject.folderId, moveSessionToFolder]);
+  }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory, activeProject.folderId]);
 
   const handleCloseSession = useCallback(
     async (sessionId: string) => {
@@ -201,16 +216,25 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       const prefs = resolvePreferencesForFolder(folderId);
       const name = `Terminal ${sessionCounter}`;
       setSessionCounter((c) => c + 1);
-      const newSession = await createSession({
+      // Pass folderId at creation time so preferences (including startupCommand) are applied
+      await createSession({
         name,
-        projectPath: prefs.defaultWorkingDirectory,
+        projectPath: prefs.defaultWorkingDirectory || undefined,
+        folderId,
       });
-      if (newSession) {
-        await moveSessionToFolder(newSession.id, folderId);
-        setActiveFolder(folderId);
-      }
+      setActiveFolder(folderId);
     },
-    [createSession, sessionCounter, resolvePreferencesForFolder, moveSessionToFolder, setActiveFolder]
+    [createSession, sessionCounter, resolvePreferencesForFolder, setActiveFolder]
+  );
+
+  const handleFolderAdvancedSession = useCallback(
+    (folderId: string) => {
+      // Set the folder context for the wizard and open it
+      setWizardFolderId(folderId);
+      setActiveFolder(folderId);
+      setIsWizardOpen(true);
+    },
+    [setActiveFolder]
   );
 
   const handleFolderClick = useCallback(
@@ -295,6 +319,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderClick={handleFolderClick}
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
+            onFolderAdvancedSession={handleFolderAdvancedSession}
           />
         </div>
       </div>
@@ -391,7 +416,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       {/* New Session Wizard */}
       <NewSessionWizard
         open={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
+        onClose={() => {
+          setIsWizardOpen(false);
+          setWizardFolderId(null);
+        }}
         onCreate={handleCreateSession}
         isGitHubConnected={isGitHubConnected}
       />

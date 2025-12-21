@@ -12,6 +12,8 @@ import type {
   SessionWithMetadata,
 } from "@/types/session";
 import * as TmuxService from "./tmux-service";
+import * as WorktreeService from "./worktree-service";
+import { getResolvedPreferences } from "./preferences-service";
 
 export class SessionServiceError extends Error {
   constructor(
@@ -49,11 +51,58 @@ export async function createSession(
     ? existingSessions[0].tabOrder + 1
     : 0;
 
-  // Create the tmux session first
+  // Fetch resolved preferences
+  const preferences = await getResolvedPreferences(userId, input.folderId);
+
+  // Determine working path and branch name
+  let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
+  let branchName = input.worktreeBranch;
+
+  // Handle worktree creation for feature sessions
+  if (input.createWorktree && input.projectPath && input.featureDescription) {
+    // Generate branch name from feature description
+    const sanitizedBranch = `feature/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
+    branchName = sanitizedBranch;
+
+    // Validate it's a git repo
+    if (!(await WorktreeService.isGitRepo(input.projectPath))) {
+      throw new SessionServiceError(
+        "Project path is not a git repository",
+        "NOT_GIT_REPO",
+        sessionId
+      );
+    }
+
+    // Create the worktree with new branch
+    try {
+      const result = await WorktreeService.createBranchWithWorktree(
+        input.projectPath,
+        sanitizedBranch,
+        input.baseBranch,
+        undefined // Auto-generate worktree path
+      );
+      workingPath = result.worktreePath;
+    } catch (error) {
+      if (error instanceof WorktreeService.WorktreeServiceError) {
+        throw new SessionServiceError(
+          `Failed to create worktree: ${error.message}`,
+          error.code,
+          sessionId
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Determine startup command (explicit override takes precedence)
+  const startupCommand = input.startupCommand || preferences.startupCommand || undefined;
+
+  // Create the tmux session
   try {
     await TmuxService.createSession(
       tmuxSessionName,
-      input.projectPath ?? process.env.HOME ?? undefined
+      workingPath ?? undefined,
+      startupCommand
     );
   } catch (error) {
     if (error instanceof TmuxService.TmuxServiceError) {
@@ -76,9 +125,10 @@ export async function createSession(
         userId,
         name: input.name,
         tmuxSessionName,
-        projectPath: input.projectPath ?? null,
+        projectPath: workingPath ?? null,
         githubRepoId: input.githubRepoId ?? null,
-        worktreeBranch: input.worktreeBranch ?? null,
+        worktreeBranch: branchName ?? null,
+        folderId: input.folderId ?? null,
         status: "active",
         tabOrder: nextTabOrder,
         lastActivityAt: now,
@@ -406,6 +456,7 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     projectPath: dbSession.projectPath,
     githubRepoId: dbSession.githubRepoId,
     worktreeBranch: dbSession.worktreeBranch,
+    folderId: dbSession.folderId,
     status: dbSession.status as SessionStatus,
     tabOrder: dbSession.tabOrder,
     lastActivityAt: new Date(dbSession.lastActivityAt),

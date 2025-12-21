@@ -14,6 +14,7 @@ export interface Preferences {
   theme: string;
   fontSize: number;
   fontFamily: string;
+  startupCommand: string;
 }
 
 /**
@@ -37,6 +38,7 @@ export interface UserSettings {
   theme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
+  startupCommand: string | null;
   activeFolderId: string | null;
   pinnedFolderId: string | null;
   autoFollowActiveSession: boolean;
@@ -56,6 +58,7 @@ export interface FolderPreferences {
   theme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
+  startupCommand: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -86,6 +89,7 @@ export interface UpdateUserSettingsInput {
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
+  startupCommand?: string | null;
   activeFolderId?: string | null;
   pinnedFolderId?: string | null;
   autoFollowActiveSession?: boolean;
@@ -100,4 +104,5 @@ export interface UpdateFolderPreferencesInput {
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
+  startupCommand?: string | null;
 }

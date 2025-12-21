@@ -80,6 +80,7 @@ export const userSettings = sqliteTable("user_settings", {
   // Terminal preferences
   defaultWorkingDirectory: text("default_working_directory"),
   defaultShell: text("default_shell"),
+  startupCommand: text("startup_command"),
   // Appearance preferences
   theme: text("theme").default("tokyo-night"),
   fontSize: integer("font_size").default(14),
@@ -167,6 +168,7 @@ export const folderPreferences = sqliteTable(
     // Terminal preferences (all nullable = inherit from user)
     defaultWorkingDirectory: text("default_working_directory"),
     defaultShell: text("default_shell"),
+    startupCommand: text("startup_command"),
     // Appearance preferences
     theme: text("theme"),
     fontSize: integer("font_size"),

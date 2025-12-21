@@ -56,6 +56,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const allowedFields = [
       "defaultWorkingDirectory",
       "defaultShell",
+      "startupCommand",
       "theme",
       "fontSize",
       "fontFamily",

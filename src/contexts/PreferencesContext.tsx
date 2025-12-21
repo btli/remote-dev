@@ -29,6 +29,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   theme: "tokyo-night",
   fontSize: 14,
   fontFamily: "'JetBrains Mono', monospace",
+  startupCommand: "",
 };
 
 interface PreferencesContextValue {
@@ -228,6 +229,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         theme: "default",
         fontSize: "default",
         fontFamily: "default",
+        startupCommand: "default",
       };
 
       // Start with defaults
@@ -255,6 +257,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           resolved.fontFamily = userSettings.fontFamily;
           source.fontFamily = "user";
         }
+        if (userSettings.startupCommand !== null) {
+          resolved.startupCommand = userSettings.startupCommand;
+          source.startupCommand = "user";
+        }
       }
 
       // Apply folder overrides
@@ -280,6 +286,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           if (folderPrefs.fontFamily !== null) {
             resolved.fontFamily = folderPrefs.fontFamily;
             source.fontFamily = "folder";
+          }
+          if (folderPrefs.startupCommand !== null) {
+            resolved.startupCommand = folderPrefs.startupCommand;
+            source.startupCommand = "folder";
           }
         }
       }
