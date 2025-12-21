@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Plus, Clock } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock } from "lucide-react";
 import { useTemplateContext } from "@/contexts/TemplateContext";
 import { expandNamePattern, type SessionTemplate } from "@/types/template";
 import {

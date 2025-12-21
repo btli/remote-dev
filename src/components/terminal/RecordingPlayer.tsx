@@ -170,6 +170,14 @@ export function RecordingPlayer({
     };
   }, [isPlaying, tick, currentTime]);
 
+  const handleRestart = useCallback(() => {
+    setIsPlaying(false);
+    pausedAtRef.current = 0;
+    eventIndexRef.current = 0;
+    xtermRef.current?.reset();
+    setCurrentTime(0);
+  }, []);
+
   const handlePlayPause = useCallback(() => {
     if (currentTime >= recording.duration) {
       // Restart from beginning
@@ -178,15 +186,7 @@ export function RecordingPlayer({
     } else {
       setIsPlaying(!isPlaying);
     }
-  }, [isPlaying, currentTime, recording.duration]);
-
-  const handleRestart = useCallback(() => {
-    setIsPlaying(false);
-    pausedAtRef.current = 0;
-    eventIndexRef.current = 0;
-    xtermRef.current?.reset();
-    setCurrentTime(0);
-  }, []);
+  }, [isPlaying, currentTime, recording.duration, handleRestart]);
 
   const handleSeek = useCallback(
     (value: number[]) => {

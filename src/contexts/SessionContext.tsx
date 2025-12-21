@@ -6,6 +6,7 @@ import {
   useReducer,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import type {
@@ -119,12 +120,8 @@ export function SessionProvider({
     error: null,
   });
 
-  // Fetch sessions on mount if none provided
-  useEffect(() => {
-    if (initialSessions.length === 0) {
-      refreshSessions();
-    }
-  }, []);
+  // Track if we've already attempted to fetch sessions
+  const hasFetchedRef = useRef(false);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -136,6 +133,15 @@ export function SessionProvider({
       console.error("Error fetching sessions:", error);
     }
   }, []);
+
+  // Fetch sessions on mount if none provided
+  useEffect(() => {
+    if (hasFetchedRef.current) return;
+    if (initialSessions.length === 0) {
+      hasFetchedRef.current = true;
+      refreshSessions();
+    }
+  }, [initialSessions.length, refreshSessions]);
 
   const createSession = useCallback(
     async (input: CreateSessionInput): Promise<TerminalSession> => {
