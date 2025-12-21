@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Pause, Terminal, Settings,
-  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles
+  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -347,19 +347,28 @@ export function Sidebar({
                   className="w-full bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />
               ) : (
-                <span
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    handleStartEdit(session.id, "session", session.name, e);
-                  }}
-                  className={cn(
-                    "block truncate text-xs",
-                    isActive ? "text-white" : "text-slate-400 group-hover:text-white"
+                <>
+                  <span
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      handleStartEdit(session.id, "session", session.name, e);
+                    }}
+                    className={cn(
+                      "block truncate text-xs",
+                      isActive ? "text-white" : "text-slate-400 group-hover:text-white"
+                    )}
+                    title="Double-click to rename"
+                  >
+                    {session.name}
+                  </span>
+                  {/* Git branch indicator */}
+                  {session.worktreeBranch && (
+                    <span className="flex items-center gap-0.5 text-[10px] text-emerald-400/80 truncate">
+                      <GitBranch className="w-2.5 h-2.5" />
+                      {session.worktreeBranch}
+                    </span>
                   )}
-                  title="Double-click to rename"
-                >
-                  {session.name}
-                </span>
+                </>
               )}
             </div>
 
