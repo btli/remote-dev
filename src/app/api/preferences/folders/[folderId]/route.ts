@@ -60,6 +60,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
       "theme",
       "fontSize",
       "fontFamily",
+      "githubRepoId",
+      "localRepoPath",
     ];
 
     const filteredUpdates: Record<string, unknown> = {};

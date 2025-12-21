@@ -4,10 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Remote Dev is a web-based terminal interface built with Next.js 15, xterm.js, and NextAuth v5. It provides:
+Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 19**, **xterm.js**, and **NextAuth v5**. It provides:
 - Multiple persistent terminal sessions via tmux
 - GitHub OAuth integration with repository browsing
 - Git worktree support for branch isolation
+- Session recording and playback
+- Session templates for reusable configurations
+- Hierarchical folder organization with preference inheritance
+- Split pane terminal layouts
 - Modern glassmorphism UI with shadcn/ui components
 
 ## Commands
@@ -17,7 +21,7 @@ Remote Dev is a web-based terminal interface built with Next.js 15, xterm.js, an
 bun run dev
 
 # Or run separately
-bun run dev:next      # Next.js dev server (port 3000)
+bun run dev:next      # Next.js dev server with Turbopack (port 3000)
 bun run dev:terminal  # Terminal WebSocket server (port 3001)
 
 # Production
@@ -61,7 +65,9 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 2. **Connect**: WebSocket attaches PTY to tmux session
 3. **Disconnect**: PTY terminates, tmux session continues
 4. **Reconnect**: New PTY reattaches to existing tmux session
-5. **Close**: `DELETE /api/sessions/:id` kills tmux and removes DB record
+5. **Suspend**: `POST /api/sessions/:id/suspend` detaches and marks session suspended
+6. **Resume**: `POST /api/sessions/:id/resume` reattaches to existing tmux session
+7. **Close**: `DELETE /api/sessions/:id` kills tmux and marks session closed
 
 ### Authentication Flow
 
@@ -83,9 +89,13 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 | `user` | NextAuth users |
 | `account` | OAuth accounts (GitHub) |
 | `authorized_user` | Email allowlist |
-| `terminal_session` | Session metadata, tmux names, status |
-| `github_repository` | Cached repository data |
-| `user_settings` | User preferences |
+| `terminal_session` | Session metadata, tmux names, status, worktree info |
+| `github_repository` | Cached repository data with local paths |
+| `session_folder` | Hierarchical folder organization |
+| `folder_preferences` | Per-folder preference overrides |
+| `user_settings` | User-level preferences |
+| `session_template` | Reusable session configurations |
+| `session_recording` | Terminal session recordings |
 
 ### Service Layer
 
@@ -97,6 +107,10 @@ Located in `src/services/`:
 | `TmuxService` | tmux session lifecycle, commands |
 | `GitHubService` | GitHub API, repository operations |
 | `WorktreeService` | Git worktree management |
+| `FolderService` | Folder CRUD, hierarchy management |
+| `PreferencesService` | User settings and folder preferences |
+| `TemplateService` | Session template management |
+| `RecordingService` | Session recording storage |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -107,28 +121,46 @@ Located in `src/services/`:
 - **Tokyo Night** terminal theme with glassmorphism effects
 
 **Key UI Components:**
+
 | Component | Purpose |
 |-----------|---------|
-| `Terminal.tsx` | xterm.js wrapper with WebSocket |
-| `TabBar.tsx` | Session tabs with drag reorder |
-| `SessionManager.tsx` | Session list sidebar |
-| `NewSessionWizard.tsx` | Create session flow |
-| `RepositoryPicker.tsx` | GitHub repo browser |
-| `BranchPicker.tsx` | Branch selection with worktree |
+| `Terminal.tsx` | xterm.js wrapper with WebSocket and recording support |
+| `TerminalWithKeyboard.tsx` | Terminal with mobile keyboard support |
+| `SplitPane.tsx` | Resizable split pane layouts |
+| `RecordingPlayer.tsx` | Playback recorded terminal sessions |
+| `Sidebar.tsx` | Session/folder tree with context menus |
+| `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
+| `NewSessionWizard.tsx` | Multi-step session creation flow |
+| `SaveTemplateModal.tsx` | Save session as reusable template |
+| `RecordingsModal.tsx` | Browse and manage recordings |
+| `SaveRecordingModal.tsx` | Save current recording |
+| `FolderPreferencesModal.tsx` | Per-folder preference overrides |
+| `UserSettingsModal.tsx` | User-level preferences |
 
 ### State Management
 
-- **SessionContext** (`src/contexts/SessionContext.tsx`) - React Context with useReducer
-- Actions: `SET_SESSIONS`, `ADD_SESSION`, `UPDATE_SESSION`, `REMOVE_SESSION`, `SET_ACTIVE_SESSION`, `REORDER_SESSIONS`
-- Optimistic updates for tab operations
+React Contexts in `src/contexts/`:
+
+| Context | Purpose |
+|---------|---------|
+| `SessionContext` | Session state with optimistic updates |
+| `FolderContext` | Folder tree state and operations |
+| `PreferencesContext` | User settings + folder preferences with inheritance |
+| `TemplateContext` | Session templates state |
+| `RecordingContext` | Recording state management |
+
+**Preference Inheritance**: Default → User Settings → Folder Preferences
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `src/server/terminal.ts` | WebSocket + PTY + tmux terminal server |
+| `src/server/index.ts` | Terminal server entry point |
 | `src/components/terminal/Terminal.tsx` | xterm.js React wrapper |
+| `src/components/session/Sidebar.tsx` | Session/folder sidebar UI |
 | `src/contexts/SessionContext.tsx` | Session state management |
+| `src/contexts/PreferencesContext.tsx` | Preferences with inheritance |
 | `src/auth.ts` | NextAuth configuration |
 | `src/middleware.ts` | Route protection |
 | `src/db/schema.ts` | Drizzle schema definitions |
@@ -141,10 +173,38 @@ Located in `src/services/`:
 - `POST /api/sessions` - Create new session
 - `GET /api/sessions/:id` - Get session details
 - `PATCH /api/sessions/:id` - Update session
-- `DELETE /api/sessions/:id` - Delete session
+- `DELETE /api/sessions/:id` - Close session
 - `POST /api/sessions/:id/suspend` - Suspend session
 - `POST /api/sessions/:id/resume` - Resume session
+- `POST /api/sessions/:id/folder` - Move session to folder
+- `GET /api/sessions/:id/token` - Get session WebSocket token
 - `POST /api/sessions/reorder` - Reorder tabs
+
+### Folders
+- `GET /api/folders` - List user's folders
+- `POST /api/folders` - Create folder
+- `PATCH /api/folders/:id` - Update folder
+- `DELETE /api/folders/:id` - Delete folder
+
+### Preferences
+- `GET /api/preferences` - Get user settings + all folder preferences
+- `PATCH /api/preferences` - Update user settings
+- `PUT /api/preferences/folders/:folderId` - Set folder preferences
+- `DELETE /api/preferences/folders/:folderId` - Reset folder preferences
+- `POST /api/preferences/active-folder` - Set active folder
+
+### Templates
+- `GET /api/templates` - List session templates
+- `POST /api/templates` - Create template
+- `GET /api/templates/:id` - Get template
+- `PATCH /api/templates/:id` - Update template
+- `DELETE /api/templates/:id` - Delete template
+
+### Recordings
+- `GET /api/recordings` - List recordings
+- `POST /api/recordings` - Save recording
+- `GET /api/recordings/:id` - Get recording
+- `DELETE /api/recordings/:id` - Delete recording
 
 ### GitHub
 - `GET /api/github/repositories` - List repos from GitHub
@@ -156,6 +216,12 @@ Located in `src/services/`:
 - `DELETE /api/github/worktrees` - Remove worktree
 - `GET /api/auth/github/link` - Start OAuth flow
 - `GET /api/auth/github/callback` - OAuth callback
+
+### Git
+- `POST /api/git/validate` - Validate git repository path
+
+### Images
+- `GET /api/images` - Proxy external images
 
 ## Adding Authorized Users
 

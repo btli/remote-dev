@@ -4,6 +4,10 @@ import * as GitHubService from "@/services/github-service";
 
 /**
  * GET /api/github/repositories - List user's GitHub repositories
+ *
+ * Query params:
+ * - cached=true: Return only locally cached/cloned repositories from database
+ * - page, perPage, sort: Pagination and sorting for API fetch
  */
 export async function GET(request: Request) {
   try {
@@ -12,7 +16,30 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const accessToken = await GitHubService.getAccessToken(session.user.id);
+    const { searchParams } = new URL(request.url);
+    const cached = searchParams.get("cached") === "true";
+    const userId = session.user.id;
+
+    // If cached=true, return only locally cached repos from database
+    if (cached) {
+      const cachedRepos = await GitHubService.getCachedRepositories(userId);
+      const repos = cachedRepos.map((repo) => ({
+        id: repo.id,
+        name: repo.name,
+        fullName: repo.fullName,
+        localPath: repo.localPath,
+        defaultBranch: repo.defaultBranch,
+        isPrivate: repo.isPrivate,
+      }));
+
+      return NextResponse.json({
+        repositories: repos,
+        cached: true,
+      });
+    }
+
+    // Otherwise, fetch from GitHub API
+    const accessToken = await GitHubService.getAccessToken(userId);
     if (!accessToken) {
       return NextResponse.json(
         { error: "GitHub not connected", code: "GITHUB_NOT_CONNECTED" },
@@ -20,7 +47,6 @@ export async function GET(request: Request) {
       );
     }
 
-    const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1", 10);
     const perPage = parseInt(searchParams.get("perPage") || "100", 10);
     const sort = (searchParams.get("sort") || "updated") as
@@ -35,8 +61,6 @@ export async function GET(request: Request) {
       perPage,
       sort
     );
-
-    const userId = session.user.id;
 
     // Cache repositories in database and get the cached versions with database IDs
     const cachedRepos = await Promise.all(

@@ -16,10 +16,14 @@ import type {
   SessionStatus,
 } from "@/types/session";
 
+interface CloseSessionOptions {
+  deleteWorktree?: boolean;
+}
+
 interface SessionContextValue extends SessionState {
   createSession: (input: CreateSessionInput) => Promise<TerminalSession>;
   updateSession: (sessionId: string, updates: Partial<TerminalSession>) => Promise<void>;
-  closeSession: (sessionId: string) => Promise<void>;
+  closeSession: (sessionId: string, options?: CloseSessionOptions) => Promise<void>;
   suspendSession: (sessionId: string) => Promise<void>;
   resumeSession: (sessionId: string) => Promise<void>;
   setActiveSession: (sessionId: string | null) => void;
@@ -179,7 +183,7 @@ export function SessionProvider({
   );
 
   const closeSession = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string, options?: CloseSessionOptions) => {
       // FIX: Store previous active session to restore on error
       const previousActiveSessionId = state.activeSessionId;
 
@@ -187,7 +191,10 @@ export function SessionProvider({
       dispatch({ type: "DELETE", sessionId });
 
       try {
-        const response = await fetch(`/api/sessions/${sessionId}`, {
+        const url = options?.deleteWorktree
+          ? `/api/sessions/${sessionId}?deleteWorktree=true`
+          : `/api/sessions/${sessionId}`;
+        const response = await fetch(url, {
           method: "DELETE",
         });
 

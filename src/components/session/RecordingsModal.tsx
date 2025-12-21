@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { RecordingPlayer } from "@/components/terminal/RecordingPlayer";
-import { formatDuration } from "@/services/recording-service";
+import { formatDuration } from "@/types/recording";
 import { Video, Play, Trash2, Calendar, Clock } from "lucide-react";
 import type { ParsedRecording } from "@/types/recording";
 

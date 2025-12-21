@@ -28,7 +28,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   defaultShell: "/bin/bash",
   theme: "tokyo-night",
   fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
+  fontFamily: "'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace",
   startupCommand: "",
 };
 
@@ -53,6 +53,7 @@ interface PreferencesContextValue {
   ) => Promise<void>;
   deleteFolderPreferences: (folderId: string) => Promise<void>;
   hasFolderPreferences: (folderId: string) => boolean;
+  folderHasRepo: (folderId: string) => boolean;
 
   // Active project management
   setActiveFolder: (folderId: string | null, pinned?: boolean) => void;
@@ -166,6 +167,14 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const hasFolderPreferences = useCallback(
     (folderId: string): boolean => {
       return folderPreferences.has(folderId);
+    },
+    [folderPreferences]
+  );
+
+  const folderHasRepo = useCallback(
+    (folderId: string): boolean => {
+      const prefs = folderPreferences.get(folderId);
+      return !!(prefs?.githubRepoId || prefs?.localRepoPath);
     },
     [folderPreferences]
   );
@@ -350,6 +359,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         updateFolderPreferences: updateFolderPreferencesHandler,
         deleteFolderPreferences: deleteFolderPreferencesHandler,
         hasFolderPreferences,
+        folderHasRepo,
         setActiveFolder,
         resolvePreferencesForFolder,
         refreshPreferences,

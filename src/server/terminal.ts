@@ -115,7 +115,7 @@ function tmuxSessionExists(sessionName: string): boolean {
 }
 
 /**
- * Create a new tmux session
+ * Create a new tmux session with optimal settings
  */
 function createTmuxSession(
   sessionName: string,
@@ -128,6 +128,16 @@ function createTmuxSession(
     args.push("-c", cwd);
   }
   execFileSync("tmux", args, { stdio: "pipe" });
+
+  // Enable mouse mode for scrolling and selection
+  execFileSync("tmux", ["set-option", "-t", sessionName, "mouse", "on"], { stdio: "pipe" });
+
+  // Increase scrollback buffer (default is 2000)
+  execFileSync("tmux", ["set-option", "-t", sessionName, "history-limit", "50000"], { stdio: "pipe" });
+
+  // Prevent tmux from resizing window to smallest attached client
+  // This fixes the issue where switching tabs causes resize
+  execFileSync("tmux", ["set-option", "-t", sessionName, "aggressive-resize", "off"], { stdio: "pipe" });
 }
 
 /**
@@ -276,6 +286,14 @@ export function createTerminalServer(port: number = 3001) {
             ptyProcess.write(msg.data);
             break;
           case "resize":
+            // Ignore resize events with invalid dimensions
+            // This prevents tmux from shrinking when tabs are hidden
+            const MIN_COLS = 10;
+            const MIN_ROWS = 3;
+            if (msg.cols < MIN_COLS || msg.rows < MIN_ROWS) {
+              break;
+            }
+
             ptyProcess.resize(msg.cols, msg.rows);
             // Also resize the tmux session
             try {
@@ -327,7 +345,7 @@ export function createTerminalServer(port: number = 3001) {
 }
 
 // Cleanup on exit - DON'T kill tmux sessions, only PTY wrappers
-process.on("SIGINT", () => {
+function cleanup() {
   console.log("Shutting down terminal server...");
   console.log("Note: tmux sessions are preserved for reconnection");
   for (const [id, session] of sessions) {
@@ -336,4 +354,7 @@ process.on("SIGINT", () => {
     console.log(`Closed PTY wrapper for session ${id}`);
   }
   process.exit(0);
-});
+}
+
+process.on("SIGINT", cleanup);
+process.on("SIGTERM", cleanup);
