@@ -237,8 +237,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory, activeProject.folderId, registerSessionFolder]);
 
   const handleCloseSession = useCallback(
-    async (sessionId: string) => {
-      await closeSession(sessionId);
+    async (sessionId: string, options?: { deleteWorktree?: boolean }) => {
+      await closeSession(sessionId, options);
     },
     [closeSession]
   );
@@ -546,12 +546,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         fontFamily={prefs.fontFamily}
         notificationsEnabled={true}
         isRecording={isRecording && isActiveSession}
-        onSessionExit={() => closeSession(session.id)}
         onOutput={isRecording && isActiveSession ? recordOutput : undefined}
         onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
       />
     );
-  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, closeSession, activeSessionId, isRecording, recordOutput, updateDimensions]);
+  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions]);
 
   return (
     <div className="flex-1 flex overflow-hidden relative">

@@ -57,7 +57,7 @@ interface SidebarProps {
   folderHasPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
   onSessionClick: (sessionId: string) => void;
-  onSessionClose: (sessionId: string) => void;
+  onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
   onSessionMove: (sessionId: string, folderId: string | null) => void;
   onSessionReorder: (sessionIds: string[]) => void;
@@ -135,14 +135,8 @@ export function Sidebar({
   const handleWorktreeDeleteConfirm = useCallback(async () => {
     if (!worktreeDialogSession) return;
 
-    // Call the close with deleteWorktree flag
-    // The SessionContext/API will handle the worktree deletion
-    await fetch(`/api/sessions/${worktreeDialogSession.id}?deleteWorktree=true`, {
-      method: "DELETE",
-    });
-
-    // Trigger UI update
-    onSessionClose(worktreeDialogSession.id);
+    // Close session with deleteWorktree flag - context handles the API call
+    await onSessionClose(worktreeDialogSession.id, { deleteWorktree: true });
     setWorktreeDialogSession(null);
   }, [worktreeDialogSession, onSessionClose]);
 
