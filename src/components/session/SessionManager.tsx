@@ -372,6 +372,56 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [setActiveFolder]
   );
 
+  // Handle restarting a session with the same configuration
+  const handleSessionRestart = useCallback(
+    async (session: typeof activeSessions[0]) => {
+      // Close the old session first
+      await closeSession(session.id);
+
+      // Create a new session with the same configuration
+      const newSession = await createSession({
+        name: session.name,
+        projectPath: session.projectPath ?? undefined,
+        githubRepoId: session.githubRepoId ?? undefined,
+        worktreeBranch: session.worktreeBranch ?? undefined,
+      });
+
+      // Move to the same folder if applicable
+      const folderId = sessionFolders[session.id] || null;
+      if (folderId && newSession) {
+        await moveSessionToFolder(newSession.id, folderId);
+      }
+    },
+    [closeSession, createSession, sessionFolders, moveSessionToFolder]
+  );
+
+  // Handle deleting a session (with optional worktree deletion)
+  const handleSessionDelete = useCallback(
+    async (session: typeof activeSessions[0], deleteWorktree?: boolean) => {
+      // If deleting worktree, call the worktree delete API first
+      if (deleteWorktree && session.githubRepoId && session.projectPath) {
+        try {
+          await fetch("/api/github/worktrees", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              repositoryId: session.githubRepoId,
+              worktreePath: session.projectPath,
+              force: true, // Force delete since session is closed
+            }),
+          });
+        } catch (error) {
+          console.error("Failed to delete worktree:", error);
+          // Continue with session deletion even if worktree deletion fails
+        }
+      }
+
+      // Close the session
+      await closeSession(session.id);
+    },
+    [closeSession]
+  );
+
   // Close mobile sidebar when selecting a session
   const handleSessionClick = useCallback(
     (sessionId: string) => {
@@ -541,6 +591,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         tmuxSessionName={session.tmuxSessionName}
         sessionName={session.name}
         projectPath={session.projectPath}
+        session={session}
         theme={prefs.theme}
         fontSize={prefs.fontSize}
         fontFamily={prefs.fontFamily}
@@ -548,9 +599,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isRecording={isRecording && isActiveSession}
         onOutput={isRecording && isActiveSession ? recordOutput : undefined}
         onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
+        onSessionRestart={() => handleSessionRestart(session)}
+        onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
       />
     );
-  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions]);
+  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions, handleSessionRestart, handleSessionDelete]);
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
@@ -751,6 +804,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           tmuxSessionName={session.tmuxSessionName}
                           sessionName={session.name}
                           projectPath={session.projectPath}
+                          session={session}
                           theme={prefs.theme}
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
@@ -758,11 +812,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           isRecording={isRecording && isActiveSession}
                           onOutput={isRecording && isActiveSession ? recordOutput : undefined}
                           onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
+                          onSessionRestart={() => handleSessionRestart(session)}
+                          onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
                         />
                       </div>
                     );
                   })
-                )}
+                )
               </div>
             </div>
           </div>
