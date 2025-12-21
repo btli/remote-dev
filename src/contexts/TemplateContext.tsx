@@ -8,7 +8,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import type { SessionTemplate, CreateTemplateInput, UpdateTemplateInput } from "@/services/template-service";
+import type { SessionTemplate, CreateTemplateInput, UpdateTemplateInput } from "@/types/template";
 
 interface TemplateContextValue {
   templates: SessionTemplate[];

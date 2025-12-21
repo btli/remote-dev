@@ -84,7 +84,7 @@ export const userSettings = sqliteTable("user_settings", {
   // Appearance preferences
   theme: text("theme").default("tokyo-night"),
   fontSize: integer("font_size").default(14),
-  fontFamily: text("font_family").default("'JetBrains Mono', monospace"),
+  fontFamily: text("font_family").default("'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace"),
   // Active project tracking
   activeFolderId: text("active_folder_id"),
   pinnedFolderId: text("pinned_folder_id"),
@@ -177,6 +177,11 @@ export const folderPreferences = sqliteTable(
     theme: text("theme"),
     fontSize: integer("font_size"),
     fontFamily: text("font_family"),
+    // Repository association for worktree support
+    githubRepoId: text("github_repo_id").references(() => githubRepositories.id, {
+      onDelete: "set null",
+    }),
+    localRepoPath: text("local_repo_path"), // Alternative: manual path to local git repo
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

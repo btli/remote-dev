@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   X, Plus, Pause, Terminal, Settings,
   Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch,
@@ -32,6 +32,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { DeleteWorktreeDialog } from "./DeleteWorktreeDialog";
 
 export interface SessionFolder {
   id: string;
@@ -54,8 +55,9 @@ interface SidebarProps {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   folderHasPreferences: (folderId: string) => boolean;
+  folderHasRepo: (folderId: string) => boolean;
   onSessionClick: (sessionId: string) => void;
-  onSessionClose: (sessionId: string) => void;
+  onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
   onSessionMove: (sessionId: string, folderId: string | null) => void;
   onSessionReorder: (sessionIds: string[]) => void;
@@ -69,6 +71,7 @@ interface SidebarProps {
   onFolderSettings: (folderId: string, folderName: string) => void;
   onFolderNewSession: (folderId: string) => void;
   onFolderAdvancedSession: (folderId: string) => void;
+  onFolderNewWorktree: (folderId: string) => void;
   onFolderMove: (folderId: string, newParentId: string | null) => void;
 }
 
@@ -81,6 +84,7 @@ export function Sidebar({
   collapsed,
   onCollapsedChange,
   folderHasPreferences,
+  folderHasRepo,
   onSessionClick,
   onSessionClose,
   onSessionRename,
@@ -96,6 +100,7 @@ export function Sidebar({
   onFolderSettings,
   onFolderNewSession,
   onFolderAdvancedSession,
+  onFolderNewWorktree,
   onFolderMove,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -109,10 +114,31 @@ export function Sidebar({
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<"before" | "after" | null>(null);
+  const [worktreeDialogSession, setWorktreeDialogSession] = useState<TerminalSession | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
+
+  // Handler for session close that checks for worktree
+  const handleSessionCloseRequest = useCallback((session: TerminalSession) => {
+    if (session.worktreeBranch) {
+      // Session has a worktree - show confirmation dialog
+      setWorktreeDialogSession(session);
+    } else {
+      // No worktree - close directly
+      onSessionClose(session.id);
+    }
+  }, [onSessionClose]);
+
+  // Handler for confirming worktree deletion
+  const handleWorktreeDeleteConfirm = useCallback(async () => {
+    if (!worktreeDialogSession) return;
+
+    // Close session with deleteWorktree flag - context handles the API call
+    await onSessionClose(worktreeDialogSession.id, { deleteWorktree: true });
+    setWorktreeDialogSession(null);
+  }, [worktreeDialogSession, onSessionClose]);
 
   // Sessions not in any folder
   const rootSessions = activeSessions.filter(
@@ -608,7 +634,7 @@ export function Sidebar({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onSessionClose(session.id);
+                  handleSessionCloseRequest(session);
                 }}
                 className={cn(
                   "p-0.5 rounded opacity-0 group-hover:opacity-100",
@@ -660,7 +686,7 @@ export function Sidebar({
           )}
           <ContextMenuSeparator />
           <ContextMenuItem
-            onClick={() => onSessionClose(session.id)}
+            onClick={() => handleSessionCloseRequest(session)}
             className="text-red-400 focus:text-red-400"
           >
             <Trash2 className="w-3.5 h-3.5 mr-2" />
@@ -1010,6 +1036,18 @@ export function Sidebar({
                               <Sparkles className="w-3 h-3 mr-2" />
                               Advanced...
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                onFolderNewWorktree(node.id);
+                              }}
+                              disabled={!folderHasRepo(node.id)}
+                              className={!folderHasRepo(node.id) ? "opacity-50" : ""}
+                              title={!folderHasRepo(node.id) ? "Link a repository in folder preferences first" : undefined}
+                            >
+                              <GitBranch className="w-3 h-3 mr-2" />
+                              New Worktree
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               onClick={(e: React.MouseEvent) => {
@@ -1124,6 +1162,15 @@ export function Sidebar({
           </div>
         </div>
       )}
+
+      {/* Worktree deletion confirmation dialog */}
+      <DeleteWorktreeDialog
+        open={worktreeDialogSession !== null}
+        onClose={() => setWorktreeDialogSession(null)}
+        onConfirm={handleWorktreeDeleteConfirm}
+        sessionName={worktreeDialogSession?.name || ""}
+        branchName={worktreeDialogSession?.worktreeBranch || ""}
+      />
     </div>
     </TooltipProvider>
   );

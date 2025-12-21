@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import * as SessionService from "@/services/session-service";
+import * as WorktreeService from "@/services/worktree-service";
+import * as GitHubService from "@/services/github-service";
+import { getFolderPreferences } from "@/services/preferences-service";
 import type { UpdateSessionInput } from "@/types/session";
 
 interface RouteParams {
@@ -83,6 +86,9 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
 /**
  * DELETE /api/sessions/:id - Close a session
+ *
+ * Query params:
+ * - deleteWorktree=true: Also delete the git worktree from disk
  */
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
@@ -92,6 +98,55 @@ export async function DELETE(request: Request, { params }: RouteParams) {
     }
 
     const { id } = await params;
+    const { searchParams } = new URL(request.url);
+    const deleteWorktree = searchParams.get("deleteWorktree") === "true";
+
+    // If deleteWorktree is requested, handle worktree cleanup first
+    if (deleteWorktree) {
+      const terminalSession = await SessionService.getSessionWithMetadata(
+        id,
+        session.user.id
+      );
+
+      if (terminalSession?.worktreeBranch && terminalSession?.projectPath) {
+        let mainRepoPath: string | null = null;
+
+        // Try to get the main repo path from GitHub repository
+        if (terminalSession.githubRepoId) {
+          const repo = await GitHubService.getRepository(
+            terminalSession.githubRepoId,
+            session.user.id
+          );
+          mainRepoPath = repo?.localPath ?? null;
+        }
+
+        // Fall back to folder preferences for local repo path
+        if (!mainRepoPath && terminalSession.folderId) {
+          const folderPrefs = await getFolderPreferences(
+            terminalSession.folderId,
+            session.user.id
+          );
+          mainRepoPath = folderPrefs?.localRepoPath ?? null;
+        }
+
+        if (mainRepoPath) {
+          try {
+            await WorktreeService.removeWorktree(
+              mainRepoPath,
+              terminalSession.projectPath,
+              true // force removal
+            );
+            console.log(
+              `Removed worktree at ${terminalSession.projectPath} for session ${id}`
+            );
+          } catch (worktreeError) {
+            console.error("Failed to remove worktree:", worktreeError);
+            // Continue with session closure even if worktree removal fails
+          }
+        }
+      }
+    }
+
     await SessionService.closeSession(id, session.user.id);
 
     return NextResponse.json({ success: true });

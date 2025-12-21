@@ -59,6 +59,9 @@ export interface FolderPreferences {
   fontSize: number | null;
   fontFamily: string | null;
   startupCommand: string | null;
+  // Repository association for worktree support
+  githubRepoId: string | null;
+  localRepoPath: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -105,4 +108,7 @@ export interface UpdateFolderPreferencesInput {
   fontSize?: number | null;
   fontFamily?: string | null;
   startupCommand?: string | null;
+  // Repository association for worktree support
+  githubRepoId?: string | null;
+  localRepoPath?: string | null;
 }

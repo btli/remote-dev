@@ -128,6 +128,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const {
     activeProject,
     hasFolderPreferences,
+    folderHasRepo,
     currentPreferences,
     setActiveFolder,
     resolvePreferencesForFolder,
@@ -236,8 +237,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory, activeProject.folderId, registerSessionFolder]);
 
   const handleCloseSession = useCallback(
-    async (sessionId: string) => {
-      await closeSession(sessionId);
+    async (sessionId: string, options?: { deleteWorktree?: boolean }) => {
+      await closeSession(sessionId, options);
     },
     [closeSession]
   );
@@ -338,6 +339,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setIsWizardOpen(true);
     },
     [setActiveFolder]
+  );
+
+  const handleFolderNewWorktree = useCallback(
+    async (folderId: string) => {
+      // Quick worktree creation - generates branch name and creates session
+      try {
+        const newSession = await createSession({
+          name: "Worktree",
+          folderId,
+          createWorktree: true,
+        });
+        setActiveSession(newSession.id);
+      } catch (error) {
+        console.error("Failed to create worktree session:", error);
+      }
+    },
+    [createSession, setActiveSession]
   );
 
   // Handler for opening the wizard from Plus button or command palette
@@ -492,7 +510,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, []);
 
   const handleSaveRecording = useCallback(
-    async (name: string, description?: string) => {
+    async (name: string) => {
       const data = await stopRecording(name);
       if (data) {
         // Recording was saved via the onSave callback in useRecording
@@ -528,12 +546,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         fontFamily={prefs.fontFamily}
         notificationsEnabled={true}
         isRecording={isRecording && isActiveSession}
-        onSessionExit={() => closeSession(session.id)}
         onOutput={isRecording && isActiveSession ? recordOutput : undefined}
         onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
       />
     );
-  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, closeSession, activeSessionId, isRecording, recordOutput, updateDimensions]);
+  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions]);
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
@@ -587,6 +604,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             collapsed={sidebarCollapsed}
             onCollapsedChange={handleSidebarCollapsedChange}
             folderHasPreferences={hasFolderPreferences}
+            folderHasRepo={folderHasRepo}
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}
             onSessionRename={handleRenameSession}
@@ -602,6 +620,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
             onFolderAdvancedSession={handleFolderAdvancedSession}
+            onFolderNewWorktree={handleFolderNewWorktree}
             onFolderMove={handleMoveFolder}
           />
         </div>
