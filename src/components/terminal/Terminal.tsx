@@ -93,6 +93,87 @@ export function Terminal({
       terminal.open(terminalRef.current);
       fitAddon.fit();
 
+      // Custom keyboard handler for macOS shortcuts
+      // xterm.js doesn't translate Cmd+key combinations by default
+      terminal.attachCustomKeyEventHandler((event) => {
+        // Only handle keydown events with Cmd (Meta) key on macOS
+        if (event.type !== "keydown" || !event.metaKey) {
+          return true; // Let xterm handle it
+        }
+
+        // Cmd+Enter: Let this bubble up to app-level handler (creates new terminal)
+        // Return false to stop xterm processing, event will propagate to window listener
+        if (event.key === "Enter") {
+          return false;
+        }
+
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          return true;
+        }
+
+        // Cmd+Backspace: Delete line (kill line) - send Ctrl+U
+        if (event.key === "Backspace") {
+          ws.send(JSON.stringify({ type: "input", data: "\x15" })); // Ctrl+U
+          return false; // Prevent default
+        }
+
+        // Cmd+Delete: Delete word forward - send Ctrl+K (kill to end of line)
+        // Note: This is "Delete" key (fn+backspace on Mac keyboards)
+        if (event.key === "Delete") {
+          ws.send(JSON.stringify({ type: "input", data: "\x0b" })); // Ctrl+K
+          return false;
+        }
+
+        // Cmd+Left: Move to beginning of line - send Ctrl+A
+        if (event.key === "ArrowLeft") {
+          ws.send(JSON.stringify({ type: "input", data: "\x01" })); // Ctrl+A
+          return false;
+        }
+
+        // Cmd+Right: Move to end of line - send Ctrl+E
+        if (event.key === "ArrowRight") {
+          ws.send(JSON.stringify({ type: "input", data: "\x05" })); // Ctrl+E
+          return false;
+        }
+
+        // Option+Backspace: Delete word backward - send Ctrl+W
+        // (This catches Alt+Backspace which is Option on Mac)
+        // Note: We check altKey separately since metaKey won't be true here
+
+        return true; // Let xterm handle other Cmd combinations (copy, paste, etc.)
+      });
+
+      // Also handle Option+Backspace (delete word) - needs separate handler
+      terminal.attachCustomKeyEventHandler((event) => {
+        if (event.type !== "keydown") return true;
+
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          return true;
+        }
+
+        // Option+Backspace: Delete word backward - send Ctrl+W
+        if (event.altKey && !event.metaKey && event.key === "Backspace") {
+          ws.send(JSON.stringify({ type: "input", data: "\x17" })); // Ctrl+W
+          return false;
+        }
+
+        // Option+Left: Move word backward - send ESC+b
+        if (event.altKey && !event.metaKey && event.key === "ArrowLeft") {
+          ws.send(JSON.stringify({ type: "input", data: "\x1bb" })); // ESC+b
+          return false;
+        }
+
+        // Option+Right: Move word forward - send ESC+f
+        if (event.altKey && !event.metaKey && event.key === "ArrowRight") {
+          ws.send(JSON.stringify({ type: "input", data: "\x1bf" })); // ESC+f
+          return false;
+        }
+
+        return true;
+      });
+
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
       imageAddonRef.current = imageAddon;
