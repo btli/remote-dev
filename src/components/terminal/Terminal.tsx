@@ -202,6 +202,13 @@ export function Terminal({
           }
         }
 
+        // Shift+Enter - xterm.js may not send Enter when Shift is held
+        // Manually send carriage return to ensure Enter works in terminal apps
+        if (event.shiftKey && event.key === "Enter") {
+          ws.send(JSON.stringify({ type: "input", data: "\r" }));
+          return false;
+        }
+
         return true; // Let xterm handle other key combinations
       });
 
