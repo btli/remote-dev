@@ -47,6 +47,7 @@ const THEME_OPTIONS = [
 ];
 
 const FONT_OPTIONS = [
+  { value: "'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace", label: "JetBrains Mono (Nerd Font)" },
   { value: "'JetBrains Mono', monospace", label: "JetBrains Mono" },
   { value: "'Fira Code', monospace", label: "Fira Code" },
   { value: "'Source Code Pro', monospace", label: "Source Code Pro" },

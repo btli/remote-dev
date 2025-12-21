@@ -8,7 +8,7 @@ import { Play, Pause, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import type { ParsedRecording } from "@/types/recording";
-import { formatDuration } from "@/services/recording-service";
+import { formatDuration } from "@/types/recording";
 
 interface RecordingPlayerProps {
   recording: ParsedRecording;

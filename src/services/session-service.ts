@@ -13,7 +13,8 @@ import type {
 } from "@/types/session";
 import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
-import { getResolvedPreferences } from "./preferences-service";
+import * as GitHubService from "./github-service";
+import { getResolvedPreferences, getFolderPreferences } from "./preferences-service";
 
 export class SessionServiceError extends Error {
   constructor(
@@ -58,7 +59,7 @@ export async function createSession(
   let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
   let branchName = input.worktreeBranch;
 
-  // Handle worktree creation for feature sessions
+  // Handle worktree creation for feature sessions (with explicit path + description)
   if (input.createWorktree && input.projectPath && input.featureDescription) {
     // Generate branch name from feature description
     const sanitizedBranch = `feature/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
@@ -82,6 +83,79 @@ export async function createSession(
         undefined // Auto-generate worktree path
       );
       workingPath = result.worktreePath;
+    } catch (error) {
+      if (error instanceof WorktreeService.WorktreeServiceError) {
+        throw new SessionServiceError(
+          `Failed to create worktree: ${error.message}`,
+          error.code,
+          sessionId
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Handle quick worktree creation from folder (New Worktree menu item)
+  if (input.createWorktree && input.folderId && !input.featureDescription) {
+    // Get folder preferences to find linked repository
+    const folderPrefs = await getFolderPreferences(input.folderId, userId);
+
+    let repoPath: string | null = null;
+    let repoId: string | null = null;
+
+    if (folderPrefs?.githubRepoId) {
+      // Get repo from database
+      const repo = await GitHubService.getRepository(folderPrefs.githubRepoId, userId);
+      if (!repo?.localPath) {
+        throw new SessionServiceError(
+          "Repository is not cloned locally. Clone it first.",
+          "REPO_NOT_CLONED",
+          sessionId
+        );
+      }
+      repoPath = repo.localPath;
+      repoId = repo.id;
+    } else if (folderPrefs?.localRepoPath) {
+      repoPath = folderPrefs.localRepoPath;
+    }
+
+    if (!repoPath) {
+      throw new SessionServiceError(
+        "No repository linked to this folder. Configure in folder preferences.",
+        "NO_REPO_LINKED",
+        sessionId
+      );
+    }
+
+    // Validate it's a git repo
+    if (!(await WorktreeService.isGitRepo(repoPath))) {
+      throw new SessionServiceError(
+        "Linked path is not a git repository",
+        "NOT_GIT_REPO",
+        sessionId
+      );
+    }
+
+    // Generate auto branch name with timestamp
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    const autoBranch = `wt-${timestamp}`;
+    branchName = autoBranch;
+
+    // Create the worktree with new branch
+    try {
+      const result = await WorktreeService.createBranchWithWorktree(
+        repoPath,
+        autoBranch,
+        input.baseBranch,
+        undefined // Auto-generate worktree path
+      );
+      workingPath = result.worktreePath;
+
+      // Update input for database record
+      if (repoId) {
+        input.githubRepoId = repoId;
+      }
     } catch (error) {
       if (error instanceof WorktreeService.WorktreeServiceError) {
         throw new SessionServiceError(

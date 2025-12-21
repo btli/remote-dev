@@ -24,7 +24,7 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   defaultShell: process.env.SHELL || "/bin/bash",
   theme: "tokyo-night",
   fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
+  fontFamily: "'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace",
   startupCommand: "",
 } as const;
 
@@ -384,6 +384,8 @@ function mapDbFolderPreferences(
     theme: db.theme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
+    githubRepoId: db.githubRepoId,
+    localRepoPath: db.localRepoPath,
     createdAt: new Date(db.createdAt),
     updatedAt: new Date(db.updatedAt),
   };

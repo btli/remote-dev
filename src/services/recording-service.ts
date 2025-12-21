@@ -8,6 +8,9 @@ import type {
   UpdateRecordingInput,
 } from "@/types/recording";
 
+// Re-export for backwards compatibility
+export { formatDuration } from "@/types/recording";
+
 /**
  * Get all recordings for a user, ordered by creation date (newest first)
  */
@@ -123,17 +126,3 @@ export async function deleteRecording(
   return result.length > 0;
 }
 
-/**
- * Format duration as human-readable string (e.g., "2:34" or "1:02:34")
- */
-export function formatDuration(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-  }
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
