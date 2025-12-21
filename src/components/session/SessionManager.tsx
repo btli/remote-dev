@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
+import { CommandPalette } from "@/components/CommandPalette";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
@@ -446,6 +447,24 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           folderName={folderSettingsModal.folderName}
         />
       )}
+
+      {/* Command Palette */}
+      <CommandPalette
+        onNewSession={() => setIsWizardOpen(true)}
+        onQuickNewSession={handleQuickNewSession}
+        onNewFolder={() => handleCreateFolder("New Folder")}
+        onOpenSettings={() => {
+          // Open settings modal (could be expanded in future)
+          console.log("Settings not yet implemented");
+        }}
+        onCloseActiveSession={
+          activeSessionId
+            ? () => closeSession(activeSessionId)
+            : undefined
+        }
+        activeSessionId={activeSessionId}
+        activeSessionStatus={activeSessions.find((s) => s.id === activeSessionId)?.status}
+      />
     </div>
   );
 }
