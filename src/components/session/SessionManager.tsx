@@ -60,6 +60,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     activeProject,
     hasFolderPreferences,
     currentPreferences,
+    setActiveFolder,
+    resolvePreferencesForFolder,
   } = usePreferencesContext();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
@@ -119,11 +121,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
     // Use active project's preferences for working directory
-    await createSession({
+    const newSession = await createSession({
       name,
       projectPath: currentPreferences.defaultWorkingDirectory,
     });
-  }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory]);
+    // Move to active folder if one is selected
+    if (activeProject.folderId && newSession) {
+      await moveSessionToFolder(newSession.id, activeProject.folderId);
+    }
+  }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory, activeProject.folderId, moveSessionToFolder]);
 
   const handleCloseSession = useCallback(
     async (sessionId: string) => {
@@ -182,13 +188,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     []
   );
 
+  const handleFolderClick = useCallback(
+    (folderId: string) => {
+      setActiveFolder(folderId);
+    },
+    [setActiveFolder]
+  );
+
   // Close mobile sidebar when selecting a session
   const handleSessionClick = useCallback(
     (sessionId: string) => {
       setActiveSession(sessionId);
       setIsMobileSidebarOpen(false);
+      // Update active folder based on the session's folder
+      const folderId = sessionFolders[sessionId] || null;
+      setActiveFolder(folderId);
     },
-    [setActiveSession]
+    [setActiveSession, sessionFolders, setActiveFolder]
   );
 
   return (
@@ -251,6 +267,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderRename={handleRenameFolder}
             onFolderDelete={handleDeleteFolder}
             onFolderToggle={handleToggleFolder}
+            onFolderClick={handleFolderClick}
             onFolderSettings={handleFolderSettings}
           />
         </div>
@@ -316,22 +333,29 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
               {/* Terminal panels - render all but show only active */}
               <div className="relative h-full">
-                {activeSessions.map((session) => (
-                  <div
-                    key={session.id}
-                    className={
-                      session.id === activeSessionId
-                        ? "absolute inset-0 z-10"
-                        : "hidden"
-                    }
-                  >
-                    <TerminalWithKeyboard
-                      sessionId={session.id}
-                      tmuxSessionName={session.tmuxSessionName}
-                      onSessionExit={() => closeSession(session.id)}
-                    />
-                  </div>
-                ))}
+                {activeSessions.map((session) => {
+                  const folderId = sessionFolders[session.id] || null;
+                  const prefs = resolvePreferencesForFolder(folderId);
+                  return (
+                    <div
+                      key={session.id}
+                      className={
+                        session.id === activeSessionId
+                          ? "absolute inset-0 z-10"
+                          : "hidden"
+                      }
+                    >
+                      <TerminalWithKeyboard
+                        sessionId={session.id}
+                        tmuxSessionName={session.tmuxSessionName}
+                        theme={prefs.theme}
+                        fontSize={prefs.fontSize}
+                        fontFamily={prefs.fontFamily}
+                        onSessionExit={() => closeSession(session.id)}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

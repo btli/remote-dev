@@ -53,6 +53,8 @@ const FONT_OPTIONS = [
   { value: "'Menlo', monospace", label: "Menlo" },
 ];
 
+const INHERIT_VALUE = "__inherit__";
+
 export function FolderPreferencesModal({
   open,
   onClose,
@@ -184,8 +186,8 @@ export function FolderPreferencesModal({
               )}
             </div>
             <Select
-              value={getValue("defaultShell") || ""}
-              onValueChange={(value) => setValue("defaultShell", value || null)}
+              value={getValue("defaultShell") || INHERIT_VALUE}
+              onValueChange={(value) => setValue("defaultShell", value === INHERIT_VALUE ? null : value)}
             >
               <SelectTrigger
                 className={cn(
@@ -201,7 +203,7 @@ export function FolderPreferencesModal({
                 />
               </SelectTrigger>
               <SelectContent className="bg-slate-800 border-white/10">
-                <SelectItem value="" className="text-slate-400 focus:bg-violet-500/20">
+                <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
                   Inherit from user settings
                 </SelectItem>
                 {SHELL_OPTIONS.map((option) => (
@@ -226,8 +228,8 @@ export function FolderPreferencesModal({
               )}
             </div>
             <Select
-              value={getValue("theme") || ""}
-              onValueChange={(value) => setValue("theme", value || null)}
+              value={getValue("theme") || INHERIT_VALUE}
+              onValueChange={(value) => setValue("theme", value === INHERIT_VALUE ? null : value)}
             >
               <SelectTrigger
                 className={cn(
@@ -243,7 +245,7 @@ export function FolderPreferencesModal({
                 />
               </SelectTrigger>
               <SelectContent className="bg-slate-800 border-white/10">
-                <SelectItem value="" className="text-slate-400 focus:bg-violet-500/20">
+                <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
                   Inherit from user settings
                 </SelectItem>
                 {THEME_OPTIONS.map((option) => (
@@ -286,8 +288,8 @@ export function FolderPreferencesModal({
               )}
             </div>
             <Select
-              value={getValue("fontFamily") || ""}
-              onValueChange={(value) => setValue("fontFamily", value || null)}
+              value={getValue("fontFamily") || INHERIT_VALUE}
+              onValueChange={(value) => setValue("fontFamily", value === INHERIT_VALUE ? null : value)}
             >
               <SelectTrigger
                 className={cn(
@@ -303,7 +305,7 @@ export function FolderPreferencesModal({
                 />
               </SelectTrigger>
               <SelectContent className="bg-slate-800 border-white/10">
-                <SelectItem value="" className="text-slate-400 focus:bg-violet-500/20">
+                <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
                   Inherit from user settings
                 </SelectItem>
                 {FONT_OPTIONS.map((option) => (
