@@ -23,6 +23,7 @@ import {
   Rows,
   Maximize2,
   FileBox,
+  Keyboard,
 } from "lucide-react";
 
 interface CommandAction {
@@ -47,6 +48,7 @@ interface CommandPaletteProps {
   onSplitVertical?: () => void;
   onExitSplitMode?: () => void;
   onSaveAsTemplate?: () => void;
+  onShowKeyboardShortcuts?: () => void;
   activeSessionId?: string | null;
   activeSessionStatus?: string;
   isSplitMode?: boolean;
@@ -65,6 +67,7 @@ export function CommandPalette({
   onSplitVertical,
   onExitSplitMode,
   onSaveAsTemplate,
+  onShowKeyboardShortcuts,
   activeSessionId,
   activeSessionStatus,
   isSplitMode,
@@ -205,6 +208,19 @@ export function CommandPalette({
       group: "Settings",
       onSelect: () => runAction(onOpenSettings),
     },
+    // Keyboard shortcuts
+    ...(onShowKeyboardShortcuts
+      ? [
+          {
+            id: "keyboard-shortcuts",
+            label: "Keyboard Shortcuts",
+            icon: <Keyboard className="w-4 h-4" />,
+            shortcut: "⌘?",
+            group: "Help",
+            onSelect: () => runAction(onShowKeyboardShortcuts),
+          },
+        ]
+      : []),
     // Refresh
     ...(onRefreshSessions
       ? [
