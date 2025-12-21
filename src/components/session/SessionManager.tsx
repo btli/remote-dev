@@ -425,9 +425,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <TerminalWithKeyboard
         sessionId={session.id}
         tmuxSessionName={session.tmuxSessionName}
+        sessionName={session.name}
         theme={prefs.theme}
         fontSize={prefs.fontSize}
         fontFamily={prefs.fontFamily}
+        notificationsEnabled={true}
         onSessionExit={() => closeSession(session.id)}
       />
     );
@@ -624,9 +626,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                         <TerminalWithKeyboard
                           sessionId={session.id}
                           tmuxSessionName={session.tmuxSessionName}
+                          sessionName={session.name}
                           theme={prefs.theme}
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
+                          notificationsEnabled={true}
                           onSessionExit={() => closeSession(session.id)}
                         />
                       </div>

@@ -8,14 +8,17 @@ import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { ConnectionStatus } from "@/types/terminal";
 import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
 import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
+import { useNotifications } from "@/hooks/useNotifications";
 
 interface TerminalProps {
   sessionId: string;
   tmuxSessionName: string;
+  sessionName?: string;
   wsUrl?: string;
   theme?: string;
   fontSize?: number;
   fontFamily?: string;
+  notificationsEnabled?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
@@ -24,10 +27,12 @@ interface TerminalProps {
 export function Terminal({
   sessionId,
   tmuxSessionName,
+  sessionName = "Terminal",
   wsUrl = "ws://localhost:3001",
   theme = "tokyo-night",
   fontSize = 14,
   fontFamily = "'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+  notificationsEnabled = true,
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
@@ -47,6 +52,13 @@ export function Terminal({
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
   const maxReconnectAttempts = 5;
+
+  // Notifications hook for command completion
+  const { recordActivity } = useNotifications({
+    enabled: notificationsEnabled,
+    sessionName,
+    inactivityDelay: 3000, // 3 seconds of inactivity = command finished
+  });
 
   // FIX: Use refs for callbacks to avoid re-creating terminal on callback changes
   const onStatusChangeRef = useRef(onStatusChange);
@@ -169,6 +181,8 @@ export function Terminal({
             switch (msg.type) {
               case "output":
                 terminal.write(msg.data);
+                // Record activity for notification detection
+                recordActivity();
                 break;
               case "ready":
                 console.log("Terminal session ready:", msg.sessionId);
@@ -193,6 +207,8 @@ export function Terminal({
             }
           } catch {
             terminal.write(event.data);
+            // Record activity for notification detection (raw data)
+            recordActivity();
           }
         };
 
