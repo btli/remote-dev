@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
+import { TemplateProvider } from "@/contexts/TemplateContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
 import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
@@ -57,7 +58,8 @@ export default async function Home() {
   return (
     <PreferencesProvider>
       <FolderProvider>
-        <SessionProvider initialSessions={initialSessions}>
+        <TemplateProvider>
+          <SessionProvider initialSessions={initialSessions}>
           <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
             {/* Header with glassmorphism */}
             <header className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
@@ -108,6 +110,7 @@ export default async function Home() {
             <SessionManager isGitHubConnected={isGitHubConnected} />
           </div>
         </SessionProvider>
+        </TemplateProvider>
       </FolderProvider>
     </PreferencesProvider>
   );

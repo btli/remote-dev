@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Plus, Clock } from "lucide-react";
+import { useTemplateContext } from "@/contexts/TemplateContext";
+import { expandNamePattern, type SessionTemplate } from "@/services/template-service";
 import {
   Dialog,
   DialogContent,
@@ -42,8 +44,10 @@ type WizardStep =
   | "github-branch"
   | "github-confirm"
   | "feature-form"
-  | "feature-confirm";
-type SessionType = "simple" | "github" | "folder" | "feature";
+  | "feature-confirm"
+  | "template-list"
+  | "save-template";
+type SessionType = "simple" | "github" | "folder" | "feature" | "template";
 
 export function NewSessionWizard({
   open,
@@ -64,6 +68,10 @@ export function NewSessionWizard({
   const [createWorktree, setCreateWorktree] = useState(false);
   const [newBranchName, setNewBranchName] = useState<string | undefined>();
   const [cloningStatus, setCloningStatus] = useState<string | null>(null);
+
+  // Template state
+  const { templates, recordUsage } = useTemplateContext();
+  const [templateCounter, setTemplateCounter] = useState(1);
 
   // Feature session state
   const [featureDescription, setFeatureDescription] = useState("");
@@ -157,8 +165,38 @@ export function NewSessionWizard({
       setStep("simple-form");
     } else if (type === "feature") {
       setStep("feature-form");
+    } else if (type === "template") {
+      setStep("template-list");
     } else {
       setStep("github-repo");
+    }
+  };
+
+  const handleTemplateSelect = async (template: SessionTemplate) => {
+    setIsCreating(true);
+    setError(null);
+
+    try {
+      // Record template usage
+      await recordUsage(template.id);
+
+      // Expand name pattern
+      const name = expandNamePattern(template.sessionNamePattern, templateCounter);
+      setTemplateCounter((c) => c + 1);
+
+      // Create session with template settings
+      await onCreate({
+        name,
+        projectPath: template.projectPath || undefined,
+        folderId: template.folderId || undefined,
+        startupCommand: template.startupCommand || undefined,
+      });
+
+      handleClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create session");
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -313,6 +351,7 @@ export function NewSessionWizard({
             {step === "github-confirm" && "Review and create your session"}
             {step === "feature-form" && "Configure your feature session"}
             {step === "feature-confirm" && "Review and create your session"}
+            {step === "template-list" && "Select a saved template to use"}
           </DialogDescription>
         </DialogHeader>
 
@@ -346,6 +385,79 @@ export function NewSessionWizard({
                 description="Start an AI agent session for a new feature"
                 onClick={() => handleTypeSelect("feature")}
               />
+              {templates.length > 0 && (
+                <SessionTypeCard
+                  icon={<FileBox className="w-5 h-5" />}
+                  title="From Template"
+                  description={`Use a saved configuration (${templates.length} available)`}
+                  onClick={() => handleTypeSelect("template")}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Template List */}
+          {step === "template-list" && (
+            <div className="space-y-4">
+              <div className="grid gap-2 max-h-[300px] overflow-y-auto">
+                {templates.map((template) => (
+                  <button
+                    key={template.id}
+                    onClick={() => handleTemplateSelect(template)}
+                    disabled={isCreating}
+                    className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 border border-white/5 hover:border-violet-500/50 hover:bg-slate-800 transition-all text-left group"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500/20 to-purple-500/20 flex items-center justify-center flex-shrink-0">
+                      <FileBox className="w-5 h-5 text-violet-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-white truncate">
+                          {template.name}
+                        </span>
+                        {template.usageCount > 0 && (
+                          <span className="text-xs text-slate-500 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {template.usageCount}x
+                          </span>
+                        )}
+                      </div>
+                      {template.description && (
+                        <p className="text-xs text-slate-400 truncate">
+                          {template.description}
+                        </p>
+                      )}
+                      <div className="flex gap-2 mt-1 text-[10px] text-slate-500">
+                        {template.projectPath && (
+                          <span className="truncate max-w-[150px]">
+                            {template.projectPath}
+                          </span>
+                        )}
+                        {template.startupCommand && (
+                          <span className="truncate max-w-[100px]">
+                            $ {template.startupCommand}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-violet-400 flex-shrink-0" />
+                  </button>
+                ))}
+              </div>
+
+              {error && (
+                <p className="text-sm text-red-400">{error}</p>
+              )}
+
+              <div className="flex justify-between pt-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => setStep("choose-type")}
+                  className="text-slate-400"
+                >
+                  Back
+                </Button>
+              </div>
             </div>
           )}
 
