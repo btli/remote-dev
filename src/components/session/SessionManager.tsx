@@ -712,7 +712,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           fontFamily={prefs.fontFamily}
                           notificationsEnabled={true}
                           isRecording={isRecording && isActiveSession}
-                          onSessionExit={() => closeSession(session.id)}
                           onOutput={isRecording && isActiveSession ? recordOutput : undefined}
                           onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
                         />
