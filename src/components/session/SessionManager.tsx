@@ -401,7 +401,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       // If deleting worktree, call the worktree delete API first
       if (deleteWorktree && session.githubRepoId && session.projectPath) {
         try {
-          await fetch("/api/github/worktrees", {
+          const response = await fetch("/api/github/worktrees", {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -410,6 +410,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               force: true, // Force delete since session is closed
             }),
           });
+
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: "Unknown error" }));
+            console.error("Failed to delete worktree:", error);
+            // Continue with session deletion even if worktree deletion fails
+          }
         } catch (error) {
           console.error("Failed to delete worktree:", error);
           // Continue with session deletion even if worktree deletion fails
@@ -818,7 +824,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                       </div>
                     );
                   })
-                )
+                )}
               </div>
             </div>
           </div>

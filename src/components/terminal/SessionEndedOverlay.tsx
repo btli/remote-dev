@@ -56,7 +56,10 @@ export function SessionEndedOverlay({
         const response = await fetch("/api/github/worktrees/check", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ worktreePath: session.projectPath }),
+          body: JSON.stringify({
+            worktreePath: session.projectPath,
+            repositoryId: session.githubRepoId,
+          }),
         });
 
         if (response.ok) {
