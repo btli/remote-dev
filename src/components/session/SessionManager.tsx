@@ -50,12 +50,21 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     closeSession,
     updateSession,
     setActiveSession,
+    reorderSessions,
   } = useSessionContext();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardFolderId, setWizardFolderId] = useState<string | null>(null);
   const [sessionCounter, setSessionCounter] = useState(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    // Initialize from localStorage if available
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("sidebar-collapsed");
+      return saved === "true";
+    }
+    return false;
+  });
   const [folderSettingsModal, setFolderSettingsModal] = useState<{
     folderId: string;
     folderName: string;
@@ -95,6 +104,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Refs for split handlers (to avoid stale closures in keyboard handler)
   const splitHorizontalRef = useRef<(() => void) | null>(null);
   const splitVerticalRef = useRef<(() => void) | null>(null);
+
+  // Persist sidebar collapsed state to localStorage
+  const handleSidebarCollapsedChange = useCallback((collapsed: boolean) => {
+    setSidebarCollapsed(collapsed);
+    localStorage.setItem("sidebar-collapsed", String(collapsed));
+  }, []);
 
   // Folder state from context (persisted in database)
   const {
@@ -240,6 +255,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       await moveSessionToFolder(sessionId, folderId);
     },
     [moveSessionToFolder]
+  );
+
+  const handleReorderSessions = useCallback(
+    async (sessionIds: string[]) => {
+      await reorderSessions(sessionIds);
+    },
+    [reorderSessions]
   );
 
   const handleCreateFolder = useCallback(
@@ -562,11 +584,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             sessionFolders={sessionFolders}
             activeSessionId={activeSessionId}
             activeFolderId={activeProject.folderId}
+            collapsed={sidebarCollapsed}
+            onCollapsedChange={handleSidebarCollapsedChange}
             folderHasPreferences={hasFolderPreferences}
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}
             onSessionRename={handleRenameSession}
             onSessionMove={handleMoveSession}
+            onSessionReorder={handleReorderSessions}
             onNewSession={handleOpenWizard}
             onQuickNewSession={handleQuickNewSession}
             onFolderCreate={handleCreateFolder}
