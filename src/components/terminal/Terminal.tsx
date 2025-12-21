@@ -7,35 +7,43 @@ import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
 import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { ConnectionStatus } from "@/types/terminal";
 import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
-import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
+import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
 
 interface TerminalProps {
   sessionId: string;
   tmuxSessionName: string;
   sessionName?: string;
+  projectPath?: string | null;
   wsUrl?: string;
   theme?: string;
   fontSize?: number;
   fontFamily?: string;
   notificationsEnabled?: boolean;
+  isRecording?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
+  onOutput?: (data: string) => void;
+  onDimensionsChange?: (cols: number, rows: number) => void;
 }
 
 export function Terminal({
   sessionId,
   tmuxSessionName,
   sessionName = "Terminal",
+  projectPath,
   wsUrl = "ws://localhost:3001",
   theme = "tokyo-night",
   fontSize = 14,
-  fontFamily = "'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+  fontFamily = "'JetBrainsMono Nerd Font', 'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
   notificationsEnabled = true,
+  isRecording = false,
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
+  onOutput,
+  onDimensionsChange,
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
@@ -64,12 +72,16 @@ export function Terminal({
   const onStatusChangeRef = useRef(onStatusChange);
   const onWebSocketReadyRef = useRef(onWebSocketReady);
   const onSessionExitRef = useRef(onSessionExit);
+  const onOutputRef = useRef(onOutput);
+  const onDimensionsChangeRef = useRef(onDimensionsChange);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
     onWebSocketReadyRef.current = onWebSocketReady;
     onSessionExitRef.current = onSessionExit;
-  }, [onStatusChange, onWebSocketReady, onSessionExit]);
+    onOutputRef.current = onOutput;
+    onDimensionsChangeRef.current = onDimensionsChange;
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange]);
 
   const updateStatus = useCallback(
     (status: ConnectionStatus) => {
@@ -139,19 +151,41 @@ export function Terminal({
       imageAddonRef.current = imageAddon;
       searchAddonRef.current = searchAddon;
 
-      function connect() {
+      async function connect() {
         if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
         updateStatus("connecting");
 
+        // Fetch auth token from Next.js server
+        let token: string;
+        try {
+          const tokenResponse = await fetch(`/api/sessions/${sessionId}/token`);
+          if (!tokenResponse.ok) {
+            throw new Error("Failed to get auth token");
+          }
+          const tokenData = await tokenResponse.json();
+          token = tokenData.token;
+        } catch (error) {
+          console.error("Failed to get WebSocket token:", error);
+          terminal.writeln("\r\n\x1b[31mError: Failed to authenticate\x1b[0m");
+          updateStatus("error");
+          return;
+        }
+
         const cols = terminal.cols;
         const rows = terminal.rows;
         const params = new URLSearchParams({
+          token,
           sessionId,
           tmuxSession: tmuxSessionName,
           cols: String(cols),
           rows: String(rows),
         });
+
+        // Include working directory if specified
+        if (projectPath) {
+          params.set("cwd", projectPath);
+        }
 
         const ws = new WebSocket(`${wsUrl}?${params.toString()}`);
         wsRef.current = ws;
@@ -183,6 +217,8 @@ export function Terminal({
                 terminal.write(msg.data);
                 // Record activity for notification detection
                 recordActivity();
+                // Emit output for recording
+                onOutputRef.current?.(msg.data);
                 break;
               case "ready":
                 console.log("Terminal session ready:", msg.sessionId);
@@ -209,6 +245,8 @@ export function Terminal({
             terminal.write(event.data);
             // Record activity for notification detection (raw data)
             recordActivity();
+            // Emit output for recording
+            onOutputRef.current?.(event.data);
           }
         };
 
@@ -257,6 +295,15 @@ export function Terminal({
         // Use requestAnimationFrame to ensure DOM is ready
         requestAnimationFrame(() => {
           fitAddon.fit();
+
+          // Don't send resize events for invalid dimensions
+          // This prevents resizing tmux when terminal is hidden or minimized
+          const MIN_COLS = 10;
+          const MIN_ROWS = 3;
+          if (terminal.cols < MIN_COLS || terminal.rows < MIN_ROWS) {
+            return;
+          }
+
           if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(
               JSON.stringify({
@@ -266,6 +313,8 @@ export function Terminal({
               })
             );
           }
+          // Emit dimensions for recording
+          onDimensionsChangeRef.current?.(terminal.cols, terminal.rows);
         });
       };
 
@@ -326,7 +375,7 @@ export function Terminal({
       searchAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, wsUrl, updateStatus]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus]);
 
   // Update terminal options when preferences change
   useEffect(() => {
@@ -516,6 +565,14 @@ export function Terminal({
       onDrop={handleDrop}
       onPaste={handlePaste}
     >
+      {/* Recording indicator */}
+      {isRecording && (
+        <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5 bg-red-500/90 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-lg animate-pulse">
+          <Circle className="w-2 h-2 fill-white text-white" />
+          <span className="text-xs font-medium text-white">REC</span>
+        </div>
+      )}
+
       {/* Search overlay */}
       {isSearchOpen && (
         <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-lg px-2 py-1.5 shadow-lg">

@@ -7,7 +7,11 @@ import { SaveTemplateModal } from "./SaveTemplateModal";
 import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
+import { RecordingsModal } from "@/components/session/RecordingsModal";
+import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { useSessionContext } from "@/contexts/SessionContext";
+import { useRecordingContext } from "@/contexts/RecordingContext";
+import { useRecording } from "@/hooks/useRecording";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { Terminal as TerminalIcon, Plus, PanelLeft, X, Columns, Rows, Maximize2 } from "lucide-react";
@@ -58,6 +62,24 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
+  const [isRecordingsModalOpen, setIsRecordingsModalOpen] = useState(false);
+  const [isSaveRecordingModalOpen, setIsSaveRecordingModalOpen] = useState(false);
+
+  // Recording state
+  const { createRecording } = useRecordingContext();
+  const {
+    isRecording,
+    duration: recordingDuration,
+    startRecording,
+    stopRecording,
+    recordOutput,
+    updateDimensions,
+  } = useRecording({
+    sessionId: activeSessionId || undefined,
+    onSave: async (data) => {
+      await createRecording(data);
+    },
+  });
 
   // Split pane state
   const [splitPaneLayout, setSplitPaneLayout] = useState<PaneNode | null>(null);
@@ -413,6 +435,36 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
   }, [splitPaneLayout, setActiveSession]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Recording Handlers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const handleStartRecording = useCallback(() => {
+    startRecording();
+  }, [startRecording]);
+
+  const handleStopRecording = useCallback(() => {
+    // Show modal to save the recording
+    setIsSaveRecordingModalOpen(true);
+  }, []);
+
+  const handleSaveRecording = useCallback(
+    async (name: string, description?: string) => {
+      const data = await stopRecording(name);
+      if (data) {
+        // Recording was saved via the onSave callback in useRecording
+        setIsSaveRecordingModalOpen(false);
+      }
+    },
+    [stopRecording]
+  );
+
+  const handleCancelSaveRecording = useCallback(() => {
+    // Cancel recording - discard the data
+    stopRecording();
+    setIsSaveRecordingModalOpen(false);
+  }, [stopRecording]);
+
   /** Render terminal for split pane */
   const renderTerminalForPane = useCallback((sessionId: string) => {
     const session = activeSessions.find((s) => s.id === sessionId);
@@ -420,20 +472,25 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
     const folderId = sessionFolders[session.id] || null;
     const prefs = resolvePreferencesForFolder(folderId);
+    const isActiveSession = session.id === activeSessionId;
 
     return (
       <TerminalWithKeyboard
         sessionId={session.id}
         tmuxSessionName={session.tmuxSessionName}
         sessionName={session.name}
+        projectPath={session.projectPath}
         theme={prefs.theme}
         fontSize={prefs.fontSize}
         fontFamily={prefs.fontFamily}
         notificationsEnabled={true}
+        isRecording={isRecording && isActiveSession}
         onSessionExit={() => closeSession(session.id)}
+        onOutput={isRecording && isActiveSession ? recordOutput : undefined}
+        onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
       />
     );
-  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, closeSession]);
+  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, closeSession, activeSessionId, isRecording, recordOutput, updateDimensions]);
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
@@ -614,11 +671,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                   activeSessions.map((session) => {
                     const folderId = sessionFolders[session.id] || null;
                     const prefs = resolvePreferencesForFolder(folderId);
+                    const isActiveSession = session.id === activeSessionId;
                     return (
                       <div
                         key={session.id}
                         className={
-                          session.id === activeSessionId
+                          isActiveSession
                             ? "absolute inset-0 z-10"
                             : "hidden"
                         }
@@ -627,11 +685,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           sessionId={session.id}
                           tmuxSessionName={session.tmuxSessionName}
                           sessionName={session.name}
+                          projectPath={session.projectPath}
                           theme={prefs.theme}
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
                           notificationsEnabled={true}
+                          isRecording={isRecording && isActiveSession}
                           onSessionExit={() => closeSession(session.id)}
+                          onOutput={isRecording && isActiveSession ? recordOutput : undefined}
+                          onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
                         />
                       </div>
                     );
@@ -683,9 +745,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onExitSplitMode={handleExitSplitMode}
         onSaveAsTemplate={() => setIsTemplateModalOpen(true)}
         onShowKeyboardShortcuts={() => setIsKeyboardShortcutsOpen(true)}
+        onStartRecording={handleStartRecording}
+        onStopRecording={handleStopRecording}
+        onViewRecordings={() => setIsRecordingsModalOpen(true)}
         activeSessionId={activeSessionId}
         activeSessionStatus={activeSessions.find((s) => s.id === activeSessionId)?.status}
         isSplitMode={isSplitMode}
+        isRecording={isRecording}
       />
 
       {/* Save Template Modal */}
@@ -699,6 +765,21 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <KeyboardShortcutsPanel
         open={isKeyboardShortcutsOpen}
         onOpenChange={setIsKeyboardShortcutsOpen}
+      />
+
+      {/* Recordings Modal */}
+      <RecordingsModal
+        open={isRecordingsModalOpen}
+        onOpenChange={setIsRecordingsModalOpen}
+      />
+
+      {/* Save Recording Modal */}
+      <SaveRecordingModal
+        open={isSaveRecordingModalOpen}
+        onClose={handleCancelSaveRecording}
+        onSave={handleSaveRecording}
+        duration={recordingDuration}
+        sessionName={activeSessions.find((s) => s.id === activeSessionId)?.name}
       />
     </div>
   );
