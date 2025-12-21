@@ -8,6 +8,7 @@ import { eq, and, asc } from "drizzle-orm";
 export interface SessionFolder {
   id: string;
   userId: string;
+  parentId: string | null;
   name: string;
   collapsed: boolean;
   sortOrder: number;
@@ -27,6 +28,7 @@ export async function getFolders(userId: string): Promise<SessionFolder[]> {
   return folders.map((f) => ({
     id: f.id,
     userId: f.userId,
+    parentId: f.parentId ?? null,
     name: f.name,
     collapsed: f.collapsed ?? false,
     sortOrder: f.sortOrder,
@@ -62,15 +64,30 @@ export async function getSessionFolderMappings(
 }
 
 /**
- * Create a new folder
+ * Create a new folder (optionally nested under a parent)
  */
 export async function createFolder(
   userId: string,
-  name: string
+  name: string,
+  parentId?: string | null
 ): Promise<SessionFolder> {
-  // Get the max sort order
+  // Validate parent folder ownership if specified
+  if (parentId) {
+    const parentFolder = await db.query.sessionFolders.findFirst({
+      where: and(
+        eq(sessionFolders.id, parentId),
+        eq(sessionFolders.userId, userId)
+      ),
+    });
+    if (!parentFolder) {
+      throw new Error("Parent folder not found or access denied");
+    }
+  }
+
+  // Get the max sort order among siblings (same parent)
   const existingFolders = await getFolders(userId);
-  const maxOrder = existingFolders.reduce(
+  const siblings = existingFolders.filter((f) => f.parentId === (parentId ?? null));
+  const maxOrder = siblings.reduce(
     (max, f) => Math.max(max, f.sortOrder),
     -1
   );
@@ -80,6 +97,7 @@ export async function createFolder(
     .values({
       userId,
       name,
+      parentId: parentId ?? null,
       sortOrder: maxOrder + 1,
     })
     .returning();
@@ -87,6 +105,7 @@ export async function createFolder(
   return {
     id: folder.id,
     userId: folder.userId,
+    parentId: folder.parentId ?? null,
     name: folder.name,
     collapsed: folder.collapsed ?? false,
     sortOrder: folder.sortOrder,
@@ -119,6 +138,92 @@ export async function updateFolder(
   return {
     id: updated.id,
     userId: updated.userId,
+    parentId: updated.parentId ?? null,
+    name: updated.name,
+    collapsed: updated.collapsed ?? false,
+    sortOrder: updated.sortOrder,
+    createdAt: new Date(updated.createdAt),
+    updatedAt: new Date(updated.updatedAt),
+  };
+}
+
+/**
+ * Check if moving a folder to a new parent would create a circular reference.
+ * Returns true if circular (invalid move).
+ */
+async function wouldCreateCircularReference(
+  folderId: string,
+  newParentId: string,
+  allFolders: SessionFolder[]
+): Promise<boolean> {
+  // Build a map for quick lookup
+  const folderMap = new Map(allFolders.map((f) => [f.id, f]));
+
+  // Walk up the parent chain from newParentId
+  let currentId: string | null = newParentId;
+  while (currentId) {
+    if (currentId === folderId) {
+      return true; // Circular reference detected
+    }
+    const current = folderMap.get(currentId);
+    currentId = current?.parentId ?? null;
+  }
+
+  return false;
+}
+
+/**
+ * Move a folder to a new parent (or to root if parentId is null).
+ * Validates ownership and prevents circular references.
+ */
+export async function moveFolderToParent(
+  folderId: string,
+  userId: string,
+  newParentId: string | null
+): Promise<SessionFolder | null> {
+  // Get all folders for validation
+  const allFolders = await getFolders(userId);
+  const folder = allFolders.find((f) => f.id === folderId);
+
+  if (!folder) {
+    return null; // Folder not found or doesn't belong to user
+  }
+
+  // Validate new parent if specified
+  if (newParentId) {
+    const newParent = allFolders.find((f) => f.id === newParentId);
+    if (!newParent) {
+      throw new Error("Parent folder not found or access denied");
+    }
+
+    // Check for circular reference
+    if (await wouldCreateCircularReference(folderId, newParentId, allFolders)) {
+      throw new Error("Cannot move folder into its own descendant");
+    }
+  }
+
+  // Calculate sort order among new siblings
+  const siblings = allFolders.filter((f) => f.parentId === newParentId && f.id !== folderId);
+  const maxOrder = siblings.reduce((max, f) => Math.max(max, f.sortOrder), -1);
+
+  const [updated] = await db
+    .update(sessionFolders)
+    .set({
+      parentId: newParentId,
+      sortOrder: maxOrder + 1,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(sessionFolders.id, folderId), eq(sessionFolders.userId, userId))
+    )
+    .returning();
+
+  if (!updated) return null;
+
+  return {
+    id: updated.id,
+    userId: updated.userId,
+    parentId: updated.parentId ?? null,
     name: updated.name,
     collapsed: updated.collapsed ?? false,
     sortOrder: updated.sortOrder,

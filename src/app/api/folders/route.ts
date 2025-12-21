@@ -28,7 +28,7 @@ export async function GET() {
 }
 
 /**
- * POST /api/folders - Create a new folder
+ * POST /api/folders - Create a new folder (optionally nested)
  */
 export async function POST(request: Request) {
   try {
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name } = body;
+    const { name, parentId } = body;
 
     if (!name || typeof name !== "string") {
       return NextResponse.json(
@@ -47,13 +47,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const folder = await FolderService.createFolder(session.user.id, name);
+    // Validate parentId if provided
+    if (parentId !== undefined && parentId !== null && typeof parentId !== "string") {
+      return NextResponse.json(
+        { error: "parentId must be a string or null" },
+        { status: 400 }
+      );
+    }
+
+    const folder = await FolderService.createFolder(session.user.id, name, parentId);
 
     return NextResponse.json(folder, { status: 201 });
   } catch (error) {
     console.error("Error creating folder:", error);
+    const message = error instanceof Error ? error.message : "Failed to create folder";
     return NextResponse.json(
-      { error: "Failed to create folder" },
+      { error: message },
       { status: 500 }
     );
   }

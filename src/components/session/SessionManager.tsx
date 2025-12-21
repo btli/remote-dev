@@ -60,6 +60,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     deleteFolder,
     toggleFolder,
     moveSessionToFolder,
+    moveFolderToParent,
   } = useFolderContext();
 
   // Preferences state from context
@@ -177,10 +178,21 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handleCreateFolder = useCallback(
-    async (name: string) => {
-      await createFolder(name);
+    async (name: string, parentId?: string | null) => {
+      await createFolder(name, parentId);
     },
     [createFolder]
+  );
+
+  const handleMoveFolder = useCallback(
+    async (folderId: string, newParentId: string | null) => {
+      try {
+        await moveFolderToParent(folderId, newParentId);
+      } catch (error) {
+        console.error("Failed to move folder:", error);
+      }
+    },
+    [moveFolderToParent]
   );
 
   const handleRenameFolder = useCallback(
@@ -320,6 +332,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
             onFolderAdvancedSession={handleFolderAdvancedSession}
+            onFolderMove={handleMoveFolder}
           />
         </div>
       </div>
