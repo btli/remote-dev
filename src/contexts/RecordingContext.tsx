@@ -12,7 +12,6 @@ import type {
   SessionRecording,
   ParsedRecording,
   CreateRecordingInput,
-  RecordingData,
 } from "@/types/recording";
 
 interface RecordingContextValue {

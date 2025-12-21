@@ -55,7 +55,6 @@ export function Terminal({
   const [isDragging, setIsDragging] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResultCount, setSearchResultCount] = useState<number | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
@@ -74,6 +73,13 @@ export function Terminal({
   const onSessionExitRef = useRef(onSessionExit);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
+  const recordActivityRef = useRef(recordActivity);
+
+  // FIX: Capture initial theme/font values to avoid recreating terminal on changes
+  // Updates are handled by a separate useEffect that modifies terminal.options
+  const initialThemeRef = useRef(theme);
+  const initialFontSizeRef = useRef(fontSize);
+  const initialFontFamilyRef = useRef(fontFamily);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
@@ -81,7 +87,8 @@ export function Terminal({
     onSessionExitRef.current = onSessionExit;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange]);
+    recordActivityRef.current = recordActivity;
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity]);
 
   const updateStatus = useCallback(
     (status: ConnectionStatus) => {
@@ -120,9 +127,9 @@ export function Terminal({
 
       terminal = new XTerm({
         cursorBlink: true,
-        fontSize,
-        fontFamily,
-        theme: getTerminalTheme(theme),
+        fontSize: initialFontSizeRef.current,
+        fontFamily: initialFontFamilyRef.current,
+        theme: getTerminalTheme(initialThemeRef.current),
         allowProposedApi: true,
         scrollback: 10000,
       });
@@ -267,7 +274,7 @@ export function Terminal({
               case "output":
                 terminal.write(msg.data);
                 // Record activity for notification detection
-                recordActivity();
+                recordActivityRef.current?.();
                 // Emit output for recording
                 onOutputRef.current?.(msg.data);
                 break;
@@ -295,7 +302,7 @@ export function Terminal({
           } catch {
             terminal.write(event.data);
             // Record activity for notification detection (raw data)
-            recordActivity();
+            recordActivityRef.current?.();
             // Emit output for recording
             onOutputRef.current?.(event.data);
           }
@@ -455,7 +462,6 @@ export function Terminal({
   const closeSearch = useCallback(() => {
     setIsSearchOpen(false);
     setSearchQuery("");
-    setSearchResultCount(null);
     searchAddonRef.current?.clearDecorations();
     xtermRef.current?.focus();
   }, []);
@@ -468,7 +474,6 @@ export function Terminal({
       searchAddonRef.current.findNext(query, { caseSensitive: false });
     } else {
       searchAddonRef.current?.clearDecorations();
-      setSearchResultCount(null);
     }
   }, []);
 

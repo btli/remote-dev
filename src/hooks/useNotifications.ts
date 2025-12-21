@@ -14,18 +14,16 @@ export function useNotifications({
   enabled = true,
   sessionName = "Terminal",
 }: NotificationOptions = {}) {
-  const [permissionState, setPermissionState] = useState<NotificationPermission>("default");
-  const lastActivityRef = useRef<number>(Date.now());
+  const [permissionState, setPermissionState] = useState<NotificationPermission>(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      return Notification.permission;
+    }
+    return "default";
+  });
+  const lastActivityRef = useRef<number>(0);
   const wasActiveRef = useRef<boolean>(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notifiedRef = useRef<boolean>(false);
-
-  // Check notification permission on mount
-  useEffect(() => {
-    if ("Notification" in window) {
-      setPermissionState(Notification.permission);
-    }
-  }, []);
 
   // Request notification permission
   const requestPermission = useCallback(async () => {
