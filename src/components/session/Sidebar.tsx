@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Pause, Terminal, Settings,
-  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch
+  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch,
+  PanelLeftClose, PanelLeft
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -25,6 +26,12 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export interface SessionFolder {
   id: string;
@@ -44,11 +51,14 @@ interface SidebarProps {
   sessionFolders: Record<string, string>; // sessionId -> folderId
   activeSessionId: string | null;
   activeFolderId: string | null;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
   folderHasPreferences: (folderId: string) => boolean;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
   onSessionMove: (sessionId: string, folderId: string | null) => void;
+  onSessionReorder: (sessionIds: string[]) => void;
   onNewSession: () => void;
   onQuickNewSession: () => void;
   onFolderCreate: (name: string, parentId?: string | null) => void;
@@ -68,11 +78,14 @@ export function Sidebar({
   sessionFolders,
   activeSessionId,
   activeFolderId,
+  collapsed,
+  onCollapsedChange,
   folderHasPreferences,
   onSessionClick,
   onSessionClose,
   onSessionRename,
   onSessionMove,
+  onSessionReorder,
   onNewSession,
   onQuickNewSession,
   onFolderCreate,
@@ -93,6 +106,9 @@ export function Sidebar({
   const [newFolderName, setNewFolderName] = useState("");
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
+  const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropPosition, setDropPosition] = useState<"before" | "after" | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -228,6 +244,7 @@ export function Sidebar({
     e.dataTransfer.setData("text/plain", sessionId);
     e.dataTransfer.setData("type", "session");
     e.dataTransfer.effectAllowed = "move";
+    setDraggedSessionId(sessionId);
     (e.target as HTMLElement).classList.add("opacity-50");
   };
 
@@ -244,6 +261,9 @@ export function Sidebar({
     (e.target as HTMLElement).classList.remove("opacity-50");
     setDragOverFolderId(null);
     setDraggingFolderId(null);
+    setDraggedSessionId(null);
+    setDropTargetId(null);
+    setDropPosition(null);
   };
 
   const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
@@ -262,6 +282,9 @@ export function Sidebar({
     if (dragOverFolderId !== folderId) {
       setDragOverFolderId(folderId);
     }
+    // Clear reorder indicators when over folder (not session)
+    setDropTargetId(null);
+    setDropPosition(null);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
@@ -271,6 +294,8 @@ export function Sidebar({
     const currentTarget = e.currentTarget as HTMLElement;
     if (!relatedTarget || !currentTarget.contains(relatedTarget)) {
       setDragOverFolderId(null);
+      setDropTargetId(null);
+      setDropPosition(null);
     }
   };
 
@@ -292,13 +317,191 @@ export function Sidebar({
 
     setDragOverFolderId(null);
     setDraggingFolderId(null);
+    setDropTargetId(null);
+    setDropPosition(null);
+    setDraggedSessionId(null);
   };
 
-  const renderSession = (session: TerminalSession, depth = 0) => {
+  // Handler for dropping on a session (for reordering)
+  const handleSessionDrop = (e: React.DragEvent, targetSessionId: string, targetFolderId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const draggedId = e.dataTransfer.getData("text/plain");
+    const dragType = e.dataTransfer.getData("type");
+
+    // Only handle session drops for reordering
+    if (!draggedId || draggedId === targetSessionId || dragType === "folder") {
+      setDragOverFolderId(null);
+      setDropTargetId(null);
+      setDropPosition(null);
+      setDraggedSessionId(null);
+      return;
+    }
+
+    // Check if in the same folder
+    const draggedFolderId = sessionFolders[draggedId] || null;
+    if (draggedFolderId !== targetFolderId) {
+      // Different folder - move to target folder
+      onSessionMove(draggedId, targetFolderId);
+    } else {
+      // Same folder - reorder
+      const sessionsInFolder = activeSessions.filter(
+        (s) => (sessionFolders[s.id] || null) === targetFolderId
+      );
+      const currentOrder = sessionsInFolder.map((s) => s.id);
+
+      // Remove dragged item from current position
+      const newOrder = currentOrder.filter((id) => id !== draggedId);
+
+      // Find target position
+      const targetIndex = newOrder.indexOf(targetSessionId);
+      const insertIndex = dropPosition === "before" ? targetIndex : targetIndex + 1;
+
+      // Insert at new position
+      newOrder.splice(insertIndex, 0, draggedId);
+
+      // Get full session order (include sessions from other folders)
+      const fullOrder: string[] = [];
+
+      // Add sessions from each folder
+      folders.forEach((folder) => {
+        if (folder.id === targetFolderId) {
+          // Use the reordered list for the target folder
+          fullOrder.push(...newOrder);
+        } else {
+          // Keep existing order for other folders
+          const otherFolderSessions = activeSessions
+            .filter((s) => sessionFolders[s.id] === folder.id)
+            .map((s) => s.id);
+          fullOrder.push(...otherFolderSessions);
+        }
+      });
+
+      // Add root sessions
+      if (targetFolderId === null) {
+        // Reordering root sessions - use new order
+        fullOrder.push(...newOrder);
+      } else {
+        // Keep existing order for root sessions
+        const rootSessionIds = activeSessions
+          .filter((s) => !sessionFolders[s.id])
+          .map((s) => s.id);
+        fullOrder.push(...rootSessionIds);
+      }
+
+      onSessionReorder(fullOrder);
+    }
+
+    setDragOverFolderId(null);
+    setDropTargetId(null);
+    setDropPosition(null);
+    setDraggedSessionId(null);
+  };
+
+  // Handler for dragging over a session (for reordering)
+  const handleSessionDragOver = (e: React.DragEvent, targetSessionId: string, targetFolderId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+
+    // Don't show indicator for the dragged item itself
+    if (targetSessionId === draggedSessionId) {
+      setDropTargetId(null);
+      setDropPosition(null);
+      return;
+    }
+
+    // Check if dragged session is in the same folder
+    const draggedFolderId = draggedSessionId ? sessionFolders[draggedSessionId] : null;
+    if (draggedFolderId !== targetFolderId) {
+      // Different folder - treat as folder drop
+      setDragOverFolderId(targetFolderId);
+      setDropTargetId(null);
+      setDropPosition(null);
+      return;
+    }
+
+    // Same folder - show reorder indicator
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    const position = e.clientY < midY ? "before" : "after";
+
+    setDropTargetId(targetSessionId);
+    setDropPosition(position);
+    setDragOverFolderId(null);
+  };
+
+  // renderSession accepts depth for indentation and parentFolderId for drag-drop targeting
+  const renderSession = (session: TerminalSession, depth = 0, parentFolderId: string | null = null) => {
     const isActive = session.id === activeSessionId;
     const isSuspended = session.status === "suspended";
     const isEditing = editingId === session.id;
-    const currentFolderId = sessionFolders[session.id];
+    const inFolder = parentFolderId !== null;
+    const currentFolderId = sessionFolders[session.id]; // Used in context menu
+    const isDragOverSession = parentFolderId !== null && dragOverFolderId === parentFolderId;
+    const isDropTarget = dropTargetId === session.id;
+    const showDropBefore = isDropTarget && dropPosition === "before";
+    const showDropAfter = isDropTarget && dropPosition === "after";
+
+    // Collapsed view - show only status indicator with tooltip
+    if (collapsed) {
+      return (
+        <Tooltip key={session.id}>
+          <TooltipTrigger asChild>
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label={`${session.name}${isSuspended ? " (suspended)" : ""}`}
+              draggable
+              onDragStart={(e) => handleDragStart(e, session.id)}
+              onDragEnd={handleDragEnd}
+              onDragOver={(e) => handleSessionDragOver(e, session.id, parentFolderId)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleSessionDrop(e, session.id, parentFolderId)}
+              onClick={() => onSessionClick(session.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSessionClick(session.id);
+                }
+              }}
+              className={cn(
+                "relative flex items-center justify-center p-2 rounded-md cursor-pointer",
+                "transition-all duration-200",
+                inFolder && "ml-2",
+                isActive
+                  ? "bg-gradient-to-r from-violet-500/20 via-purple-500/15 to-blue-500/10 border border-white/10"
+                  : "hover:bg-white/5 border border-transparent",
+                isDragOverSession && "bg-violet-500/20 border-violet-500/30"
+              )}
+            >
+              {/* Drop indicator - before */}
+              {showDropBefore && (
+                <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-violet-500 rounded-full" />
+              )}
+              <span
+                className={cn(
+                  "w-2 h-2 rounded-full",
+                  isSuspended
+                    ? "bg-amber-400"
+                    : isActive
+                    ? "bg-green-400 animate-pulse"
+                    : "bg-slate-600"
+                )}
+              />
+              {/* Drop indicator - after */}
+              {showDropAfter && (
+                <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-violet-500 rounded-full" />
+              )}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="right" className="text-xs">
+            {session.name}
+            {isSuspended && " (suspended)"}
+          </TooltipContent>
+        </Tooltip>
+      );
+    }
 
     return (
       <div
@@ -306,19 +509,42 @@ export function Sidebar({
         draggable={!isEditing}
         onDragStart={(e) => handleDragStart(e, session.id)}
         onDragEnd={handleDragEnd}
-        className={!isEditing ? "cursor-grab active:cursor-grabbing" : ""}
+        onDragOver={(e) => handleSessionDragOver(e, session.id, parentFolderId)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleSessionDrop(e, session.id, parentFolderId)}
+        className={cn(
+          "relative",
+          !isEditing && "cursor-grab active:cursor-grabbing"
+        )}
       >
+        {/* Drop indicator - before */}
+        {showDropBefore && (
+          <div className={cn(
+            "absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full",
+            inFolder && "left-6"
+          )} />
+        )}
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
+              role="button"
+              tabIndex={isEditing ? -1 : 0}
+              aria-label={`${session.name}${isSuspended ? " (suspended)" : ""}`}
               onClick={() => !isEditing && onSessionClick(session.id)}
+              onKeyDown={(e) => {
+                if (!isEditing && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  onSessionClick(session.id);
+                }
+              }}
               style={{ marginLeft: depth > 0 ? `${(depth + 1) * 12}px` : undefined }}
               className={cn(
                 "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
                 "transition-all duration-200",
                 isActive
                   ? "bg-gradient-to-r from-violet-500/20 via-purple-500/15 to-blue-500/10 border border-white/10"
-                  : "hover:bg-white/5 border border-transparent"
+                  : "hover:bg-white/5 border border-transparent",
+                isDragOverSession && "bg-violet-500/20 border-violet-500/30"
               )}
             >
             {/* Status indicator */}
@@ -442,56 +668,99 @@ export function Sidebar({
           </ContextMenuItem>
         </ContextMenuContent>
         </ContextMenu>
+        {/* Drop indicator - after */}
+        {showDropAfter && (
+          <div className={cn(
+            "absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full",
+            inFolder && "left-6"
+          )} />
+        )}
       </div>
     );
   };
 
   return (
-    <div className="w-52 h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5">
+    <TooltipProvider delayDuration={200}>
+    <div className={cn(
+      "h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5",
+      "transition-all duration-200",
+      collapsed ? "w-12" : "w-52"
+    )}>
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-          <div className="flex items-center gap-2">
-            <Terminal className="w-4 h-4 text-violet-400" />
-            <span className="text-xs font-medium text-white">Sessions</span>
-          </div>
-          <div className="flex items-center gap-0.5">
-            <Button
-              onClick={() => setCreatingFolder(true)}
-              variant="ghost"
-              size="icon-sm"
-              className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
-            >
-              <Folder className="w-3.5 h-3.5" />
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+        <div className={cn(
+          "flex items-center border-b border-white/5",
+          collapsed ? "justify-center px-1 py-2" : "justify-between px-3 py-2"
+        )}>
+          {collapsed ? (
+            // Collapsed header - just toggle button
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <Button
-                  onClick={(e) => {
-                    // If not opening dropdown, do quick session
-                    if (!e.defaultPrevented) {
-                      onQuickNewSession();
-                    }
-                  }}
+                  onClick={() => onCollapsedChange(false)}
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-7 w-7 text-slate-400 hover:text-white hover:bg-white/10"
+                >
+                  <PanelLeft className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Expand sidebar</TooltipContent>
+            </Tooltip>
+          ) : (
+            // Expanded header
+            <>
+              <div className="flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-violet-400" />
+                <span className="text-xs font-medium text-white">Sessions</span>
+              </div>
+              <div className="flex items-center gap-0.5">
+                <Button
+                  onClick={() => setCreatingFolder(true)}
                   variant="ghost"
                   size="icon-sm"
                   className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Folder className="w-3.5 h-3.5" />
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem onClick={onQuickNewSession}>
-                  <Terminal className="w-3.5 h-3.5 mr-2" />
-                  Quick Terminal
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onNewSession}>
-                  <Settings className="w-3.5 h-3.5 mr-2" />
-                  Advanced...
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      onClick={(e) => {
+                        // If not opening dropdown, do quick session
+                        if (!e.defaultPrevented) {
+                          onQuickNewSession();
+                        }
+                      }}
+                      variant="ghost"
+                      size="icon-sm"
+                      className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onClick={onQuickNewSession}>
+                      <Terminal className="w-3.5 h-3.5 mr-2" />
+                      Quick Terminal
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={onNewSession}>
+                      <Settings className="w-3.5 h-3.5 mr-2" />
+                      Advanced...
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button
+                  onClick={() => onCollapsedChange(true)}
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                >
+                  <PanelLeftClose className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Session List */}
@@ -502,31 +771,50 @@ export function Sidebar({
           onDrop={(e) => handleDrop(e, null)}
         >
           {activeSessions.length === 0 && folders.length === 0 && !creatingFolder ? (
-            <div className="text-center py-8 px-2">
-              <Terminal className="w-6 h-6 mx-auto text-slate-600 mb-2" />
-              <p className="text-xs text-slate-500 mb-2">No sessions</p>
-              <div className="flex flex-col gap-1 items-center">
-                <Button
-                  onClick={onQuickNewSession}
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
-                >
-                  <Plus className="w-3 h-3 mr-1" />
-                  New Session
-                </Button>
-                <button
-                  onClick={onNewSession}
-                  className="text-[10px] text-slate-500 hover:text-slate-400 transition-colors"
-                >
-                  Advanced options...
-                </button>
+            collapsed ? (
+              // Collapsed empty state - just show plus button
+              <div className="flex flex-col items-center py-4">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={onQuickNewSession}
+                      variant="ghost"
+                      size="icon-sm"
+                      className="h-8 w-8 text-slate-500 hover:text-violet-400 hover:bg-violet-500/10"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">New session</TooltipContent>
+                </Tooltip>
               </div>
-            </div>
+            ) : (
+              <div className="text-center py-8 px-2">
+                <Terminal className="w-6 h-6 mx-auto text-slate-600 mb-2" />
+                <p className="text-xs text-slate-500 mb-2">No sessions</p>
+                <div className="flex flex-col gap-1 items-center">
+                  <Button
+                    onClick={onQuickNewSession}
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    New Session
+                  </Button>
+                  <button
+                    onClick={onNewSession}
+                    className="text-[10px] text-slate-500 hover:text-slate-400 transition-colors"
+                  >
+                    Advanced options...
+                  </button>
+                </div>
+              </div>
+            )
           ) : (
             <>
-              {/* New folder input (at root level) */}
-              {creatingFolder && !creatingSubfolderId && (
+              {/* New folder input (at root level, only when not collapsed) */}
+              {creatingFolder && !creatingSubfolderId && !collapsed && (
                 <div className="flex items-center gap-1 px-2 py-1">
                   <Folder className="w-3.5 h-3.5 text-violet-400 shrink-0" />
                   <input
@@ -565,6 +853,65 @@ export function Sidebar({
 
                   // Count total items (sessions + subfolders)
                   const totalItems = folderSessions.length + node.children.length;
+
+                  // Collapsed sidebar view - show folder icon only
+                  if (collapsed) {
+                    return (
+                      <div key={node.id} className="space-y-0.5">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div
+                              onDragOver={(e) => handleDragOver(e, node.id)}
+                              onDragLeave={handleDragLeave}
+                              onDrop={(e) => handleDrop(e, node.id)}
+                              onClick={() => {
+                                onFolderClick(node.id);
+                                onFolderToggle(node.id);
+                              }}
+                              style={{ marginLeft: node.depth > 0 ? `${node.depth * 8}px` : undefined }}
+                              className={cn(
+                                "flex items-center justify-center p-2 rounded-md cursor-pointer",
+                                "hover:bg-white/5 transition-all duration-150",
+                                isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
+                                isActive && "bg-violet-500/10",
+                                isBeingDragged && "opacity-50"
+                              )}
+                            >
+                              {node.collapsed && !isActive ? (
+                                <Folder
+                                  className={cn(
+                                    "w-4 h-4",
+                                    isActive
+                                      ? "text-violet-300 fill-violet-400"
+                                      : "text-violet-400"
+                                  )}
+                                />
+                              ) : (
+                                <FolderOpen
+                                  className={cn(
+                                    "w-4 h-4",
+                                    isActive
+                                      ? "text-violet-300 fill-violet-400"
+                                      : "text-violet-400"
+                                  )}
+                                />
+                              )}
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="text-xs">
+                            {node.name} ({totalItems})
+                          </TooltipContent>
+                        </Tooltip>
+                        {/* Child folders and sessions in collapsed view */}
+                        {!node.collapsed && (
+                          <>
+                            {node.children.map((child) => renderFolderNode(child))}
+                            {folderSessions.map((session) => renderSession(session, node.depth + 1, node.id))}
+                          </>
+                        )}
+                      </div>
+                    );
+                  }
 
                   return (
                     <div key={node.id} className="space-y-0.5">
@@ -752,7 +1099,7 @@ export function Sidebar({
                       {!node.collapsed && (
                         <>
                           {node.children.map((child) => renderFolderNode(child))}
-                          {folderSessions.map((session) => renderSession(session, node.depth + 1))}
+                          {folderSessions.map((session) => renderSession(session, node.depth + 1, node.id))}
                         </>
                       )}
                     </div>
@@ -768,13 +1115,16 @@ export function Sidebar({
           )}
         </div>
 
-      {/* Footer */}
-      <div className="px-3 py-1.5 border-t border-white/5">
-        <div className="flex items-center justify-between text-[10px] text-slate-500">
-          <span>New session</span>
-          <kbd className="px-1 py-0.5 bg-slate-800 rounded">⌘↵</kbd>
+      {/* Footer - hide when collapsed */}
+      {!collapsed && (
+        <div className="px-3 py-1.5 border-t border-white/5">
+          <div className="flex items-center justify-between text-[10px] text-slate-500">
+            <span>New session</span>
+            <kbd className="px-1 py-0.5 bg-slate-800 rounded">⌘↵</kbd>
+          </div>
         </div>
-      </div>
+      )}
     </div>
+    </TooltipProvider>
   );
 }
