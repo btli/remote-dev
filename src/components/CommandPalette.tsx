@@ -22,6 +22,7 @@ import {
   Columns,
   Rows,
   Maximize2,
+  FileBox,
 } from "lucide-react";
 
 interface CommandAction {
@@ -45,6 +46,7 @@ interface CommandPaletteProps {
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
   onExitSplitMode?: () => void;
+  onSaveAsTemplate?: () => void;
   activeSessionId?: string | null;
   activeSessionStatus?: string;
   isSplitMode?: boolean;
@@ -62,6 +64,7 @@ export function CommandPalette({
   onSplitHorizontal,
   onSplitVertical,
   onExitSplitMode,
+  onSaveAsTemplate,
   activeSessionId,
   activeSessionStatus,
   isSplitMode,
@@ -111,6 +114,18 @@ export function CommandPalette({
       group: "Sessions",
       onSelect: () => runAction(onNewFolder),
     },
+    // Save as template
+    ...(activeSessionId && onSaveAsTemplate
+      ? [
+          {
+            id: "save-as-template",
+            label: "Save Session as Template",
+            icon: <FileBox className="w-4 h-4" />,
+            group: "Templates",
+            onSelect: () => runAction(onSaveAsTemplate),
+          },
+        ]
+      : []),
     // Active session actions
     ...(activeSessionId && onCloseActiveSession
       ? [

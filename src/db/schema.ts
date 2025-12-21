@@ -190,6 +190,46 @@ export const folderPreferences = sqliteTable(
   ]
 );
 
+// Session templates for reusable configurations
+export const sessionTemplates = sqliteTable(
+  "session_template",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    // Template settings
+    sessionNamePattern: text("session_name_pattern"), // e.g., "Dev Server - ${n}"
+    projectPath: text("project_path"),
+    startupCommand: text("startup_command"),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    icon: text("icon"), // lucide icon name
+    // Appearance overrides
+    theme: text("theme"),
+    fontSize: integer("font_size"),
+    fontFamily: text("font_family"),
+    // Usage tracking
+    usageCount: integer("usage_count").notNull().default(0),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("session_template_user_idx").on(table.userId),
+    index("session_template_usage_idx").on(table.userId, table.usageCount),
+  ]
+);
+
 // Terminal sessions with tmux persistence
 export const terminalSessions = sqliteTable(
   "terminal_session",

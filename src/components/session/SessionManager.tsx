@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
+import { SaveTemplateModal } from "./SaveTemplateModal";
 import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -54,6 +55,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     folderId: string;
     folderName: string;
   } | null>(null);
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
 
   // Split pane state
   const [splitPaneLayout, setSplitPaneLayout] = useState<PaneNode | null>(null);
@@ -673,9 +675,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onSplitHorizontal={handleSplitHorizontal}
         onSplitVertical={handleSplitVertical}
         onExitSplitMode={handleExitSplitMode}
+        onSaveAsTemplate={() => setIsTemplateModalOpen(true)}
         activeSessionId={activeSessionId}
         activeSessionStatus={activeSessions.find((s) => s.id === activeSessionId)?.status}
         isSplitMode={isSplitMode}
+      />
+
+      {/* Save Template Modal */}
+      <SaveTemplateModal
+        open={isTemplateModalOpen}
+        onClose={() => setIsTemplateModalOpen(false)}
+        session={activeSessions.find((s) => s.id === activeSessionId) || null}
       />
     </div>
   );
