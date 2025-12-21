@@ -4,8 +4,10 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
+import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { ConnectionStatus } from "@/types/terminal";
 import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
+import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
 
 interface TerminalProps {
   sessionId: string;
@@ -34,8 +36,13 @@ export function Terminal({
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
   const imageAddonRef = useRef<ImageAddonType | null>(null);
+  const searchAddonRef = useRef<SearchAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResultCount, setSearchResultCount] = useState<number | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
@@ -73,11 +80,13 @@ export function Terminal({
         { FitAddon },
         { WebLinksAddon },
         { ImageAddon },
+        { SearchAddon },
       ] = await Promise.all([
         import("@xterm/xterm"),
         import("@xterm/addon-fit"),
         import("@xterm/addon-web-links"),
         import("@xterm/addon-image"),
+        import("@xterm/addon-search"),
       ]);
 
       // Also import CSS
@@ -96,10 +105,12 @@ export function Terminal({
       fitAddon = new FitAddon();
       const webLinksAddon = new WebLinksAddon();
       const imageAddon = new ImageAddon();
+      const searchAddon = new SearchAddon();
 
       terminal.loadAddon(fitAddon);
       terminal.loadAddon(webLinksAddon);
       terminal.loadAddon(imageAddon);
+      terminal.loadAddon(searchAddon);
 
       terminal.open(terminalRef.current);
 
@@ -114,6 +125,7 @@ export function Terminal({
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
       imageAddonRef.current = imageAddon;
+      searchAddonRef.current = searchAddon;
 
       function connect() {
         if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -295,6 +307,7 @@ export function Terminal({
       xtermRef.current = null;
       fitAddonRef.current = null;
       imageAddonRef.current = null;
+      searchAddonRef.current = null;
       wsRef.current = null;
     };
   }, [sessionId, tmuxSessionName, wsUrl, updateStatus]);
@@ -311,6 +324,78 @@ export function Terminal({
     // Refit after font changes
     fitAddonRef.current?.fit();
   }, [theme, fontSize, fontFamily]);
+
+  // Search functions
+  const findNext = useCallback(() => {
+    if (!searchAddonRef.current || !searchQuery) return;
+    searchAddonRef.current.findNext(searchQuery, { caseSensitive: false });
+  }, [searchQuery]);
+
+  const findPrevious = useCallback(() => {
+    if (!searchAddonRef.current || !searchQuery) return;
+    searchAddonRef.current.findPrevious(searchQuery, { caseSensitive: false });
+  }, [searchQuery]);
+
+  const closeSearch = useCallback(() => {
+    setIsSearchOpen(false);
+    setSearchQuery("");
+    setSearchResultCount(null);
+    searchAddonRef.current?.clearDecorations();
+    xtermRef.current?.focus();
+  }, []);
+
+  // Handle search input changes
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const query = e.target.value;
+    setSearchQuery(query);
+    if (query && searchAddonRef.current) {
+      searchAddonRef.current.findNext(query, { caseSensitive: false });
+    } else {
+      searchAddonRef.current?.clearDecorations();
+      setSearchResultCount(null);
+    }
+  }, []);
+
+  // Handle search keyboard shortcuts
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        findPrevious();
+      } else {
+        findNext();
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearch();
+    }
+  }, [findNext, findPrevious, closeSearch]);
+
+  // Global keyboard shortcut for opening search (Cmd/Ctrl + F)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        setIsSearchOpen(true);
+        // Focus input after state update
+        setTimeout(() => searchInputRef.current?.focus(), 0);
+      }
+    };
+
+    const container = terminalRef.current;
+    if (container) {
+      container.addEventListener("keydown", handleKeyDown);
+      return () => container.removeEventListener("keydown", handleKeyDown);
+    }
+  }, []);
+
+  // Focus search input when opened
+  useEffect(() => {
+    if (isSearchOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+      searchInputRef.current.select();
+    }
+  }, [isSearchOpen]);
 
   // Upload image to server and return file path
   const uploadImage = useCallback(async (file: File): Promise<string> => {
@@ -415,6 +500,47 @@ export function Terminal({
       onDrop={handleDrop}
       onPaste={handlePaste}
     >
+      {/* Search overlay */}
+      {isSearchOpen && (
+        <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-lg px-2 py-1.5 shadow-lg">
+          <Search className="w-3.5 h-3.5 text-slate-400" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={handleSearchChange}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search..."
+            className="w-48 bg-transparent border-none outline-none text-sm text-white placeholder:text-slate-500"
+          />
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={findPrevious}
+              disabled={!searchQuery}
+              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Previous (Shift+Enter)"
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={findNext}
+              disabled={!searchQuery}
+              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Next (Enter)"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={closeSearch}
+              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
+              title="Close (Esc)"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {isDragging && (
         <div className="absolute inset-0 bg-blue-500/10 flex items-center justify-center pointer-events-none z-10">
           <div className="bg-background/90 px-4 py-2 rounded-lg border border-blue-500/50 text-sm">
