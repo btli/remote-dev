@@ -188,6 +188,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     []
   );
 
+  const handleFolderNewSession = useCallback(
+    async (folderId: string) => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      const name = `Terminal ${sessionCounter}`;
+      setSessionCounter((c) => c + 1);
+      const newSession = await createSession({
+        name,
+        projectPath: prefs.defaultWorkingDirectory,
+      });
+      if (newSession) {
+        await moveSessionToFolder(newSession.id, folderId);
+        setActiveFolder(folderId);
+      }
+    },
+    [createSession, sessionCounter, resolvePreferencesForFolder, moveSessionToFolder, setActiveFolder]
+  );
+
   const handleFolderClick = useCallback(
     (folderId: string) => {
       setActiveFolder(folderId);
@@ -269,6 +286,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderToggle={handleToggleFolder}
             onFolderClick={handleFolderClick}
             onFolderSettings={handleFolderSettings}
+            onFolderNewSession={handleFolderNewSession}
           />
         </div>
       </div>
