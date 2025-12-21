@@ -6,6 +6,7 @@ import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { TemplateProvider } from "@/contexts/TemplateContext";
+import { RecordingProvider } from "@/contexts/RecordingContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
 import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
@@ -59,6 +60,7 @@ export default async function Home() {
     <PreferencesProvider>
       <FolderProvider>
         <TemplateProvider>
+          <RecordingProvider>
           <SessionProvider initialSessions={initialSessions}>
           <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
             {/* Header with glassmorphism */}
@@ -110,6 +112,7 @@ export default async function Home() {
             <SessionManager isGitHubConnected={isGitHubConnected} />
           </div>
         </SessionProvider>
+          </RecordingProvider>
         </TemplateProvider>
       </FolderProvider>
     </PreferencesProvider>

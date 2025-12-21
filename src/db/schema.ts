@@ -230,6 +230,35 @@ export const sessionTemplates = sqliteTable(
   ]
 );
 
+// Session recordings for playback
+export const sessionRecordings = sqliteTable(
+  "session_recording",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id"), // Optional: link to original session
+    name: text("name").notNull(),
+    description: text("description"),
+    // Recording metadata
+    duration: integer("duration").notNull(), // Duration in milliseconds
+    terminalCols: integer("terminal_cols").notNull().default(80),
+    terminalRows: integer("terminal_rows").notNull().default(24),
+    // Recording data as JSON: { events: [{ t: number, d: string }] }
+    data: text("data").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("session_recording_user_idx").on(table.userId),
+    index("session_recording_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
 // Terminal sessions with tmux persistence
 export const terminalSessions = sqliteTable(
   "terminal_session",

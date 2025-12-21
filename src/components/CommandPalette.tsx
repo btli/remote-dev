@@ -24,6 +24,9 @@ import {
   Maximize2,
   FileBox,
   Keyboard,
+  Video,
+  Circle,
+  Square,
 } from "lucide-react";
 
 interface CommandAction {
@@ -49,9 +52,13 @@ interface CommandPaletteProps {
   onExitSplitMode?: () => void;
   onSaveAsTemplate?: () => void;
   onShowKeyboardShortcuts?: () => void;
+  onStartRecording?: () => void;
+  onStopRecording?: () => void;
+  onViewRecordings?: () => void;
   activeSessionId?: string | null;
   activeSessionStatus?: string;
   isSplitMode?: boolean;
+  isRecording?: boolean;
 }
 
 export function CommandPalette({
@@ -68,9 +75,13 @@ export function CommandPalette({
   onExitSplitMode,
   onSaveAsTemplate,
   onShowKeyboardShortcuts,
+  onStartRecording,
+  onStopRecording,
+  onViewRecordings,
   activeSessionId,
   activeSessionStatus,
   isSplitMode,
+  isRecording,
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
 
@@ -197,6 +208,40 @@ export function CommandPalette({
             icon: <Maximize2 className="w-4 h-4" />,
             group: "Layout",
             onSelect: () => runAction(onExitSplitMode),
+          },
+        ]
+      : []),
+    // Recording actions
+    ...(activeSessionId && onStartRecording && !isRecording
+      ? [
+          {
+            id: "start-recording",
+            label: "Start Recording",
+            icon: <Circle className="w-4 h-4 text-red-500" />,
+            group: "Recording",
+            onSelect: () => runAction(onStartRecording),
+          },
+        ]
+      : []),
+    ...(isRecording && onStopRecording
+      ? [
+          {
+            id: "stop-recording",
+            label: "Stop Recording",
+            icon: <Square className="w-4 h-4 text-red-500" />,
+            group: "Recording",
+            onSelect: () => runAction(onStopRecording),
+          },
+        ]
+      : []),
+    ...(onViewRecordings
+      ? [
+          {
+            id: "view-recordings",
+            label: "View Recordings",
+            icon: <Video className="w-4 h-4" />,
+            group: "Recording",
+            onSelect: () => runAction(onViewRecordings),
           },
         ]
       : []),

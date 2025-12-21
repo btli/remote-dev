@@ -9,26 +9,34 @@ interface TerminalWithKeyboardProps {
   sessionId: string;
   tmuxSessionName: string;
   sessionName?: string;
+  projectPath?: string | null;
   wsUrl?: string;
   theme?: string;
   fontSize?: number;
   fontFamily?: string;
   notificationsEnabled?: boolean;
+  isRecording?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onSessionExit?: (exitCode: number) => void;
+  onOutput?: (data: string) => void;
+  onDimensionsChange?: (cols: number, rows: number) => void;
 }
 
 export function TerminalWithKeyboard({
   sessionId,
   tmuxSessionName,
   sessionName,
+  projectPath,
   wsUrl = "ws://localhost:3001",
   theme,
   fontSize,
   fontFamily,
   notificationsEnabled,
+  isRecording,
   onStatusChange,
   onSessionExit,
+  onOutput,
+  onDimensionsChange,
 }: TerminalWithKeyboardProps) {
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -70,14 +78,18 @@ export function TerminalWithKeyboard({
           sessionId={sessionId}
           tmuxSessionName={tmuxSessionName}
           sessionName={sessionName}
+          projectPath={projectPath}
           wsUrl={wsUrl}
           theme={theme}
           fontSize={fontSize}
           fontFamily={fontFamily}
           notificationsEnabled={notificationsEnabled}
+          isRecording={isRecording}
           onStatusChange={onStatusChange}
           onWebSocketReady={handleWebSocketReady}
           onSessionExit={onSessionExit}
+          onOutput={onOutput}
+          onDimensionsChange={onDimensionsChange}
         />
       </div>
       <MobileKeyboard onKeyPress={handleMobileKeyPress} />
