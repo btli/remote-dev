@@ -39,6 +39,7 @@ const TerminalWithKeyboard = dynamic(
 
 interface SessionManagerProps {
   isGitHubConnected?: boolean;
+  userEmail?: string;
 }
 
 export function SessionManager({ isGitHubConnected = false }: SessionManagerProps) {
