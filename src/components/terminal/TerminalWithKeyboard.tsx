@@ -8,10 +8,12 @@ import type { ConnectionStatus } from "@/types/terminal";
 interface TerminalWithKeyboardProps {
   sessionId: string;
   tmuxSessionName: string;
+  sessionName?: string;
   wsUrl?: string;
   theme?: string;
   fontSize?: number;
   fontFamily?: string;
+  notificationsEnabled?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onSessionExit?: (exitCode: number) => void;
 }
@@ -19,10 +21,12 @@ interface TerminalWithKeyboardProps {
 export function TerminalWithKeyboard({
   sessionId,
   tmuxSessionName,
+  sessionName,
   wsUrl = "ws://localhost:3001",
   theme,
   fontSize,
   fontFamily,
+  notificationsEnabled,
   onStatusChange,
   onSessionExit,
 }: TerminalWithKeyboardProps) {
@@ -65,10 +69,12 @@ export function TerminalWithKeyboard({
         <Terminal
           sessionId={sessionId}
           tmuxSessionName={tmuxSessionName}
+          sessionName={sessionName}
           wsUrl={wsUrl}
           theme={theme}
           fontSize={fontSize}
           fontFamily={fontFamily}
+          notificationsEnabled={notificationsEnabled}
           onStatusChange={onStatusChange}
           onWebSocketReady={handleWebSocketReady}
           onSessionExit={onSessionExit}
