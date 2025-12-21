@@ -51,6 +51,7 @@ interface SidebarProps {
   onFolderToggle: (folderId: string) => void;
   onFolderClick: (folderId: string) => void;
   onFolderSettings: (folderId: string, folderName: string) => void;
+  onFolderNewSession: (folderId: string) => void;
 }
 
 export function Sidebar({
@@ -72,6 +73,7 @@ export function Sidebar({
   onFolderToggle,
   onFolderClick,
   onFolderSettings,
+  onFolderNewSession,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -527,6 +529,16 @@ export function Sidebar({
                           </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-36">
+                          <DropdownMenuItem
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              onFolderNewSession(folder.id);
+                            }}
+                          >
+                            <Terminal className="w-3 h-3 mr-2" />
+                            New Session
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={(e: React.MouseEvent) => {
                               e.stopPropagation();
