@@ -725,7 +725,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     Quick Terminal
                   </Button>
                   <Button
-                    onClick={() => setIsWizardOpen(true)}
+                    onClick={handleOpenWizard}
                     variant="outline"
                     className="border-white/10 text-slate-300 hover:bg-white/5"
                   >
