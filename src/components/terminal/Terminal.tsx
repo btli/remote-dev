@@ -147,6 +147,57 @@ export function Terminal({
       };
       initialFit();
 
+      // Custom keyboard handler for macOS shortcuts
+      // xterm.js doesn't translate Cmd/Option key combinations by default
+      terminal.attachCustomKeyEventHandler((event) => {
+        if (event.type !== "keydown") return true;
+
+        // Cmd+Enter: Let this bubble up to app-level handler (creates new terminal)
+        if (event.metaKey && event.key === "Enter") {
+          return false;
+        }
+
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          return true;
+        }
+
+        // Cmd+key shortcuts (macOS)
+        if (event.metaKey && !event.altKey) {
+          switch (event.key) {
+            case "Backspace": // Delete line (kill line)
+              ws.send(JSON.stringify({ type: "input", data: "\x15" })); // Ctrl+U
+              return false;
+            case "Delete": // Kill to end of line (fn+backspace on Mac)
+              ws.send(JSON.stringify({ type: "input", data: "\x0b" })); // Ctrl+K
+              return false;
+            case "ArrowLeft": // Jump to line start
+              ws.send(JSON.stringify({ type: "input", data: "\x01" })); // Ctrl+A
+              return false;
+            case "ArrowRight": // Jump to line end
+              ws.send(JSON.stringify({ type: "input", data: "\x05" })); // Ctrl+E
+              return false;
+          }
+        }
+
+        // Option+key shortcuts (macOS)
+        if (event.altKey && !event.metaKey) {
+          switch (event.key) {
+            case "Backspace": // Delete word backward
+              ws.send(JSON.stringify({ type: "input", data: "\x17" })); // Ctrl+W
+              return false;
+            case "ArrowLeft": // Move word backward
+              ws.send(JSON.stringify({ type: "input", data: "\x1bb" })); // ESC+b
+              return false;
+            case "ArrowRight": // Move word forward
+              ws.send(JSON.stringify({ type: "input", data: "\x1bf" })); // ESC+f
+              return false;
+          }
+        }
+
+        return true; // Let xterm handle other key combinations
+      });
+
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
       imageAddonRef.current = imageAddon;
