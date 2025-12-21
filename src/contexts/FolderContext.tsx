@@ -11,6 +11,7 @@ import {
 
 export interface SessionFolder {
   id: string;
+  parentId: string | null;
   name: string;
   collapsed: boolean;
 }
@@ -19,11 +20,12 @@ interface FolderContextValue {
   folders: SessionFolder[];
   sessionFolders: Record<string, string>; // sessionId -> folderId
   loading: boolean;
-  createFolder: (name: string) => Promise<SessionFolder>;
+  createFolder: (name: string, parentId?: string | null) => Promise<SessionFolder>;
   updateFolder: (folderId: string, updates: Partial<{ name: string; collapsed: boolean }>) => Promise<void>;
   deleteFolder: (folderId: string) => Promise<void>;
   toggleFolder: (folderId: string) => Promise<void>;
   moveSessionToFolder: (sessionId: string, folderId: string | null) => Promise<void>;
+  moveFolderToParent: (folderId: string, parentId: string | null) => Promise<void>;
   refreshFolders: () => Promise<void>;
 }
 
@@ -45,8 +47,9 @@ export function FolderProvider({ children }: FolderProviderProps) {
       const data = await response.json();
 
       setFolders(
-        data.folders.map((f: { id: string; name: string; collapsed: boolean }) => ({
+        data.folders.map((f: { id: string; parentId: string | null; name: string; collapsed: boolean }) => ({
           id: f.id,
+          parentId: f.parentId ?? null,
           name: f.name,
           collapsed: f.collapsed ?? false,
         }))
@@ -65,11 +68,11 @@ export function FolderProvider({ children }: FolderProviderProps) {
   }, [refreshFolders]);
 
   const createFolder = useCallback(
-    async (name: string): Promise<SessionFolder> => {
+    async (name: string, parentId?: string | null): Promise<SessionFolder> => {
       const response = await fetch("/api/folders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, parentId: parentId ?? null }),
       });
 
       if (!response.ok) {
@@ -79,6 +82,7 @@ export function FolderProvider({ children }: FolderProviderProps) {
       const folder = await response.json();
       const newFolder: SessionFolder = {
         id: folder.id,
+        parentId: folder.parentId ?? null,
         name: folder.name,
         collapsed: folder.collapsed ?? false,
       };
@@ -188,6 +192,33 @@ export function FolderProvider({ children }: FolderProviderProps) {
     [refreshFolders]
   );
 
+  const moveFolderToParent = useCallback(
+    async (folderId: string, parentId: string | null) => {
+      // Optimistic update
+      setFolders((prev) =>
+        prev.map((f) => (f.id === folderId ? { ...f, parentId } : f))
+      );
+
+      try {
+        const response = await fetch(`/api/folders/${folderId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parentId }),
+        });
+
+        if (!response.ok) {
+          await refreshFolders();
+          const data = await response.json();
+          throw new Error(data.error || "Failed to move folder");
+        }
+      } catch (error) {
+        console.error("Error moving folder:", error);
+        throw error;
+      }
+    },
+    [refreshFolders]
+  );
+
   return (
     <FolderContext.Provider
       value={{
@@ -199,6 +230,7 @@ export function FolderProvider({ children }: FolderProviderProps) {
         deleteFolder,
         toggleFolder,
         moveSessionToFolder,
+        moveFolderToParent,
         refreshFolders,
       }}
     >

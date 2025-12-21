@@ -129,7 +129,7 @@ export const githubRepositories = sqliteTable(
   ]
 );
 
-// Session folders for organizing terminal sessions
+// Session folders for organizing terminal sessions (supports nesting)
 export const sessionFolders = sqliteTable(
   "session_folder",
   {
@@ -139,6 +139,7 @@ export const sessionFolders = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    parentId: text("parent_id"),
     name: text("name").notNull(),
     collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
@@ -149,7 +150,10 @@ export const sessionFolders = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (table) => [index("session_folder_user_idx").on(table.userId)]
+  (table) => [
+    index("session_folder_user_idx").on(table.userId),
+    index("session_folder_parent_idx").on(table.parentId),
+  ]
 );
 
 // Folder-level preference overrides
