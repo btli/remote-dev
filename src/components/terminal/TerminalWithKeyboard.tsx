@@ -9,6 +9,9 @@ interface TerminalWithKeyboardProps {
   sessionId: string;
   tmuxSessionName: string;
   wsUrl?: string;
+  theme?: string;
+  fontSize?: number;
+  fontFamily?: string;
   onStatusChange?: (status: ConnectionStatus) => void;
   onSessionExit?: (exitCode: number) => void;
 }
@@ -17,6 +20,9 @@ export function TerminalWithKeyboard({
   sessionId,
   tmuxSessionName,
   wsUrl = "ws://localhost:3001",
+  theme,
+  fontSize,
+  fontFamily,
   onStatusChange,
   onSessionExit,
 }: TerminalWithKeyboardProps) {
@@ -60,6 +66,9 @@ export function TerminalWithKeyboard({
           sessionId={sessionId}
           tmuxSessionName={tmuxSessionName}
           wsUrl={wsUrl}
+          theme={theme}
+          fontSize={fontSize}
+          fontFamily={fontFamily}
           onStatusChange={onStatusChange}
           onWebSocketReady={handleWebSocketReady}
           onSessionExit={onSessionExit}

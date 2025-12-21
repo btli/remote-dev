@@ -9,12 +9,6 @@ import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
 import { Button } from "@/components/ui/button";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -55,6 +49,7 @@ interface SidebarProps {
   onFolderRename: (folderId: string, newName: string) => void;
   onFolderDelete: (folderId: string) => void;
   onFolderToggle: (folderId: string) => void;
+  onFolderClick: (folderId: string) => void;
   onFolderSettings: (folderId: string, folderName: string) => void;
 }
 
@@ -75,6 +70,7 @@ export function Sidebar({
   onFolderRename,
   onFolderDelete,
   onFolderToggle,
+  onFolderClick,
   onFolderSettings,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -255,15 +251,15 @@ export function Sidebar({
                 />
               ) : (
                 <span
-                  onClick={(e) => {
+                  onDoubleClick={(e) => {
                     e.stopPropagation();
                     handleStartEdit(session.id, "session", session.name, e);
                   }}
                   className={cn(
-                    "block truncate text-xs cursor-text hover:underline hover:decoration-dotted",
+                    "block truncate text-xs",
                     isActive ? "text-white" : "text-slate-400 group-hover:text-white"
                   )}
-                  title="Click to rename"
+                  title="Double-click to rename"
                 >
                   {session.name}
                 </span>
@@ -345,8 +341,7 @@ export function Sidebar({
   };
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <div className="w-52 h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5">
+    <div className="w-52 h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
           <div className="flex items-center gap-2">
@@ -354,45 +349,30 @@ export function Sidebar({
             <span className="text-xs font-medium text-white">Sessions</span>
           </div>
           <div className="flex items-center gap-0.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
+            <Button
+              onClick={() => setCreatingFolder(true)}
+              variant="ghost"
+              size="icon-sm"
+              className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+            >
+              <Folder className="w-3.5 h-3.5" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <Button
-                  onClick={() => setCreatingFolder(true)}
+                  onClick={(e) => {
+                    // If not opening dropdown, do quick session
+                    if (!e.defaultPrevented) {
+                      onQuickNewSession();
+                    }
+                  }}
                   variant="ghost"
                   size="icon-sm"
                   className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
                 >
-                  <Folder className="w-3.5 h-3.5" />
+                  <Plus className="w-3.5 h-3.5" />
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">New Folder</TooltipContent>
-            </Tooltip>
-            <DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      onClick={(e) => {
-                        // If not opening dropdown, do quick session
-                        if (!e.defaultPrevented) {
-                          onQuickNewSession();
-                        }
-                      }}
-                      variant="ghost"
-                      size="icon-sm"
-                      className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <div className="flex items-center gap-2">
-                    <span>New Session</span>
-                    <kbd className="px-1 py-0.5 text-[10px] bg-slate-700 rounded">⌘↵</kbd>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
+              </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-40">
                 <DropdownMenuItem onClick={onQuickNewSession}>
                   <Terminal className="w-3.5 h-3.5 mr-2" />
@@ -484,20 +464,27 @@ export function Sidebar({
                         isDragOver && "bg-violet-500/20 border border-violet-500/30",
                         isActive && "bg-violet-500/10"
                       )}
-                      onClick={() => onFolderToggle(folder.id)}
+                      onClick={() => {
+                        onFolderClick(folder.id);
+                        onFolderToggle(folder.id);
+                      }}
                     >
                       {folder.collapsed ? (
                         <Folder
                           className={cn(
-                            "w-3.5 h-3.5 text-violet-400 shrink-0",
-                            isActive && "fill-violet-400/40"
+                            "w-3.5 h-3.5 shrink-0",
+                            isActive
+                              ? "text-violet-300 fill-violet-400"
+                              : "text-violet-400"
                           )}
                         />
                       ) : (
                         <FolderOpen
                           className={cn(
-                            "w-3.5 h-3.5 text-violet-400 shrink-0",
-                            isActive && "fill-violet-400/40"
+                            "w-3.5 h-3.5 shrink-0",
+                            isActive
+                              ? "text-violet-300 fill-violet-400"
+                              : "text-violet-400"
                           )}
                         />
                       )}
@@ -514,7 +501,14 @@ export function Sidebar({
                           className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
                         />
                       ) : (
-                        <span className="flex-1 text-xs text-slate-300 truncate">
+                        <span
+                          className="flex-1 text-xs text-slate-300 truncate"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            handleStartEdit(folder.id, "folder", folder.name, e);
+                          }}
+                          title="Double-click to rename"
+                        >
                           {folder.name}
                         </span>
                       )}
@@ -581,14 +575,13 @@ export function Sidebar({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-3 py-1.5 border-t border-white/5">
-          <div className="flex items-center justify-between text-[10px] text-slate-500">
-            <span>New session</span>
-            <kbd className="px-1 py-0.5 bg-slate-800 rounded">⌘↵</kbd>
-          </div>
+      {/* Footer */}
+      <div className="px-3 py-1.5 border-t border-white/5">
+        <div className="flex items-center justify-between text-[10px] text-slate-500">
+          <span>New session</span>
+          <kbd className="px-1 py-0.5 bg-slate-800 rounded">⌘↵</kbd>
         </div>
       </div>
-    </TooltipProvider>
+    </div>
   );
 }

@@ -54,60 +54,60 @@ export default async function Home() {
   }));
 
   return (
-    <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-      {/* Header with glassmorphism */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
-        {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-            <span className="text-white font-bold text-sm">RD</span>
-          </div>
-          <h1 className="text-lg font-semibold text-white">Remote Dev</h1>
-        </div>
-
-        {/* User info and actions */}
-        <div className="flex items-center gap-4">
-          {/* GitHub connection status */}
-          {isGitHubConnected ? (
-            <div className="flex items-center gap-2 text-sm">
-              <Github className="w-4 h-4 text-green-400" />
-              <span className="text-slate-400">GitHub Connected</span>
-            </div>
-          ) : (
-            <GitHubConnectButton />
-          )}
-
-          {/* User settings */}
-          <HeaderUserMenu email={session.user.email || ""} />
-
-          {/* Sign out */}
-          <form
-            action={async () => {
-              "use server";
-              await signOut();
-            }}
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              type="submit"
-              className="text-slate-400 hover:text-white"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign out
-            </Button>
-          </form>
-        </div>
-      </header>
-
-      {/* Main content */}
-      <PreferencesProvider>
+    <PreferencesProvider>
+      <FolderProvider>
         <SessionProvider initialSessions={initialSessions}>
-          <FolderProvider>
+          <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+            {/* Header with glassmorphism */}
+            <header className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
+              {/* Logo */}
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                  <span className="text-white font-bold text-sm">RD</span>
+                </div>
+                <h1 className="text-lg font-semibold text-white">Remote Dev</h1>
+              </div>
+
+              {/* User info and actions */}
+              <div className="flex items-center gap-4">
+                {/* GitHub connection status */}
+                {isGitHubConnected ? (
+                  <div className="flex items-center gap-2 text-sm">
+                    <Github className="w-4 h-4 text-green-400" />
+                    <span className="text-slate-400">GitHub Connected</span>
+                  </div>
+                ) : (
+                  <GitHubConnectButton />
+                )}
+
+                {/* User settings */}
+                <HeaderUserMenu email={session.user.email || ""} />
+
+                {/* Sign out */}
+                <form
+                  action={async () => {
+                    "use server";
+                    await signOut();
+                  }}
+                >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="submit"
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Sign out
+                  </Button>
+                </form>
+              </div>
+            </header>
+
+            {/* Main content */}
             <SessionManager isGitHubConnected={isGitHubConnected} />
-          </FolderProvider>
+          </div>
         </SessionProvider>
-      </PreferencesProvider>
-    </div>
+      </FolderProvider>
+    </PreferencesProvider>
   );
 }

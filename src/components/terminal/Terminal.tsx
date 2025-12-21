@@ -4,45 +4,27 @@ import { useEffect, useRef, useCallback } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ConnectionStatus } from "@/types/terminal";
+import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
 
 interface TerminalProps {
   sessionId: string;
   tmuxSessionName: string;
   wsUrl?: string;
+  theme?: string;
+  fontSize?: number;
+  fontFamily?: string;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
 }
 
-// Tokyo Night theme colors
-const TOKYO_NIGHT_THEME = {
-  background: "#1a1b26",
-  foreground: "#a9b1d6",
-  cursor: "#c0caf5",
-  cursorAccent: "#1a1b26",
-  selectionBackground: "#33467c",
-  black: "#32344a",
-  red: "#f7768e",
-  green: "#9ece6a",
-  yellow: "#e0af68",
-  blue: "#7aa2f7",
-  magenta: "#ad8ee6",
-  cyan: "#449dab",
-  white: "#787c99",
-  brightBlack: "#444b6a",
-  brightRed: "#ff7a93",
-  brightGreen: "#b9f27c",
-  brightYellow: "#ff9e64",
-  brightBlue: "#7da6ff",
-  brightMagenta: "#bb9af7",
-  brightCyan: "#0db9d7",
-  brightWhite: "#acb0d0",
-};
-
 export function Terminal({
   sessionId,
   tmuxSessionName,
   wsUrl = "ws://localhost:3001",
+  theme = "tokyo-night",
+  fontSize = 14,
+  fontFamily = "'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
@@ -89,9 +71,9 @@ export function Terminal({
 
       terminal = new XTerm({
         cursorBlink: true,
-        fontSize: 14,
-        fontFamily: '"FiraCode Nerd Font", "Fira Code", Menlo, Monaco, "Courier New", monospace',
-        theme: TOKYO_NIGHT_THEME,
+        fontSize,
+        fontFamily,
+        theme: getTerminalTheme(theme),
         allowProposedApi: true,
       });
 
@@ -248,10 +230,24 @@ export function Terminal({
     };
   }, [sessionId, tmuxSessionName, wsUrl, updateStatus]);
 
+  // Update terminal options when preferences change
+  useEffect(() => {
+    const terminal = xtermRef.current;
+    if (!terminal) return;
+
+    terminal.options.theme = getTerminalTheme(theme);
+    terminal.options.fontSize = fontSize;
+    terminal.options.fontFamily = fontFamily;
+
+    // Refit after font changes
+    fitAddonRef.current?.fit();
+  }, [theme, fontSize, fontFamily]);
+
   return (
     <div
       ref={terminalRef}
-      className="h-full w-full bg-[#1a1b26] rounded-lg overflow-hidden"
+      className="h-full w-full rounded-lg overflow-hidden"
+      style={{ backgroundColor: getThemeBackground(theme) }}
     />
   );
 }
