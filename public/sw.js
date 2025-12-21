@@ -78,13 +78,17 @@ self.addEventListener('fetch', (event) => {
       caches.match(request).then((cached) => {
         if (cached) {
           // Return cached, but update in background
-          fetch(request).then((response) => {
-            if (response.ok) {
-              caches.open(CACHE_NAME).then((cache) => {
-                cache.put(request, response);
-              });
-            }
-          });
+          fetch(request)
+            .then((response) => {
+              if (response.ok) {
+                caches.open(CACHE_NAME).then((cache) => {
+                  cache.put(request, response);
+                });
+              }
+            })
+            .catch(() => {
+              // Network error during background update, ignore silently
+            });
           return cached;
         }
         // Not cached, fetch and cache

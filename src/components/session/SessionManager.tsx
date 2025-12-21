@@ -293,9 +293,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         const repoSessions = sessions.filter(
           (s) => s.githubRepoId === session.githubRepoId
         );
-        await Promise.all(
+        // Use allSettled to handle partial failures gracefully
+        const results = await Promise.allSettled(
           repoSessions.map((s) => moveSessionToFolder(s.id, folderId))
         );
+        const failures = results.filter((r) => r.status === "rejected");
+        if (failures.length > 0) {
+          console.error("Some sessions failed to move:", failures);
+        }
       } else {
         // No repo association, just move this session
         await moveSessionToFolder(sessionId, folderId);
