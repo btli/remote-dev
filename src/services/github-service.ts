@@ -184,7 +184,9 @@ export function getRepoLocalPath(repoFullName: string): string {
 }
 
 /**
- * Clone a repository to local disk
+ * Clone a repository to local disk.
+ * SECURITY: Uses GIT_ASKPASS to provide credentials securely without exposing
+ * the token in process arguments or error messages.
  */
 export async function cloneRepository(
   accessToken: string,
@@ -195,9 +197,18 @@ export async function cloneRepository(
 
   // Check if already cloned
   if (existsSync(join(targetPath, ".git"))) {
-    // Repository exists, do a fetch instead
-    await execFile("git", ["-C", targetPath, "fetch", "--all"]);
-    return { success: true, localPath: targetPath };
+    // Repository exists, do a fetch instead using credential helper
+    try {
+      await execFileWithToken(accessToken, "git", ["-C", targetPath, "fetch", "--all"]);
+      return { success: true, localPath: targetPath };
+    } catch (error) {
+      const err = error as Error & { stderr?: string };
+      return {
+        success: false,
+        localPath: targetPath,
+        error: sanitizeGitError(err.stderr || err.message),
+      };
+    }
   }
 
   // Create parent directory
@@ -206,20 +217,70 @@ export async function cloneRepository(
     mkdirSync(parentDir, { recursive: true });
   }
 
-  // Clone with authenticated URL
-  const cloneUrl = `https://${accessToken}@github.com/${repoFullName}.git`;
+  // SECURITY: Clone using HTTPS URL without embedded token
+  // Token is provided via GIT_ASKPASS environment variable
+  const cloneUrl = `https://github.com/${repoFullName}.git`;
 
   try {
-    await execFile("git", ["clone", cloneUrl, targetPath]);
+    await execFileWithToken(accessToken, "git", ["clone", cloneUrl, targetPath]);
     return { success: true, localPath: targetPath };
   } catch (error) {
     const err = error as Error & { stderr?: string };
     return {
       success: false,
       localPath: targetPath,
-      error: err.stderr || err.message,
+      error: sanitizeGitError(err.stderr || err.message),
     };
   }
+}
+
+/**
+ * Execute a git command with token authentication via GIT_ASKPASS.
+ * This prevents the token from appearing in process arguments.
+ */
+async function execFileWithToken(
+  accessToken: string,
+  command: string,
+  args: string[]
+): Promise<{ stdout: string; stderr: string }> {
+  const { writeFileSync, unlinkSync, chmodSync } = await import("fs");
+  const { tmpdir } = await import("os");
+  const { join: pathJoin } = await import("path");
+
+  // Create a temporary script that echoes the token
+  const scriptPath = pathJoin(tmpdir(), `git-askpass-${Date.now()}.sh`);
+  writeFileSync(scriptPath, `#!/bin/sh\necho "${accessToken}"\n`);
+  chmodSync(scriptPath, 0o700);
+
+  try {
+    const result = await execFile(command, args, {
+      env: {
+        ...process.env,
+        GIT_ASKPASS: scriptPath,
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+    return result;
+  } finally {
+    // Clean up the temporary script
+    try {
+      unlinkSync(scriptPath);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+/**
+ * Sanitize git error messages to remove any potential token leakage.
+ */
+function sanitizeGitError(message: string): string {
+  // Remove any URLs that might contain tokens
+  return message
+    .replace(/https:\/\/[^@]*@github\.com/g, "https://github.com")
+    .replace(/x-access-token:[^@]*@/g, "")
+    .replace(/ghp_[a-zA-Z0-9]+/g, "[REDACTED]")
+    .replace(/gho_[a-zA-Z0-9]+/g, "[REDACTED]");
 }
 
 /**

@@ -25,7 +25,8 @@ export class SessionServiceError extends Error {
 }
 
 /**
- * Create a new terminal session
+ * Create a new terminal session.
+ * SECURITY: Wraps tmux creation with proper cleanup on DB failure.
  */
 export async function createSession(
   userId: string,
@@ -65,27 +66,35 @@ export async function createSession(
     throw error;
   }
 
-  // Insert the database record
-  const now = new Date();
-  const [session] = await db
-    .insert(terminalSessions)
-    .values({
-      id: sessionId,
-      userId,
-      name: input.name,
-      tmuxSessionName,
-      projectPath: input.projectPath ?? null,
-      githubRepoId: input.githubRepoId ?? null,
-      worktreeBranch: input.worktreeBranch ?? null,
-      status: "active",
-      tabOrder: nextTabOrder,
-      lastActivityAt: now,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
+  // Insert the database record - clean up tmux session if this fails
+  try {
+    const now = new Date();
+    const [session] = await db
+      .insert(terminalSessions)
+      .values({
+        id: sessionId,
+        userId,
+        name: input.name,
+        tmuxSessionName,
+        projectPath: input.projectPath ?? null,
+        githubRepoId: input.githubRepoId ?? null,
+        worktreeBranch: input.worktreeBranch ?? null,
+        status: "active",
+        tabOrder: nextTabOrder,
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
 
-  return mapDbSessionToSession(session);
+    return mapDbSessionToSession(session);
+  } catch (error) {
+    // SECURITY: Clean up orphaned tmux session if DB insert fails
+    await TmuxService.killSession(tmuxSessionName).catch(() => {
+      console.error(`Failed to clean up orphaned tmux session: ${tmuxSessionName}`);
+    });
+    throw error;
+  }
 }
 
 /**
@@ -221,6 +230,7 @@ export async function touchSession(
 
 /**
  * Suspend a session (detach tmux, keep alive)
+ * SECURITY: Includes userId in WHERE clause to prevent TOCTOU attacks
  */
 export async function suspendSession(
   sessionId: string,
@@ -241,11 +251,17 @@ export async function suspendSession(
       status: "suspended",
       updatedAt: new Date(),
     })
-    .where(eq(terminalSessions.id, sessionId));
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      )
+    );
 }
 
 /**
  * Resume a suspended session
+ * SECURITY: Includes userId in WHERE clause to prevent TOCTOU attacks
  */
 export async function resumeSession(
   sessionId: string,
@@ -276,11 +292,17 @@ export async function resumeSession(
       status: "active",
       updatedAt: new Date(),
     })
-    .where(eq(terminalSessions.id, sessionId));
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      )
+    );
 }
 
 /**
  * Close a session (kill tmux, mark as closed)
+ * SECURITY: Includes userId in WHERE clause to prevent TOCTOU attacks
  */
 export async function closeSession(
   sessionId: string,
@@ -305,7 +327,12 @@ export async function closeSession(
       status: "closed",
       updatedAt: new Date(),
     })
-    .where(eq(terminalSessions.id, sessionId));
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      )
+    );
 }
 
 /**

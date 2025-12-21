@@ -2,6 +2,18 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 
+/**
+ * API routes that don't require authentication.
+ * All other API routes require a valid session token.
+ */
+const PUBLIC_API_ROUTES = [
+  "/api/auth/", // NextAuth routes (login, callback, etc.)
+];
+
+function isPublicApiRoute(pathname: string): boolean {
+  return PUBLIC_API_ROUTES.some((route) => pathname.startsWith(route));
+}
+
 export async function middleware(request: NextRequest) {
   const token = await getToken({
     req: request,
@@ -12,7 +24,20 @@ export async function middleware(request: NextRequest) {
   const isLoginPage = request.nextUrl.pathname === "/login";
   const isApiRoute = request.nextUrl.pathname.startsWith("/api");
 
+  // SECURITY: Protect API routes (except public ones like auth)
   if (isApiRoute) {
+    if (isPublicApiRoute(request.nextUrl.pathname)) {
+      return NextResponse.next();
+    }
+
+    // Require authentication for all other API routes
+    if (!isLoggedIn) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
     return NextResponse.next();
   }
 

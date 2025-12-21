@@ -180,6 +180,9 @@ export function SessionProvider({
 
   const closeSession = useCallback(
     async (sessionId: string) => {
+      // FIX: Store previous active session to restore on error
+      const previousActiveSessionId = state.activeSessionId;
+
       // Optimistic update
       dispatch({ type: "DELETE", sessionId });
 
@@ -189,8 +192,12 @@ export function SessionProvider({
         });
 
         if (!response.ok) {
-          // Rollback on error - refetch
+          // Rollback on error - refetch and restore active session
           await refreshSessions();
+          // Restore the previous active session if it still exists
+          if (previousActiveSessionId && previousActiveSessionId !== sessionId) {
+            dispatch({ type: "SET_ACTIVE", sessionId: previousActiveSessionId });
+          }
           throw new Error("Failed to close session");
         }
       } catch (error) {
@@ -198,7 +205,7 @@ export function SessionProvider({
         throw error;
       }
     },
-    [refreshSessions]
+    [refreshSessions, state.activeSessionId]
   );
 
   const suspendSession = useCallback(
