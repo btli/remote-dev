@@ -81,7 +81,7 @@ export const userSettings = sqliteTable("user_settings", {
   // Appearance preferences
   theme: text("theme").default("tokyo-night"),
   fontSize: integer("font_size").default(14),
-  fontFamily: text("font_family").default("'JetBrains Mono', monospace"),
+  fontFamily: text("font_family").default("'JetBrainsMono Nerd Font Mono', monospace"),
   // Active project tracking
   activeFolderId: text("active_folder_id"),
   pinnedFolderId: text("pinned_folder_id"),
