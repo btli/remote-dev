@@ -92,6 +92,7 @@ export function Terminal({
 
       terminal.open(terminalRef.current);
       fitAddon.fit();
+      terminal.focus();
 
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
@@ -219,9 +220,15 @@ export function Terminal({
           // Only trigger resize when dimensions actually change from non-zero to new values
           // This catches the transition from hidden (0x0) to visible
           if (width > 0 && height > 0 && (width !== lastWidth || height !== lastHeight)) {
+            // Transition from hidden (0x0) to visible - focus the terminal
+            const wasHidden = lastWidth === 0 && lastHeight === 0;
             lastWidth = width;
             lastHeight = height;
             handleResize();
+            // Focus terminal when it becomes visible (tab switch)
+            if (wasHidden) {
+              terminal.focus();
+            }
           }
         }
       });
@@ -361,6 +368,11 @@ export function Terminal({
     [sendImageToTerminal]
   );
 
+  // Focus terminal on click/mousedown to ensure it maintains focus during selection
+  const handleContainerMouseDown = useCallback(() => {
+    xtermRef.current?.focus();
+  }, []);
+
   return (
     <div
       ref={terminalRef}
@@ -368,6 +380,7 @@ export function Terminal({
         isDragging ? "ring-2 ring-blue-500 ring-opacity-50" : ""
       }`}
       style={{ backgroundColor: getThemeBackground(theme) }}
+      onMouseDown={handleContainerMouseDown}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
