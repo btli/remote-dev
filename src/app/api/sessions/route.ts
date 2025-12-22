@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput } from "@/types/session";
 import { resolve } from "path";
@@ -31,50 +31,46 @@ function validateProjectPath(path: string | undefined): string | undefined {
 /**
  * GET /api/sessions - List user's terminal sessions
  */
-export async function GET(request: Request) {
+export const GET = withAuth(async (request, { userId }) => {
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status") as "active" | "suspended" | "closed" | null;
 
     const sessions = await SessionService.listSessions(
-      session.user.id,
+      userId,
       status ?? undefined
     );
 
     return NextResponse.json({ sessions });
   } catch (error) {
     console.error("Error listing sessions:", error);
-    return NextResponse.json(
-      { error: "Failed to list sessions" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to list sessions", 500);
   }
-}
+});
 
 /**
  * POST /api/sessions - Create a new terminal session
  */
-export async function POST(request: Request) {
+export const POST = withAuth(async (request, { userId }) => {
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await request.json();
+    const result = await parseJsonBody<{
+      name?: string;
+      projectPath?: string;
+      githubRepoId?: string;
+      worktreeBranch?: string;
+      folderId?: string;
+      startupCommand?: string;
+      featureDescription?: string;
+      createWorktree?: boolean;
+      baseBranch?: string;
+    }>(request);
+    if ("error" in result) return result.error;
+    const body = result.data;
 
     // SECURITY: Validate projectPath to prevent path traversal
     const validatedPath = validateProjectPath(body.projectPath);
     if (body.projectPath && !validatedPath) {
-      return NextResponse.json(
-        { error: "Invalid project path" },
-        { status: 400 }
-      );
+      return errorResponse("Invalid project path", 400, "INVALID_PATH");
     }
 
     const input: CreateSessionInput = {
@@ -90,22 +86,16 @@ export async function POST(request: Request) {
       baseBranch: body.baseBranch,
     };
 
-    const newSession = await SessionService.createSession(session.user.id, input);
+    const newSession = await SessionService.createSession(userId, input);
 
     return NextResponse.json(newSession, { status: 201 });
   } catch (error) {
     console.error("Error creating session:", error);
 
     if (error instanceof SessionService.SessionServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
 
-    return NextResponse.json(
-      { error: "Failed to create session" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to create session", 500);
   }
-}
+});

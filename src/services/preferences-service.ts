@@ -15,6 +15,10 @@ import type {
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
+import { PreferencesServiceError } from "@/lib/errors";
+
+// Re-export for backwards compatibility
+export { PreferencesServiceError };
 
 /**
  * System-wide default preferences
@@ -27,19 +31,6 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
   startupCommand: "",
 } as const;
-
-/**
- * Error class for preferences operations
- */
-export class PreferencesServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string
-  ) {
-    super(message);
-    this.name = "PreferencesServiceError";
-  }
-}
 
 // ============================================================================
 // User Settings Operations
