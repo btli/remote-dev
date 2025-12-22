@@ -112,9 +112,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       githubRepoId?: string;
       worktreeBranch?: string;
     }) => {
-      await createSession(data);
+      const newSession = await createSession(data);
+      // Move to active folder if one is selected (same behavior as quick new session)
+      if (activeProject.folderId && newSession) {
+        await moveSessionToFolder(newSession.id, activeProject.folderId);
+      }
     },
-    [createSession]
+    [createSession, activeProject.folderId, moveSessionToFolder]
   );
 
   const handleQuickNewSession = useCallback(async () => {
