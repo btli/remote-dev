@@ -4,7 +4,7 @@
  * Inheritance chain: Default Constants -> User Preferences -> Folder Preferences
  */
 import { db } from "@/db";
-import { userSettings, folderPreferences, sessionFolders } from "@/db/schema";
+import { users, userSettings, folderPreferences, sessionFolders } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type {
   Preferences,
@@ -45,6 +45,19 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
   });
 
   if (!settings) {
+    // Verify user exists before creating settings (prevents FK constraint errors
+    // from stale session cookies referencing deleted users)
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      throw new PreferencesServiceError(
+        "User not found - session may be stale, please re-login",
+        "USER_NOT_FOUND"
+      );
+    }
+
     // Create default settings for new user
     const [newSettings] = await db
       .insert(userSettings)
