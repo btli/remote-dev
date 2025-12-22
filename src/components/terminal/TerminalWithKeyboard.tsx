@@ -1,11 +1,15 @@
 "use client";
 
-import { useRef, useCallback, useState } from "react";
-import { Terminal } from "./Terminal";
+import { useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
+import { Terminal, type TerminalRef } from "./Terminal";
 import { MobileKeyboard } from "./MobileKeyboard";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { TerminalSession } from "@/types/session";
+
+export interface TerminalWithKeyboardRef {
+  focus: () => void;
+}
 
 interface TerminalWithKeyboardProps {
   sessionId: string;
@@ -27,7 +31,7 @@ interface TerminalWithKeyboardProps {
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
 }
 
-export function TerminalWithKeyboard({
+export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
   sessionId,
   tmuxSessionName,
   sessionName,
@@ -45,10 +49,18 @@ export function TerminalWithKeyboard({
   onDimensionsChange,
   onSessionRestart,
   onSessionDelete,
-}: TerminalWithKeyboardProps) {
+}, ref) {
   const wsRef = useRef<WebSocket | null>(null);
+  const terminalRef = useRef<TerminalRef>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [exitCode, setExitCode] = useState(0);
+
+  // Expose focus method to parent components
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      terminalRef.current?.focus();
+    },
+  }), []);
 
   const handleWebSocketReady = useCallback((ws: WebSocket | null) => {
     wsRef.current = ws;
@@ -106,6 +118,7 @@ export function TerminalWithKeyboard({
     <div className="flex flex-col h-full relative">
       <div className="flex-1 min-h-0">
         <Terminal
+          ref={terminalRef}
           sessionId={sessionId}
           tmuxSessionName={tmuxSessionName}
           sessionName={sessionName}
@@ -135,4 +148,4 @@ export function TerminalWithKeyboard({
       )}
     </div>
   );
-}
+});
