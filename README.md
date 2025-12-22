@@ -2,18 +2,24 @@
 
 A modern web-based terminal interface for local development, featuring multi-session support, GitHub integration, and persistent sessions via tmux.
 
+![Version](https://img.shields.io/badge/version-0.1.0-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Next.js](https://img.shields.io/badge/Next.js-15-black)
+![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
 
 ## Features
 
 - **Multiple Terminal Sessions** - Run multiple terminals in browser tabs, switch between them seamlessly
 - **Session Persistence** - Sessions survive browser close via tmux integration
+- **Session Folders** - Organize sessions into hierarchical folders with preference inheritance
+- **Session Templates** - Save and reuse session configurations
+- **Session Recording** - Record and playback terminal sessions
+- **Split Panes** - Split terminals horizontally or vertically
 - **GitHub Integration** - Connect your GitHub account, browse repositories, and clone with one click
 - **Git Worktrees** - Create isolated worktrees for feature branches automatically
-- **Modern UI** - Glassmorphism design with gradient accents and smooth animations
-- **Secure Authentication** - Email allowlist with NextAuth v5 and optional GitHub OAuth
+- **Modern UI** - Glassmorphism design with Tokyo Night theme, 22 Nerd Fonts
+- **Secure Authentication** - Cloudflare Access (remote) + localhost email auth (local dev)
+- **Mobile Support** - Touch-friendly keyboard and responsive design
 
 ## Screenshots
 
@@ -106,9 +112,9 @@ To enable GitHub integration:
 Edit `src/db/seed.ts` to add email addresses:
 
 ```typescript
-const authorizedEmails = [
+const AUTHORIZED_EMAILS = [
   "your-email@example.com",
-  "teammate@example.com",
+  // Add more emails as needed
 ];
 ```
 
@@ -152,10 +158,10 @@ bun run db:seed
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Next.js 15, React 19, TypeScript |
+| Frontend | Next.js 16, React 19, TypeScript |
 | UI Components | shadcn/ui, Tailwind CSS v4 |
 | Terminal | xterm.js, node-pty |
-| Authentication | NextAuth v5, GitHub OAuth |
+| Authentication | NextAuth v5, Cloudflare Access, GitHub OAuth |
 | Database | SQLite (libsql), Drizzle ORM |
 | Persistence | tmux sessions |
 | Runtime | Bun (frontend), tsx (terminal server) |
@@ -220,19 +226,30 @@ The application uses a clean service layer architecture:
 - **TmuxService** - tmux session lifecycle management
 - **GitHubService** - GitHub API integration, repository caching
 - **WorktreeService** - Git worktree creation and management
+- **FolderService** - Session folder hierarchy management
+- **PreferencesService** - User settings and folder preferences with inheritance
+- **TemplateService** - Session template management
+- **RecordingService** - Session recording storage
 
 ### API Routes
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/sessions` | GET | List user's sessions |
-| `/api/sessions` | POST | Create new session |
-| `/api/sessions/[id]` | GET | Get session details |
-| `/api/sessions/[id]` | PATCH | Update session |
-| `/api/sessions/[id]` | DELETE | Close session |
+| `/api/sessions` | GET, POST | List/create sessions |
+| `/api/sessions/[id]` | GET, PATCH, DELETE | Session CRUD |
+| `/api/sessions/[id]/suspend` | POST | Suspend session |
+| `/api/sessions/[id]/resume` | POST | Resume session |
+| `/api/folders` | GET, POST | List/create folders |
+| `/api/folders/[id]` | PATCH, DELETE | Update/delete folder |
+| `/api/preferences` | GET, PATCH | User settings |
+| `/api/preferences/folders/[id]` | PUT, DELETE | Folder preferences |
+| `/api/templates` | GET, POST | List/create templates |
+| `/api/recordings` | GET, POST | List/save recordings |
 | `/api/github/repositories` | GET | List GitHub repos |
-| `/api/github/repositories/[id]` | POST | Clone repository |
-| `/api/github/worktrees` | POST | Create worktree |
+| `/api/github/repositories/[id]` | GET, POST | Get/clone repository |
+| `/api/github/worktrees` | POST, DELETE | Create/delete worktree |
+
+See `docs/API.md` for complete API documentation.
 
 ## Session Persistence
 
@@ -251,10 +268,23 @@ tmux list-sessions | grep "^rdv-"
 
 ## Security
 
+- **Dual Authentication Model**:
+  - **Localhost** (`127.0.0.1`): Email-only auth for convenient local development
+  - **Remote/LAN**: Cloudflare Access JWT validation required
 - **Email Allowlist** - Only pre-authorized emails can authenticate
-- **JWT Sessions** - Secure, stateless session management
-- **No Shell Injection** - Commands use `execFile` (not `exec`)
-- **Local Only** - Designed for local development, not production deployment
+- **JWT Sessions** - Secure, stateless session management via NextAuth v5
+- **No Shell Injection** - All commands use `execFile` with array arguments (no shell interpolation)
+- **WebSocket Token Auth** - Session-specific tokens for terminal connections
+
+### Remote Access via Cloudflare Access
+
+For secure remote access, configure [Cloudflare Access](https://www.cloudflare.com/products/zero-trust/access/):
+
+1. Set up a Cloudflare Tunnel to your local machine
+2. Configure an Access Application with your identity provider
+3. Add authorized emails to both Cloudflare Access and `src/db/seed.ts`
+
+The app validates Cloudflare Access JWTs automatically via the `CF_Authorization` cookie.
 
 ## Troubleshooting
 

@@ -101,8 +101,9 @@ bun run db:push
 Edit `src/db/seed.ts` to add your email:
 
 ```typescript
-const authorizedEmails = [
+const AUTHORIZED_EMAILS = [
   "your-email@example.com",
+  // Add more emails as needed
 ];
 ```
 

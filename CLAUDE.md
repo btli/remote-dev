@@ -71,11 +71,15 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 
 ### Authentication Flow
 
+- **Dual auth model**:
+  - **Localhost** (`127.0.0.1`): Email-only credentials auth for local dev
+  - **Remote/LAN**: Cloudflare Access JWT validation (via `CF_Authorization` cookie)
 - **NextAuth v5** with JWT session strategy
-- **Credentials provider** checks against `authorized_user` table
+- **Credentials provider** restricted to localhost only (security)
 - **GitHub OAuth** for repository access (optional)
 - Middleware in `src/middleware.ts` protects all routes except `/login` and `/api`
 - Auth configuration in `src/auth.ts` exports `auth`, `signIn`, `signOut`, `handlers`
+- Auth utilities in `src/lib/auth-utils.ts` handle CF Access JWT validation
 
 ### Database Layer
 
