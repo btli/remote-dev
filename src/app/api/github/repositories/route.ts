@@ -28,6 +28,7 @@ export async function GET(request: Request) {
       | "created"
       | "pushed"
       | "full_name";
+    const includeCloneStatus = searchParams.get("includeCloneStatus") === "true";
 
     const repositories = await GitHubService.listRepositoriesFromAPI(
       accessToken,
@@ -44,6 +45,16 @@ export async function GET(request: Request) {
         GitHubService.cacheRepository(userId, repo)
       )
     );
+
+    // If clone status is requested, return cached repos with localPath
+    if (includeCloneStatus) {
+      const cachedRepos = await GitHubService.getCachedRepositories(userId);
+      return NextResponse.json({
+        repositories: cachedRepos,
+        page,
+        hasMore: repositories.length === perPage,
+      });
+    }
 
     // Transform to simpler format for frontend
     const repos = repositories.map((repo) => ({

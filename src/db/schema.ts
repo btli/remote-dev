@@ -162,6 +162,10 @@ export const folderPreferences = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    // Linked GitHub repository (sets default working directory)
+    githubRepoId: text("github_repo_id").references(() => githubRepositories.id, {
+      onDelete: "set null",
+    }),
     // Terminal preferences (all nullable = inherit from user)
     defaultWorkingDirectory: text("default_working_directory"),
     defaultShell: text("default_shell"),

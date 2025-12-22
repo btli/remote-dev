@@ -367,6 +367,7 @@ function mapDbFolderPreferences(
     id: db.id,
     folderId: db.folderId,
     userId: db.userId,
+    githubRepoId: db.githubRepoId,
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
     theme: db.theme,

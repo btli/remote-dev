@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, RotateCcw } from "lucide-react";
+import { Folder, RotateCcw, Github, Loader2, X, Check, Download } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -20,8 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { FolderRepositoryPicker } from "@/components/github/FolderRepositoryPicker";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import type { UpdateFolderPreferencesInput } from "@/types/preferences";
+import type { CachedGitHubRepository } from "@/types/github";
 import { cn } from "@/lib/utils";
 
 interface FolderPreferencesModalProps {
@@ -71,6 +73,10 @@ export function FolderPreferencesModal({
 
   const [localSettings, setLocalSettings] = useState<UpdateFolderPreferencesInput>({});
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isRepoPickerOpen, setIsRepoPickerOpen] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState<CachedGitHubRepository | null>(null);
+  const [cloningStatus, setCloningStatus] = useState<string | null>(null);
 
   const folderPrefs = getFolderPreferences(folderId);
 
@@ -78,23 +84,87 @@ export function FolderPreferencesModal({
   useEffect(() => {
     if (open) {
       setLocalSettings({});
+      setSelectedRepo(null);
+      setSaveError(null);
+      setCloningStatus(null);
     }
   }, [open]);
 
+  // Fetch the currently linked repository details when modal opens
+  useEffect(() => {
+    async function fetchLinkedRepo() {
+      const repoId = folderPrefs?.githubRepoId;
+      if (!repoId || !open) return;
+
+      try {
+        const response = await fetch(`/api/github/repositories?includeCloneStatus=true`);
+        if (response.ok) {
+          const data = await response.json();
+          const repo = data.repositories.find((r: CachedGitHubRepository) => r.id === repoId);
+          if (repo) {
+            setSelectedRepo(repo);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to fetch linked repository:", err);
+      }
+    }
+    fetchLinkedRepo();
+  }, [open, folderPrefs?.githubRepoId]);
+
   const handleSave = async () => {
-    if (Object.keys(localSettings).length === 0) {
+    const hasChanges = Object.keys(localSettings).length > 0;
+    const hasRepoChange = "githubRepoId" in localSettings;
+
+    if (!hasChanges) {
       onClose();
       return;
     }
 
     setSaving(true);
+    setSaveError(null);
+
     try {
+      // If a repo is selected and it's not cloned, clone it first
+      if (hasRepoChange && selectedRepo && !selectedRepo.localPath) {
+        setCloningStatus("Cloning repository...");
+        const cloneResponse = await fetch(`/api/github/repositories/${selectedRepo.githubId}`, {
+          method: "POST",
+        });
+
+        if (!cloneResponse.ok) {
+          const data = await cloneResponse.json();
+          throw new Error(data.error || "Failed to clone repository");
+        }
+
+        const cloneData = await cloneResponse.json();
+
+        // Auto-set working directory to the cloned path
+        localSettings.defaultWorkingDirectory = cloneData.localPath;
+      }
+
+      setCloningStatus(null);
       await updateFolderPreferences(folderId, localSettings);
       onClose();
     } catch (error) {
       console.error("Failed to save folder preferences:", error);
+      setSaveError(error instanceof Error ? error.message : "Failed to save");
     } finally {
       setSaving(false);
+      setCloningStatus(null);
+    }
+  };
+
+  const handleRepoSelect = (repo: CachedGitHubRepository | null) => {
+    setSelectedRepo(repo);
+    if (repo) {
+      setValue("githubRepoId", repo.id);
+      // If repo is already cloned, set the working directory
+      if (repo.localPath) {
+        setValue("defaultWorkingDirectory", repo.localPath);
+      }
+    } else {
+      setValue("githubRepoId", null);
     }
   };
 
@@ -156,6 +226,66 @@ export function FolderPreferencesModal({
         </DialogHeader>
 
         <div className="space-y-4 mt-4">
+          {/* Linked Repository */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-slate-300">Linked Repository</Label>
+              {(selectedRepo || folderPrefs?.githubRepoId) && (
+                <span className="text-xs text-violet-400">Configured</span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsRepoPickerOpen(true)}
+              className={cn(
+                "w-full flex items-center gap-3 p-3 rounded-lg text-left",
+                "border transition-all duration-200",
+                selectedRepo
+                  ? "border-violet-500/50 bg-violet-500/10"
+                  : "border-white/10 bg-slate-800/50 hover:bg-slate-800/80 hover:border-violet-500/30"
+              )}
+            >
+              <Github className="w-4 h-4 text-violet-400 shrink-0" />
+              {selectedRepo ? (
+                <div className="flex-1 min-w-0">
+                  <span className="font-medium text-white truncate block">
+                    {selectedRepo.fullName}
+                  </span>
+                  <span className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                    {selectedRepo.localPath ? (
+                      <>
+                        <Check className="w-3 h-3 text-green-400" />
+                        Cloned
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3 h-3" />
+                        Will be cloned on save
+                      </>
+                    )}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-slate-400 flex-1">Select a repository...</span>
+              )}
+              {selectedRepo && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRepoSelect(null);
+                  }}
+                  className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </button>
+            <p className="text-xs text-slate-500">
+              Links a GitHub repository to this folder. Non-cloned repos will be cloned automatically.
+            </p>
+          </div>
+
           {/* Working Directory */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -175,6 +305,11 @@ export function FolderPreferencesModal({
                 isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
               )}
             />
+            {selectedRepo && !selectedRepo.localPath && (
+              <p className="text-xs text-amber-400">
+                Working directory will be set to the cloned repo path on save.
+              </p>
+            )}
           </div>
 
           {/* Shell */}
@@ -323,6 +458,11 @@ export function FolderPreferencesModal({
           </div>
         </div>
 
+        {/* Error display */}
+        {saveError && (
+          <p className="text-sm text-red-400 mt-2">{saveError}</p>
+        )}
+
         <div className="flex justify-between pt-4 border-t border-white/5">
           {folderPrefs && (
             <Button
@@ -339,6 +479,7 @@ export function FolderPreferencesModal({
             <Button
               variant="ghost"
               onClick={onClose}
+              disabled={saving}
               className="text-slate-400 hover:text-white"
             >
               Cancel
@@ -348,11 +489,26 @@ export function FolderPreferencesModal({
               disabled={saving}
               className="bg-violet-600 hover:bg-violet-700 text-white"
             >
-              {saving ? "Saving..." : "Save Changes"}
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {cloningStatus || "Saving..."}
+                </>
+              ) : (
+                "Save Changes"
+              )}
             </Button>
           </div>
         </div>
       </DialogContent>
+
+      {/* Repository Picker Dialog */}
+      <FolderRepositoryPicker
+        open={isRepoPickerOpen}
+        onClose={() => setIsRepoPickerOpen(false)}
+        onSelect={handleRepoSelect}
+        selectedRepoId={selectedRepo?.id || folderPrefs?.githubRepoId || null}
+      />
     </Dialog>
   );
 }

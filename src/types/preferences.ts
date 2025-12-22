@@ -51,6 +51,7 @@ export interface FolderPreferences {
   id: string;
   folderId: string;
   userId: string;
+  githubRepoId: string | null;
   defaultWorkingDirectory: string | null;
   defaultShell: string | null;
   theme: string | null;
@@ -95,6 +96,7 @@ export interface UpdateUserSettingsInput {
  * Input for updating folder preferences
  */
 export interface UpdateFolderPreferencesInput {
+  githubRepoId?: string | null;
   defaultWorkingDirectory?: string | null;
   defaultShell?: string | null;
   theme?: string | null;
