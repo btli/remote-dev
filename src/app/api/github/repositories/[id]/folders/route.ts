@@ -1,36 +1,23 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * GET /api/github/repositories/:id/folders - Get folder structure of a cloned repository
  */
-export async function GET(request: Request, { params }: RouteParams) {
+export const GET = withAuth(async (request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const id = params?.id;
+    if (!id) return errorResponse("Repository ID required", 400);
 
-    const { id } = await params;
-    const repository = await GitHubService.getRepository(id, session.user.id);
+    const repository = await GitHubService.getRepository(id, userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return errorResponse("Repository not found", 404);
     }
 
     if (!repository.localPath) {
-      return NextResponse.json(
-        { error: "Repository not cloned", code: "NOT_CLONED" },
-        { status: 400 }
-      );
+      return errorResponse("Repository not cloned", 400, "NOT_CLONED");
     }
 
     const { searchParams } = new URL(request.url);
@@ -47,9 +34,6 @@ export async function GET(request: Request, { params }: RouteParams) {
     });
   } catch (error) {
     console.error("Error getting folder structure:", error);
-    return NextResponse.json(
-      { error: "Failed to get folder structure" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to get folder structure", 500);
   }
-}
+});

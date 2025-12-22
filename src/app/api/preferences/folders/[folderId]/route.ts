@@ -1,53 +1,38 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import {
   getFolderPreferences,
   updateFolderPreferences,
   deleteFolderPreferences,
 } from "@/services/preferences-service";
 
-interface RouteParams {
-  params: Promise<{ folderId: string }>;
-}
-
 /**
  * GET /api/preferences/folders/[folderId]
  * Returns folder-specific preference overrides
  */
-export async function GET(request: Request, { params }: RouteParams) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { folderId } = await params;
+export const GET = withAuth(async (_request, { userId, params }) => {
+  const folderId = params?.folderId;
+  if (!folderId) return errorResponse("Folder ID required", 400);
 
   try {
-    const prefs = await getFolderPreferences(folderId, session.user.id);
+    const prefs = await getFolderPreferences(folderId, userId);
     if (!prefs) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return errorResponse("Not found", 404);
     }
     return NextResponse.json(prefs);
   } catch (error) {
     console.error("Error fetching folder preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch folder preferences" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to fetch folder preferences", 500);
   }
-}
+});
 
 /**
  * PUT /api/preferences/folders/[folderId]
  * Creates or updates folder-specific preference overrides
  */
-export async function PUT(request: Request, { params }: RouteParams) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { folderId } = await params;
+export const PUT = withAuth(async (request, { userId, params }) => {
+  const folderId = params?.folderId;
+  if (!folderId) return errorResponse("Folder ID required", 400);
 
   try {
     const updates = await request.json();
@@ -70,45 +55,35 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
     const updated = await updateFolderPreferences(
       folderId,
-      session.user.id,
+      userId,
       filteredUpdates
     );
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Error updating folder preferences:", error);
     if (error instanceof Error && error.message === "Folder not found") {
-      return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+      return errorResponse("Folder not found", 404);
     }
-    return NextResponse.json(
-      { error: "Failed to update folder preferences" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to update folder preferences", 500);
   }
-}
+});
 
 /**
  * DELETE /api/preferences/folders/[folderId]
  * Removes folder-specific preference overrides (reverts to user defaults)
  */
-export async function DELETE(request: Request, { params }: RouteParams) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { folderId } = await params;
+export const DELETE = withAuth(async (_request, { userId, params }) => {
+  const folderId = params?.folderId;
+  if (!folderId) return errorResponse("Folder ID required", 400);
 
   try {
-    const deleted = await deleteFolderPreferences(folderId, session.user.id);
+    const deleted = await deleteFolderPreferences(folderId, userId);
     if (!deleted) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return errorResponse("Not found", 404);
     }
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error deleting folder preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to delete folder preferences" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to delete folder preferences", 500);
   }
-}
+});

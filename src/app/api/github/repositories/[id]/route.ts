@@ -1,67 +1,45 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * GET /api/github/repositories/:id - Get a single repository
  */
-export async function GET(request: Request, { params }: RouteParams) {
+export const GET = withAuth(async (_request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const id = params?.id;
+    if (!id) return errorResponse("Repository ID required", 400);
 
-    const { id } = await params;
-    const repository = await GitHubService.getRepository(id, session.user.id);
+    const repository = await GitHubService.getRepository(id, userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return errorResponse("Repository not found", 404);
     }
 
     return NextResponse.json(repository);
   } catch (error) {
     console.error("Error getting repository:", error);
-    return NextResponse.json(
-      { error: "Failed to get repository" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to get repository", 500);
   }
-}
+});
 
 /**
  * POST /api/github/repositories/:id - Clone repository to local cache
  */
-export async function POST(request: Request, { params }: RouteParams) {
+export const POST = withAuth(async (_request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const id = params?.id;
+    if (!id) return errorResponse("Repository ID required", 400);
 
-    const accessToken = await GitHubService.getAccessToken(session.user.id);
+    const accessToken = await GitHubService.getAccessToken(userId);
     if (!accessToken) {
-      return NextResponse.json(
-        { error: "GitHub not connected" },
-        { status: 400 }
-      );
+      return errorResponse("GitHub not connected", 400);
     }
 
-    const { id } = await params;
-    const repository = await GitHubService.getRepository(id, session.user.id);
+    const repository = await GitHubService.getRepository(id, userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return errorResponse("Repository not found", 404);
     }
 
     // Clone the repository
@@ -71,10 +49,7 @@ export async function POST(request: Request, { params }: RouteParams) {
     );
 
     if (!result.success) {
-      return NextResponse.json(
-        { error: result.error || "Clone failed" },
-        { status: 500 }
-      );
+      return errorResponse(result.error || "Clone failed", 500);
     }
 
     // Update the local path in database
@@ -86,9 +61,6 @@ export async function POST(request: Request, { params }: RouteParams) {
     });
   } catch (error) {
     console.error("Error cloning repository:", error);
-    return NextResponse.json(
-      { error: "Failed to clone repository" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to clone repository", 500);
   }
-}
+});

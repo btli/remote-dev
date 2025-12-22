@@ -7,38 +7,19 @@ import { db } from "@/db";
 import { userSettings, folderPreferences, sessionFolders } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type {
-  Preferences,
   UserSettings,
   FolderPreferences,
   ResolvedPreferences,
-  PreferenceSource,
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
+import { PreferencesServiceError } from "@/lib/errors";
+import {
+  DEFAULT_PREFERENCES,
+  resolvePreferences,
+} from "@/lib/preferences";
 
-/**
- * System-wide default preferences
- */
-export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
-  defaultWorkingDirectory: process.env.HOME || "~",
-  defaultShell: process.env.SHELL || "/bin/bash",
-  theme: "tokyo-night",
-  fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
-} as const;
-
-/**
- * Error class for preferences operations
- */
-export class PreferencesServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string
-  ) {
-    super(message);
-    this.name = "PreferencesServiceError";
-  }
-}
+export { PreferencesServiceError, DEFAULT_PREFERENCES, resolvePreferences };
 
 // ============================================================================
 // User Settings Operations
@@ -226,78 +207,6 @@ export async function deleteFolderPreferences(
 // ============================================================================
 // Preference Resolution
 // ============================================================================
-
-/**
- * Resolve preferences with inheritance chain
- * Default -> User -> Folder
- */
-export function resolvePreferences(
-  userSettingsData: UserSettings,
-  folderPrefsData: FolderPreferences | null
-): ResolvedPreferences {
-  const source: Record<keyof Preferences, PreferenceSource> = {
-    defaultWorkingDirectory: "default",
-    defaultShell: "default",
-    theme: "default",
-    fontSize: "default",
-    fontFamily: "default",
-  };
-
-  // Start with defaults
-  const resolved: Preferences = { ...DEFAULT_PREFERENCES };
-
-  // Apply user settings
-  if (userSettingsData.defaultWorkingDirectory !== null) {
-    resolved.defaultWorkingDirectory = userSettingsData.defaultWorkingDirectory;
-    source.defaultWorkingDirectory = "user";
-  }
-  if (userSettingsData.defaultShell !== null) {
-    resolved.defaultShell = userSettingsData.defaultShell;
-    source.defaultShell = "user";
-  }
-  if (userSettingsData.theme !== null) {
-    resolved.theme = userSettingsData.theme;
-    source.theme = "user";
-  }
-  if (userSettingsData.fontSize !== null) {
-    resolved.fontSize = userSettingsData.fontSize;
-    source.fontSize = "user";
-  }
-  if (userSettingsData.fontFamily !== null) {
-    resolved.fontFamily = userSettingsData.fontFamily;
-    source.fontFamily = "user";
-  }
-
-  // Apply folder overrides
-  if (folderPrefsData) {
-    if (folderPrefsData.defaultWorkingDirectory !== null) {
-      resolved.defaultWorkingDirectory = folderPrefsData.defaultWorkingDirectory;
-      source.defaultWorkingDirectory = "folder";
-    }
-    if (folderPrefsData.defaultShell !== null) {
-      resolved.defaultShell = folderPrefsData.defaultShell;
-      source.defaultShell = "folder";
-    }
-    if (folderPrefsData.theme !== null) {
-      resolved.theme = folderPrefsData.theme;
-      source.theme = "folder";
-    }
-    if (folderPrefsData.fontSize !== null) {
-      resolved.fontSize = folderPrefsData.fontSize;
-      source.fontSize = "folder";
-    }
-    if (folderPrefsData.fontFamily !== null) {
-      resolved.fontFamily = folderPrefsData.fontFamily;
-      source.fontFamily = "folder";
-    }
-  }
-
-  return {
-    ...resolved,
-    source,
-    folderId: folderPrefsData?.folderId || null,
-  };
-}
 
 /**
  * Get resolved preferences for a user and optional folder

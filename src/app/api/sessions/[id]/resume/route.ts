@@ -1,23 +1,16 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * POST /api/sessions/:id/resume - Resume a suspended session
  */
-export async function POST(request: Request, { params }: RouteParams) {
+export const POST = withAuth(async (_request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const id = params?.id;
+    if (!id) return errorResponse("Session ID required", 400);
 
-    const { id } = await params;
-    await SessionService.resumeSession(id, session.user.id);
+    await SessionService.resumeSession(id, userId);
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -28,15 +21,9 @@ export async function POST(request: Request, { params }: RouteParams) {
       if (error.code === "SESSION_NOT_FOUND") status = 404;
       if (error.code === "TMUX_SESSION_GONE") status = 410; // Gone
 
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status }
-      );
+      return errorResponse(error.message, status, error.code);
     }
 
-    return NextResponse.json(
-      { error: "Failed to resume session" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to resume session", 500);
   }
-}
+});

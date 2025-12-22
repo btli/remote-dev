@@ -1,43 +1,16 @@
 /**
  * TmuxService - Manages tmux session lifecycle for terminal persistence
  */
-import { execFile, execFileCheck, execFileNoThrow } from "@/lib/exec";
+import { execFile, execFileNoThrow } from "@/lib/exec";
+import { TmuxServiceError } from "@/lib/errors";
+
+export { TmuxServiceError };
 
 export interface TmuxSessionInfo {
   name: string;
   windowCount: number;
   created: Date;
   attached: boolean;
-}
-
-export class TmuxServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly details?: string
-  ) {
-    super(message);
-    this.name = "TmuxServiceError";
-  }
-}
-
-/**
- * Check if tmux is installed on the system
- */
-export async function isTmuxInstalled(): Promise<boolean> {
-  return execFileCheck("tmux", ["-V"]);
-}
-
-/**
- * Get tmux version string
- */
-export async function getTmuxVersion(): Promise<string | null> {
-  try {
-    const { stdout } = await execFile("tmux", ["-V"]);
-    return stdout;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -130,67 +103,6 @@ export async function killSession(sessionName: string): Promise<void> {
       "KILL_FAILED",
       (error as Error).message
     );
-  }
-}
-
-/**
- * Send keys to a tmux session (execute a command)
- */
-export async function sendKeys(
-  sessionName: string,
-  command: string,
-  pressEnter = true
-): Promise<void> {
-  if (!(await sessionExists(sessionName))) {
-    throw new TmuxServiceError(
-      `Tmux session "${sessionName}" does not exist`,
-      "SESSION_NOT_FOUND"
-    );
-  }
-
-  const args = ["send-keys", "-t", sessionName, command];
-  if (pressEnter) {
-    args.push("Enter");
-  }
-
-  try {
-    await execFile("tmux", args);
-  } catch (error) {
-    throw new TmuxServiceError(
-      `Failed to send keys to tmux session: ${(error as Error).message}`,
-      "SEND_KEYS_FAILED",
-      (error as Error).message
-    );
-  }
-}
-
-/**
- * Resize a tmux session's window
- */
-export async function resizeSession(
-  sessionName: string,
-  cols: number,
-  rows: number
-): Promise<void> {
-  if (!(await sessionExists(sessionName))) {
-    throw new TmuxServiceError(
-      `Tmux session "${sessionName}" does not exist`,
-      "SESSION_NOT_FOUND"
-    );
-  }
-
-  try {
-    await execFile("tmux", [
-      "resize-window",
-      "-t",
-      sessionName,
-      "-x",
-      cols.toString(),
-      "-y",
-      rows.toString(),
-    ]);
-  } catch {
-    // Resize may fail if client not attached, ignore
   }
 }
 

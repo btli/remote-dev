@@ -1,7 +1,7 @@
 /**
  * Safe execution utilities using execFile to prevent shell injection
  */
-import { execFile as execFileCallback, spawn } from "child_process";
+import { execFile as execFileCallback } from "child_process";
 import { promisify } from "util";
 
 const execFilePromise = promisify(execFileCallback);
@@ -96,40 +96,3 @@ export async function execFileNoThrow(
   }
 }
 
-/**
- * Spawn a long-running process and stream output
- */
-export function spawnProcess(
-  command: string,
-  args: string[],
-  options?: {
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    onStdout?: (data: string) => void;
-    onStderr?: (data: string) => void;
-  }
-): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command, args, {
-      cwd: options?.cwd,
-      env: { ...process.env, ...options?.env },
-      // No shell: true - arguments are passed directly
-    });
-
-    proc.stdout.on("data", (data: Buffer) => {
-      options?.onStdout?.(data.toString());
-    });
-
-    proc.stderr.on("data", (data: Buffer) => {
-      options?.onStderr?.(data.toString());
-    });
-
-    proc.on("close", (code) => {
-      resolve(code ?? 0);
-    });
-
-    proc.on("error", (err) => {
-      reject(err);
-    });
-  });
-}

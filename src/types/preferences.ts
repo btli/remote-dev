@@ -17,11 +17,6 @@ export interface Preferences {
 }
 
 /**
- * Partial preferences for overrides (all fields optional)
- */
-export type PreferenceOverrides = Partial<Preferences>;
-
-/**
  * Source of each preference value in the inheritance chain
  */
 export type PreferenceSource = "default" | "user" | "folder";

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import {
   getUserSettings,
   updateUserSettings,
@@ -11,17 +11,12 @@ import { getFolders } from "@/services/folder-service";
  * GET /api/preferences
  * Returns user settings, all folder preferences, and active folder details
  */
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth(async (_request, { userId }) => {
   try {
     const [userSettingsData, folderPreferencesData, folders] = await Promise.all([
-      getUserSettings(session.user.id),
-      getAllFolderPreferences(session.user.id),
-      getFolders(session.user.id),
+      getUserSettings(userId),
+      getAllFolderPreferences(userId),
+      getFolders(userId),
     ]);
 
     // Find active folder details if set
@@ -40,23 +35,15 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error fetching preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch preferences" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to fetch preferences", 500);
   }
-}
+});
 
 /**
  * PATCH /api/preferences
  * Updates user settings
  */
-export async function PATCH(request: Request) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const PATCH = withAuth(async (request, { userId }) => {
   try {
     const updates = await request.json();
 
@@ -80,19 +67,13 @@ export async function PATCH(request: Request) {
     }
 
     if (Object.keys(filteredUpdates).length === 0) {
-      return NextResponse.json(
-        { error: "No valid fields to update" },
-        { status: 400 }
-      );
+      return errorResponse("No valid fields to update", 400);
     }
 
-    const updated = await updateUserSettings(session.user.id, filteredUpdates);
+    const updated = await updateUserSettings(userId, filteredUpdates);
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Error updating preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to update preferences" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to update preferences", 500);
   }
-}
+});

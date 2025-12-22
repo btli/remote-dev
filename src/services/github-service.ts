@@ -14,17 +14,9 @@ import type {
 } from "@/types/github";
 import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { join } from "path";
+import { GitHubServiceError } from "@/lib/errors";
 
-export class GitHubServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly statusCode?: number
-  ) {
-    super(message);
-    this.name = "GitHubServiceError";
-  }
-}
+export { GitHubServiceError };
 
 const GITHUB_API_BASE = "https://api.github.com";
 const REPOS_CACHE_DIR = ".remote-dev/repos";

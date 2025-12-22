@@ -1,40 +1,27 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 import * as WorktreeService from "@/services/worktree-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * GET /api/github/repositories/:id/branches - Get branches for a repository
  * Note: :id is the GitHub repository ID (number), not the internal database ID
  */
-export async function GET(request: Request, { params }: RouteParams) {
+export const GET = withAuth(async (_request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const id = params?.id;
+    if (!id) return errorResponse("Repository ID required", 400);
 
-    const { id } = await params;
     const githubId = parseInt(id, 10);
 
     if (isNaN(githubId)) {
-      return NextResponse.json(
-        { error: "Invalid repository ID" },
-        { status: 400 }
-      );
+      return errorResponse("Invalid repository ID", 400);
     }
 
-    const repository = await GitHubService.getRepositoryByGitHubId(githubId, session.user.id);
+    const repository = await GitHubService.getRepositoryByGitHubId(githubId, userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return errorResponse("Repository not found", 404);
     }
 
     // If we have a local path, get branches from the local repo
@@ -44,12 +31,9 @@ export async function GET(request: Request, { params }: RouteParams) {
     }
 
     // Otherwise, fetch from GitHub API
-    const accessToken = await GitHubService.getAccessToken(session.user.id);
+    const accessToken = await GitHubService.getAccessToken(userId);
     if (!accessToken) {
-      return NextResponse.json(
-        { error: "GitHub not connected" },
-        { status: 400 }
-      );
+      return errorResponse("GitHub not connected", 400);
     }
 
     const [owner, repo] = repository.fullName.split("/");
@@ -68,9 +52,6 @@ export async function GET(request: Request, { params }: RouteParams) {
     return NextResponse.json({ branches });
   } catch (error) {
     console.error("Error listing branches:", error);
-    return NextResponse.json(
-      { error: "Failed to list branches" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to list branches", 500);
   }
-}
+});

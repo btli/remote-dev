@@ -88,10 +88,3 @@ export interface CloneResult {
   localPath: string;
   error?: string;
 }
-
-export interface WorktreeResult {
-  success: boolean;
-  worktreePath: string;
-  branch: string;
-  error?: string;
-}

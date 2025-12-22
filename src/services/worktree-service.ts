@@ -5,17 +5,9 @@ import { execFile, execFileNoThrow, execFileCheck } from "@/lib/exec";
 import type { WorktreeInfo, BranchInfo } from "@/types/github";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename, dirname } from "path";
+import { WorktreeServiceError } from "@/lib/errors";
 
-export class WorktreeServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly details?: string
-  ) {
-    super(message);
-    this.name = "WorktreeServiceError";
-  }
-}
+export { WorktreeServiceError };
 
 /**
  * Check if a directory is a git repository

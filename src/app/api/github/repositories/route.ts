@@ -1,23 +1,15 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 
 /**
  * GET /api/github/repositories - List user's GitHub repositories
  */
-export async function GET(request: Request) {
+export const GET = withAuth(async (request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const accessToken = await GitHubService.getAccessToken(session.user.id);
+    const accessToken = await GitHubService.getAccessToken(userId);
     if (!accessToken) {
-      return NextResponse.json(
-        { error: "GitHub not connected", code: "GITHUB_NOT_CONNECTED" },
-        { status: 400 }
-      );
+      return errorResponse("GitHub not connected", 400, "GITHUB_NOT_CONNECTED");
     }
 
     const { searchParams } = new URL(request.url);
@@ -35,8 +27,6 @@ export async function GET(request: Request) {
       perPage,
       sort
     );
-
-    const userId = session.user.id;
 
     // Cache repositories in database
     await Promise.all(
@@ -74,15 +64,9 @@ export async function GET(request: Request) {
     console.error("Error listing GitHub repositories:", error);
 
     if (error instanceof GitHubService.GitHubServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.statusCode || 500 }
-      );
+      return errorResponse(error.message, error.statusCode || 500, error.code);
     }
 
-    return NextResponse.json(
-      { error: "Failed to list repositories" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to list repositories", 500);
   }
-}
+});

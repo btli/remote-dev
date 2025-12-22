@@ -1,45 +1,28 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 import * as WorktreeService from "@/services/worktree-service";
 
 /**
  * POST /api/github/worktrees - Create a git worktree for a branch
  */
-export async function POST(request: Request) {
+export const POST = withAuth(async (request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const body = await request.json();
     const { repositoryId, branch, createNewBranch, baseBranch } = body;
 
     if (!repositoryId || !branch) {
-      return NextResponse.json(
-        { error: "repositoryId and branch are required" },
-        { status: 400 }
-      );
+      return errorResponse("repositoryId and branch are required", 400);
     }
 
-    const repository = await GitHubService.getRepository(
-      repositoryId,
-      session.user.id
-    );
+    const repository = await GitHubService.getRepository(repositoryId, userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return errorResponse("Repository not found", 404);
     }
 
     if (!repository.localPath) {
-      return NextResponse.json(
-        { error: "Repository not cloned. Clone it first.", code: "NOT_CLONED" },
-        { status: 400 }
-      );
+      return errorResponse("Repository not cloned. Clone it first.", 400, "NOT_CLONED");
     }
 
     let worktreePath: string;
@@ -69,56 +52,33 @@ export async function POST(request: Request) {
     console.error("Error creating worktree:", error);
 
     if (error instanceof WorktreeService.WorktreeServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code, details: error.details },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
 
-    return NextResponse.json(
-      { error: "Failed to create worktree" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to create worktree", 500);
   }
-}
+});
 
 /**
  * DELETE /api/github/worktrees - Remove a git worktree
  */
-export async function DELETE(request: Request) {
+export const DELETE = withAuth(async (request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const body = await request.json();
     const { repositoryId, worktreePath, force } = body;
 
     if (!repositoryId || !worktreePath) {
-      return NextResponse.json(
-        { error: "repositoryId and worktreePath are required" },
-        { status: 400 }
-      );
+      return errorResponse("repositoryId and worktreePath are required", 400);
     }
 
-    const repository = await GitHubService.getRepository(
-      repositoryId,
-      session.user.id
-    );
+    const repository = await GitHubService.getRepository(repositoryId, userId);
 
     if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
+      return errorResponse("Repository not found", 404);
     }
 
     if (!repository.localPath) {
-      return NextResponse.json(
-        { error: "Repository not cloned" },
-        { status: 400 }
-      );
+      return errorResponse("Repository not cloned", 400);
     }
 
     await WorktreeService.removeWorktree(
@@ -132,15 +92,9 @@ export async function DELETE(request: Request) {
     console.error("Error removing worktree:", error);
 
     if (error instanceof WorktreeService.WorktreeServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
 
-    return NextResponse.json(
-      { error: "Failed to remove worktree" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to remove worktree", 500);
   }
-}
+});

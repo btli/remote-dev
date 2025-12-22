@@ -16,20 +16,8 @@ import type {
   ActiveProject,
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
-  Preferences,
-  PreferenceSource,
 } from "@/types/preferences";
-
-/**
- * Default preferences used as fallback
- */
-const DEFAULT_PREFERENCES: Preferences = {
-  defaultWorkingDirectory: "~",
-  defaultShell: "/bin/bash",
-  theme: "tokyo-night",
-  fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
-};
+import { resolvePreferences } from "@/lib/preferences";
 
 interface PreferencesContextValue {
   // State
@@ -222,73 +210,8 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
 
   const resolvePreferencesForFolder = useCallback(
     (folderId: string | null): ResolvedPreferences => {
-      const source: Record<keyof Preferences, PreferenceSource> = {
-        defaultWorkingDirectory: "default",
-        defaultShell: "default",
-        theme: "default",
-        fontSize: "default",
-        fontFamily: "default",
-      };
-
-      // Start with defaults
-      const resolved: Preferences = { ...DEFAULT_PREFERENCES };
-
-      // Apply user settings
-      if (userSettings) {
-        if (userSettings.defaultWorkingDirectory !== null) {
-          resolved.defaultWorkingDirectory = userSettings.defaultWorkingDirectory;
-          source.defaultWorkingDirectory = "user";
-        }
-        if (userSettings.defaultShell !== null) {
-          resolved.defaultShell = userSettings.defaultShell;
-          source.defaultShell = "user";
-        }
-        if (userSettings.theme !== null) {
-          resolved.theme = userSettings.theme;
-          source.theme = "user";
-        }
-        if (userSettings.fontSize !== null) {
-          resolved.fontSize = userSettings.fontSize;
-          source.fontSize = "user";
-        }
-        if (userSettings.fontFamily !== null) {
-          resolved.fontFamily = userSettings.fontFamily;
-          source.fontFamily = "user";
-        }
-      }
-
-      // Apply folder overrides
-      if (folderId) {
-        const folderPrefs = folderPreferences.get(folderId);
-        if (folderPrefs) {
-          if (folderPrefs.defaultWorkingDirectory !== null) {
-            resolved.defaultWorkingDirectory = folderPrefs.defaultWorkingDirectory;
-            source.defaultWorkingDirectory = "folder";
-          }
-          if (folderPrefs.defaultShell !== null) {
-            resolved.defaultShell = folderPrefs.defaultShell;
-            source.defaultShell = "folder";
-          }
-          if (folderPrefs.theme !== null) {
-            resolved.theme = folderPrefs.theme;
-            source.theme = "folder";
-          }
-          if (folderPrefs.fontSize !== null) {
-            resolved.fontSize = folderPrefs.fontSize;
-            source.fontSize = "folder";
-          }
-          if (folderPrefs.fontFamily !== null) {
-            resolved.fontFamily = folderPrefs.fontFamily;
-            source.fontFamily = "folder";
-          }
-        }
-      }
-
-      return {
-        ...resolved,
-        source,
-        folderId,
-      };
+      const folderPrefs = folderId ? folderPreferences.get(folderId) || null : null;
+      return resolvePreferences(userSettings, folderPrefs);
     },
     [userSettings, folderPreferences]
   );
