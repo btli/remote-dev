@@ -22,7 +22,7 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   defaultShell: typeof process !== "undefined" ? (process.env.SHELL || "/bin/bash") : "/bin/bash",
   theme: "tokyo-night",
   fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
+  fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
 } as const;
 
 /**
