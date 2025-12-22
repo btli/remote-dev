@@ -240,7 +240,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             <div className="space-y-2">
               <Label className="text-slate-300">Font Family</Label>
               <Select
-                value={getValue("fontFamily") || "'JetBrains Mono', monospace"}
+                value={getValue("fontFamily") || "'JetBrainsMono Nerd Font Mono', monospace"}
                 onValueChange={(value) => setValue("fontFamily", value)}
               >
                 <SelectTrigger className="bg-slate-800 border-white/10 text-white">
