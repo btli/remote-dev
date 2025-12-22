@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
@@ -9,6 +9,10 @@ import type { ConnectionStatus } from "@/types/terminal";
 import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
+
+export interface TerminalRef {
+  focus: () => void;
+}
 
 interface TerminalProps {
   sessionId: string;
@@ -28,7 +32,7 @@ interface TerminalProps {
   onDimensionsChange?: (cols: number, rows: number) => void;
 }
 
-export function Terminal({
+export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal({
   sessionId,
   tmuxSessionName,
   sessionName = "Terminal",
@@ -44,7 +48,7 @@ export function Terminal({
   onSessionExit,
   onOutput,
   onDimensionsChange,
-}: TerminalProps) {
+}, ref) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
@@ -89,6 +93,13 @@ export function Terminal({
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
   }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity]);
+
+  // Expose focus method to parent components
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      xtermRef.current?.focus();
+    },
+  }), []);
 
   const updateStatus = useCallback(
     (status: ConnectionStatus) => {
@@ -768,4 +779,4 @@ export function Terminal({
       )}
     </div>
   );
-}
+});

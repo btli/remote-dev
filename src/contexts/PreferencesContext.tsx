@@ -84,9 +84,16 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const refreshPreferences = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch user settings
-      const userRes = await fetch("/api/preferences");
-      if (!userRes.ok) throw new Error("Failed to fetch user settings");
+      // Fetch user settings with credentials to ensure cookies are sent
+      const userRes = await fetch("/api/preferences", {
+        credentials: "include",
+      });
+      if (!userRes.ok) {
+        // Don't throw - gracefully handle auth or server errors
+        // User might not be authenticated yet during initial load
+        console.warn("Failed to fetch preferences:", userRes.status);
+        return;
+      }
       const userData = await userRes.json();
       setUserSettings(userData.userSettings);
 

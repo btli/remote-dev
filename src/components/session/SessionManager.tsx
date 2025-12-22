@@ -28,6 +28,8 @@ import {
   findPane,
 } from "@/components/terminal/SplitPane";
 
+import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
+
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
   () =>
@@ -105,6 +107,20 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [splitPaneLayout, setSplitPaneLayout] = useState<PaneNode | null>(null);
   const [activePaneId, setActivePaneId] = useState<string | null>(null);
   const isSplitMode = splitPaneLayout !== null && splitPaneLayout.type === "container";
+
+  // Terminal refs for focus management
+  const terminalRefsMap = useRef<Map<string, TerminalWithKeyboardRef>>(new Map());
+
+  // Focus terminal when active session changes
+  useEffect(() => {
+    if (activeSessionId && !isSplitMode) {
+      // Small delay to ensure terminal is mounted and visible
+      const timeoutId = setTimeout(() => {
+        terminalRefsMap.current.get(activeSessionId)?.focus();
+      }, 50);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [activeSessionId, isSplitMode]);
 
   // Compute WebSocket URL based on current location (supports cloudflared tunnels)
   const wsUrl = useMemo(() => {
@@ -910,6 +926,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                         }
                       >
                         <TerminalWithKeyboard
+                          ref={(ref) => {
+                            if (ref) {
+                              terminalRefsMap.current.set(session.id, ref);
+                            } else {
+                              terminalRefsMap.current.delete(session.id);
+                            }
+                          }}
                           sessionId={session.id}
                           tmuxSessionName={session.tmuxSessionName}
                           sessionName={session.name}
