@@ -28,7 +28,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   defaultShell: "/bin/bash",
   theme: "tokyo-night",
   fontSize: 14,
-  fontFamily: "'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace",
+  fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
   startupCommand: "",
 };
 

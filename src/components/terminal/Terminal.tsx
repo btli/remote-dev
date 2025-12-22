@@ -36,7 +36,7 @@ export function Terminal({
   wsUrl = "ws://localhost:3001",
   theme = "tokyo-night",
   fontSize = 14,
-  fontFamily = "'JetBrainsMono Nerd Font', 'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+  fontFamily = "'JetBrainsMono Nerd Font Mono', monospace",
   notificationsEnabled = true,
   isRecording = false,
   onStatusChange,
