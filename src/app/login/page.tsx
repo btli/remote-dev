@@ -16,7 +16,6 @@ import {
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -28,12 +27,11 @@ export default function LoginPage() {
 
     const result = await signIn("credentials", {
       email,
-      password,
       redirect: false,
     });
 
     if (result?.error) {
-      setError("Invalid credentials or unauthorized user");
+      setError("Unauthorized email or login not allowed from this location");
       setLoading(false);
     } else {
       router.push("/");
@@ -47,7 +45,7 @@ export default function LoginPage() {
         <CardHeader>
           <CardTitle>Remote Dev</CardTitle>
           <CardDescription>
-            Sign in to access the terminal
+            Sign in with your authorized email (localhost only)
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -61,16 +59,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
+                autoFocus
               />
             </div>
             {error && (
@@ -79,6 +68,9 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Signing in..." : "Sign in"}
             </Button>
+            <p className="text-xs text-muted-foreground text-center">
+              Remote access requires Cloudflare Access authentication
+            </p>
           </form>
         </CardContent>
       </Card>

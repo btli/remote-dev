@@ -3,8 +3,35 @@ import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
 import { db } from "@/db";
 import { users, accounts, sessions, verificationTokens, authorizedUsers } from "@/db/schema";
+
+/**
+ * Check if the request is from localhost (127.0.0.1 or ::1)
+ * Used to restrict credentials auth to local development only
+ */
+async function isLocalhostRequest(): Promise<boolean> {
+  const headersList = await headers();
+
+  // Check x-forwarded-for first (for proxied requests)
+  const forwarded = headersList.get("x-forwarded-for");
+  if (forwarded) {
+    const firstIp = forwarded.split(",")[0].trim();
+    return firstIp === "127.0.0.1" || firstIp === "::1" || firstIp === "localhost";
+  }
+
+  // Check x-real-ip
+  const realIp = headersList.get("x-real-ip");
+  if (realIp) {
+    return realIp === "127.0.0.1" || realIp === "::1" || realIp === "localhost";
+  }
+
+  // For direct connections, Next.js doesn't expose the remote IP in headers
+  // but if we're here without x-forwarded-for, we're likely on localhost
+  // In production behind Cloudflare, x-forwarded-for will always be set
+  return true;
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: DrizzleAdapter(db, {
@@ -29,10 +56,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       name: "credentials",
       credentials: {
         email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
+        // Security: Only allow credentials auth from localhost
+        // Remote access must use Cloudflare Access (JWT validated in getAuthSession)
+        const isLocalhost = await isLocalhostRequest();
+        if (!isLocalhost) {
+          console.warn("Credentials auth attempted from non-localhost, rejecting");
+          return null;
+        }
+
+        if (!credentials?.email) {
           return null;
         }
 
