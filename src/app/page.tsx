@@ -1,19 +1,23 @@
-import { auth, signOut } from "@/auth";
+import { signOut } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import { db } from "@/db";
 import { terminalSessions, accounts } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
+import { TemplateProvider } from "@/contexts/TemplateContext";
+import { RecordingProvider } from "@/contexts/RecordingContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
 import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
 import { Button } from "@/components/ui/button";
 import { LogOut, Github } from "lucide-react";
+import Image from "next/image";
 import type { TerminalSession } from "@/types/session";
 
 export default async function Home() {
-  const session = await auth();
+  const session = await getAuthSession();
 
   if (!session?.user?.id) {
     return null;
@@ -46,6 +50,7 @@ export default async function Home() {
     projectPath: s.projectPath,
     githubRepoId: s.githubRepoId,
     worktreeBranch: s.worktreeBranch,
+    folderId: s.folderId,
     status: s.status as "active" | "suspended" | "closed",
     tabOrder: s.tabOrder,
     lastActivityAt: new Date(s.lastActivityAt),
@@ -56,15 +61,21 @@ export default async function Home() {
   return (
     <PreferencesProvider>
       <FolderProvider>
-        <SessionProvider initialSessions={initialSessions}>
+        <TemplateProvider>
+          <RecordingProvider>
+          <SessionProvider initialSessions={initialSessions}>
           <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-            {/* Header with glassmorphism */}
-            <header className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
+            {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
+            <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
               {/* Logo */}
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                  <span className="text-white font-bold text-sm">RD</span>
-                </div>
+                <Image
+                  src="/favicon.svg"
+                  alt="Remote Dev"
+                  width={32}
+                  height={32}
+                  className="rounded-lg"
+                />
                 <h1 className="text-lg font-semibold text-white">Remote Dev</h1>
               </div>
 
@@ -104,9 +115,14 @@ export default async function Home() {
             </header>
 
             {/* Main content */}
-            <SessionManager isGitHubConnected={isGitHubConnected} />
+            <SessionManager
+              isGitHubConnected={isGitHubConnected}
+              userEmail={session.user.email || ""}
+            />
           </div>
         </SessionProvider>
+          </RecordingProvider>
+        </TemplateProvider>
       </FolderProvider>
     </PreferencesProvider>
   );

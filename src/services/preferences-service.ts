@@ -25,6 +25,7 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   theme: "tokyo-night",
   fontSize: 14,
   fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
+  startupCommand: "",
 } as const;
 
 /**
@@ -241,6 +242,7 @@ export function resolvePreferences(
     theme: "default",
     fontSize: "default",
     fontFamily: "default",
+    startupCommand: "default",
   };
 
   // Start with defaults
@@ -267,6 +269,10 @@ export function resolvePreferences(
     resolved.fontFamily = userSettingsData.fontFamily;
     source.fontFamily = "user";
   }
+  if (userSettingsData.startupCommand !== null) {
+    resolved.startupCommand = userSettingsData.startupCommand;
+    source.startupCommand = "user";
+  }
 
   // Apply folder overrides
   if (folderPrefsData) {
@@ -289,6 +295,10 @@ export function resolvePreferences(
     if (folderPrefsData.fontFamily !== null) {
       resolved.fontFamily = folderPrefsData.fontFamily;
       source.fontFamily = "folder";
+    }
+    if (folderPrefsData.startupCommand !== null) {
+      resolved.startupCommand = folderPrefsData.startupCommand;
+      source.startupCommand = "folder";
     }
   }
 
@@ -349,6 +359,7 @@ function mapDbUserSettings(
     userId: db.userId,
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
+    startupCommand: db.startupCommand,
     theme: db.theme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
@@ -369,9 +380,12 @@ function mapDbFolderPreferences(
     userId: db.userId,
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
+    startupCommand: db.startupCommand,
     theme: db.theme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
+    githubRepoId: db.githubRepoId,
+    localRepoPath: db.localRepoPath,
     createdAt: new Date(db.createdAt),
     updatedAt: new Date(db.updatedAt),
   };

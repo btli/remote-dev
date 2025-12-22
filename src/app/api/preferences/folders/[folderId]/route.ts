@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import {
   getFolderPreferences,
   updateFolderPreferences,
@@ -15,7 +15,7 @@ interface RouteParams {
  * Returns folder-specific preference overrides
  */
 export async function GET(request: Request, { params }: RouteParams) {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -42,7 +42,7 @@ export async function GET(request: Request, { params }: RouteParams) {
  * Creates or updates folder-specific preference overrides
  */
 export async function PUT(request: Request, { params }: RouteParams) {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -56,9 +56,12 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const allowedFields = [
       "defaultWorkingDirectory",
       "defaultShell",
+      "startupCommand",
       "theme",
       "fontSize",
       "fontFamily",
+      "githubRepoId",
+      "localRepoPath",
     ];
 
     const filteredUpdates: Record<string, unknown> = {};
@@ -91,7 +94,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
  * Removes folder-specific preference overrides (reverts to user defaults)
  */
 export async function DELETE(request: Request, { params }: RouteParams) {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

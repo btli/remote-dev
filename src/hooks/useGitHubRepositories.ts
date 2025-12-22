@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 interface GitHubRepo {
   id: number;
@@ -140,10 +140,15 @@ export function useGitHubRepositories(): UseGitHubRepositoriesReturn {
     [repositories]
   );
 
+  // Track if we've already fetched
+  const hasFetchedRef = useRef(false);
+
   // Fetch on mount
   useEffect(() => {
+    if (hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
     fetchRepositories(1, true);
-  }, []);
+  }, [fetchRepositories]);
 
   return {
     repositories,
