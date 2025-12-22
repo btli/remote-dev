@@ -265,7 +265,7 @@ async function start(mode: Mode): Promise<void> {
   await Bun.sleep(1500);
 
   // Start Next.js
-  await startServer("Next.js", config.nextCmd, {}, NEXT_PID_FILE, "next");
+  await startServer("Next.js", [...config.nextCmd], {}, NEXT_PID_FILE, "next");
 
   saveMode(mode);
 
