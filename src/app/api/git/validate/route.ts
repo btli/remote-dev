@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import { isGitRepo, getBranches } from "@/services/worktree-service";
 
 /**
@@ -12,7 +12,7 @@ import { isGitRepo, getBranches } from "@/services/worktree-service";
  */
 export async function GET(request: Request) {
   try {
-    const session = await auth();
+    const session = await getAuthSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

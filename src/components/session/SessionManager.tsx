@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
@@ -105,6 +105,20 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [splitPaneLayout, setSplitPaneLayout] = useState<PaneNode | null>(null);
   const [activePaneId, setActivePaneId] = useState<string | null>(null);
   const isSplitMode = splitPaneLayout !== null && splitPaneLayout.type === "container";
+
+  // Compute WebSocket URL based on current location (supports cloudflared tunnels)
+  const wsUrl = useMemo(() => {
+    if (typeof window === "undefined") return "ws://localhost:6002";
+    const { protocol, hostname, port } = window.location;
+    const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
+    if (isLocalhost) {
+      // Local development: use terminal server port directly
+      return `ws://localhost:${process.env.NEXT_PUBLIC_TERMINAL_PORT || "6002"}`;
+    }
+    // Remote access via tunnel: use /ws path (cloudflared routes to terminal server)
+    const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
+    return `${wsProtocol}//${hostname}${port ? `:${port}` : ""}/ws`;
+  }, []);
 
   // Use ref for sessionCounter to avoid stale closures in keyboard handler
   const sessionCounterRef = useRef(sessionCounter);
@@ -649,6 +663,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         sessionName={session.name}
         projectPath={session.projectPath}
         session={session}
+        wsUrl={wsUrl}
         theme={prefs.theme}
         fontSize={prefs.fontSize}
         fontFamily={prefs.fontFamily}
@@ -660,7 +675,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
       />
     );
-  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions, handleSessionRestart, handleSessionDelete]);
+  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions, handleSessionRestart, handleSessionDelete, wsUrl]);
 
   // On mobile, sidebar is collapsed when drawer is not open
   const effectiveCollapsed = isMobile ? !isMobileSidebarOpen : sidebarCollapsed;
@@ -901,6 +916,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           sessionName={session.name}
                           projectPath={session.projectPath}
                           session={session}
+                          wsUrl={wsUrl}
                           theme={prefs.theme}
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
