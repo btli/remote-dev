@@ -226,10 +226,16 @@ export function Terminal({
       };
 
       // Re-fit when page becomes visible again (returning from background)
+      let visibilityTimeout: ReturnType<typeof setTimeout> | null = null;
       const handleVisibilityChange = () => {
         if (!document.hidden) {
+          // Clear any pending timeout to avoid duplicate calls
+          if (visibilityTimeout) {
+            clearTimeout(visibilityTimeout);
+          }
           // Small delay to let the browser settle after becoming visible
-          setTimeout(() => {
+          visibilityTimeout = setTimeout(() => {
+            visibilityTimeout = null;
             handleResize();
           }, 100);
         }
@@ -265,6 +271,9 @@ export function Terminal({
 
       // Store cleanup in closure
       return () => {
+        if (visibilityTimeout) {
+          clearTimeout(visibilityTimeout);
+        }
         window.removeEventListener("resize", handleResize);
         document.removeEventListener("visibilitychange", handleVisibilityChange);
         resizeObserver.disconnect();
