@@ -356,7 +356,25 @@ export function Terminal({
         }
       });
 
+      // Minimum dimensions to prevent resizing to unusable sizes
+      const MIN_WIDTH = 100;
+      const MIN_HEIGHT = 80;
+
       const handleResize = () => {
+        const container = terminalRef.current;
+        if (!container) return;
+
+        // Skip resize if page is hidden (browser tab backgrounded)
+        if (document.hidden) return;
+
+        // Skip if container is not visible (display: none from "hidden" class)
+        // offsetParent is null when element or ancestor has display: none
+        if (container.offsetParent === null) return;
+
+        // Skip if container is too small
+        const rect = container.getBoundingClientRect();
+        if (rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT) return;
+
         // Use requestAnimationFrame to ensure DOM is ready
         requestAnimationFrame(() => {
           fitAddon.fit();
@@ -383,7 +401,24 @@ export function Terminal({
         });
       };
 
+      // Re-fit when page becomes visible again (returning from background)
+      let visibilityTimeout: ReturnType<typeof setTimeout> | null = null;
+      const handleVisibilityChange = () => {
+        if (!document.hidden) {
+          // Clear any pending timeout to avoid duplicate calls
+          if (visibilityTimeout) {
+            clearTimeout(visibilityTimeout);
+          }
+          // Small delay to let the browser settle after becoming visible
+          visibilityTimeout = setTimeout(() => {
+            visibilityTimeout = null;
+            handleResize();
+          }, 100);
+        }
+      };
+
       window.addEventListener("resize", handleResize);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
 
       // Use ResizeObserver to detect when terminal container becomes visible
       // This handles the case when switching tabs (hidden -> visible)
@@ -394,9 +429,13 @@ export function Terminal({
       const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const { width, height } = entry.contentRect;
-          // Only trigger resize when dimensions actually change from non-zero to new values
-          // This catches the transition from hidden (0x0) to visible
-          if (width > 0 && height > 0 && (width !== lastWidth || height !== lastHeight)) {
+          // Only trigger resize when dimensions are above minimum threshold
+          // and actually change to new values
+          if (
+            width >= MIN_WIDTH &&
+            height >= MIN_HEIGHT &&
+            (width !== lastWidth || height !== lastHeight)
+          ) {
             lastWidth = width;
             lastHeight = height;
 
@@ -413,7 +452,11 @@ export function Terminal({
 
       // Store cleanup in closure
       return () => {
+        if (visibilityTimeout) {
+          clearTimeout(visibilityTimeout);
+        }
         window.removeEventListener("resize", handleResize);
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
         resizeObserver.disconnect();
         if (resizeTimeout) clearTimeout(resizeTimeout);
       };
