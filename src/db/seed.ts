@@ -5,7 +5,6 @@ async function seed() {
   console.log("Seeding database...");
 
   await db.insert(authorizedUsers).values([
-    { email: "admin@localhost" },
     { email: "bryan.li@gmail.com" },
   ]).onConflictDoNothing();
 
