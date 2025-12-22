@@ -5,6 +5,7 @@ import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
 import type { ConnectionStatus } from "@/types/terminal";
+import type { ShellFramework } from "@/types/preferences";
 import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
 
 interface TerminalProps {
@@ -12,6 +13,8 @@ interface TerminalProps {
   tmuxSessionName: string;
   wsUrl?: string;
   theme?: string;
+  shellFramework?: ShellFramework;
+  shellTheme?: string;
   fontSize?: number;
   fontFamily?: string;
   onStatusChange?: (status: ConnectionStatus) => void;
@@ -24,6 +27,8 @@ export function Terminal({
   tmuxSessionName,
   wsUrl = "ws://localhost:3001",
   theme = "tokyo-night",
+  shellFramework = "oh-my-zsh",
+  shellTheme = "robbyrussell",
   fontSize = 14,
   fontFamily = "'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
   onStatusChange,
@@ -39,6 +44,8 @@ export function Terminal({
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
+  const initialShellFrameworkRef = useRef<ShellFramework>(shellFramework);
+  const initialShellThemeRef = useRef<string>(shellTheme);
   const maxReconnectAttempts = 5;
 
   const updateStatus = useCallback(
@@ -109,6 +116,8 @@ export function Terminal({
           tmuxSession: tmuxSessionName,
           cols: String(cols),
           rows: String(rows),
+          shellFramework: initialShellFrameworkRef.current,
+          shellTheme: initialShellThemeRef.current,
         });
 
         const ws = new WebSocket(`${wsUrl}?${params.toString()}`);
@@ -181,8 +190,12 @@ export function Terminal({
           }
         };
 
-        ws.onerror = () => {
-          console.error("WebSocket error");
+        ws.onerror = (event) => {
+          console.error("WebSocket error:", event);
+          updateStatus("error");
+          terminal.writeln(
+            `\r\n\x1b[31mConnection error. Check that the terminal server is running on ${wsUrl}\x1b[0m`
+          );
         };
       }
 
@@ -272,6 +285,27 @@ export function Terminal({
     fitAddonRef.current?.fit();
   }, [theme, fontSize, fontFamily]);
 
+  // Apply shell theme changes to existing sessions
+  useEffect(() => {
+    const ws = wsRef.current;
+    // Only apply if we have an active connection and the theme or framework has changed
+    // Skip the initial render
+    const themeChanged = shellTheme !== initialShellThemeRef.current;
+    const frameworkChanged = shellFramework !== initialShellFrameworkRef.current;
+
+    if (ws?.readyState === WebSocket.OPEN && (themeChanged || frameworkChanged)) {
+      console.log(`Applying shell theme change: ${shellFramework}/${shellTheme}`);
+      ws.send(JSON.stringify({
+        type: "apply_theme",
+        framework: shellFramework,
+        theme: shellTheme,
+      }));
+      // Update the refs so we track the current applied values
+      initialShellFrameworkRef.current = shellFramework;
+      initialShellThemeRef.current = shellTheme;
+    }
+  }, [shellFramework, shellTheme]);
+
   // Encode image as iTerm2 OSC 1337 escape sequence
   const encodeImageAsOSC1337 = useCallback(
     async (file: File): Promise<string> => {
@@ -294,8 +328,11 @@ export function Terminal({
   // Send image through WebSocket as terminal input
   const sendImageToTerminal = useCallback(
     async (file: File) => {
+      const terminal = xtermRef.current;
+
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         console.error("WebSocket not connected");
+        terminal?.writeln("\r\n\x1b[31mCannot paste image: Terminal not connected\x1b[0m");
         return;
       }
 
@@ -303,7 +340,9 @@ export function Terminal({
         const sequence = await encodeImageAsOSC1337(file);
         wsRef.current.send(JSON.stringify({ type: "input", data: sequence }));
       } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
         console.error("Failed to encode image:", error);
+        terminal?.writeln(`\r\n\x1b[31mFailed to paste image: ${message}\x1b[0m`);
       }
     },
     [encodeImageAsOSC1337]

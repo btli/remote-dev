@@ -6,12 +6,19 @@
  */
 
 /**
+ * Shell framework options for theme compatibility
+ */
+export type ShellFramework = "oh-my-zsh" | "starship" | "powerlevel10k" | "none";
+
+/**
  * Core preference keys that can be customized at any level
  */
 export interface Preferences {
   defaultWorkingDirectory: string;
   defaultShell: string;
   theme: string;
+  shellFramework: ShellFramework;
+  shellTheme: string;
   fontSize: number;
   fontFamily: string;
 }
@@ -35,6 +42,8 @@ export interface UserSettings {
   defaultWorkingDirectory: string | null;
   defaultShell: string | null;
   theme: string | null;
+  shellFramework: ShellFramework | null;
+  shellTheme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
   activeFolderId: string | null;
@@ -54,6 +63,8 @@ export interface FolderPreferences {
   defaultWorkingDirectory: string | null;
   defaultShell: string | null;
   theme: string | null;
+  shellFramework: ShellFramework | null;
+  shellTheme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
   createdAt: Date;
@@ -84,6 +95,8 @@ export interface UpdateUserSettingsInput {
   defaultWorkingDirectory?: string | null;
   defaultShell?: string | null;
   theme?: string | null;
+  shellFramework?: ShellFramework | null;
+  shellTheme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
   activeFolderId?: string | null;
@@ -98,6 +111,8 @@ export interface UpdateFolderPreferencesInput {
   defaultWorkingDirectory?: string | null;
   defaultShell?: string | null;
   theme?: string | null;
+  shellFramework?: ShellFramework | null;
+  shellTheme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
 }

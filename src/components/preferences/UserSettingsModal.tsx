@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Settings, Terminal, Palette, Folder, Pin, PinOff } from "lucide-react";
+import { Settings, Terminal, Palette, Folder, Pin, PinOff, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -24,8 +24,13 @@ import {
 } from "@/components/ui/select";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useFolderContext } from "@/contexts/FolderContext";
-import type { UpdateUserSettingsInput } from "@/types/preferences";
+import type { UpdateUserSettingsInput, ShellFramework } from "@/types/preferences";
 import { cn } from "@/lib/utils";
+import {
+  SHELL_FRAMEWORKS,
+  getThemesForFramework,
+  getDefaultTheme,
+} from "@/lib/shell-themes";
 
 interface UserSettingsModalProps {
   open: boolean;
@@ -65,11 +70,13 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
   const [localSettings, setLocalSettings] = useState<UpdateUserSettingsInput>({});
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Reset local settings when modal opens
+  // Reset local settings and error when modal opens
   useEffect(() => {
     if (open && userSettings) {
       setLocalSettings({});
+      setSaveError(null);
     }
   }, [open, userSettings]);
 
@@ -80,11 +87,14 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
     }
 
     setSaving(true);
+    setSaveError(null);
     try {
       await updateUserSettings(localSettings);
       onClose();
     } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save settings";
       console.error("Failed to save settings:", error);
+      setSaveError(message);
     } finally {
       setSaving(false);
     }
@@ -173,6 +183,90 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Shell Framework */}
+            <div className="space-y-2">
+              <Label className="text-slate-300">Shell Framework</Label>
+              <Select
+                value={getValue("shellFramework") || "oh-my-zsh"}
+                onValueChange={(value) => {
+                  setValue("shellFramework", value as ShellFramework);
+                  // Reset shell theme to default for new framework
+                  setValue("shellTheme", getDefaultTheme(value as ShellFramework));
+                }}
+              >
+                <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-800 border-white/10">
+                  {SHELL_FRAMEWORKS.map((framework) => (
+                    <SelectItem
+                      key={framework.id}
+                      value={framework.id}
+                      className="text-white focus:bg-violet-500/20"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                        {framework.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">
+                {SHELL_FRAMEWORKS.find(f => f.id === (getValue("shellFramework") || "oh-my-zsh"))?.description}
+              </p>
+            </div>
+
+            {/* Shell Theme - only show if framework has themes */}
+            {(() => {
+              const currentFramework = (getValue("shellFramework") || "oh-my-zsh") as ShellFramework;
+              const availableThemes = getThemesForFramework(currentFramework);
+
+              if (availableThemes.length === 0) return null;
+
+              return (
+                <div className="space-y-2">
+                  <Label className="text-slate-300">Shell Theme</Label>
+                  <Select
+                    value={getValue("shellTheme") || getDefaultTheme(currentFramework)}
+                    onValueChange={(value) => setValue("shellTheme", value)}
+                  >
+                    <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border-white/10 max-h-[300px]">
+                      {availableThemes.map((theme) => (
+                        <SelectItem
+                          key={theme.id}
+                          value={theme.id}
+                          className="text-white focus:bg-violet-500/20"
+                        >
+                          <div className="flex flex-col">
+                            <span>{theme.name}</span>
+                            <span className="text-xs text-slate-400">{theme.description}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {(() => {
+                    const currentTheme = availableThemes.find(
+                      t => t.id === (getValue("shellTheme") || getDefaultTheme(currentFramework))
+                    );
+                    if (currentTheme?.requiresFonts) {
+                      return (
+                        <p className="text-xs text-amber-400 flex items-center gap-1">
+                          <Sparkles className="w-3 h-3" />
+                          Requires Nerd Font or Powerline font
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              );
+            })()}
           </TabsContent>
 
           <TabsContent value="appearance" className="space-y-4 mt-4">
@@ -333,6 +427,12 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             </div>
           </TabsContent>
         </Tabs>
+
+        {saveError && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {saveError}
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-4 border-t border-white/5">
           <Button

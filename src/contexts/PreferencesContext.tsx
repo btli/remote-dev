@@ -27,6 +27,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   defaultWorkingDirectory: "~",
   defaultShell: "/bin/bash",
   theme: "tokyo-night",
+  shellFramework: "oh-my-zsh",
+  shellTheme: "robbyrussell",
   fontSize: 14,
   fontFamily: "'JetBrains Mono', monospace",
 };
@@ -226,6 +228,8 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         defaultWorkingDirectory: "default",
         defaultShell: "default",
         theme: "default",
+        shellFramework: "default",
+        shellTheme: "default",
         fontSize: "default",
         fontFamily: "default",
       };
@@ -246,6 +250,14 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         if (userSettings.theme !== null) {
           resolved.theme = userSettings.theme;
           source.theme = "user";
+        }
+        if (userSettings.shellFramework !== null) {
+          resolved.shellFramework = userSettings.shellFramework;
+          source.shellFramework = "user";
+        }
+        if (userSettings.shellTheme !== null) {
+          resolved.shellTheme = userSettings.shellTheme;
+          source.shellTheme = "user";
         }
         if (userSettings.fontSize !== null) {
           resolved.fontSize = userSettings.fontSize;
@@ -272,6 +284,14 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           if (folderPrefs.theme !== null) {
             resolved.theme = folderPrefs.theme;
             source.theme = "folder";
+          }
+          if (folderPrefs.shellFramework !== null) {
+            resolved.shellFramework = folderPrefs.shellFramework;
+            source.shellFramework = "folder";
+          }
+          if (folderPrefs.shellTheme !== null) {
+            resolved.shellTheme = folderPrefs.shellTheme;
+            source.shellTheme = "folder";
           }
           if (folderPrefs.fontSize !== null) {
             resolved.fontSize = folderPrefs.fontSize;

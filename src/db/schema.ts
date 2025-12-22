@@ -80,6 +80,9 @@ export const userSettings = sqliteTable("user_settings", {
   defaultShell: text("default_shell"),
   // Appearance preferences
   theme: text("theme").default("tokyo-night"),
+  // Shell customization framework (oh-my-zsh, starship, powerlevel10k, none)
+  shellFramework: text("shell_framework").default("oh-my-zsh"),
+  shellTheme: text("shell_theme").default("robbyrussell"),
   fontSize: integer("font_size").default(14),
   fontFamily: text("font_family").default("'JetBrains Mono', monospace"),
   // Active project tracking
@@ -167,6 +170,9 @@ export const folderPreferences = sqliteTable(
     defaultShell: text("default_shell"),
     // Appearance preferences
     theme: text("theme"),
+    // Shell customization framework (oh-my-zsh, starship, powerlevel10k, none)
+    shellFramework: text("shell_framework"),
+    shellTheme: text("shell_theme"),
     fontSize: integer("font_size"),
     fontFamily: text("font_family"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

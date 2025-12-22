@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, RotateCcw } from "lucide-react";
+import { Folder, RotateCcw, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,8 +21,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import type { UpdateFolderPreferencesInput } from "@/types/preferences";
+import type { UpdateFolderPreferencesInput, ShellFramework } from "@/types/preferences";
 import { cn } from "@/lib/utils";
+import {
+  SHELL_FRAMEWORKS,
+  getThemesForFramework,
+  getDefaultTheme,
+} from "@/lib/shell-themes";
 
 interface FolderPreferencesModalProps {
   open: boolean;
@@ -71,13 +76,15 @@ export function FolderPreferencesModal({
 
   const [localSettings, setLocalSettings] = useState<UpdateFolderPreferencesInput>({});
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const folderPrefs = getFolderPreferences(folderId);
 
-  // Reset local settings when modal opens
+  // Reset local settings and error when modal opens
   useEffect(() => {
     if (open) {
       setLocalSettings({});
+      setError(null);
     }
   }, [open]);
 
@@ -88,11 +95,14 @@ export function FolderPreferencesModal({
     }
 
     setSaving(true);
+    setError(null);
     try {
       await updateFolderPreferences(folderId, localSettings);
       onClose();
-    } catch (error) {
-      console.error("Failed to save folder preferences:", error);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save preferences";
+      console.error("Failed to save folder preferences:", err);
+      setError(message);
     } finally {
       setSaving(false);
     }
@@ -100,11 +110,14 @@ export function FolderPreferencesModal({
 
   const handleReset = async () => {
     setSaving(true);
+    setError(null);
     try {
       await deleteFolderPreferences(folderId);
       onClose();
-    } catch (error) {
-      console.error("Failed to reset folder preferences:", error);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to reset preferences";
+      console.error("Failed to reset folder preferences:", err);
+      setError(message);
     } finally {
       setSaving(false);
     }
@@ -219,10 +232,134 @@ export function FolderPreferencesModal({
             </Select>
           </div>
 
+          {/* Shell Framework */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-slate-300">Shell Framework</Label>
+              {isOverridden("shellFramework") && (
+                <span className="text-xs text-violet-400">Overridden</span>
+              )}
+            </div>
+            <Select
+              value={getValue("shellFramework") || INHERIT_VALUE}
+              onValueChange={(value) => {
+                if (value === INHERIT_VALUE) {
+                  setValue("shellFramework", null);
+                  setValue("shellTheme", null);
+                } else {
+                  setValue("shellFramework", value as ShellFramework);
+                  // Reset shell theme to default for new framework
+                  setValue("shellTheme", getDefaultTheme(value as ShellFramework));
+                }
+              }}
+            >
+              <SelectTrigger
+                className={cn(
+                  "bg-slate-800 border-white/10 text-white",
+                  isOverridden("shellFramework") && "border-violet-500/50"
+                )}
+              >
+                <SelectValue
+                  placeholder={`Inherit: ${
+                    SHELL_FRAMEWORKS.find((f) => f.id === getInherited("shellFramework"))
+                      ?.name || getInherited("shellFramework")
+                  }`}
+                />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-800 border-white/10">
+                <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                  Inherit from user settings
+                </SelectItem>
+                {SHELL_FRAMEWORKS.map((framework) => (
+                  <SelectItem
+                    key={framework.id}
+                    value={framework.id}
+                    className="text-white focus:bg-violet-500/20"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                      {framework.name}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-slate-500">
+              {SHELL_FRAMEWORKS.find(f => f.id === (getValue("shellFramework") || getInherited("shellFramework")))?.description}
+            </p>
+          </div>
+
+          {/* Shell Theme - conditional based on framework */}
+          {(() => {
+            const currentFramework = (getValue("shellFramework") || getInherited("shellFramework")) as ShellFramework;
+            const availableThemes = getThemesForFramework(currentFramework);
+
+            if (availableThemes.length === 0) return null;
+
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Shell Theme</Label>
+                  {isOverridden("shellTheme") && (
+                    <span className="text-xs text-violet-400">Overridden</span>
+                  )}
+                </div>
+                <Select
+                  value={getValue("shellTheme") || INHERIT_VALUE}
+                  onValueChange={(value) => setValue("shellTheme", value === INHERIT_VALUE ? null : value)}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      "bg-slate-800 border-white/10 text-white",
+                      isOverridden("shellTheme") && "border-violet-500/50"
+                    )}
+                  >
+                    <SelectValue
+                      placeholder={`Inherit: ${
+                        availableThemes.find((t) => t.id === getInherited("shellTheme"))
+                          ?.name || getInherited("shellTheme")
+                      }`}
+                    />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-white/10 max-h-[300px]">
+                    <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                      Inherit from user settings
+                    </SelectItem>
+                    {availableThemes.map((theme) => (
+                      <SelectItem
+                        key={theme.id}
+                        value={theme.id}
+                        className="text-white focus:bg-violet-500/20"
+                      >
+                        <div className="flex flex-col">
+                          <span>{theme.name}</span>
+                          <span className="text-xs text-slate-400">{theme.description}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {(() => {
+                  const selectedTheme = getValue("shellTheme") || getInherited("shellTheme");
+                  const currentTheme = availableThemes.find(t => t.id === selectedTheme);
+                  if (currentTheme?.requiresFonts) {
+                    return (
+                      <p className="text-xs text-amber-400 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        Requires Nerd Font or Powerline font
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+            );
+          })()}
+
           {/* Theme */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label className="text-slate-300">Theme</Label>
+              <Label className="text-slate-300">Terminal Theme</Label>
               {isOverridden("theme") && (
                 <span className="text-xs text-violet-400">Overridden</span>
               )}
@@ -322,6 +459,12 @@ export function FolderPreferencesModal({
             </Select>
           </div>
         </div>
+
+        {error && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
 
         <div className="flex justify-between pt-4 border-t border-white/5">
           {folderPrefs && (

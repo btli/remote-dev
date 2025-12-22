@@ -65,6 +65,8 @@ export async function PATCH(request: Request) {
       "defaultWorkingDirectory",
       "defaultShell",
       "theme",
+      "shellFramework",
+      "shellTheme",
       "fontSize",
       "fontFamily",
       "activeFolderId",

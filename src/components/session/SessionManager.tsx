@@ -367,6 +367,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                         sessionId={session.id}
                         tmuxSessionName={session.tmuxSessionName}
                         theme={prefs.theme}
+                        shellFramework={prefs.shellFramework}
+                        shellTheme={prefs.shellTheme}
                         fontSize={prefs.fontSize}
                         fontFamily={prefs.fontFamily}
                         onSessionExit={() => closeSession(session.id)}

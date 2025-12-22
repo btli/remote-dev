@@ -4,12 +4,15 @@ import { useRef, useCallback } from "react";
 import { Terminal } from "./Terminal";
 import { MobileKeyboard } from "./MobileKeyboard";
 import type { ConnectionStatus } from "@/types/terminal";
+import type { ShellFramework } from "@/types/preferences";
 
 interface TerminalWithKeyboardProps {
   sessionId: string;
   tmuxSessionName: string;
   wsUrl?: string;
   theme?: string;
+  shellFramework?: ShellFramework;
+  shellTheme?: string;
   fontSize?: number;
   fontFamily?: string;
   onStatusChange?: (status: ConnectionStatus) => void;
@@ -21,6 +24,8 @@ export function TerminalWithKeyboard({
   tmuxSessionName,
   wsUrl = "ws://localhost:3001",
   theme,
+  shellFramework,
+  shellTheme,
   fontSize,
   fontFamily,
   onStatusChange,
@@ -67,6 +72,8 @@ export function TerminalWithKeyboard({
           tmuxSessionName={tmuxSessionName}
           wsUrl={wsUrl}
           theme={theme}
+          shellFramework={shellFramework}
+          shellTheme={shellTheme}
           fontSize={fontSize}
           fontFamily={fontFamily}
           onStatusChange={onStatusChange}

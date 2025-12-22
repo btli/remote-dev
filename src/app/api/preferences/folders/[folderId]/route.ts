@@ -57,6 +57,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
       "defaultWorkingDirectory",
       "defaultShell",
       "theme",
+      "shellFramework",
+      "shellTheme",
       "fontSize",
       "fontFamily",
     ];

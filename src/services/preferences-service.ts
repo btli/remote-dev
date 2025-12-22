@@ -23,6 +23,8 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   defaultWorkingDirectory: process.env.HOME || "~",
   defaultShell: process.env.SHELL || "/bin/bash",
   theme: "tokyo-night",
+  shellFramework: "oh-my-zsh",
+  shellTheme: "robbyrussell",
   fontSize: 14,
   fontFamily: "'JetBrains Mono', monospace",
 } as const;
@@ -61,6 +63,8 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
         defaultWorkingDirectory: DEFAULT_PREFERENCES.defaultWorkingDirectory,
         defaultShell: DEFAULT_PREFERENCES.defaultShell,
         theme: DEFAULT_PREFERENCES.theme,
+        shellFramework: DEFAULT_PREFERENCES.shellFramework,
+        shellTheme: DEFAULT_PREFERENCES.shellTheme,
         fontSize: DEFAULT_PREFERENCES.fontSize,
         fontFamily: DEFAULT_PREFERENCES.fontFamily,
         autoFollowActiveSession: true,
@@ -239,6 +243,8 @@ export function resolvePreferences(
     defaultWorkingDirectory: "default",
     defaultShell: "default",
     theme: "default",
+    shellFramework: "default",
+    shellTheme: "default",
     fontSize: "default",
     fontFamily: "default",
   };
@@ -258,6 +264,14 @@ export function resolvePreferences(
   if (userSettingsData.theme !== null) {
     resolved.theme = userSettingsData.theme;
     source.theme = "user";
+  }
+  if (userSettingsData.shellFramework !== null) {
+    resolved.shellFramework = userSettingsData.shellFramework;
+    source.shellFramework = "user";
+  }
+  if (userSettingsData.shellTheme !== null) {
+    resolved.shellTheme = userSettingsData.shellTheme;
+    source.shellTheme = "user";
   }
   if (userSettingsData.fontSize !== null) {
     resolved.fontSize = userSettingsData.fontSize;
@@ -281,6 +295,14 @@ export function resolvePreferences(
     if (folderPrefsData.theme !== null) {
       resolved.theme = folderPrefsData.theme;
       source.theme = "folder";
+    }
+    if (folderPrefsData.shellFramework !== null) {
+      resolved.shellFramework = folderPrefsData.shellFramework;
+      source.shellFramework = "folder";
+    }
+    if (folderPrefsData.shellTheme !== null) {
+      resolved.shellTheme = folderPrefsData.shellTheme;
+      source.shellTheme = "folder";
     }
     if (folderPrefsData.fontSize !== null) {
       resolved.fontSize = folderPrefsData.fontSize;
@@ -350,6 +372,8 @@ function mapDbUserSettings(
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
     theme: db.theme,
+    shellFramework: db.shellFramework as UserSettings["shellFramework"],
+    shellTheme: db.shellTheme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
     activeFolderId: db.activeFolderId,
@@ -370,6 +394,8 @@ function mapDbFolderPreferences(
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
     theme: db.theme,
+    shellFramework: db.shellFramework as FolderPreferences["shellFramework"],
+    shellTheme: db.shellTheme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
     createdAt: new Date(db.createdAt),
