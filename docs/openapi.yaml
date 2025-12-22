@@ -1,0 +1,1430 @@
+openapi: 3.0.3
+info:
+  title: Remote Dev API
+  description: |
+    API for Remote Dev - a web-based terminal interface with persistent sessions,
+    GitHub integration, and session management features.
+  version: 1.0.0
+  contact:
+    name: Remote Dev
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3000
+    description: Development server
+  - url: http://localhost:6001
+    description: Production server
+
+tags:
+  - name: Sessions
+    description: Terminal session management
+  - name: Folders
+    description: Folder organization
+  - name: Preferences
+    description: User settings and folder preferences
+  - name: Templates
+    description: Reusable session templates
+  - name: Recordings
+    description: Terminal session recordings
+  - name: GitHub
+    description: GitHub repository integration
+  - name: Git
+    description: Git repository utilities
+
+paths:
+  # Sessions API
+  /api/sessions:
+    get:
+      tags: [Sessions]
+      summary: List sessions
+      description: Get all terminal sessions for the current user
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended, closed]
+          description: Filter by session status
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Sessions]
+      summary: Create session
+      description: Create a new terminal session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/sessions/{id}:
+    get:
+      tags: [Sessions]
+      summary: Get session
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Sessions]
+      summary: Update session
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSessionRequest'
+      responses:
+        '200':
+          description: Session updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: '#/components/schemas/Session'
+
+    delete:
+      tags: [Sessions]
+      summary: Delete session
+      description: Close and delete a session
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: deleteWorktree
+          in: query
+          schema:
+            type: string
+            enum: ['true', 'false']
+          description: Also delete git worktree from disk
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/sessions/{id}/suspend:
+    post:
+      tags: [Sessions]
+      summary: Suspend session
+      description: Suspend an active session (keeps tmux running)
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/sessions/{id}/resume:
+    post:
+      tags: [Sessions]
+      summary: Resume session
+      description: Resume a suspended session
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: tmux session no longer exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/sessions/{id}/folder:
+    put:
+      tags: [Sessions]
+      summary: Move session to folder
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                folderId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Folder UUID (null to remove from folder)
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /api/sessions/{id}/token:
+    get:
+      tags: [Sessions]
+      summary: Get session WebSocket token
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: WebSocket authentication token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+
+  /api/sessions/reorder:
+    post:
+      tags: [Sessions]
+      summary: Reorder sessions
+      description: Update tab order for multiple sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sessionIds
+              properties:
+                sessionIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  # Folders API
+  /api/folders:
+    get:
+      tags: [Folders]
+      summary: List folders
+      responses:
+        '200':
+          description: List of folders and session mappings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  folders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Folder'
+                  sessionFolders:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sessionId:
+                          type: string
+                          format: uuid
+                        folderId:
+                          type: string
+                          format: uuid
+
+    post:
+      tags: [Folders]
+      summary: Create folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                parentId:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '201':
+          description: Folder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folder'
+
+  /api/folders/{id}:
+    patch:
+      tags: [Folders]
+      summary: Update folder
+      parameters:
+        - $ref: '#/components/parameters/FolderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                collapsed:
+                  type: boolean
+                sortOrder:
+                  type: integer
+                parentId:
+                  type: string
+                  format: uuid
+                  nullable: true
+      responses:
+        '200':
+          description: Folder updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Folder'
+
+    delete:
+      tags: [Folders]
+      summary: Delete folder
+      parameters:
+        - $ref: '#/components/parameters/FolderId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  # Preferences API
+  /api/preferences:
+    get:
+      tags: [Preferences]
+      summary: Get preferences
+      description: Get user settings, all folder preferences, and active folder
+      responses:
+        '200':
+          description: User preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userSettings:
+                    $ref: '#/components/schemas/UserSettings'
+                  folderPreferences:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FolderPreferences'
+                  activeFolder:
+                    $ref: '#/components/schemas/Folder'
+
+    patch:
+      tags: [Preferences]
+      summary: Update user settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserSettingsUpdate'
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSettings'
+
+  /api/preferences/active-folder:
+    post:
+      tags: [Preferences]
+      summary: Set active folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                folderId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                pinned:
+                  type: boolean
+      responses:
+        '200':
+          description: Active folder set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSettings'
+
+  /api/preferences/folders/{folderId}:
+    get:
+      tags: [Preferences]
+      summary: Get folder preferences
+      parameters:
+        - $ref: '#/components/parameters/FolderId'
+      responses:
+        '200':
+          description: Folder preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FolderPreferences'
+
+    put:
+      tags: [Preferences]
+      summary: Set folder preferences
+      parameters:
+        - $ref: '#/components/parameters/FolderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FolderPreferencesUpdate'
+      responses:
+        '200':
+          description: Preferences updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FolderPreferences'
+
+    delete:
+      tags: [Preferences]
+      summary: Delete folder preferences
+      description: Reset folder preferences to inherit from user defaults
+      parameters:
+        - $ref: '#/components/parameters/FolderId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  # Templates API
+  /api/templates:
+    get:
+      tags: [Templates]
+      summary: List templates
+      responses:
+        '200':
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Template'
+
+    post:
+      tags: [Templates]
+      summary: Create template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+
+  /api/templates/{id}:
+    get:
+      tags: [Templates]
+      summary: Get template
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+
+    post:
+      tags: [Templates]
+      summary: Record template usage
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+                  enum: [use]
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+    patch:
+      tags: [Templates]
+      summary: Update template
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Template'
+
+    delete:
+      tags: [Templates]
+      summary: Delete template
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  # Recordings API
+  /api/recordings:
+    get:
+      tags: [Recordings]
+      summary: List recordings
+      responses:
+        '200':
+          description: List of recordings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Recording'
+
+    post:
+      tags: [Recordings]
+      summary: Create recording
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRecordingRequest'
+      responses:
+        '201':
+          description: Recording saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+
+  /api/recordings/{id}:
+    get:
+      tags: [Recordings]
+      summary: Get recording
+      parameters:
+        - $ref: '#/components/parameters/RecordingId'
+        - name: parsed
+          in: query
+          schema:
+            type: string
+            enum: ['true', 'false']
+          description: Return parsed recording data
+      responses:
+        '200':
+          description: Recording with data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordingWithData'
+
+    patch:
+      tags: [Recordings]
+      summary: Update recording
+      parameters:
+        - $ref: '#/components/parameters/RecordingId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                sessionId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Recording updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+
+    delete:
+      tags: [Recordings]
+      summary: Delete recording
+      parameters:
+        - $ref: '#/components/parameters/RecordingId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  # GitHub API
+  /api/github/repositories:
+    get:
+      tags: [GitHub]
+      summary: List repositories
+      parameters:
+        - name: cached
+          in: query
+          schema:
+            type: string
+            enum: ['true', 'false']
+          description: Return only cloned repositories
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [updated, created, pushed, full_name]
+            default: updated
+      responses:
+        '200':
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repositories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Repository'
+                  page:
+                    type: integer
+                  hasMore:
+                    type: boolean
+        '400':
+          description: GitHub not connected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  code:
+                    type: string
+                    enum: [GITHUB_NOT_CONNECTED]
+
+  /api/github/repositories/{id}:
+    get:
+      tags: [GitHub]
+      summary: Get repository
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Database UUID or GitHub numeric ID
+      responses:
+        '200':
+          description: Repository details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+
+    post:
+      tags: [GitHub]
+      summary: Clone repository
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Repository cloned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  localPath:
+                    type: string
+                  repositoryId:
+                    type: string
+                    format: uuid
+
+  /api/github/repositories/{id}/branches:
+    get:
+      tags: [GitHub]
+      summary: List branches
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of branches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  branches:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        isRemote:
+                          type: boolean
+                        isDefault:
+                          type: boolean
+
+  /api/github/repositories/{id}/folders:
+    get:
+      tags: [GitHub]
+      summary: Get folder structure
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: maxDepth
+          in: query
+          schema:
+            type: integer
+            default: 3
+      responses:
+        '200':
+          description: Folder structure
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  folders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FolderTree'
+                  rootPath:
+                    type: string
+
+  /api/github/worktrees:
+    post:
+      tags: [GitHub]
+      summary: Create worktree
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - repositoryId
+                - branch
+              properties:
+                repositoryId:
+                  type: string
+                  format: uuid
+                branch:
+                  type: string
+                createNewBranch:
+                  type: boolean
+                baseBranch:
+                  type: string
+      responses:
+        '200':
+          description: Worktree created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  worktreePath:
+                    type: string
+                  branch:
+                    type: string
+
+    delete:
+      tags: [GitHub]
+      summary: Delete worktree
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - repositoryId
+                - worktreePath
+              properties:
+                repositoryId:
+                  type: string
+                  format: uuid
+                worktreePath:
+                  type: string
+                force:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /api/github/worktrees/check:
+    post:
+      tags: [GitHub]
+      summary: Check worktree status
+      description: Check for uncommitted changes in a worktree
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - repositoryId
+                - worktreePath
+              properties:
+                repositoryId:
+                  type: string
+                  format: uuid
+                worktreePath:
+                  type: string
+      responses:
+        '200':
+          description: Worktree status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hasUncommittedChanges:
+                    type: boolean
+                  branch:
+                    type: string
+
+  # Git API
+  /api/git/validate:
+    get:
+      tags: [Git]
+      summary: Validate repository
+      description: Check if a path is a valid git repository
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Filesystem path to validate
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isGitRepo:
+                    type: boolean
+                  branches:
+                    type: array
+                    items:
+                      type: string
+
+  # Images API
+  /api/images:
+    post:
+      tags: [Images]
+      summary: Upload image
+      description: Upload an image and save to filesystem
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+          application/json:
+            schema:
+              type: object
+              required:
+                - data
+                - mediaType
+              properties:
+                data:
+                  type: string
+                  description: Base64-encoded image data
+                mediaType:
+                  type: string
+                  enum: [image/jpeg, image/png, image/gif, image/webp]
+      responses:
+        '200':
+          description: Image uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  size:
+                    type: integer
+                  mediaType:
+                    type: string
+
+components:
+  schemas:
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        tmuxSessionName:
+          type: string
+        projectPath:
+          type: string
+          nullable: true
+        githubRepoId:
+          type: string
+          format: uuid
+          nullable: true
+        worktreeBranch:
+          type: string
+          nullable: true
+        folderId:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum: [active, suspended, closed]
+        tabOrder:
+          type: integer
+        lastActivityAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          default: Terminal
+        projectPath:
+          type: string
+        githubRepoId:
+          type: string
+          format: uuid
+        worktreeBranch:
+          type: string
+        folderId:
+          type: string
+          format: uuid
+        startupCommand:
+          type: string
+        featureDescription:
+          type: string
+        createWorktree:
+          type: boolean
+        baseBranch:
+          type: string
+
+    UpdateSessionRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        tabOrder:
+          type: integer
+        status:
+          type: string
+          enum: [active, suspended, closed]
+
+    Folder:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        parentId:
+          type: string
+          format: uuid
+          nullable: true
+        collapsed:
+          type: boolean
+        sortOrder:
+          type: integer
+        userId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserSettings:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        defaultWorkingDirectory:
+          type: string
+          nullable: true
+        defaultShell:
+          type: string
+          nullable: true
+        startupCommand:
+          type: string
+          nullable: true
+        theme:
+          type: string
+        fontSize:
+          type: integer
+        fontFamily:
+          type: string
+        activeFolderId:
+          type: string
+          format: uuid
+          nullable: true
+        pinnedFolderId:
+          type: string
+          format: uuid
+          nullable: true
+        autoFollowActiveSession:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserSettingsUpdate:
+      type: object
+      properties:
+        defaultWorkingDirectory:
+          type: string
+        defaultShell:
+          type: string
+        startupCommand:
+          type: string
+        theme:
+          type: string
+        fontSize:
+          type: integer
+        fontFamily:
+          type: string
+        activeFolderId:
+          type: string
+          format: uuid
+        pinnedFolderId:
+          type: string
+          format: uuid
+        autoFollowActiveSession:
+          type: boolean
+
+    FolderPreferences:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        folderId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        defaultWorkingDirectory:
+          type: string
+          nullable: true
+        defaultShell:
+          type: string
+          nullable: true
+        startupCommand:
+          type: string
+          nullable: true
+        theme:
+          type: string
+          nullable: true
+        fontSize:
+          type: integer
+          nullable: true
+        fontFamily:
+          type: string
+          nullable: true
+        githubRepoId:
+          type: string
+          format: uuid
+          nullable: true
+        localRepoPath:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    FolderPreferencesUpdate:
+      type: object
+      properties:
+        defaultWorkingDirectory:
+          type: string
+        defaultShell:
+          type: string
+        startupCommand:
+          type: string
+        theme:
+          type: string
+        fontSize:
+          type: integer
+        fontFamily:
+          type: string
+        githubRepoId:
+          type: string
+          format: uuid
+        localRepoPath:
+          type: string
+
+    Template:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        projectPath:
+          type: string
+          nullable: true
+        startupCommand:
+          type: string
+          nullable: true
+        theme:
+          type: string
+          nullable: true
+        fontSize:
+          type: integer
+          nullable: true
+        fontFamily:
+          type: string
+          nullable: true
+        usageCount:
+          type: integer
+        userId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateTemplateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        projectPath:
+          type: string
+        startupCommand:
+          type: string
+        theme:
+          type: string
+        fontSize:
+          type: integer
+        fontFamily:
+          type: string
+
+    Recording:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sessionId:
+          type: string
+          format: uuid
+          nullable: true
+        duration:
+          type: integer
+          description: Duration in seconds
+        userId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    RecordingWithData:
+      allOf:
+        - $ref: '#/components/schemas/Recording'
+        - type: object
+          properties:
+            data:
+              type: string
+              description: Base64-encoded recording data
+
+    CreateRecordingRequest:
+      type: object
+      required:
+        - name
+        - data
+        - duration
+      properties:
+        name:
+          type: string
+        data:
+          type: string
+          description: Base64-encoded recording data
+        duration:
+          type: integer
+          description: Duration in seconds
+        sessionId:
+          type: string
+          format: uuid
+
+    Repository:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        fullName:
+          type: string
+        cloneUrl:
+          type: string
+        sshUrl:
+          type: string
+        defaultBranch:
+          type: string
+        isPrivate:
+          type: boolean
+        description:
+          type: string
+          nullable: true
+        language:
+          type: string
+          nullable: true
+        stargazersCount:
+          type: integer
+        forksCount:
+          type: integer
+        updatedAt:
+          type: string
+          format: date-time
+        owner:
+          type: object
+          properties:
+            login:
+              type: string
+            avatarUrl:
+              type: string
+
+    FolderTree:
+      type: object
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        isDirectory:
+          type: boolean
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/FolderTree'
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+
+  parameters:
+    SessionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Session UUID
+
+    FolderId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Folder UUID
+
+    TemplateId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Template UUID
+
+    RecordingId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Recording UUID
+
+  responses:
+    Success:
+      description: Operation successful
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                const: true
+
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: next-auth.session-token
+      description: NextAuth session cookie
+
+security:
+  - sessionCookie: []

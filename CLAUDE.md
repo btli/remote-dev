@@ -119,6 +119,7 @@ Located in `src/services/`:
 - **shadcn/ui** components in `src/components/ui/`
 - **Tailwind CSS v4** with CSS variables for theming
 - **Tokyo Night** terminal theme with glassmorphism effects
+- **22 Nerd Fonts** self-hosted in WOFF2 format for optimal mobile loading
 
 **Key UI Components:**
 
@@ -214,14 +215,15 @@ React Contexts in `src/contexts/`:
 - `GET /api/github/repositories/:id/folders` - Get folder structure
 - `POST /api/github/worktrees` - Create worktree
 - `DELETE /api/github/worktrees` - Remove worktree
+- `POST /api/github/worktrees/check` - Check worktree status
 - `GET /api/auth/github/link` - Start OAuth flow
 - `GET /api/auth/github/callback` - OAuth callback
 
 ### Git
-- `POST /api/git/validate` - Validate git repository path
+- `GET /api/git/validate` - Validate git repository path
 
 ### Images
-- `GET /api/images` - Proxy external images
+- `POST /api/images` - Upload and save image
 
 ## Adding Authorized Users
 
@@ -251,3 +253,4 @@ See the `docs/` directory for detailed documentation:
 - `docs/ARCHITECTURE.md` - System architecture deep dive
 - `docs/SETUP.md` - Installation and configuration guide
 - `docs/API.md` - Complete API reference
+- `docs/openapi.yaml` - OpenAPI 3.0 specification (45 endpoints)
