@@ -49,7 +49,6 @@ interface FolderNode extends SessionFolder {
 interface SidebarProps {
   sessions: TerminalSession[];
   folders: SessionFolder[];
-  sessionFolders: Record<string, string>; // sessionId -> folderId
   activeSessionId: string | null;
   activeFolderId: string | null;
   collapsed: boolean;
@@ -78,7 +77,6 @@ interface SidebarProps {
 export function Sidebar({
   sessions,
   folders,
-  sessionFolders,
   activeSessionId,
   activeFolderId,
   collapsed,
@@ -140,9 +138,9 @@ export function Sidebar({
     setWorktreeDialogSession(null);
   }, [worktreeDialogSession, onSessionClose]);
 
-  // Sessions not in any folder
+  // Sessions not in any folder - use session.folderId directly for accurate rendering
   const rootSessions = activeSessions.filter(
-    (s) => !sessionFolders[s.id]
+    (s) => !s.folderId
   );
 
   // Build folder tree from flat list
@@ -364,15 +362,16 @@ export function Sidebar({
       return;
     }
 
-    // Check if in the same folder
-    const draggedFolderId = sessionFolders[draggedId] || null;
+    // Check if in the same folder - use session.folderId directly
+    const draggedSession = activeSessions.find((s) => s.id === draggedId);
+    const draggedFolderId = draggedSession?.folderId || null;
     if (draggedFolderId !== targetFolderId) {
       // Different folder - move to target folder
       onSessionMove(draggedId, targetFolderId);
     } else {
       // Same folder - reorder
       const sessionsInFolder = activeSessions.filter(
-        (s) => (sessionFolders[s.id] || null) === targetFolderId
+        (s) => (s.folderId || null) === targetFolderId
       );
       const currentOrder = sessionsInFolder.map((s) => s.id);
 
@@ -397,7 +396,7 @@ export function Sidebar({
         } else {
           // Keep existing order for other folders
           const otherFolderSessions = activeSessions
-            .filter((s) => sessionFolders[s.id] === folder.id)
+            .filter((s) => s.folderId === folder.id)
             .map((s) => s.id);
           fullOrder.push(...otherFolderSessions);
         }
@@ -410,7 +409,7 @@ export function Sidebar({
       } else {
         // Keep existing order for root sessions
         const rootSessionIds = activeSessions
-          .filter((s) => !sessionFolders[s.id])
+          .filter((s) => !s.folderId)
           .map((s) => s.id);
         fullOrder.push(...rootSessionIds);
       }
@@ -437,8 +436,9 @@ export function Sidebar({
       return;
     }
 
-    // Check if dragged session is in the same folder
-    const draggedFolderId = draggedSessionId ? sessionFolders[draggedSessionId] : null;
+    // Check if dragged session is in the same folder - use session.folderId directly
+    const draggedSession = draggedSessionId ? activeSessions.find((s) => s.id === draggedSessionId) : null;
+    const draggedFolderId = draggedSession?.folderId || null;
     if (draggedFolderId !== targetFolderId) {
       // Different folder - treat as folder drop
       setDragOverFolderId(targetFolderId);
@@ -463,7 +463,7 @@ export function Sidebar({
     const isSuspended = session.status === "suspended";
     const isEditing = editingId === session.id;
     const inFolder = parentFolderId !== null;
-    const currentFolderId = sessionFolders[session.id]; // Used in context menu
+    const currentFolderId = session.folderId; // Used in context menu - use session.folderId directly
     const isDragOverSession = parentFolderId !== null && dragOverFolderId === parentFolderId;
     const isDropTarget = dropTargetId === session.id;
     const showDropBefore = isDropTarget && dropPosition === "before";
@@ -866,8 +866,9 @@ export function Sidebar({
               {/* Recursive folder rendering */}
               {folderTree.map((folderNode) => {
                 const renderFolderNode = (node: FolderNode): React.ReactNode => {
+                  // Use session.folderId directly for accurate folder membership
                   const folderSessions = activeSessions.filter(
-                    (s) => sessionFolders[s.id] === node.id
+                    (s) => s.folderId === node.id
                   );
                   const isEditingFolder = editingId === node.id && editingType === "folder";
                   const isDragOver = dragOverFolderId === node.id;
