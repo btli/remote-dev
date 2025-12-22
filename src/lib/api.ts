@@ -9,7 +9,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 
 /**
- * Route params type for dynamic routes
+ * Route context type for dynamic routes
+ *
+ * In Next.js 15, route params are wrapped in a Promise to support
+ * streaming and async rendering. The withAuth wrapper awaits this
+ * automatically before passing params to the handler.
  */
 export interface RouteContext {
   params?: Promise<Record<string, string>>;
@@ -20,6 +24,10 @@ export interface RouteContext {
  *
  * Automatically checks for a valid session and extracts the user ID.
  * Returns 401 Unauthorized if no valid session exists.
+ * Catches any unhandled errors and returns a standardized 500 response.
+ *
+ * @param handler - The route handler function to wrap
+ * @returns Wrapped handler that checks auth before calling the original handler
  *
  * @example
  * ```ts
@@ -36,39 +44,92 @@ export function withAuth(
   ) => Promise<NextResponse>
 ): (request: Request, context?: RouteContext) => Promise<NextResponse> {
   return async (request: Request, context?: RouteContext) => {
-    const session = await auth();
+    try {
+      const session = await auth();
 
-    if (!session?.user?.id) {
+      if (!session?.user?.id) {
+        return NextResponse.json(
+          { error: "Unauthorized" },
+          { status: 401 }
+        );
+      }
+
+      // Await params if provided (for dynamic routes)
+      const params = context?.params ? await context.params : undefined;
+
+      return await handler(request, { userId: session.user.id, params });
+    } catch (error) {
+      console.error("Unhandled error in API route:", error);
       return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
+        { error: "Internal server error" },
+        { status: 500 }
       );
     }
-
-    // Await params if provided (for dynamic routes)
-    const params = context?.params ? await context.params : undefined;
-
-    return handler(request, { userId: session.user.id, params });
   };
 }
 
 /**
  * Standard error response helper
+ *
+ * Creates a consistent JSON error response with optional error code and details.
+ * Automatically logs server errors (5xx) for debugging.
+ *
+ * @param message - Human-readable error message
+ * @param status - HTTP status code (default: 500)
+ * @param code - Optional machine-readable error code for client handling
+ * @param details - Optional additional details (e.g., stderr output for debugging)
+ * @returns NextResponse with error JSON body
+ *
+ * @example
+ * ```ts
+ * return errorResponse("Not found", 404);
+ * return errorResponse("GitHub not connected", 400, "GITHUB_NOT_CONNECTED");
+ * return errorResponse("Failed to create worktree", 400, "CREATE_FAILED", err.stderr);
+ * ```
  */
 export function errorResponse(
   message: string,
   status: number = 500,
-  code?: string
-): NextResponse<{ error: string; code?: string }> {
-  return NextResponse.json(
-    code ? { error: message, code } : { error: message },
-    { status }
-  );
+  code?: string,
+  details?: string
+): NextResponse<{ error: string; code?: string; details?: string }> {
+  // Log server errors for debugging
+  if (status >= 500) {
+    console.error(`API Error [${status}]:`, message, code ? `(${code})` : "", details || "");
+  }
+
+  const body: { error: string; code?: string; details?: string } = { error: message };
+  if (code) body.code = code;
+  if (details) body.details = details;
+
+  return NextResponse.json(body, { status });
 }
 
 /**
- * Standard success response helper
+ * Helper for safely parsing JSON request body
+ *
+ * Handles SyntaxError from malformed JSON and returns a proper 400 response.
+ *
+ * @param request - The incoming Request object
+ * @returns Object with either parsed data or error response
+ *
+ * @example
+ * ```ts
+ * const result = await parseJsonBody<{ name: string }>(request);
+ * if ('error' in result) return result.error;
+ * const { name } = result.data;
+ * ```
  */
-export function successResponse<T>(data: T, status: number = 200): NextResponse<T> {
-  return NextResponse.json(data, { status });
+export async function parseJsonBody<T>(
+  request: Request
+): Promise<{ data: T } | { error: NextResponse }> {
+  try {
+    const data = (await request.json()) as T;
+    return { data };
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return { error: errorResponse("Invalid JSON in request body", 400, "INVALID_JSON") };
+    }
+    throw error;
+  }
 }

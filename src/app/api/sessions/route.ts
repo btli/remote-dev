@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput } from "@/types/session";
 
@@ -28,12 +28,19 @@ export const GET = withAuth(async (request, { userId }) => {
  */
 export const POST = withAuth(async (request, { userId }) => {
   try {
-    const body = await request.json();
+    const result = await parseJsonBody<{
+      name?: string;
+      projectPath?: string;
+      githubRepoId?: string;
+      worktreeBranch?: string;
+    }>(request);
+    if ("error" in result) return result.error;
+
     const input: CreateSessionInput = {
-      name: body.name || "Terminal",
-      projectPath: body.projectPath,
-      githubRepoId: body.githubRepoId,
-      worktreeBranch: body.worktreeBranch,
+      name: result.data.name || "Terminal",
+      projectPath: result.data.projectPath,
+      githubRepoId: result.data.githubRepoId,
+      worktreeBranch: result.data.worktreeBranch,
     };
 
     const newSession = await SessionService.createSession(userId, input);

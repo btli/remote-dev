@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as FolderService from "@/services/folder-service";
 
 /**
@@ -24,8 +24,9 @@ export const GET = withAuth(async (_request, { userId }) => {
  */
 export const POST = withAuth(async (request, { userId }) => {
   try {
-    const body = await request.json();
-    const { name } = body;
+    const result = await parseJsonBody<{ name?: string }>(request);
+    if ("error" in result) return result.error;
+    const { name } = result.data;
 
     if (!name || typeof name !== "string") {
       return errorResponse("Name is required", 400);

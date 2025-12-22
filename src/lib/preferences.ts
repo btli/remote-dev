@@ -16,6 +16,12 @@ import type {
 /**
  * System-wide default preferences
  * Used as fallback when no user or folder preferences are set
+ *
+ * Note: Environment checks (typeof process !== "undefined") ensure this module
+ * works in both server (Node.js) and client (browser) contexts. On the server,
+ * defaultWorkingDirectory and defaultShell use environment variables. On the
+ * client, they fall back to "~" and "/bin/bash" respectively. These client-side
+ * values are only used for display; actual session creation uses server-resolved values.
  */
 export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   defaultWorkingDirectory: typeof process !== "undefined" ? (process.env.HOME || "~") : "~",
@@ -29,7 +35,15 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
  * Resolve preferences with inheritance chain
  * Default -> User -> Folder
  *
+ * Each preference value comes from the most specific level that defines it.
+ * The returned object includes a `source` map indicating where each
+ * preference value originated, useful for UI indicators showing inheritance.
+ *
  * This is a pure function that can be used on both server and client.
+ *
+ * @param userSettings - User-level preferences (null if not loaded)
+ * @param folderPrefs - Folder-level overrides (null if no folder or no overrides)
+ * @returns Resolved preferences with source tracking and folderId
  */
 export function resolvePreferences(
   userSettings: UserSettings | null,

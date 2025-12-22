@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 import * as WorktreeService from "@/services/worktree-service";
 
@@ -8,8 +8,14 @@ import * as WorktreeService from "@/services/worktree-service";
  */
 export const POST = withAuth(async (request, { userId }) => {
   try {
-    const body = await request.json();
-    const { repositoryId, branch, createNewBranch, baseBranch } = body;
+    const result = await parseJsonBody<{
+      repositoryId: string;
+      branch: string;
+      createNewBranch?: boolean;
+      baseBranch?: string;
+    }>(request);
+    if ("error" in result) return result.error;
+    const { repositoryId, branch, createNewBranch, baseBranch } = result.data;
 
     if (!repositoryId || !branch) {
       return errorResponse("repositoryId and branch are required", 400);
@@ -52,7 +58,7 @@ export const POST = withAuth(async (request, { userId }) => {
     console.error("Error creating worktree:", error);
 
     if (error instanceof WorktreeService.WorktreeServiceError) {
-      return errorResponse(error.message, 400, error.code);
+      return errorResponse(error.message, 400, error.code, error.details);
     }
 
     return errorResponse("Failed to create worktree", 500);
@@ -64,8 +70,13 @@ export const POST = withAuth(async (request, { userId }) => {
  */
 export const DELETE = withAuth(async (request, { userId }) => {
   try {
-    const body = await request.json();
-    const { repositoryId, worktreePath, force } = body;
+    const result = await parseJsonBody<{
+      repositoryId: string;
+      worktreePath: string;
+      force?: boolean;
+    }>(request);
+    if ("error" in result) return result.error;
+    const { repositoryId, worktreePath, force } = result.data;
 
     if (!repositoryId || !worktreePath) {
       return errorResponse("repositoryId and worktreePath are required", 400);
@@ -92,7 +103,7 @@ export const DELETE = withAuth(async (request, { userId }) => {
     console.error("Error removing worktree:", error);
 
     if (error instanceof WorktreeService.WorktreeServiceError) {
-      return errorResponse(error.message, 400, error.code);
+      return errorResponse(error.message, 400, error.code, error.details);
     }
 
     return errorResponse("Failed to remove worktree", 500);
