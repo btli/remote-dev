@@ -77,10 +77,12 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
  * Create a new tmux session
  * @param sessionName - Unique session name (e.g., "rdv-abc123")
  * @param cwd - Working directory for the session
+ * @param startupCommand - Optional command to run after session creation
  */
 export async function createSession(
   sessionName: string,
-  cwd?: string
+  cwd?: string,
+  startupCommand?: string
 ): Promise<void> {
   // Check if session already exists
   if (await sessionExists(sessionName)) {
@@ -104,6 +106,20 @@ export async function createSession(
 
   try {
     await execFile("tmux", args);
+
+    // Enable mouse mode for scrollback support
+    await execFile("tmux", [
+      "set-option",
+      "-t",
+      sessionName,
+      "mouse",
+      "on",
+    ]);
+
+    // Execute startup command if provided
+    if (startupCommand && startupCommand.trim()) {
+      await sendKeys(sessionName, startupCommand.trim());
+    }
   } catch (error) {
     throw new TmuxServiceError(
       `Failed to create tmux session: ${(error as Error).message}`,
