@@ -721,7 +721,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           <Sidebar
             sessions={activeSessions}
             folders={folders}
-            sessionFolders={sessionFolders}
             activeSessionId={activeSessionId}
             activeFolderId={activeProject.folderId}
             collapsed={effectiveCollapsed}
