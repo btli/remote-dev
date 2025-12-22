@@ -29,6 +29,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   theme: "tokyo-night",
   fontSize: 14,
   fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
+  startupCommand: "",
 };
 
 interface PreferencesContextValue {
@@ -52,6 +53,7 @@ interface PreferencesContextValue {
   ) => Promise<void>;
   deleteFolderPreferences: (folderId: string) => Promise<void>;
   hasFolderPreferences: (folderId: string) => boolean;
+  folderHasRepo: (folderId: string) => boolean;
 
   // Active project management
   setActiveFolder: (folderId: string | null, pinned?: boolean) => void;
@@ -169,6 +171,14 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     [folderPreferences]
   );
 
+  const folderHasRepo = useCallback(
+    (folderId: string): boolean => {
+      const prefs = folderPreferences.get(folderId);
+      return !!(prefs?.githubRepoId || prefs?.localRepoPath);
+    },
+    [folderPreferences]
+  );
+
   const updateFolderPreferencesHandler = useCallback(
     async (folderId: string, updates: UpdateFolderPreferencesInput) => {
       try {
@@ -228,6 +238,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         theme: "default",
         fontSize: "default",
         fontFamily: "default",
+        startupCommand: "default",
       };
 
       // Start with defaults
@@ -255,6 +266,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           resolved.fontFamily = userSettings.fontFamily;
           source.fontFamily = "user";
         }
+        if (userSettings.startupCommand !== null) {
+          resolved.startupCommand = userSettings.startupCommand;
+          source.startupCommand = "user";
+        }
       }
 
       // Apply folder overrides
@@ -280,6 +295,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           if (folderPrefs.fontFamily !== null) {
             resolved.fontFamily = folderPrefs.fontFamily;
             source.fontFamily = "folder";
+          }
+          if (folderPrefs.startupCommand !== null) {
+            resolved.startupCommand = folderPrefs.startupCommand;
+            source.startupCommand = "folder";
           }
         }
       }
@@ -340,6 +359,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         updateFolderPreferences: updateFolderPreferencesHandler,
         deleteFolderPreferences: deleteFolderPreferencesHandler,
         hasFolderPreferences,
+        folderHasRepo,
         setActiveFolder,
         resolvePreferencesForFolder,
         refreshPreferences,

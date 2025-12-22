@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import {
   getUserSettings,
   updateUserSettings,
@@ -12,7 +12,7 @@ import { getFolders } from "@/services/folder-service";
  * Returns user settings, all folder preferences, and active folder details
  */
 export async function GET() {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -52,7 +52,7 @@ export async function GET() {
  * Updates user settings
  */
 export async function PATCH(request: Request) {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -64,6 +64,7 @@ export async function PATCH(request: Request) {
     const allowedFields = [
       "defaultWorkingDirectory",
       "defaultShell",
+      "startupCommand",
       "theme",
       "fontSize",
       "fontFamily",

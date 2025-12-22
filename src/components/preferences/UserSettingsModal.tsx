@@ -191,6 +191,20 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Startup Command */}
+            <div className="space-y-2">
+              <Label className="text-slate-300">Startup Command</Label>
+              <Input
+                value={getValue("startupCommand") || ""}
+                onChange={(e) => setValue("startupCommand", e.target.value || null)}
+                placeholder="claude"
+                className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+              />
+              <p className="text-xs text-slate-500">
+                Command to run when a new session starts (e.g., claude, clauded)
+              </p>
+            </div>
           </TabsContent>
 
           <TabsContent value="appearance" className="space-y-4 mt-4">
