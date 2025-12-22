@@ -21,26 +21,9 @@ A modern web-based terminal interface for local development, featuring multi-ses
 - **Secure Authentication** - Cloudflare Access (remote) + localhost email auth (local dev)
 - **Mobile Support** - Touch-friendly keyboard and responsive design
 
-## Screenshots
+## Screenshot
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  [RD] Remote Dev                        GitHub ✓  user@example  │
-├─────────────────────────────────────────────────────────────────┤
-│  ● Project A   ● API Server   ● Tests   [+]                     │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ~/projects/api $ npm run dev                                   │
-│  > api@1.0.0 dev                                                │
-│  > next dev                                                     │
-│                                                                 │
-│  ▲ Next.js 15.0.0                                               │
-│  - Local: http://localhost:3000                                 │
-│                                                                 │
-│  ~/projects/api $ █                                             │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+![Remote Dev Terminal Interface](docs/assets/remote-dev-terminal.png)
 
 ## Quick Start
 
