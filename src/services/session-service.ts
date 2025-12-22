@@ -307,6 +307,13 @@ export async function updateSession(
     );
   }
 
+  // If status is being changed to closed, kill the tmux session
+  if (updates.status === "closed" && existing.status !== "closed") {
+    await TmuxService.killSession(existing.tmuxSessionName).catch((err) => {
+      console.error(`Failed to kill tmux session during status update: ${err.message}`);
+    });
+  }
+
   const [updated] = await db
     .update(terminalSessions)
     .set({
@@ -505,11 +512,16 @@ export async function recoverSessions(userId: string): Promise<{
 }
 
 /**
- * Clean up orphaned tmux sessions that aren't in the database
+ * Clean up orphaned tmux sessions that aren't in the database or are closed
  */
 export async function cleanupOrphanedTmuxSessions(userId: string): Promise<string[]> {
   const sessions = await listSessions(userId);
-  const validSessionNames = new Set(sessions.map((s) => s.tmuxSessionName));
+  // Only active or suspended sessions should have a running tmux instance
+  const validSessionNames = new Set(
+    sessions
+      .filter((s) => s.status === "active" || s.status === "suspended")
+      .map((s) => s.tmuxSessionName)
+  );
   return TmuxService.cleanupOrphanedSessions(validSessionNames, "rdv-");
 }
 
