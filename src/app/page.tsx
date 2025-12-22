@@ -1,4 +1,5 @@
-import { auth, signOut } from "@/auth";
+import { signOut } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import { db } from "@/db";
 import { terminalSessions, accounts } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -16,7 +17,7 @@ import Image from "next/image";
 import type { TerminalSession } from "@/types/session";
 
 export default async function Home() {
-  const session = await auth();
+  const session = await getAuthSession();
 
   if (!session?.user?.id) {
     return null;
