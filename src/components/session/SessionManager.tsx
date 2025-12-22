@@ -108,12 +108,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Compute WebSocket URL based on current location (supports cloudflared tunnels)
   const wsUrl = useMemo(() => {
-    if (typeof window === "undefined") return "ws://localhost:6002";
+    if (typeof window === "undefined") return "ws://localhost:3001";
     const { protocol, hostname, port } = window.location;
     const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
     if (isLocalhost) {
       // Local development: use terminal server port directly
-      return `ws://localhost:${process.env.NEXT_PUBLIC_TERMINAL_PORT || "6002"}`;
+      return `ws://localhost:${process.env.NEXT_PUBLIC_TERMINAL_PORT || "3001"}`;
     }
     // Remote access via tunnel: use /ws path (cloudflared routes to terminal server)
     const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
