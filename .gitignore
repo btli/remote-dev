@@ -41,6 +41,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# process manager pids
+/.pids
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
