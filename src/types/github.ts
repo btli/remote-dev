@@ -1,6 +1,11 @@
 /**
- * GitHub types for repository management and OAuth
+ * Git repository types for multi-vendor repository management and OAuth
  */
+
+import type { GitProvider } from "@/db/schema";
+
+// Re-export GitProvider for convenience
+export type { GitProvider } from "@/db/schema";
 
 export interface GitHubRepository {
   id: number;
@@ -15,6 +20,7 @@ export interface GitHubRepository {
   language: string | null;
   stargazersCount: number;
   forksCount: number;
+  provider: GitProvider;
   owner: {
     login: string;
     avatarUrl: string;
@@ -25,6 +31,7 @@ export interface CachedGitHubRepository {
   id: string;
   userId: string;
   githubId: number;
+  provider: GitProvider;
   name: string;
   fullName: string;
   cloneUrl: string;

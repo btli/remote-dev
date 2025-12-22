@@ -96,7 +96,10 @@ export const userSettings = sqliteTable("user_settings", {
     .$defaultFn(() => new Date()),
 });
 
-// GitHub repository cache
+// Git provider types
+export type GitProvider = "github" | "gitlab" | "bitbucket" | "gitea" | "azure-devops";
+
+// Git repository cache (supports multiple providers)
 export const githubRepositories = sqliteTable(
   "github_repository",
   {
@@ -106,7 +109,10 @@ export const githubRepositories = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    // Provider-specific repository ID (GitHub ID, GitLab project ID, etc.)
     githubId: integer("github_id").notNull(),
+    // Git provider (github, gitlab, bitbucket, gitea, azure-devops)
+    provider: text("provider").$type<GitProvider>().notNull().default("github"),
     name: text("name").notNull(),
     fullName: text("full_name").notNull(),
     cloneUrl: text("clone_url").notNull(),
@@ -123,6 +129,7 @@ export const githubRepositories = sqliteTable(
   (table) => [
     index("github_repo_user_idx").on(table.userId),
     index("github_repo_github_id_idx").on(table.userId, table.githubId),
+    index("github_repo_provider_idx").on(table.userId, table.provider),
   ]
 );
 

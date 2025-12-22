@@ -7,7 +7,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
+import type { GitProvider } from "@/db/schema";
 import { Button } from "@/components/ui/button";
+import { GitProviderIcon } from "@/components/ui/git-provider-icon";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,10 +34,19 @@ export interface SessionFolder {
   collapsed: boolean;
 }
 
+// Repository metadata for sessions
+export interface SessionRepositoryInfo {
+  id: string;
+  name: string;
+  fullName: string;
+  provider: GitProvider;
+}
+
 interface SidebarProps {
   sessions: TerminalSession[];
   folders: SessionFolder[];
   sessionFolders: Record<string, string>; // sessionId -> folderId
+  sessionRepositories?: Record<string, SessionRepositoryInfo>; // sessionId -> repository info
   activeSessionId: string | null;
   activeFolderId: string | null;
   folderHasPreferences: (folderId: string) => boolean;
@@ -58,6 +69,7 @@ export function Sidebar({
   sessions,
   folders,
   sessionFolders,
+  sessionRepositories = {},
   activeSessionId,
   activeFolderId,
   folderHasPreferences,
@@ -90,6 +102,22 @@ export function Sidebar({
   const rootSessions = activeSessions.filter(
     (s) => !sessionFolders[s.id]
   );
+
+  // Get the git provider for a folder based on sessions with linked repositories
+  const getFolderProvider = (folderId: string): GitProvider | null => {
+    const folderSessionIds = Object.entries(sessionFolders)
+      .filter(([, fId]) => fId === folderId)
+      .map(([sessionId]) => sessionId);
+
+    // Find first session with a repository
+    for (const sessionId of folderSessionIds) {
+      const repo = sessionRepositories[sessionId];
+      if (repo) {
+        return repo.provider;
+      }
+    }
+    return null;
+  };
 
   // Focus input when editing starts
   useEffect(() => {
@@ -453,6 +481,7 @@ export function Sidebar({
                 const isDragOver = dragOverFolderId === folder.id;
                 const isActive = activeFolderId === folder.id;
                 const hasPrefs = folderHasPreferences(folder.id);
+                const folderProvider = getFolderProvider(folder.id);
 
                 return (
                   <div key={folder.id} className="space-y-0.5">
@@ -471,25 +500,36 @@ export function Sidebar({
                         onFolderToggle(folder.id);
                       }}
                     >
-                      {folder.collapsed ? (
-                        <Folder
-                          className={cn(
-                            "w-3.5 h-3.5 shrink-0",
-                            isActive
-                              ? "text-violet-300 fill-violet-400"
-                              : "text-violet-400"
-                          )}
-                        />
-                      ) : (
-                        <FolderOpen
-                          className={cn(
-                            "w-3.5 h-3.5 shrink-0",
-                            isActive
-                              ? "text-violet-300 fill-violet-400"
-                              : "text-violet-400"
-                          )}
-                        />
-                      )}
+                      {/* Folder/Git Provider icon */}
+                      <div className="flex items-center shrink-0">
+                        {folderProvider ? (
+                          <GitProviderIcon
+                            provider={folderProvider}
+                            size="sm"
+                            className={cn(
+                              isActive ? "opacity-100" : "opacity-80"
+                            )}
+                          />
+                        ) : folder.collapsed ? (
+                          <Folder
+                            className={cn(
+                              "w-3.5 h-3.5",
+                              isActive
+                                ? "text-violet-300 fill-violet-400"
+                                : "text-violet-400"
+                            )}
+                          />
+                        ) : (
+                          <FolderOpen
+                            className={cn(
+                              "w-3.5 h-3.5",
+                              isActive
+                                ? "text-violet-300 fill-violet-400"
+                                : "text-violet-400"
+                            )}
+                          />
+                        )}
+                      </div>
 
                       {isEditingFolder ? (
                         <input

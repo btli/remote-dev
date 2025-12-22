@@ -39,6 +39,7 @@ export interface SessionWithMetadata extends TerminalSession {
     name: string;
     fullName: string;
     cloneUrl: string;
+    provider: "github" | "gitlab" | "bitbucket" | "gitea" | "azure-devops";
   } | null;
 }
 

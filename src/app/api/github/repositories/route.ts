@@ -59,6 +59,7 @@ export async function GET(request: Request) {
       stargazersCount: repo.stargazers_count,
       forksCount: 0, // GitHub API doesn't always return this in user repos endpoint
       updatedAt: repo.updated_at,
+      provider: "github" as const, // All repos from this endpoint are GitHub repos
       owner: {
         login: repo.owner.login,
         avatarUrl: repo.owner.avatar_url,

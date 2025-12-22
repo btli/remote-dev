@@ -134,6 +134,7 @@ export async function getSessionWithMetadata(
         name: repo.name,
         fullName: repo.fullName,
         cloneUrl: repo.cloneUrl,
+        provider: repo.provider,
       };
     }
   }

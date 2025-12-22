@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Github,
   Search,
   Loader2,
   Lock,
@@ -11,10 +10,12 @@ import {
   GitFork,
   ChevronRight,
   RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { GitProviderIcon, getProviderName } from "@/components/ui/git-provider-icon";
 import { cn } from "@/lib/utils";
 import type { GitHubRepository } from "@/types/github";
 
@@ -95,7 +96,7 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <Github className="w-12 h-12 text-red-400 mb-4" />
+        <AlertCircle className="w-12 h-12 text-red-400 mb-4" />
         <p className="text-red-400 mb-4">{error}</p>
         <div className="flex gap-2">
           <Button variant="ghost" onClick={onBack} className="text-slate-400">
@@ -144,12 +145,16 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
                   "hover:shadow-lg hover:shadow-violet-500/10"
                 )}
               >
-                {/* Visibility Icon */}
-                <div className="mt-0.5">
+                {/* Git Provider Icon */}
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <GitProviderIcon
+                    provider={repo.provider}
+                    size="md"
+                  />
                   {repo.isPrivate ? (
-                    <Lock className="w-4 h-4 text-amber-400" />
+                    <Lock className="w-3.5 h-3.5 text-amber-400" />
                   ) : (
-                    <Globe className="w-4 h-4 text-slate-400" />
+                    <Globe className="w-3.5 h-3.5 text-slate-500" />
                   )}
                 </div>
 
@@ -159,6 +164,9 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
                     <h3 className="font-medium text-white truncate">
                       {repo.fullName}
                     </h3>
+                    <span className="text-[10px] text-slate-500 px-1.5 py-0.5 bg-slate-700/50 rounded">
+                      {getProviderName(repo.provider)}
+                    </span>
                   </div>
 
                   {repo.description && (

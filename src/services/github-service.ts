@@ -349,6 +349,7 @@ function mapDbRepoToCachedRepository(
     id: dbRepo.id,
     userId: dbRepo.userId,
     githubId: dbRepo.githubId,
+    provider: dbRepo.provider,
     name: dbRepo.name,
     fullName: dbRepo.fullName,
     cloneUrl: dbRepo.cloneUrl,
