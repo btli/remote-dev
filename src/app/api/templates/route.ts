@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import {
   getTemplates,
   createTemplate,
@@ -8,7 +8,7 @@ import {
 
 export async function GET() {
   try {
-    const session = await auth();
+    const session = await getAuthSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -26,7 +26,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await auth();
+    const session = await getAuthSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
