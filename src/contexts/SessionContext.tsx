@@ -16,6 +16,37 @@ import type {
   SessionStatus,
 } from "@/types/session";
 
+const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
+
+/**
+ * Get the saved active session ID from localStorage.
+ * Returns null if not found or if running on server (SSR).
+ */
+function getSavedActiveSessionId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save the active session ID to localStorage.
+ */
+function saveActiveSessionId(sessionId: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (sessionId) {
+      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, sessionId);
+    } else {
+      localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors (e.g., quota exceeded, private browsing)
+  }
+}
+
 interface SessionContextValue extends SessionState {
   createSession: (input: CreateSessionInput) => Promise<TerminalSession>;
   updateSession: (sessionId: string, updates: Partial<TerminalSession>) => Promise<void>;
@@ -29,20 +60,44 @@ interface SessionContextValue extends SessionState {
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
+/**
+ * Determine the best active session ID from available sessions.
+ * Priority: saved localStorage ID > current state ID > first active session
+ */
+function determineActiveSessionId(
+  sessions: TerminalSession[],
+  currentActiveId: string | null
+): string | null {
+  const activeSessions = sessions.filter((s) => s.status === "active");
+  if (activeSessions.length === 0) return null;
+
+  // First, try the saved session from localStorage
+  const savedId = getSavedActiveSessionId();
+  if (savedId && activeSessions.find((s) => s.id === savedId)) {
+    return savedId;
+  }
+
+  // Second, try the current active session if it still exists
+  if (currentActiveId && activeSessions.find((s) => s.id === currentActiveId)) {
+    return currentActiveId;
+  }
+
+  // Fall back to the first active session
+  return activeSessions[0]?.id ?? null;
+}
+
 function sessionReducer(state: SessionState, action: SessionAction): SessionState {
   switch (action.type) {
-    case "LOAD_SESSIONS":
+    case "LOAD_SESSIONS": {
+      const activeSessionId = determineActiveSessionId(action.sessions, state.activeSessionId);
       return {
         ...state,
         sessions: action.sessions,
         loading: false,
         error: null,
-        // Set active to first session if none selected
-        activeSessionId:
-          state.activeSessionId && action.sessions.find((s) => s.id === state.activeSessionId)
-            ? state.activeSessionId
-            : action.sessions.filter((s) => s.status === "active")[0]?.id ?? null,
+        activeSessionId,
       };
+    }
 
     case "CREATE":
       return {
@@ -110,10 +165,29 @@ export function SessionProvider({
 }: SessionProviderProps) {
   const [state, dispatch] = useReducer(sessionReducer, {
     sessions: initialSessions,
+    // Initial active session is determined after hydration via useEffect
+    // to properly access localStorage (SSR-safe)
     activeSessionId: initialSessions.filter((s) => s.status === "active")[0]?.id ?? null,
     loading: false,
     error: null,
   });
+
+  // Restore active session from localStorage after hydration
+  useEffect(() => {
+    if (initialSessions.length > 0) {
+      const restoredId = determineActiveSessionId(initialSessions, null);
+      if (restoredId && restoredId !== state.activeSessionId) {
+        dispatch({ type: "SET_ACTIVE", sessionId: restoredId });
+      }
+    }
+    // Only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist activeSessionId to localStorage whenever it changes
+  useEffect(() => {
+    saveActiveSessionId(state.activeSessionId);
+  }, [state.activeSessionId]);
 
   // Fetch sessions on mount if none provided
   useEffect(() => {
