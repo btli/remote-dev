@@ -15,17 +15,10 @@ import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
 import * as GitHubService from "./github-service";
 import { getResolvedPreferences, getFolderPreferences } from "./preferences-service";
+import { SessionServiceError } from "@/lib/errors";
 
-export class SessionServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly sessionId?: string
-  ) {
-    super(message);
-    this.name = "SessionServiceError";
-  }
-}
+// Re-export for backwards compatibility with API routes
+export { SessionServiceError };
 
 /**
  * Create a new terminal session.

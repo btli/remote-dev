@@ -2,23 +2,16 @@
  * TmuxService - Manages tmux session lifecycle for terminal persistence
  */
 import { execFile, execFileCheck, execFileNoThrow } from "@/lib/exec";
+import { TmuxServiceError } from "@/lib/errors";
+
+// Re-export for backwards compatibility
+export { TmuxServiceError };
 
 export interface TmuxSessionInfo {
   name: string;
   windowCount: number;
   created: Date;
   attached: boolean;
-}
-
-export class TmuxServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly details?: string
-  ) {
-    super(message);
-    this.name = "TmuxServiceError";
-  }
 }
 
 /**

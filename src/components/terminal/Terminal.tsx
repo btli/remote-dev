@@ -413,6 +413,8 @@ export function Terminal({
           visibilityTimeout = setTimeout(() => {
             visibilityTimeout = null;
             handleResize();
+            // Focus terminal when page becomes visible
+            terminal.focus();
           }, 100);
         }
       };
@@ -690,6 +692,12 @@ export function Terminal({
     };
   }, [sendImageToTerminal]);
 
+  // Focus terminal on click/mousedown to ensure it maintains focus during selection
+  // This fixes the issue where selecting text would quickly lose focus, preventing copy
+  const handleContainerMouseDown = useCallback(() => {
+    xtermRef.current?.focus();
+  }, []);
+
   return (
     <div
       ref={terminalRef}
@@ -697,6 +705,7 @@ export function Terminal({
         isDragging ? "ring-2 ring-blue-500 ring-opacity-50" : ""
       }`}
       style={{ backgroundColor: getThemeBackground(theme) }}
+      onMouseDown={handleContainerMouseDown}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
