@@ -6,6 +6,7 @@ import {
   useReducer,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import type {
@@ -16,10 +17,14 @@ import type {
   SessionStatus,
 } from "@/types/session";
 
+interface CloseSessionOptions {
+  deleteWorktree?: boolean;
+}
+
 interface SessionContextValue extends SessionState {
   createSession: (input: CreateSessionInput) => Promise<TerminalSession>;
   updateSession: (sessionId: string, updates: Partial<TerminalSession>) => Promise<void>;
-  closeSession: (sessionId: string) => Promise<void>;
+  closeSession: (sessionId: string, options?: CloseSessionOptions) => Promise<void>;
   suspendSession: (sessionId: string) => Promise<void>;
   resumeSession: (sessionId: string) => Promise<void>;
   setActiveSession: (sessionId: string | null) => void;
@@ -115,12 +120,8 @@ export function SessionProvider({
     error: null,
   });
 
-  // Fetch sessions on mount if none provided
-  useEffect(() => {
-    if (initialSessions.length === 0) {
-      refreshSessions();
-    }
-  }, []);
+  // Track if we've already attempted to fetch sessions
+  const hasFetchedRef = useRef(false);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -132,6 +133,15 @@ export function SessionProvider({
       console.error("Error fetching sessions:", error);
     }
   }, []);
+
+  // Fetch sessions on mount if none provided
+  useEffect(() => {
+    if (hasFetchedRef.current) return;
+    if (initialSessions.length === 0) {
+      hasFetchedRef.current = true;
+      refreshSessions();
+    }
+  }, [initialSessions.length, refreshSessions]);
 
   const createSession = useCallback(
     async (input: CreateSessionInput): Promise<TerminalSession> => {
@@ -179,18 +189,28 @@ export function SessionProvider({
   );
 
   const closeSession = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string, options?: CloseSessionOptions) => {
+      // FIX: Store previous active session to restore on error
+      const previousActiveSessionId = state.activeSessionId;
+
       // Optimistic update
       dispatch({ type: "DELETE", sessionId });
 
       try {
-        const response = await fetch(`/api/sessions/${sessionId}`, {
+        const url = options?.deleteWorktree
+          ? `/api/sessions/${sessionId}?deleteWorktree=true`
+          : `/api/sessions/${sessionId}`;
+        const response = await fetch(url, {
           method: "DELETE",
         });
 
         if (!response.ok) {
-          // Rollback on error - refetch
+          // Rollback on error - refetch and restore active session
           await refreshSessions();
+          // Restore the previous active session if it still exists
+          if (previousActiveSessionId && previousActiveSessionId !== sessionId) {
+            dispatch({ type: "SET_ACTIVE", sessionId: previousActiveSessionId });
+          }
           throw new Error("Failed to close session");
         }
       } catch (error) {
@@ -198,7 +218,7 @@ export function SessionProvider({
         throw error;
       }
     },
-    [refreshSessions]
+    [refreshSessions, state.activeSessionId]
   );
 
   const suspendSession = useCallback(

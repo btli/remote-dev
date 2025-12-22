@@ -1,14 +1,39 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput } from "@/types/session";
+import { resolve } from "path";
+
+/**
+ * Validate a project path to prevent path traversal attacks.
+ * SECURITY: Ensures paths are within allowed directories.
+ */
+function validateProjectPath(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+
+  // Must be absolute path
+  if (!path.startsWith("/")) {
+    return undefined;
+  }
+
+  // Resolve to canonical path (removes .., ., etc.)
+  const resolved = resolve(path);
+
+  // Must be within home directory or /tmp
+  const home = process.env.HOME || "/tmp";
+  if (!resolved.startsWith(home) && !resolved.startsWith("/tmp")) {
+    return undefined;
+  }
+
+  return resolved;
+}
 
 /**
  * GET /api/sessions - List user's terminal sessions
  */
 export async function GET(request: Request) {
   try {
-    const session = await auth();
+    const session = await getAuthSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -36,17 +61,33 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const session = await auth();
+    const session = await getAuthSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json();
+
+    // SECURITY: Validate projectPath to prevent path traversal
+    const validatedPath = validateProjectPath(body.projectPath);
+    if (body.projectPath && !validatedPath) {
+      return NextResponse.json(
+        { error: "Invalid project path" },
+        { status: 400 }
+      );
+    }
+
     const input: CreateSessionInput = {
       name: body.name || "Terminal",
-      projectPath: body.projectPath,
+      projectPath: validatedPath,
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
+      folderId: body.folderId,
+      // Feature session fields
+      startupCommand: body.startupCommand,
+      featureDescription: body.featureDescription,
+      createWorktree: body.createWorktree,
+      baseBranch: body.baseBranch,
     };
 
     const newSession = await SessionService.createSession(session.user.id, input);

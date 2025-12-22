@@ -3,7 +3,8 @@
  */
 
 export interface GitHubRepository {
-  id: number;
+  id: string; // Database UUID
+  githubId: number; // GitHub's numeric ID
   name: string;
   fullName: string;
   cloneUrl: string;
