@@ -336,6 +336,33 @@ getRecording(recordingId, userId)
 deleteRecording(recordingId, userId)
 ```
 
+### SplitService (`src/services/split-service.ts`)
+
+Manages split terminal pane groups:
+
+```typescript
+// Create split from session
+createSplit(userId, { sourceSessionId, direction, newSessionName? })
+
+// Add session to split group
+addToSplit(userId, splitGroupId, { sessionId?, newSessionName? })
+
+// Remove session from split group
+removeFromSplit(userId, splitGroupId, sessionId)
+
+// Update pane layout (sizes)
+updateLayout(userId, splitGroupId, layout[])
+
+// Get split containing session
+getSplitForSession(userId, sessionId)
+
+// List user's splits
+listSplits(userId)
+
+// Delete split group
+deleteSplit(userId, splitGroupId)
+```
+
 ### ApiKeyService (`src/services/api-key-service.ts`)
 
 Manages API keys for programmatic access:
@@ -424,6 +451,13 @@ api_key (
   id, userId, name, keyPrefix, keyHash,
   lastUsedAt, expiresAt, createdAt
 )
+
+-- Split Pane Groups
+split_group (
+  id, userId, direction, createdAt, updatedAt
+)
+-- Note: Session membership stored via splitGroupId, splitOrder, splitSize
+-- fields in terminal_session table
 ```
 
 ## Security Considerations
@@ -486,7 +520,9 @@ api_key (
 |-----------|---------|
 | `Terminal.tsx` | xterm.js wrapper with WebSocket, resize protection, and recording support |
 | `TerminalWithKeyboard.tsx` | Terminal with mobile virtual keyboard support |
-| `SplitPane.tsx` | Resizable split pane layouts for multiple terminals |
+| `SplitPane.tsx` | In-session split pane container for multiple terminals |
+| `SplitPaneLayout.tsx` | Cross-session split layout (multiple sessions side-by-side) |
+| `ResizeHandle.tsx` | Draggable resize handle for split panes |
 | `RecordingPlayer.tsx` | Playback recorded terminal sessions with seek controls |
 | `Sidebar.tsx` | Session/folder tree with context menus and drag-drop |
 | `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
@@ -504,6 +540,7 @@ api_key (
 | `PreferencesContext` | User settings + folder preferences with inheritance |
 | `TemplateContext` | Session templates state |
 | `RecordingContext` | Recording state management |
+| `SplitContext` | Split pane groups with active pane tracking |
 
 ### Preference Inheritance
 

@@ -31,6 +31,8 @@ tags:
     description: GitHub repository integration
   - name: Git
     description: Git repository utilities
+  - name: Splits
+    description: Split pane terminal groups
 
 paths:
   # Sessions API
@@ -945,6 +947,213 @@ paths:
                   mediaType:
                     type: string
 
+  # Splits API
+  /api/splits:
+    get:
+      tags: [Splits]
+      summary: List split groups
+      description: Get all split pane groups for the current user
+      responses:
+        '200':
+          description: List of split groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  splits:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SplitGroup'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Splits]
+      summary: Create split group
+      description: Create a new split group from an existing session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sourceSessionId
+                - direction
+              properties:
+                sourceSessionId:
+                  type: string
+                  format: uuid
+                  description: Session UUID to split from
+                direction:
+                  type: string
+                  enum: [horizontal, vertical]
+                  description: Split direction
+                newSessionName:
+                  type: string
+                  description: Name for the new session
+      responses:
+        '201':
+          description: Split group created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/splits/{id}:
+    get:
+      tags: [Splits]
+      summary: Get split group
+      parameters:
+        - $ref: '#/components/parameters/SplitId'
+      responses:
+        '200':
+          description: Split group details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitGroup'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [Splits]
+      summary: Update split direction
+      parameters:
+        - $ref: '#/components/parameters/SplitId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                direction:
+                  type: string
+                  enum: [horizontal, vertical]
+      responses:
+        '200':
+          description: Split group updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitGroup'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Splits]
+      summary: Delete split group
+      description: Dissolve the split group, returning sessions to standalone mode
+      parameters:
+        - $ref: '#/components/parameters/SplitId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/splits/{id}/sessions:
+    post:
+      tags: [Splits]
+      summary: Add session to split
+      parameters:
+        - $ref: '#/components/parameters/SplitId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                  format: uuid
+                  description: Existing session UUID to add
+                newSessionName:
+                  type: string
+                  description: Create new session with this name instead
+      responses:
+        '200':
+          description: Session added to split
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitGroup'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [Splits]
+      summary: Remove session from split
+      parameters:
+        - $ref: '#/components/parameters/SplitId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sessionId
+              properties:
+                sessionId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Session removed from split
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitGroup'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/splits/{id}/layout:
+    put:
+      tags: [Splits]
+      summary: Update pane layout
+      description: Update the sizes of panes in a split group
+      parameters:
+        - $ref: '#/components/parameters/SplitId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - layout
+              properties:
+                layout:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - sessionId
+                      - size
+                    properties:
+                      sessionId:
+                        type: string
+                        format: uuid
+                      size:
+                        type: number
+                        minimum: 0
+                        maximum: 1
+                        description: Relative size (0-1)
+      responses:
+        '200':
+          description: Layout updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SplitGroup'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   schemas:
     Session:
@@ -1341,6 +1550,44 @@ components:
           items:
             $ref: '#/components/schemas/FolderTree'
 
+    SplitGroup:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum: [horizontal, vertical]
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SplitSession'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    SplitSession:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        splitOrder:
+          type: integer
+          description: Order of session in split (0-indexed)
+        splitSize:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Relative size of pane (0-1)
+
     Error:
       type: object
       properties:
@@ -1385,6 +1632,15 @@ components:
         type: string
         format: uuid
       description: Recording UUID
+
+    SplitId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Split group UUID
 
   responses:
     Success:
