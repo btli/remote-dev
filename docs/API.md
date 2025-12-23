@@ -1208,6 +1208,191 @@ image: File (JPEG, PNG, GIF, WebP, max 5MB)
 
 ---
 
+## Splits API
+
+Manage split terminal pane groups. Splits allow displaying multiple sessions side-by-side.
+
+### List Split Groups
+
+Get all split groups for the current user.
+
+```http
+GET /api/splits
+```
+
+**Response:**
+```json
+{
+  "splits": [
+    {
+      "id": "uuid",
+      "userId": "uuid",
+      "direction": "horizontal",
+      "sessions": [
+        {
+          "sessionId": "uuid",
+          "splitOrder": 0,
+          "splitSize": 0.5
+        },
+        {
+          "sessionId": "uuid",
+          "splitOrder": 1,
+          "splitSize": 0.5
+        }
+      ],
+      "createdAt": "2024-01-15T09:00:00Z",
+      "updatedAt": "2024-01-15T09:00:00Z"
+    }
+  ]
+}
+```
+
+### Create Split
+
+Create a new split group from an existing session.
+
+```http
+POST /api/splits
+```
+
+**Request Body:**
+```json
+{
+  "sourceSessionId": "uuid",
+  "direction": "horizontal",
+  "newSessionName": "New Terminal"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sourceSessionId` | string | Yes | Session UUID to split from |
+| `direction` | string | Yes | `"horizontal"` or `"vertical"` |
+| `newSessionName` | string | No | Name for the new session |
+
+**Response:** `201 Created`
+```json
+{
+  "id": "uuid",
+  "direction": "horizontal",
+  "sessions": [
+    { "sessionId": "uuid", "splitOrder": 0, "splitSize": 0.5 },
+    { "sessionId": "uuid", "splitOrder": 1, "splitSize": 0.5 }
+  ],
+  ...
+}
+```
+
+### Get Split Group
+
+Get details about a specific split group.
+
+```http
+GET /api/splits/:id
+```
+
+**Response:** Split group object with sessions
+
+### Update Split Direction
+
+Change the split direction.
+
+```http
+PATCH /api/splits/:id
+```
+
+**Request Body:**
+```json
+{
+  "direction": "vertical"
+}
+```
+
+**Response:** Updated split group object
+
+### Delete Split Group
+
+Dissolve a split group, returning sessions to standalone mode.
+
+```http
+DELETE /api/splits/:id
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+### Add Session to Split
+
+Add a session to an existing split group.
+
+```http
+POST /api/splits/:id/sessions
+```
+
+**Request Body:**
+```json
+{
+  "sessionId": "uuid"
+}
+```
+
+Or create a new session:
+```json
+{
+  "newSessionName": "Additional Terminal"
+}
+```
+
+**Response:** Updated split group object
+
+### Remove Session from Split
+
+Remove a session from a split group.
+
+```http
+DELETE /api/splits/:id/sessions
+```
+
+**Request Body:**
+```json
+{
+  "sessionId": "uuid"
+}
+```
+
+**Response:** Updated split group object (or deleted if only one session remains)
+
+### Update Pane Layout
+
+Update the sizes of panes in a split group.
+
+```http
+PUT /api/splits/:id/layout
+```
+
+**Request Body:**
+```json
+{
+  "layout": [
+    { "sessionId": "uuid", "size": 0.3 },
+    { "sessionId": "uuid", "size": 0.7 }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `layout[].sessionId` | string | Session UUID |
+| `layout[].size` | number | Relative size (0-1, should sum to 1) |
+
+**Response:** Updated split group object
+
+---
+
 ## WebSocket Protocol
 
 ### Connection
