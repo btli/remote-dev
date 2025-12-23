@@ -51,6 +51,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     loading,
     createSession,
     closeSession,
+    suspendSession,
+    resumeSession,
     updateSession,
     setActiveSession,
     reorderSessions,
@@ -167,6 +169,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Preferences state from context
   const {
+    userSettings,
     activeProject,
     hasFolderPreferences,
     folderHasRepo,
@@ -176,6 +179,21 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   } = usePreferencesContext();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
+  const autoFollowEnabled = userSettings?.autoFollowActiveSession ?? true;
+
+  const logSessionError = useCallback((action: string, error: unknown) => {
+    console.error(`Failed to ${action}:`, error);
+  }, []);
+
+  const maybeAutoFollowFolder = useCallback(
+    (folderId: string | null) => {
+      if (!autoFollowEnabled || activeProject.isPinned) return;
+      if (folderId !== activeProject.folderId) {
+        setActiveFolder(folderId);
+      }
+    },
+    [autoFollowEnabled, activeProject.isPinned, activeProject.folderId, setActiveFolder]
+  );
 
   // Keyboard shortcuts
   // Note: Cmd+T and Cmd+W are intercepted by browsers, so we use alternatives
@@ -188,13 +206,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         // Use ref to get current counter value (avoids stale closure)
         const name = `Terminal ${sessionCounterRef.current}`;
         setSessionCounter((c) => c + 1);
-        createSession({ name });
+        createSession({ name }).catch((error) => {
+          logSessionError("create session", error);
+        });
       }
       // Cmd+Shift+W or Ctrl+Shift+W to close current session
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "w") {
         if (activeSessionId) {
           e.preventDefault();
-          closeSession(activeSessionId);
+          closeSession(activeSessionId).catch((error) => {
+            logSessionError("close session", error);
+          });
         }
       }
       // Cmd+[ or Cmd+] to switch tabs
@@ -202,14 +224,28 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         e.preventDefault();
         const currentIndex = activeSessions.findIndex((s) => s.id === activeSessionId);
         if (currentIndex > 0) {
-          setActiveSession(activeSessions[currentIndex - 1].id);
+          const targetSession = activeSessions[currentIndex - 1];
+          setActiveSession(targetSession.id);
+          maybeAutoFollowFolder(sessionFolders[targetSession.id] || null);
+          if (targetSession.status === "suspended") {
+            resumeSession(targetSession.id).catch((error) => {
+              logSessionError("resume session", error);
+            });
+          }
         }
       }
       if (e.metaKey && e.key === "]") {
         e.preventDefault();
         const currentIndex = activeSessions.findIndex((s) => s.id === activeSessionId);
         if (currentIndex < activeSessions.length - 1) {
-          setActiveSession(activeSessions[currentIndex + 1].id);
+          const targetSession = activeSessions[currentIndex + 1];
+          setActiveSession(targetSession.id);
+          maybeAutoFollowFolder(sessionFolders[targetSession.id] || null);
+          if (targetSession.status === "suspended") {
+            resumeSession(targetSession.id).catch((error) => {
+              logSessionError("resume session", error);
+            });
+          }
         }
       }
       // Cmd+D to split horizontally
@@ -226,7 +262,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSessionId, activeSessions, setActiveSession, createSession, closeSession]);
+  }, [
+    activeSessionId,
+    activeSessions,
+    sessionFolders,
+    setActiveSession,
+    createSession,
+    closeSession,
+    resumeSession,
+    logSessionError,
+    maybeAutoFollowFolder,
+  ]);
 
   const handleCreateSession = useCallback(
     async (data: {
@@ -271,14 +317,21 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       if (newSession && effectiveFolderId) {
         registerSessionFolder(newSession.id, effectiveFolderId);
       }
-      // If session was created with a folder, set it as active
-      if (sessionData.folderId && newSession) {
-        setActiveFolder(sessionData.folderId);
+      if (newSession) {
+        maybeAutoFollowFolder(sessionData.folderId ?? null);
       }
       // Clear wizard folder after creation
       setWizardFolderId(null);
     },
-    [createSession, wizardFolderId, sessions, sessionFolders, activeProject.folderId, setActiveFolder, registerSessionFolder]
+    [
+      createSession,
+      wizardFolderId,
+      sessions,
+      sessionFolders,
+      activeProject.folderId,
+      registerSessionFolder,
+      maybeAutoFollowFolder,
+    ]
   );
 
   const handleQuickNewSession = useCallback(async () => {
@@ -286,29 +339,50 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setSessionCounter((c) => c + 1);
     const folderId = activeProject.folderId || undefined;
     // Pass folderId at creation time so preferences (including startupCommand) are applied
-    const newSession = await createSession({
-      name,
-      projectPath: currentPreferences.defaultWorkingDirectory || undefined,
-      folderId,
-    });
-    // Register session-folder mapping in FolderContext for UI update
-    if (newSession && folderId) {
-      registerSessionFolder(newSession.id, folderId);
+    try {
+      const newSession = await createSession({
+        name,
+        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
+        folderId,
+      });
+      // Register session-folder mapping in FolderContext for UI update
+      if (newSession && folderId) {
+        registerSessionFolder(newSession.id, folderId);
+      }
+      maybeAutoFollowFolder(folderId ?? null);
+    } catch (error) {
+      logSessionError("create session", error);
     }
-  }, [createSession, sessionCounter, currentPreferences.defaultWorkingDirectory, activeProject.folderId, registerSessionFolder]);
+  }, [
+    createSession,
+    sessionCounter,
+    currentPreferences.defaultWorkingDirectory,
+    activeProject.folderId,
+    registerSessionFolder,
+    logSessionError,
+    maybeAutoFollowFolder,
+  ]);
 
   const handleCloseSession = useCallback(
     async (sessionId: string, options?: { deleteWorktree?: boolean }) => {
-      await closeSession(sessionId, options);
+      try {
+        await closeSession(sessionId, options);
+      } catch (error) {
+        logSessionError("close session", error);
+      }
     },
-    [closeSession]
+    [closeSession, logSessionError]
   );
 
   const handleRenameSession = useCallback(
     async (sessionId: string, newName: string) => {
-      await updateSession(sessionId, { name: newName });
+      try {
+        await updateSession(sessionId, { name: newName });
+      } catch (error) {
+        logSessionError("rename session", error);
+      }
     },
-    [updateSession]
+    [updateSession, logSessionError]
   );
 
   // Folder handlers now use the context methods directly
@@ -341,9 +415,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   const handleReorderSessions = useCallback(
     async (sessionIds: string[]) => {
-      await reorderSessions(sessionIds);
+      try {
+        await reorderSessions(sessionIds);
+      } catch (error) {
+        logSessionError("reorder sessions", error);
+      }
     },
-    [reorderSessions]
+    [reorderSessions, logSessionError]
   );
 
   const handleCreateFolder = useCallback(
@@ -398,18 +476,29 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       const name = `Terminal ${sessionCounter}`;
       setSessionCounter((c) => c + 1);
       // Pass folderId at creation time so preferences (including startupCommand) are applied
-      const newSession = await createSession({
-        name,
-        projectPath: prefs.defaultWorkingDirectory || undefined,
-        folderId,
-      });
-      // Register session-folder mapping in FolderContext for UI update
-      if (newSession) {
-        registerSessionFolder(newSession.id, folderId);
+      try {
+        const newSession = await createSession({
+          name,
+          projectPath: prefs.defaultWorkingDirectory || undefined,
+          folderId,
+        });
+        // Register session-folder mapping in FolderContext for UI update
+        if (newSession) {
+          registerSessionFolder(newSession.id, folderId);
+        }
+        setActiveFolder(folderId);
+      } catch (error) {
+        logSessionError("create session", error);
       }
-      setActiveFolder(folderId);
     },
-    [createSession, sessionCounter, resolvePreferencesForFolder, setActiveFolder, registerSessionFolder]
+    [
+      createSession,
+      sessionCounter,
+      resolvePreferencesForFolder,
+      setActiveFolder,
+      registerSessionFolder,
+      logSessionError,
+    ]
   );
 
   const handleFolderAdvancedSession = useCallback(
@@ -456,24 +545,28 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Handle restarting a session with the same configuration
   const handleSessionRestart = useCallback(
     async (session: typeof activeSessions[0]) => {
-      // Close the old session first
-      await closeSession(session.id);
+      try {
+        // Close the old session first
+        await closeSession(session.id);
 
-      // Create a new session with the same configuration
-      const newSession = await createSession({
-        name: session.name,
-        projectPath: session.projectPath ?? undefined,
-        githubRepoId: session.githubRepoId ?? undefined,
-        worktreeBranch: session.worktreeBranch ?? undefined,
-      });
+        // Create a new session with the same configuration
+        const newSession = await createSession({
+          name: session.name,
+          projectPath: session.projectPath ?? undefined,
+          githubRepoId: session.githubRepoId ?? undefined,
+          worktreeBranch: session.worktreeBranch ?? undefined,
+        });
 
-      // Move to the same folder if applicable
-      const folderId = sessionFolders[session.id] || null;
-      if (folderId && newSession) {
-        await moveSessionToFolder(newSession.id, folderId);
+        // Move to the same folder if applicable
+        const folderId = sessionFolders[session.id] || null;
+        if (folderId && newSession) {
+          await moveSessionToFolder(newSession.id, folderId);
+        }
+      } catch (error) {
+        logSessionError("restart session", error);
       }
     },
-    [closeSession, createSession, sessionFolders, moveSessionToFolder]
+    [closeSession, createSession, sessionFolders, moveSessionToFolder, logSessionError]
   );
 
   // Handle deleting a session (with optional worktree deletion)
@@ -504,9 +597,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       }
 
       // Close the session
-      await closeSession(session.id);
+      try {
+        await closeSession(session.id);
+      } catch (error) {
+        logSessionError("close session", error);
+      }
     },
-    [closeSession]
+    [closeSession, logSessionError]
   );
 
   // Close mobile sidebar when selecting a session
@@ -514,12 +611,43 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     (sessionId: string) => {
       setActiveSession(sessionId);
       setIsMobileSidebarOpen(false);
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session?.status === "suspended") {
+        resumeSession(sessionId).catch((error) => {
+          logSessionError("resume session", error);
+        });
+      }
       // Update active folder based on the session's folder
       const folderId = sessionFolders[sessionId] || null;
-      setActiveFolder(folderId);
+      maybeAutoFollowFolder(folderId);
     },
-    [setActiveSession, sessionFolders, setActiveFolder]
+    [
+      sessions,
+      setActiveSession,
+      sessionFolders,
+      maybeAutoFollowFolder,
+      resumeSession,
+      logSessionError,
+    ]
   );
+
+  const handleSuspendActiveSession = useCallback(async () => {
+    if (!activeSessionId) return;
+    try {
+      await suspendSession(activeSessionId);
+    } catch (error) {
+      logSessionError("suspend session", error);
+    }
+  }, [activeSessionId, suspendSession, logSessionError]);
+
+  const handleResumeActiveSession = useCallback(async () => {
+    if (!activeSessionId) return;
+    try {
+      await resumeSession(activeSessionId);
+    } catch (error) {
+      logSessionError("resume session", error);
+    }
+  }, [activeSessionId, resumeSession, logSessionError]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Split Pane Handlers
@@ -532,11 +660,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
 
-    const newSession = await createSession({
-      name,
-      projectPath: currentPreferences.defaultWorkingDirectory || undefined,
-      folderId: activeProject.folderId || undefined,
-    });
+    let newSession;
+    try {
+      newSession = await createSession({
+        name,
+        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
+        folderId: activeProject.folderId || undefined,
+      });
+    } catch (error) {
+      logSessionError("create session", error);
+      return;
+    }
 
     if (newSession) {
       // Create layout if not in split mode
@@ -551,7 +685,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         setSplitPaneLayout(newLayout);
       }
     }
-  }, [activeSessionId, sessionCounter, createSession, currentPreferences.defaultWorkingDirectory, activeProject.folderId, splitPaneLayout, activePaneId]);
+  }, [
+    activeSessionId,
+    sessionCounter,
+    createSession,
+    currentPreferences.defaultWorkingDirectory,
+    activeProject.folderId,
+    splitPaneLayout,
+    activePaneId,
+    logSessionError,
+  ]);
 
   // Update ref when handler changes
   useEffect(() => {
@@ -564,11 +707,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
 
-    const newSession = await createSession({
-      name,
-      projectPath: currentPreferences.defaultWorkingDirectory || undefined,
-      folderId: activeProject.folderId || undefined,
-    });
+    let newSession;
+    try {
+      newSession = await createSession({
+        name,
+        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
+        folderId: activeProject.folderId || undefined,
+      });
+    } catch (error) {
+      logSessionError("create session", error);
+      return;
+    }
 
     if (newSession) {
       if (!splitPaneLayout) {
@@ -581,7 +730,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         setSplitPaneLayout(newLayout);
       }
     }
-  }, [activeSessionId, sessionCounter, createSession, currentPreferences.defaultWorkingDirectory, activeProject.folderId, splitPaneLayout, activePaneId]);
+  }, [
+    activeSessionId,
+    sessionCounter,
+    createSession,
+    currentPreferences.defaultWorkingDirectory,
+    activeProject.folderId,
+    splitPaneLayout,
+    activePaneId,
+    logSessionError,
+  ]);
 
   // Update ref when handler changes
   useEffect(() => {
@@ -595,7 +753,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const pane = findPane(splitPaneLayout, paneId);
     if (pane?.type === "leaf") {
       // Close the session associated with this pane
-      closeSession(pane.sessionId);
+      closeSession(pane.sessionId).catch((error) => {
+        logSessionError("close session", error);
+      });
     }
 
     const newLayout = closePane(splitPaneLayout, paneId);
@@ -613,7 +773,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         }
       }
     }
-  }, [splitPaneLayout, activePaneId, closeSession]);
+  }, [splitPaneLayout, activePaneId, closeSession, logSessionError]);
 
   /** Exit split mode, keeping only the active session */
   const handleExitSplitMode = useCallback(() => {
@@ -991,8 +1151,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         }}
         onCloseActiveSession={
           activeSessionId
-            ? () => closeSession(activeSessionId)
+            ? () => handleCloseSession(activeSessionId)
             : undefined
+        }
+        onSuspendActiveSession={
+          activeSessionId ? handleSuspendActiveSession : undefined
+        }
+        onResumeActiveSession={
+          activeSessionId ? handleResumeActiveSession : undefined
         }
         onSplitHorizontal={handleSplitHorizontal}
         onSplitVertical={handleSplitVertical}

@@ -751,12 +751,6 @@ export function Sidebar({
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
-                      onClick={(e) => {
-                        // If not opening dropdown, do quick session
-                        if (!e.defaultPrevented) {
-                          onQuickNewSession();
-                        }
-                      }}
                       variant="ghost"
                       size="icon-sm"
                       className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"

@@ -202,7 +202,7 @@ export function SessionProvider({
 
   const refreshSessions = useCallback(async () => {
     try {
-      const response = await fetch("/api/sessions?status=active");
+      const response = await fetch("/api/sessions?status=active,suspended");
       if (!response.ok) throw new Error("Failed to fetch sessions");
       const data = await response.json();
       dispatch({ type: "LOAD_SESSIONS", sessions: data.sessions });
