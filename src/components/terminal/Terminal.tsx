@@ -518,6 +518,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     const terminal = xtermRef.current;
     if (!terminal) return;
 
+    // Track if this effect has been superseded by a newer one
+    let cancelled = false;
+
     terminal.options.theme = getTerminalTheme(theme);
     terminal.options.fontSize = fontSize;
     terminal.options.fontFamily = fontFamily;
@@ -544,22 +547,56 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Wait for all fonts to be ready (including the loaded one)
       await document.fonts.ready;
 
-      // Refit after font is loaded
-      fitAddonRef.current?.fit();
+      // Bail out if this effect was superseded by a newer font change
+      if (cancelled) return;
 
-      // Send resize to server if connected
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(
-          JSON.stringify({
-            type: "resize",
-            cols: terminal.cols,
-            rows: terminal.rows,
-          })
-        );
-      }
+      // Apply the same safety checks as handleResize() to prevent
+      // resizing to invalid dimensions when terminal is hidden/backgrounded
+      const container = terminalRef.current;
+      if (!container) return;
+
+      // Skip if page is hidden (browser tab backgrounded)
+      if (document.hidden) return;
+
+      // Skip if container is not visible (display: none)
+      if (container.offsetParent === null) return;
+
+      // Skip if container is too small
+      const MIN_WIDTH = 100;
+      const MIN_HEIGHT = 80;
+      const rect = container.getBoundingClientRect();
+      if (rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT) return;
+
+      // Use requestAnimationFrame to ensure DOM is ready
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+
+        fitAddonRef.current?.fit();
+
+        // Don't send resize for invalid dimensions
+        const MIN_COLS = 10;
+        const MIN_ROWS = 3;
+        if (terminal.cols < MIN_COLS || terminal.rows < MIN_ROWS) return;
+
+        // Send resize to server if connected
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(
+            JSON.stringify({
+              type: "resize",
+              cols: terminal.cols,
+              rows: terminal.rows,
+            })
+          );
+        }
+      });
     };
 
     loadFontAndFit();
+
+    // Cleanup: cancel pending operations if effect re-runs
+    return () => {
+      cancelled = true;
+    };
   }, [theme, fontSize, fontFamily]);
 
   // Search functions
