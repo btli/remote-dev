@@ -14,17 +14,10 @@ import type {
 } from "@/types/github";
 import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { join } from "path";
+import { GitHubServiceError } from "@/lib/errors";
 
-export class GitHubServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly statusCode?: number
-  ) {
-    super(message);
-    this.name = "GitHubServiceError";
-  }
-}
+// Re-export for backwards compatibility with API routes
+export { GitHubServiceError };
 
 const GITHUB_API_BASE = "https://api.github.com";
 const REPOS_CACHE_DIR = ".remote-dev/repos";
@@ -109,6 +102,72 @@ export async function listBranchesFromAPI(
 }
 
 /**
+ * GitHub Issue type for Agent API
+ */
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  body: string | null;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  user: {
+    login: string;
+    avatar_url: string;
+  } | null;
+  labels: Array<{ name: string; color: string }>;
+  assignees: Array<{ login: string; avatar_url: string }>;
+  milestone: {
+    title: string;
+    number: number;
+  } | null;
+  comments: number;
+}
+
+/**
+ * List issues for a repository
+ *
+ * This is useful for the Agent API orchestrator workflow where an agent
+ * reviews issues and creates worktree sessions to address each one.
+ *
+ * @param accessToken - GitHub access token
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param state - Issue state filter (default: "open")
+ * @param perPage - Number of issues per page (default: 100)
+ * @param page - Page number (default: 1)
+ */
+export async function listIssuesFromAPI(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  state: "open" | "closed" | "all" = "open",
+  perPage: number = 100,
+  page: number = 1
+): Promise<GitHubIssue[]> {
+  return githubFetch<GitHubIssue[]>(
+    accessToken,
+    `/repos/${owner}/${repo}/issues?state=${state}&per_page=${perPage}&page=${page}&sort=updated&direction=desc`
+  );
+}
+
+/**
+ * Get a single issue by number
+ */
+export async function getIssueFromAPI(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  issueNumber: number
+): Promise<GitHubIssue> {
+  return githubFetch<GitHubIssue>(
+    accessToken,
+    `/repos/${owner}/${repo}/issues/${issueNumber}`
+  );
+}
+
+/**
  * Get cached repositories for a user from the database
  */
 export async function getCachedRepositories(
@@ -184,7 +243,9 @@ export function getRepoLocalPath(repoFullName: string): string {
 }
 
 /**
- * Clone a repository to local disk
+ * Clone a repository to local disk.
+ * SECURITY: Uses GIT_ASKPASS to provide credentials securely without exposing
+ * the token in process arguments or error messages.
  */
 export async function cloneRepository(
   accessToken: string,
@@ -195,9 +256,18 @@ export async function cloneRepository(
 
   // Check if already cloned
   if (existsSync(join(targetPath, ".git"))) {
-    // Repository exists, do a fetch instead
-    await execFile("git", ["-C", targetPath, "fetch", "--all"]);
-    return { success: true, localPath: targetPath };
+    // Repository exists, do a fetch instead using credential helper
+    try {
+      await execFileWithToken(accessToken, "git", ["-C", targetPath, "fetch", "--all"]);
+      return { success: true, localPath: targetPath };
+    } catch (error) {
+      const err = error as Error & { stderr?: string };
+      return {
+        success: false,
+        localPath: targetPath,
+        error: sanitizeGitError(err.stderr || err.message),
+      };
+    }
   }
 
   // Create parent directory
@@ -206,20 +276,70 @@ export async function cloneRepository(
     mkdirSync(parentDir, { recursive: true });
   }
 
-  // Clone with authenticated URL
-  const cloneUrl = `https://${accessToken}@github.com/${repoFullName}.git`;
+  // SECURITY: Clone using HTTPS URL without embedded token
+  // Token is provided via GIT_ASKPASS environment variable
+  const cloneUrl = `https://github.com/${repoFullName}.git`;
 
   try {
-    await execFile("git", ["clone", cloneUrl, targetPath]);
+    await execFileWithToken(accessToken, "git", ["clone", cloneUrl, targetPath]);
     return { success: true, localPath: targetPath };
   } catch (error) {
     const err = error as Error & { stderr?: string };
     return {
       success: false,
       localPath: targetPath,
-      error: err.stderr || err.message,
+      error: sanitizeGitError(err.stderr || err.message),
     };
   }
+}
+
+/**
+ * Execute a git command with token authentication via GIT_ASKPASS.
+ * This prevents the token from appearing in process arguments.
+ */
+async function execFileWithToken(
+  accessToken: string,
+  command: string,
+  args: string[]
+): Promise<{ stdout: string; stderr: string }> {
+  const { writeFileSync, unlinkSync, chmodSync } = await import("fs");
+  const { tmpdir } = await import("os");
+  const { join: pathJoin } = await import("path");
+
+  // Create a temporary script that echoes the token
+  const scriptPath = pathJoin(tmpdir(), `git-askpass-${Date.now()}.sh`);
+  writeFileSync(scriptPath, `#!/bin/sh\necho "${accessToken}"\n`);
+  chmodSync(scriptPath, 0o700);
+
+  try {
+    const result = await execFile(command, args, {
+      env: {
+        ...process.env,
+        GIT_ASKPASS: scriptPath,
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+    return result;
+  } finally {
+    // Clean up the temporary script
+    try {
+      unlinkSync(scriptPath);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+}
+
+/**
+ * Sanitize git error messages to remove any potential token leakage.
+ */
+function sanitizeGitError(message: string): string {
+  // Remove any URLs that might contain tokens
+  return message
+    .replace(/https:\/\/[^@]*@github\.com/g, "https://github.com")
+    .replace(/x-access-token:[^@]*@/g, "")
+    .replace(/ghp_[a-zA-Z0-9]+/g, "[REDACTED]")
+    .replace(/gho_[a-zA-Z0-9]+/g, "[REDACTED]");
 }
 
 /**

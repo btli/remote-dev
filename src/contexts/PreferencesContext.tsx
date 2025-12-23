@@ -28,7 +28,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   defaultShell: "/bin/bash",
   theme: "tokyo-night",
   fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
+  fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
+  startupCommand: "",
 };
 
 interface PreferencesContextValue {
@@ -52,6 +53,7 @@ interface PreferencesContextValue {
   ) => Promise<void>;
   deleteFolderPreferences: (folderId: string) => Promise<void>;
   hasFolderPreferences: (folderId: string) => boolean;
+  folderHasRepo: (folderId: string) => boolean;
 
   // Active project management
   setActiveFolder: (folderId: string | null, pinned?: boolean) => void;
@@ -82,9 +84,16 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const refreshPreferences = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch user settings
-      const userRes = await fetch("/api/preferences");
-      if (!userRes.ok) throw new Error("Failed to fetch user settings");
+      // Fetch user settings with credentials to ensure cookies are sent
+      const userRes = await fetch("/api/preferences", {
+        credentials: "include",
+      });
+      if (!userRes.ok) {
+        // Don't throw - gracefully handle auth or server errors
+        // User might not be authenticated yet during initial load
+        console.warn("Failed to fetch preferences:", userRes.status);
+        return;
+      }
       const userData = await userRes.json();
       setUserSettings(userData.userSettings);
 
@@ -169,6 +178,14 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     [folderPreferences]
   );
 
+  const folderHasRepo = useCallback(
+    (folderId: string): boolean => {
+      const prefs = folderPreferences.get(folderId);
+      return !!(prefs?.githubRepoId || prefs?.localRepoPath);
+    },
+    [folderPreferences]
+  );
+
   const updateFolderPreferencesHandler = useCallback(
     async (folderId: string, updates: UpdateFolderPreferencesInput) => {
       try {
@@ -228,6 +245,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         theme: "default",
         fontSize: "default",
         fontFamily: "default",
+        startupCommand: "default",
       };
 
       // Start with defaults
@@ -255,6 +273,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           resolved.fontFamily = userSettings.fontFamily;
           source.fontFamily = "user";
         }
+        if (userSettings.startupCommand !== null) {
+          resolved.startupCommand = userSettings.startupCommand;
+          source.startupCommand = "user";
+        }
       }
 
       // Apply folder overrides
@@ -280,6 +302,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           if (folderPrefs.fontFamily !== null) {
             resolved.fontFamily = folderPrefs.fontFamily;
             source.fontFamily = "folder";
+          }
+          if (folderPrefs.startupCommand !== null) {
+            resolved.startupCommand = folderPrefs.startupCommand;
+            source.startupCommand = "folder";
           }
         }
       }
@@ -340,6 +366,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         updateFolderPreferences: updateFolderPreferencesHandler,
         deleteFolderPreferences: deleteFolderPreferencesHandler,
         hasFolderPreferences,
+        folderHasRepo,
         setActiveFolder,
         resolvePreferencesForFolder,
         refreshPreferences,

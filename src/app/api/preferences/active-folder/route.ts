@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { getAuthSession } from "@/lib/auth-utils";
 import { setActiveFolder } from "@/services/preferences-service";
 
 /**
@@ -7,7 +7,7 @@ import { setActiveFolder } from "@/services/preferences-service";
  * Sets the active folder for quick terminal creation
  */
 export async function POST(request: Request) {
-  const session = await auth();
+  const session = await getAuthSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

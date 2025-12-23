@@ -66,7 +66,11 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
   );
 
   const handleSelectExisting = (branch: GitHubBranch) => {
-    onSelect(branch, true, undefined);
+    // Generate a unique branch name for the worktree based on the selected branch
+    // This avoids the "branch already checked out" error
+    const timestamp = Date.now().toString(36);
+    const worktreeBranchName = `${branch.name}-wt-${timestamp}`;
+    onSelect(branch, true, worktreeBranchName);
   };
 
   const handleCreateNew = () => {
@@ -119,7 +123,7 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
           )}
         >
           <GitBranch className="w-4 h-4 inline mr-2" />
-          Existing Branch
+          From Branch
         </button>
         <button
           onClick={() => setMode("create")}

@@ -5,9 +5,15 @@ This document describes the technical architecture of Remote Dev.
 ## Overview
 
 Remote Dev is a web-based terminal interface that provides:
-- Multiple persistent terminal sessions
+- Multiple persistent terminal sessions via tmux
 - GitHub repository integration with worktree support
 - Modern React-based UI with real-time terminal emulation
+- Session recording and playback
+- Reusable session templates
+- Hierarchical folder organization with preference inheritance
+- Split pane terminal layouts
+- Self-hosted Nerd Fonts with mobile optimization
+- Glassmorphism UI with Tokyo Night theme
 
 ## System Architecture
 
@@ -44,7 +50,11 @@ Remote Dev is a web-based terminal interface that provides:
 │                  │  │                  │
 │  - users         │  │  - rdv-{uuid}    │
 │  - sessions      │  │  - Persistent    │
-│  - repositories  │  │  - Detachable    │
+│  - folders       │  │  - Detachable    │
+│  - templates     │  │                  │
+│  - recordings    │  │                  │
+│  - repositories  │  │                  │
+│  - preferences   │  │                  │
 └──────────────────┘  └──────────────────┘
 ```
 
@@ -66,9 +76,10 @@ Handles:
 - Static assets and client bundles
 
 Technologies:
-- Next.js 15 with App Router
+- Next.js 16 with App Router and Turbopack
 - React 19 with Server Components
-- Drizzle ORM with SQLite
+- Drizzle ORM with SQLite (libsql)
+- Tailwind CSS v4 with CSS variables
 
 ### Terminal Server (Port 3001)
 
@@ -242,6 +253,115 @@ listWorktrees(repoPath)
 getBranches(repoPath)
 ```
 
+### FolderService (`src/services/folder-service.ts`)
+
+Manages hierarchical folder organization:
+
+```typescript
+// Create folder
+createFolder(userId, { name, parentId?, color? })
+
+// List user's folders
+listFolders(userId)
+
+// Update folder
+updateFolder(folderId, userId, updates)
+
+// Delete folder
+deleteFolder(folderId, userId)
+
+// Move folder
+moveFolder(folderId, userId, parentId)
+```
+
+### PreferencesService (`src/services/preferences-service.ts`)
+
+Manages user settings and folder preferences with inheritance:
+
+```typescript
+// Get user settings
+getUserSettings(userId)
+
+// Update user settings
+updateUserSettings(userId, settings)
+
+// Get folder preferences
+getFolderPreferences(userId, folderId)
+
+// Set folder preferences
+setFolderPreferences(userId, folderId, preferences)
+
+// Get effective preferences (with inheritance)
+getEffectivePreferences(userId, folderId?)
+```
+
+Preference inheritance order: Default → User Settings → Folder Preferences
+
+### TemplateService (`src/services/template-service.ts`)
+
+Manages reusable session templates:
+
+```typescript
+// Create template
+createTemplate(userId, { name, settings, isDefault? })
+
+// List templates
+listTemplates(userId)
+
+// Get template
+getTemplate(templateId, userId)
+
+// Update template
+updateTemplate(templateId, userId, updates)
+
+// Delete template
+deleteTemplate(templateId, userId)
+```
+
+### RecordingService (`src/services/recording-service.ts`)
+
+Manages terminal session recordings:
+
+```typescript
+// Save recording
+saveRecording(userId, { sessionId, name, data, duration })
+
+// List recordings
+listRecordings(userId)
+
+// Get recording
+getRecording(recordingId, userId)
+
+// Delete recording
+deleteRecording(recordingId, userId)
+```
+
+### ApiKeyService (`src/services/api-key-service.ts`)
+
+Manages API keys for programmatic access:
+
+```typescript
+// Create API key (returns full key once)
+createApiKey(userId, name, expiresAt?)
+
+// Validate API key (constant-time comparison)
+validateApiKey(key) // -> { userId, keyId } | null
+
+// List user's API keys
+listApiKeys(userId)
+
+// Get API key details
+getApiKey(keyId, userId)
+
+// Revoke API key
+revokeApiKey(keyId, userId)
+```
+
+Security notes:
+- Keys are hashed with SHA-256 (appropriate for high-entropy random keys)
+- Validation uses constant-time comparison to prevent timing attacks
+- Key prefix stored separately for efficient lookup without exposing hash
+
 ## Database Schema
 
 ### Core Tables
@@ -260,7 +380,7 @@ authorized_user (id, email, createdAt)
 terminal_session (
   id, userId, name, tmuxSessionName,
   projectPath, githubRepoId, worktreeBranch,
-  status, tabOrder, lastActivityAt, createdAt, updatedAt
+  status, tabOrder, folderId, lastActivityAt, createdAt, updatedAt
 )
 
 -- Cached GitHub Repositories
@@ -270,10 +390,39 @@ github_repository (
   addedAt, updatedAt
 )
 
--- User Settings
+-- Session Folders
+session_folder (
+  id, userId, name, parentId, color, sortOrder, createdAt, updatedAt
+)
+
+-- User Settings (with font and startup preferences)
 user_settings (
   id, userId, defaultWorkingDirectory, theme,
+  fontSize, fontFamily, notificationsEnabled,
+  isRecording, startupCommand, createdAt, updatedAt
+)
+
+-- Folder Preferences (inheritable per-folder overrides)
+folder_preferences (
+  id, folderId, userId, fontSize, fontFamily,
+  notificationsEnabled, isRecording, startupCommand,
   createdAt, updatedAt
+)
+
+-- Session Templates (reusable configurations)
+session_template (
+  id, userId, name, settings, isDefault, createdAt, updatedAt
+)
+
+-- Session Recordings (terminal playback data)
+session_recording (
+  id, userId, sessionId, name, data, duration, createdAt
+)
+
+-- API Keys (programmatic access)
+api_key (
+  id, userId, name, keyPrefix, keyHash,
+  lastUsedAt, expiresAt, createdAt
 )
 ```
 
@@ -281,10 +430,19 @@ user_settings (
 
 ### Authentication
 
-- Email allowlist in `authorized_user` table
+- **Browser**: Email allowlist in `authorized_user` table
+- **Programmatic**: API key authentication with Bearer tokens
 - JWT session strategy (stateless)
 - GitHub OAuth for repository access
 - No password storage (credentials are just email verification)
+
+### API Key Security
+
+- Keys generated with 256 bits of cryptographic randomness
+- SHA-256 hashing (appropriate for high-entropy keys, faster than bcrypt)
+- Constant-time comparison prevents timing attacks
+- Key prefix stored for identification without exposing hash
+- Optional expiration dates for time-limited access
 
 ### Command Execution
 
@@ -319,3 +477,65 @@ user_settings (
 - SQLite for low-latency local operations
 - Drizzle ORM for type-safe queries
 - Connection pooling handled by libsql
+
+## UI Architecture
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `Terminal.tsx` | xterm.js wrapper with WebSocket, resize protection, and recording support |
+| `TerminalWithKeyboard.tsx` | Terminal with mobile virtual keyboard support |
+| `SplitPane.tsx` | Resizable split pane layouts for multiple terminals |
+| `RecordingPlayer.tsx` | Playback recorded terminal sessions with seek controls |
+| `Sidebar.tsx` | Session/folder tree with context menus and drag-drop |
+| `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
+| `NewSessionWizard.tsx` | Multi-step session creation flow |
+| `SaveTemplateModal.tsx` | Save session as reusable template |
+| `FolderPreferencesModal.tsx` | Per-folder preference overrides |
+| `UserSettingsModal.tsx` | User-level preferences |
+
+### React Contexts
+
+| Context | Purpose |
+|---------|---------|
+| `SessionContext` | Session state with optimistic updates |
+| `FolderContext` | Folder tree state and operations |
+| `PreferencesContext` | User settings + folder preferences with inheritance |
+| `TemplateContext` | Session templates state |
+| `RecordingContext` | Recording state management |
+
+### Preference Inheritance
+
+```
+Default Settings (hardcoded)
+       ↓
+User Settings (user_settings table)
+       ↓
+Folder Preferences (folder_preferences table)
+       ↓
+Effective Preferences (computed at runtime)
+```
+
+## Font System
+
+### Self-Hosted Nerd Fonts
+
+Remote Dev self-hosts 22 Nerd Font families in WOFF2 format for optimal terminal rendering:
+
+- **Default**: JetBrainsMono Nerd Font Mono
+- **Available**: FiraCode, Hack, SourceCodePro, UbuntuMono, CascadiaCode, Meslo, Inconsolata, RobotoMono, IBMPlexMono, VictorMono, SpaceMono, DroidSansMono, AnonymousPro, DejaVuSansMono, Terminus, Cousine, BitstreamVeraSansMono, DaddyTimeMono, FantasqueSansMono, NotoMono
+
+### Why Self-Hosted?
+
+1. **Mobile Compatibility**: External font services often fail on mobile browsers
+2. **Offline Support**: Fonts work without internet connection
+3. **Performance**: WOFF2 provides excellent compression (~30% smaller than WOFF)
+4. **Nerd Font Icons**: Full glyph support for terminal status lines and dev tools
+
+### Font Loading
+
+Fonts are loaded via `@font-face` declarations in `globals.css` with:
+- `font-display: swap` for fast initial render
+- Subset-specific unicode ranges where available
+- Fallback to system monospace fonts
