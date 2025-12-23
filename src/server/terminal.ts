@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import { parse } from "url";
-import { execFileSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { createHmac, timingSafeEqual } from "crypto";
 import { resolve as pathResolve } from "path";
 
@@ -86,6 +86,10 @@ interface TerminalSession {
   sessionId: string;
   tmuxSessionName: string;
   isAttached: boolean;
+  lastCols: number;
+  lastRows: number;
+  pendingResize: { cols: number; rows: number } | null;
+  resizeTimeout: ReturnType<typeof setTimeout> | null;
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -256,6 +260,10 @@ export function createTerminalServer(port: number = 3001) {
       sessionId,
       tmuxSessionName,
       isAttached: true,
+      lastCols: cols,
+      lastRows: rows,
+      pendingResize: null,
+      resizeTimeout: null,
     };
 
     sessions.set(sessionId, session);
@@ -274,6 +282,11 @@ export function createTerminalServer(port: number = 3001) {
         ws.send(JSON.stringify({ type: "exit", code: exitCode }));
         ws.close();
       }
+      if (session.resizeTimeout) {
+        clearTimeout(session.resizeTimeout);
+        session.resizeTimeout = null;
+        session.pendingResize = null;
+      }
       sessions.delete(sessionId);
     });
 
@@ -285,31 +298,61 @@ export function createTerminalServer(port: number = 3001) {
           case "input":
             ptyProcess.write(msg.data);
             break;
-          case "resize":
+          case "resize": {
             // Ignore resize events with invalid dimensions
             // This prevents tmux from shrinking when tabs are hidden
             const MIN_COLS = 10;
             const MIN_ROWS = 3;
-            if (msg.cols < MIN_COLS || msg.rows < MIN_ROWS) {
+            const nextCols = Number(msg.cols);
+            const nextRows = Number(msg.rows);
+            if (!Number.isFinite(nextCols) || !Number.isFinite(nextRows)) {
+              break;
+            }
+            if (nextCols < MIN_COLS || nextRows < MIN_ROWS) {
               break;
             }
 
-            ptyProcess.resize(msg.cols, msg.rows);
-            // Also resize the tmux session
-            try {
-              execFileSync("tmux", [
-                "resize-window",
-                "-t",
-                tmuxSessionName,
-                "-x",
-                String(msg.cols),
-                "-y",
-                String(msg.rows),
-              ], { stdio: "pipe" });
-            } catch {
-              // Resize may fail if dimensions are too small, ignore
+            session.pendingResize = { cols: nextCols, rows: nextRows };
+            if (session.resizeTimeout) {
+              break;
             }
+
+            session.resizeTimeout = setTimeout(() => {
+              const pending = session.pendingResize;
+              session.pendingResize = null;
+              session.resizeTimeout = null;
+
+              if (!pending) return;
+              if (pending.cols === session.lastCols && pending.rows === session.lastRows) {
+                return;
+              }
+
+              session.lastCols = pending.cols;
+              session.lastRows = pending.rows;
+
+              try {
+                ptyProcess.resize(pending.cols, pending.rows);
+              } catch {
+                // Ignore resize errors from pty
+              }
+
+              execFile(
+                "tmux",
+                [
+                  "resize-window",
+                  "-t",
+                  tmuxSessionName,
+                  "-x",
+                  String(pending.cols),
+                  "-y",
+                  String(pending.rows),
+                ],
+                { stdio: "ignore" },
+                () => {}
+              );
+            }, 50);
             break;
+          }
           case "detach":
             // Detach from tmux but keep session alive
             console.log(`Detaching from tmux session: ${tmuxSessionName}`);
@@ -328,12 +371,22 @@ export function createTerminalServer(port: number = 3001) {
       // Kill the PTY wrapper but NOT the tmux session
       // This allows reconnection to the same tmux session later
       ptyProcess.kill();
+      if (session.resizeTimeout) {
+        clearTimeout(session.resizeTimeout);
+        session.resizeTimeout = null;
+        session.pendingResize = null;
+      }
       sessions.delete(sessionId);
     });
 
     ws.on("error", (error) => {
       console.error(`Terminal session ${sessionId} error:`, error);
       ptyProcess.kill();
+      if (session.resizeTimeout) {
+        clearTimeout(session.resizeTimeout);
+        session.resizeTimeout = null;
+        session.pendingResize = null;
+      }
       sessions.delete(sessionId);
     });
 
