@@ -12,6 +12,10 @@ export interface TerminalSession {
   projectPath: string | null;
   githubRepoId: string | null;
   worktreeBranch: string | null;
+  // Split group membership (independent from folder)
+  splitGroupId: string | null;
+  splitOrder: number;
+  splitSize: number;
   status: SessionStatus;
   tabOrder: number;
   lastActivityAt: Date;

@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
+import { SplitProvider } from "@/contexts/SplitContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
 import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
@@ -46,6 +47,9 @@ export default async function Home() {
     projectPath: s.projectPath,
     githubRepoId: s.githubRepoId,
     worktreeBranch: s.worktreeBranch,
+    splitGroupId: s.splitGroupId,
+    splitOrder: s.splitOrder,
+    splitSize: s.splitSize ?? 0.5,
     status: s.status as "active" | "suspended" | "closed",
     tabOrder: s.tabOrder,
     lastActivityAt: new Date(s.lastActivityAt),
@@ -57,7 +61,8 @@ export default async function Home() {
     <PreferencesProvider>
       <FolderProvider>
         <SessionProvider initialSessions={initialSessions}>
-          <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+          <SplitProvider>
+            <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
             {/* Header with glassmorphism */}
             <header className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
               {/* Logo */}
@@ -105,7 +110,8 @@ export default async function Home() {
 
             {/* Main content */}
             <SessionManager isGitHubConnected={isGitHubConnected} />
-          </div>
+            </div>
+          </SplitProvider>
         </SessionProvider>
       </FolderProvider>
     </PreferencesProvider>
