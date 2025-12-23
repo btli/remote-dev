@@ -12,30 +12,23 @@ import {
 import type {
   UserSettings,
   FolderPreferences,
+  FolderWithAncestry,
   ResolvedPreferences,
   ActiveProject,
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
-  Preferences,
-  PreferenceSource,
 } from "@/types/preferences";
-
-/**
- * Default preferences used as fallback
- */
-const DEFAULT_PREFERENCES: Preferences = {
-  defaultWorkingDirectory: "~",
-  defaultShell: "/bin/bash",
-  theme: "tokyo-night",
-  fontSize: 14,
-  fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
-  startupCommand: "",
-};
+import {
+  resolvePreferences,
+  buildAncestryChain,
+  isFromFolder,
+} from "@/lib/preferences";
 
 interface PreferencesContextValue {
   // State
   userSettings: UserSettings | null;
   folderPreferences: Map<string, FolderPreferences>;
+  folders: Map<string, FolderWithAncestry>;
   activeProject: ActiveProject;
   loading: boolean;
 
@@ -59,6 +52,9 @@ interface PreferencesContextValue {
   setActiveFolder: (folderId: string | null, pinned?: boolean) => void;
   resolvePreferencesForFolder: (folderId: string | null) => ResolvedPreferences;
 
+  // Utilities
+  isFromFolder: typeof isFromFolder;
+
   // Refresh
   refreshPreferences: () => Promise<void>;
 }
@@ -74,6 +70,9 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const [folderPreferences, setFolderPreferences] = useState<
     Map<string, FolderPreferences>
   >(new Map());
+  const [folders, setFolders] = useState<Map<string, FolderWithAncestry>>(
+    new Map()
+  );
   const [activeProject, setActiveProject] = useState<ActiveProject>({
     folderId: null,
     folderName: null,
@@ -98,13 +97,26 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       setUserSettings(userData.userSettings);
 
       // Set folder preferences map
-      const folderMap = new Map<string, FolderPreferences>();
+      const folderPrefsMap = new Map<string, FolderPreferences>();
       if (userData.folderPreferences) {
         for (const pref of userData.folderPreferences) {
-          folderMap.set(pref.folderId, pref);
+          folderPrefsMap.set(pref.folderId, pref);
         }
       }
-      setFolderPreferences(folderMap);
+      setFolderPreferences(folderPrefsMap);
+
+      // Set folders map for hierarchy traversal
+      const foldersMap = new Map<string, FolderWithAncestry>();
+      if (userData.folders) {
+        for (const folder of userData.folders) {
+          foldersMap.set(folder.id, {
+            id: folder.id,
+            parentId: folder.parentId ?? null,
+            name: folder.name,
+          });
+        }
+      }
+      setFolders(foldersMap);
 
       // Set active project
       const activeFolderId =
@@ -178,12 +190,16 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     [folderPreferences]
   );
 
+  /**
+   * Check if a folder has a repository associated (directly or inherited from ancestors)
+   */
   const folderHasRepo = useCallback(
     (folderId: string): boolean => {
-      const prefs = folderPreferences.get(folderId);
-      return !!(prefs?.githubRepoId || prefs?.localRepoPath);
+      // Build the ancestry chain and check if any folder has a repo
+      const chain = buildAncestryChain(folderId, folderPreferences, folders);
+      return chain.some((prefs) => prefs.githubRepoId || prefs.localRepoPath);
     },
-    [folderPreferences]
+    [folderPreferences, folders]
   );
 
   const updateFolderPreferencesHandler = useCallback(
@@ -237,96 +253,36 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     []
   );
 
+  /**
+   * Resolve preferences for a folder with hierarchical inheritance.
+   * Walks up the parent chain and applies preferences from ancestors to descendants.
+   */
   const resolvePreferencesForFolder = useCallback(
     (folderId: string | null): ResolvedPreferences => {
-      const source: Record<keyof Preferences, PreferenceSource> = {
-        defaultWorkingDirectory: "default",
-        defaultShell: "default",
-        theme: "default",
-        fontSize: "default",
-        fontFamily: "default",
-        startupCommand: "default",
-      };
-
-      // Start with defaults
-      const resolved: Preferences = { ...DEFAULT_PREFERENCES };
-
-      // Apply user settings
-      if (userSettings) {
-        if (userSettings.defaultWorkingDirectory !== null) {
-          resolved.defaultWorkingDirectory = userSettings.defaultWorkingDirectory;
-          source.defaultWorkingDirectory = "user";
-        }
-        if (userSettings.defaultShell !== null) {
-          resolved.defaultShell = userSettings.defaultShell;
-          source.defaultShell = "user";
-        }
-        if (userSettings.theme !== null) {
-          resolved.theme = userSettings.theme;
-          source.theme = "user";
-        }
-        if (userSettings.fontSize !== null) {
-          resolved.fontSize = userSettings.fontSize;
-          source.fontSize = "user";
-        }
-        if (userSettings.fontFamily !== null) {
-          resolved.fontFamily = userSettings.fontFamily;
-          source.fontFamily = "user";
-        }
-        if (userSettings.startupCommand !== null) {
-          resolved.startupCommand = userSettings.startupCommand;
-          source.startupCommand = "user";
-        }
+      if (!folderId) {
+        return resolvePreferences(userSettings, []);
       }
 
-      // Apply folder overrides
-      if (folderId) {
-        const folderPrefs = folderPreferences.get(folderId);
-        if (folderPrefs) {
-          if (folderPrefs.defaultWorkingDirectory !== null) {
-            resolved.defaultWorkingDirectory = folderPrefs.defaultWorkingDirectory;
-            source.defaultWorkingDirectory = "folder";
-          }
-          if (folderPrefs.defaultShell !== null) {
-            resolved.defaultShell = folderPrefs.defaultShell;
-            source.defaultShell = "folder";
-          }
-          if (folderPrefs.theme !== null) {
-            resolved.theme = folderPrefs.theme;
-            source.theme = "folder";
-          }
-          if (folderPrefs.fontSize !== null) {
-            resolved.fontSize = folderPrefs.fontSize;
-            source.fontSize = "folder";
-          }
-          if (folderPrefs.fontFamily !== null) {
-            resolved.fontFamily = folderPrefs.fontFamily;
-            source.fontFamily = "folder";
-          }
-          if (folderPrefs.startupCommand !== null) {
-            resolved.startupCommand = folderPrefs.startupCommand;
-            source.startupCommand = "folder";
-          }
-        }
-      }
+      // Build the ancestry chain using the shared utility
+      const chain = buildAncestryChain(folderId, folderPreferences, folders);
 
-      return {
-        ...resolved,
-        source,
-        folderId,
-      };
+      // Use the shared resolution function
+      return resolvePreferences(userSettings, chain);
     },
-    [userSettings, folderPreferences]
+    [userSettings, folderPreferences, folders]
   );
 
   const setActiveFolder = useCallback(
     (folderId: string | null, pinned: boolean = false) => {
+      // Get folder name from our map
+      const folder = folderId ? folders.get(folderId) : null;
+
       // Update local state immediately
-      setActiveProject((prev) => ({
-        ...prev,
+      setActiveProject({
         folderId,
+        folderName: folder?.name ?? null,
         isPinned: pinned,
-      }));
+      });
 
       // Also update user settings
       if (userSettings) {
@@ -344,7 +300,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         body: JSON.stringify({ folderId, pinned }),
       }).catch(console.error);
     },
-    [userSettings]
+    [userSettings, folders]
   );
 
   // Compute current preferences based on active project
@@ -358,6 +314,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       value={{
         userSettings,
         folderPreferences,
+        folders,
         activeProject,
         loading,
         currentPreferences,
@@ -369,6 +326,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         folderHasRepo,
         setActiveFolder,
         resolvePreferencesForFolder,
+        isFromFolder,
         refreshPreferences,
       }}
     >

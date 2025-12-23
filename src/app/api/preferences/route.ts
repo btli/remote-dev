@@ -35,6 +35,12 @@ export async function GET() {
     return NextResponse.json({
       userSettings: userSettingsData,
       folderPreferences: folderPreferencesData,
+      // Include all folders for client-side hierarchy building
+      folders: folders.map((f) => ({
+        id: f.id,
+        parentId: f.parentId,
+        name: f.name,
+      })),
       activeFolder: activeFolder
         ? { id: activeFolder.id, name: activeFolder.name }
         : null,

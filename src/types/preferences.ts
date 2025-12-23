@@ -2,7 +2,10 @@
  * Preferences Type Definitions
  *
  * Implements a layered inheritance system:
- * Default Constants -> User Preferences -> Folder Preferences
+ * Default Constants -> User Preferences -> Parent Folders -> Child Folder
+ *
+ * Preferences cascade from ancestors to descendants, with more specific
+ * (child) folders overriding less specific (parent) folders.
  */
 
 /**
@@ -18,14 +21,27 @@ export interface Preferences {
 }
 
 /**
+ * Extended preferences including repository association
+ * These are also inherited through the folder hierarchy
+ */
+export interface ExtendedPreferences extends Preferences {
+  githubRepoId: string | null;
+  localRepoPath: string | null;
+}
+
+/**
  * Partial preferences for overrides (all fields optional)
  */
 export type PreferenceOverrides = Partial<Preferences>;
 
 /**
- * Source of each preference value in the inheritance chain
+ * Source of each preference value in the inheritance chain.
+ * Can be a simple source type or a folder reference with metadata.
  */
-export type PreferenceSource = "default" | "user" | "folder";
+export type PreferenceSource =
+  | "default"
+  | "user"
+  | { type: "folder"; folderId: string; folderName: string };
 
 /**
  * User-level settings stored in database
@@ -67,11 +83,36 @@ export interface FolderPreferences {
 }
 
 /**
+ * Folder with ancestry information for building inheritance chain
+ */
+export interface FolderWithAncestry {
+  id: string;
+  parentId: string | null;
+  name: string;
+}
+
+/**
+ * Folder preferences with folder metadata for inheritance chain
+ */
+export interface FolderPreferencesWithMeta extends FolderPreferences {
+  folderName: string;
+}
+
+/**
+ * Extended source tracking including repository fields
+ */
+export type ExtendedPreferenceSourceMap = Record<keyof Preferences, PreferenceSource> & {
+  githubRepoId: PreferenceSource;
+  localRepoPath: PreferenceSource;
+};
+
+/**
  * Resolved preferences with inheritance chain metadata
  */
-export interface ResolvedPreferences extends Preferences {
-  source: Record<keyof Preferences, PreferenceSource>;
+export interface ResolvedPreferences extends ExtendedPreferences {
+  source: ExtendedPreferenceSourceMap;
   folderId: string | null;
+  folderName: string | null;
 }
 
 /**
