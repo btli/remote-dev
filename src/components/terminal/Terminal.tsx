@@ -522,8 +522,44 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     terminal.options.fontSize = fontSize;
     terminal.options.fontFamily = fontFamily;
 
-    // Refit after font changes
-    fitAddonRef.current?.fit();
+    // Load the font before fitting to ensure accurate cell dimensions
+    // The fontFamily value is like "'FiraCode Nerd Font Mono', monospace"
+    // Extract the primary font family name for loading
+    const fontMatch = fontFamily.match(/^['"]?([^'"]+)/);
+    const primaryFont = fontMatch ? fontMatch[1] : fontFamily;
+
+    // Use Font Loading API to ensure font is loaded before fitting
+    // This triggers the browser to actually fetch and render the font
+    const loadFontAndFit = async () => {
+      try {
+        // Load both regular and bold weights
+        await Promise.all([
+          document.fonts.load(`${fontSize}px "${primaryFont}"`),
+          document.fonts.load(`bold ${fontSize}px "${primaryFont}"`),
+        ]);
+      } catch {
+        // Font loading failed (e.g., font not found), continue with fallback
+      }
+
+      // Wait for all fonts to be ready (including the loaded one)
+      await document.fonts.ready;
+
+      // Refit after font is loaded
+      fitAddonRef.current?.fit();
+
+      // Send resize to server if connected
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          })
+        );
+      }
+    };
+
+    loadFontAndFit();
   }, [theme, fontSize, fontFamily]);
 
   // Search functions
