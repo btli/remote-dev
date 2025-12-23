@@ -51,6 +51,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     loading,
     createSession,
     closeSession,
+    suspendSession,
+    resumeSession,
     updateSession,
     setActiveSession,
     reorderSessions,
@@ -179,9 +181,49 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const activeSessions = sessions.filter((s) => s.status !== "closed");
   const autoFollowEnabled = userSettings?.autoFollowActiveSession ?? true;
 
+  const attachedSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (isSplitMode && splitPaneLayout) {
+      for (const leaf of getAllLeaves(splitPaneLayout)) {
+        ids.add(leaf.sessionId);
+      }
+    } else if (activeSessionId) {
+      ids.add(activeSessionId);
+    }
+    return ids;
+  }, [isSplitMode, splitPaneLayout, activeSessionId]);
+
   const logSessionError = useCallback((action: string, error: unknown) => {
     console.error(`Failed to ${action}:`, error);
   }, []);
+
+  const syncSessionStatus = useCallback(
+    async (sessionId: string, targetStatus: "active" | "suspended") => {
+      try {
+        if (targetStatus === "active") {
+          await resumeSession(sessionId);
+        } else {
+          await suspendSession(sessionId);
+        }
+      } catch (error) {
+        logSessionError(`${targetStatus} session`, error);
+      }
+    },
+    [resumeSession, suspendSession, logSessionError]
+  );
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
+
+    for (const session of sessions) {
+      if (session.status === "closed") continue;
+      const shouldBeActive = attachedSessionIds.has(session.id);
+      const targetStatus = shouldBeActive ? "active" : "suspended";
+      if (session.status === targetStatus) continue;
+
+      void syncSessionStatus(session.id, targetStatus);
+    }
+  }, [sessions, attachedSessionIds, syncSessionStatus]);
 
   const maybeAutoFollowFolder = useCallback(
     (folderId: string | null) => {

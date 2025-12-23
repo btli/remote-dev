@@ -35,7 +35,7 @@ export async function createSession(
   const existingSessions = await db.query.terminalSessions.findMany({
     where: and(
       eq(terminalSessions.userId, userId),
-      eq(terminalSessions.status, "active")
+      inArray(terminalSessions.status, ["active", "suspended"])
     ),
     orderBy: [desc(terminalSessions.tabOrder)],
     limit: 1,
@@ -491,7 +491,7 @@ export async function recoverSessions(userId: string): Promise<{
   recovered: string[];
   lost: string[];
 }> {
-  const sessions = await listSessions(userId, "active");
+  const sessions = await listSessions(userId, ["active", "suspended"]);
   const recovered: string[] = [];
   const lost: string[] = [];
 
