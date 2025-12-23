@@ -14,7 +14,7 @@ import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import { Terminal as TerminalIcon, Plus, X, Columns, Rows, Maximize2 } from "lucide-react";
+import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
@@ -877,22 +877,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           }
         }}
       >
-        <div className="relative h-full">
-          {/* Mobile close button - only show when expanded */}
-          {isMobile && isMobileSidebarOpen && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsMobileSidebarOpen(false);
-              }}
-              className="absolute top-2 right-2 z-50 text-slate-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </Button>
-          )}
-          <Sidebar
+        <Sidebar
             sessions={activeSessions}
             folders={folders}
             activeSessionId={activeSessionId}
@@ -926,7 +911,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderNewWorktree={handleFolderNewWorktree}
             onFolderMove={handleMoveFolder}
           />
-        </div>
       </div>
 
       {/* Main content area */}
