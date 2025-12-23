@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+/docs/code-review/
 
 # debug
 npm-debug.log*
@@ -40,6 +41,9 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+# process manager pids
+/.pids
 
 # typescript
 *.tsbuildinfo

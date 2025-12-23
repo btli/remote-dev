@@ -1,10 +1,29 @@
 # API Reference
 
-Complete API documentation for Remote Dev.
+Complete API documentation for Remote Dev. For machine-readable format, see [openapi.yaml](openapi.yaml).
 
 ## Authentication
 
-All API routes require authentication via NextAuth session cookies. Unauthenticated requests return `401 Unauthorized`.
+Remote Dev supports two authentication methods:
+
+### 1. Session Cookies (Browser)
+
+All browser-based requests use NextAuth session cookies. Unauthenticated requests return `401 Unauthorized`.
+
+### 2. API Keys (Programmatic Access)
+
+For automation and coding agents, use API key authentication:
+
+```http
+Authorization: Bearer rdv_<key>
+```
+
+API keys can be created via the `/api/keys` endpoints. They support all session-related operations, enabling workflows like:
+1. Create session with worktree for a GitHub issue
+2. Connect via WebSocket for terminal I/O
+3. Execute commands and capture output
+
+See [API Keys API](#api-keys-api) for key management endpoints.
 
 ## Sessions API
 
@@ -30,8 +49,9 @@ GET /api/sessions
       "name": "Project A",
       "tmuxSessionName": "rdv-abc12345",
       "projectPath": "/Users/me/projects/a",
-      "githubRepoId": "123456",
+      "githubRepoId": "uuid",
       "worktreeBranch": "feature/new-ui",
+      "folderId": "uuid",
       "status": "active",
       "tabOrder": 0,
       "lastActivityAt": "2024-01-15T10:30:00Z",
@@ -55,28 +75,36 @@ POST /api/sessions
 {
   "name": "My Project",
   "projectPath": "/path/to/project",
-  "githubRepoId": "123456",
-  "worktreeBranch": "main"
+  "githubRepoId": "uuid",
+  "worktreeBranch": "main",
+  "folderId": "uuid",
+  "startupCommand": "npm run dev",
+  "featureDescription": "Feature branch description",
+  "createWorktree": true,
+  "baseBranch": "main"
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Display name for the session |
-| `projectPath` | string | No | Working directory path |
-| `githubRepoId` | string | No | Associated GitHub repository ID |
+| `name` | string | No | Display name (default: "Terminal") |
+| `projectPath` | string | No | Working directory path (must be absolute) |
+| `githubRepoId` | string | No | Associated GitHub repository UUID |
 | `worktreeBranch` | string | No | Git worktree branch name |
+| `folderId` | string | No | Folder UUID to place session in |
+| `startupCommand` | string | No | Command to run on session start |
+| `featureDescription` | string | No | Description for feature branch |
+| `createWorktree` | boolean | No | Create new worktree for branch |
+| `baseBranch` | string | No | Base branch for new worktree |
 
-**Response:**
+**Response:** `201 Created`
 ```json
 {
-  "session": {
-    "id": "uuid",
-    "name": "My Project",
-    "tmuxSessionName": "rdv-abc12345",
-    "status": "active",
-    ...
-  }
+  "id": "uuid",
+  "name": "My Project",
+  "tmuxSessionName": "rdv-abc12345",
+  "status": "active",
+  ...
 }
 ```
 
@@ -91,11 +119,12 @@ GET /api/sessions/:id
 **Response:**
 ```json
 {
-  "session": {
-    "id": "uuid",
-    "name": "My Project",
-    ...
-  }
+  "id": "uuid",
+  "name": "My Project",
+  "tmuxSessionName": "rdv-abc12345",
+  "projectPath": "/path/to/project",
+  "status": "active",
+  ...
 }
 ```
 
@@ -111,7 +140,8 @@ PATCH /api/sessions/:id
 ```json
 {
   "name": "Updated Name",
-  "tabOrder": 2
+  "tabOrder": 2,
+  "status": "active"
 }
 ```
 
@@ -136,6 +166,11 @@ Close and delete a session.
 DELETE /api/sessions/:id
 ```
 
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `deleteWorktree` | string | `"true"` to also delete git worktree from disk |
+
 **Response:**
 ```json
 {
@@ -154,10 +189,7 @@ POST /api/sessions/:id/suspend
 **Response:**
 ```json
 {
-  "session": {
-    "status": "suspended",
-    ...
-  }
+  "success": true
 }
 ```
 
@@ -172,10 +204,50 @@ POST /api/sessions/:id/resume
 **Response:**
 ```json
 {
-  "session": {
-    "status": "active",
-    ...
-  }
+  "success": true
+}
+```
+
+**Error Responses:**
+- `404 Not Found` - Session doesn't exist
+- `410 Gone` - tmux session no longer exists
+
+### Move Session to Folder
+
+Move a session to a folder or remove from folder.
+
+```http
+PUT /api/sessions/:id/folder
+```
+
+**Request Body:**
+```json
+{
+  "folderId": "uuid"
+}
+```
+
+Set `folderId` to `null` to remove from folder.
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+### Get Session Token
+
+Get WebSocket authentication token for session.
+
+```http
+GET /api/sessions/:id/token
+```
+
+**Response:**
+```json
+{
+  "token": "jwt-token-string"
 }
 ```
 
@@ -201,6 +273,511 @@ POST /api/sessions/reorder
 }
 ```
 
+### Execute Command
+
+Execute a command in a session (fire-and-forget). Requires API key authentication.
+
+```http
+POST /api/sessions/:id/exec
+Authorization: Bearer rdv_<key>
+```
+
+**Request Body:**
+```json
+{
+  "command": "npm run build",
+  "captureOutput": true,
+  "timeout": 5000
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Command to execute |
+| `captureOutput` | boolean | No | Capture tmux pane output after command (default: false) |
+| `timeout` | number | No | Wait time in ms before capturing output (default: 1000) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "output": "Build completed successfully\n"
+}
+```
+
+**Notes:**
+- Command is sent to the tmux session as keystrokes followed by Enter
+- If `captureOutput` is true, waits `timeout` ms then captures visible pane content
+- Use WebSocket connection for real-time interactive I/O
+
+---
+
+## Folders API
+
+### List Folders
+
+Get all folders and session-folder mappings for current user.
+
+```http
+GET /api/folders
+```
+
+**Response:**
+```json
+{
+  "folders": [
+    {
+      "id": "uuid",
+      "name": "Work Projects",
+      "parentId": null,
+      "collapsed": false,
+      "sortOrder": 0,
+      "userId": "uuid",
+      "createdAt": "2024-01-15T09:00:00Z",
+      "updatedAt": "2024-01-15T09:00:00Z"
+    }
+  ],
+  "sessionFolders": [
+    {
+      "sessionId": "uuid",
+      "folderId": "uuid"
+    }
+  ]
+}
+```
+
+### Create Folder
+
+Create a new folder.
+
+```http
+POST /api/folders
+```
+
+**Request Body:**
+```json
+{
+  "name": "New Folder",
+  "parentId": "uuid"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Folder name |
+| `parentId` | string | No | Parent folder UUID for nesting |
+
+**Response:** `201 Created`
+```json
+{
+  "id": "uuid",
+  "name": "New Folder",
+  "parentId": "uuid",
+  "collapsed": false,
+  "sortOrder": 0,
+  ...
+}
+```
+
+### Update Folder
+
+Update folder properties.
+
+```http
+PATCH /api/folders/:id
+```
+
+**Request Body:**
+```json
+{
+  "name": "Renamed Folder",
+  "collapsed": true,
+  "sortOrder": 1,
+  "parentId": "uuid"
+}
+```
+
+**Response:** Updated folder object
+
+### Delete Folder
+
+Delete a folder.
+
+```http
+DELETE /api/folders/:id
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Preferences API
+
+### Get Preferences
+
+Get user settings, all folder preferences, and active folder.
+
+```http
+GET /api/preferences
+```
+
+**Response:**
+```json
+{
+  "userSettings": {
+    "id": "uuid",
+    "userId": "uuid",
+    "defaultWorkingDirectory": "/Users/me",
+    "defaultShell": "/bin/zsh",
+    "startupCommand": null,
+    "theme": "tokyo-night",
+    "fontSize": 14,
+    "fontFamily": "'JetBrainsMono Nerd Font Mono', monospace",
+    "activeFolderId": "uuid",
+    "pinnedFolderId": null,
+    "autoFollowActiveSession": true,
+    "createdAt": "2024-01-15T09:00:00Z",
+    "updatedAt": "2024-01-15T09:00:00Z"
+  },
+  "folderPreferences": [
+    {
+      "id": "uuid",
+      "folderId": "uuid",
+      "userId": "uuid",
+      "defaultWorkingDirectory": "/path/to/project",
+      "theme": "dracula",
+      "githubRepoId": "uuid",
+      "localRepoPath": "/path/to/repo",
+      ...
+    }
+  ],
+  "activeFolder": {
+    "id": "uuid",
+    "name": "Active Folder"
+  }
+}
+```
+
+### Update User Settings
+
+Update user-level preferences.
+
+```http
+PATCH /api/preferences
+```
+
+**Request Body:**
+```json
+{
+  "defaultWorkingDirectory": "/Users/me/projects",
+  "defaultShell": "/bin/zsh",
+  "startupCommand": "clear",
+  "theme": "tokyo-night",
+  "fontSize": 14,
+  "fontFamily": "'FiraCode Nerd Font Mono', monospace",
+  "activeFolderId": "uuid",
+  "pinnedFolderId": "uuid",
+  "autoFollowActiveSession": true
+}
+```
+
+**Response:** Updated userSettings object
+
+### Set Active Folder
+
+Set the active folder for quick terminal creation.
+
+```http
+POST /api/preferences/active-folder
+```
+
+**Request Body:**
+```json
+{
+  "folderId": "uuid",
+  "pinned": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `folderId` | string | Folder UUID (null to clear) |
+| `pinned` | boolean | Pin folder (won't auto-follow) |
+
+**Response:** Updated userSettings object
+
+### Get Folder Preferences
+
+Get preferences for a specific folder.
+
+```http
+GET /api/preferences/folders/:folderId
+```
+
+**Response:** folderPreferences object
+
+### Set Folder Preferences
+
+Create or update folder-specific preferences.
+
+```http
+PUT /api/preferences/folders/:folderId
+```
+
+**Request Body:**
+```json
+{
+  "defaultWorkingDirectory": "/path/to/project",
+  "defaultShell": "/bin/bash",
+  "startupCommand": "npm run dev",
+  "theme": "dracula",
+  "fontSize": 16,
+  "fontFamily": "'Hack Nerd Font Mono', monospace",
+  "githubRepoId": "uuid",
+  "localRepoPath": "/path/to/repo"
+}
+```
+
+**Response:** Updated folderPreferences object
+
+### Delete Folder Preferences
+
+Reset folder preferences to inherit from user defaults.
+
+```http
+DELETE /api/preferences/folders/:folderId
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Templates API
+
+### List Templates
+
+Get all session templates.
+
+```http
+GET /api/templates
+```
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Dev Server",
+    "description": "Start development server",
+    "projectPath": "/path/to/project",
+    "startupCommand": "npm run dev",
+    "theme": "tokyo-night",
+    "fontSize": 14,
+    "fontFamily": "'JetBrainsMono Nerd Font Mono', monospace",
+    "usageCount": 5,
+    "userId": "uuid",
+    "createdAt": "2024-01-15T09:00:00Z",
+    "updatedAt": "2024-01-15T09:00:00Z"
+  }
+]
+```
+
+### Create Template
+
+Create a new session template.
+
+```http
+POST /api/templates
+```
+
+**Request Body:**
+```json
+{
+  "name": "Dev Server",
+  "description": "Start development server",
+  "projectPath": "/path/to/project",
+  "startupCommand": "npm run dev",
+  "theme": "tokyo-night",
+  "fontSize": 14,
+  "fontFamily": "'JetBrainsMono Nerd Font Mono', monospace"
+}
+```
+
+**Response:** `201 Created` - Template object
+
+### Get Template
+
+Get a specific template.
+
+```http
+GET /api/templates/:id
+```
+
+**Response:** Template object
+
+### Update Template
+
+Update template properties.
+
+```http
+PATCH /api/templates/:id
+```
+
+**Request Body:** Same as create
+
+**Response:** Updated template object
+
+### Delete Template
+
+Delete a template.
+
+```http
+DELETE /api/templates/:id
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+### Record Template Usage
+
+Record that a template was used.
+
+```http
+POST /api/templates/:id
+```
+
+**Request Body:**
+```json
+{
+  "action": "use"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Recordings API
+
+### List Recordings
+
+Get all session recordings.
+
+```http
+GET /api/recordings
+```
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Demo Recording",
+    "sessionId": "uuid",
+    "duration": 120,
+    "userId": "uuid",
+    "createdAt": "2024-01-15T09:00:00Z",
+    "updatedAt": "2024-01-15T09:00:00Z"
+  }
+]
+```
+
+### Create Recording
+
+Save a new terminal recording.
+
+```http
+POST /api/recordings
+```
+
+**Request Body:**
+```json
+{
+  "name": "Demo Recording",
+  "data": "base64-encoded-recording-data",
+  "duration": 120,
+  "sessionId": "uuid"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Recording name |
+| `data` | string | Yes | Base64-encoded recording data |
+| `duration` | number | Yes | Duration in seconds |
+| `sessionId` | string | No | Associated session UUID |
+
+**Response:** `201 Created` - Recording object
+
+### Get Recording
+
+Get a specific recording with data.
+
+```http
+GET /api/recordings/:id
+```
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `parsed` | string | `"true"` to return parsed recording data |
+
+**Response:** Recording object with `data` field
+
+### Update Recording
+
+Update recording metadata.
+
+```http
+PATCH /api/recordings/:id
+```
+
+**Request Body:**
+```json
+{
+  "name": "Updated Name",
+  "sessionId": "uuid"
+}
+```
+
+**Response:** Updated recording object
+
+### Delete Recording
+
+Delete a recording.
+
+```http
+DELETE /api/recordings/:id
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+---
+
 ## GitHub API
 
 ### List Repositories
@@ -214,6 +791,7 @@ GET /api/github/repositories
 **Query Parameters:**
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `cached` | string | - | `"true"` to return only cloned repos |
 | `page` | number | 1 | Page number |
 | `perPage` | number | 100 | Results per page |
 | `sort` | string | `updated` | Sort by: `updated`, `created`, `pushed`, `full_name` |
@@ -262,19 +840,10 @@ Get details about a cached repository.
 GET /api/github/repositories/:id
 ```
 
-**Response:**
-```json
-{
-  "repository": {
-    "id": "uuid",
-    "githubId": 123456,
-    "name": "my-repo",
-    "fullName": "username/my-repo",
-    "localPath": "/Users/me/.remote-dev/repos/username/my-repo",
-    ...
-  }
-}
-```
+**Path Parameters:**
+- `id` - Database UUID or GitHub numeric ID
+
+**Response:** Repository object
 
 ### Clone Repository
 
@@ -289,16 +858,7 @@ POST /api/github/repositories/:id
 {
   "success": true,
   "localPath": "/Users/me/.remote-dev/repos/username/my-repo",
-  "alreadyCloned": false
-}
-```
-
-If already cloned:
-```json
-{
-  "success": true,
-  "localPath": "/Users/me/.remote-dev/repos/username/my-repo",
-  "alreadyCloned": true
+  "repositoryId": "uuid"
 }
 ```
 
@@ -348,17 +908,18 @@ GET /api/github/repositories/:id/folders
     {
       "name": "src",
       "path": "/src",
-      "type": "directory",
+      "isDirectory": true,
       "children": [
         {
           "name": "components",
           "path": "/src/components",
-          "type": "directory",
+          "isDirectory": true,
           "children": []
         }
       ]
     }
-  ]
+  ],
+  "rootPath": "/Users/me/.remote-dev/repos/username/my-repo"
 }
 ```
 
@@ -373,25 +934,25 @@ POST /api/github/worktrees
 **Request Body:**
 ```json
 {
-  "repositoryPath": "/path/to/repo",
-  "branchName": "feature/my-feature",
-  "baseBranch": "main",
-  "createBranch": true
+  "repositoryId": "uuid",
+  "branch": "feature/my-feature",
+  "createNewBranch": true,
+  "baseBranch": "main"
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `repositoryPath` | string | Yes | Path to the git repository |
-| `branchName` | string | Yes | Branch name for the worktree |
-| `baseBranch` | string | No | Base branch when creating new branch |
-| `createBranch` | boolean | No | Create new branch if true |
+| `repositoryId` | string | Yes | Repository UUID |
+| `branch` | string | Yes | Branch name |
+| `createNewBranch` | boolean | No | Create new branch |
+| `baseBranch` | string | No | Base branch for new branch |
 
 **Response:**
 ```json
 {
   "success": true,
-  "path": "/path/to/repo-worktrees/feature-my-feature",
+  "worktreePath": "/path/to/repo-worktrees/feature-my-feature",
   "branch": "feature/my-feature"
 }
 ```
@@ -407,7 +968,9 @@ DELETE /api/github/worktrees
 **Request Body:**
 ```json
 {
-  "worktreePath": "/path/to/worktree"
+  "repositoryId": "uuid",
+  "worktreePath": "/path/to/worktree",
+  "force": false
 }
 ```
 
@@ -417,6 +980,233 @@ DELETE /api/github/worktrees
   "success": true
 }
 ```
+
+### Check Worktree Status
+
+Check for uncommitted changes in a worktree.
+
+```http
+POST /api/github/worktrees/check
+```
+
+**Request Body:**
+```json
+{
+  "repositoryId": "uuid",
+  "worktreePath": "/path/to/worktree"
+}
+```
+
+**Response:**
+```json
+{
+  "hasUncommittedChanges": true,
+  "branch": "feature/my-feature"
+}
+```
+
+### List Repository Issues
+
+List open issues for a GitHub repository.
+
+```http
+GET /api/github/repositories/:id/issues
+Authorization: Bearer rdv_<key>
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `state` | string | `open` | Issue state: `open`, `closed`, `all` |
+| `page` | number | 1 | Page number |
+| `per_page` | number | 30 | Results per page (max 100) |
+
+**Response:**
+```json
+{
+  "issues": [
+    {
+      "number": 42,
+      "title": "Add dark mode support",
+      "body": "It would be great to have a dark theme...",
+      "state": "open",
+      "labels": [
+        { "name": "enhancement", "color": "a2eeef" }
+      ],
+      "user": {
+        "login": "username",
+        "avatar_url": "https://avatars.githubusercontent.com/u/123"
+      },
+      "created_at": "2024-01-15T10:00:00Z",
+      "updated_at": "2024-01-15T12:00:00Z"
+    }
+  ],
+  "page": 1,
+  "hasMore": true
+}
+```
+
+---
+
+## API Keys API
+
+Manage API keys for programmatic access. All endpoints require session authentication.
+
+### List API Keys
+
+Get all API keys for the current user.
+
+```http
+GET /api/keys
+```
+
+**Response:**
+```json
+{
+  "keys": [
+    {
+      "id": "uuid",
+      "name": "CI Pipeline",
+      "keyPrefix": "rdv_abc12345",
+      "lastUsedAt": "2024-01-15T10:30:00Z",
+      "expiresAt": null,
+      "createdAt": "2024-01-01T09:00:00Z"
+    }
+  ]
+}
+```
+
+### Create API Key
+
+Create a new API key. The full key is only shown once.
+
+```http
+POST /api/keys
+```
+
+**Request Body:**
+```json
+{
+  "name": "Orchestrator Agent",
+  "expiresAt": "2025-01-01T00:00:00Z"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Friendly name (max 100 chars) |
+| `expiresAt` | string | No | ISO 8601 expiration date |
+
+**Response:** `201 Created`
+```json
+{
+  "id": "uuid",
+  "name": "Orchestrator Agent",
+  "key": "rdv_abcdefghijklmnopqrstuvwxyz123456",
+  "keyPrefix": "rdv_abcdefgh",
+  "createdAt": "2024-01-15T09:00:00Z"
+}
+```
+
+⚠️ **Important:** The `key` field contains the full API key and is only returned once. Store it securely.
+
+### Get API Key
+
+Get details about a specific API key.
+
+```http
+GET /api/keys/:id
+```
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "name": "CI Pipeline",
+  "keyPrefix": "rdv_abc12345",
+  "lastUsedAt": "2024-01-15T10:30:00Z",
+  "expiresAt": null,
+  "createdAt": "2024-01-01T09:00:00Z"
+}
+```
+
+### Revoke API Key
+
+Delete an API key, immediately invalidating it.
+
+```http
+DELETE /api/keys/:id
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Git API
+
+### Validate Repository
+
+Check if a path is a valid git repository.
+
+```http
+GET /api/git/validate
+```
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `path` | string | Filesystem path to validate |
+
+**Response:**
+```json
+{
+  "isGitRepo": true,
+  "branches": ["main", "develop", "feature/new-ui"]
+}
+```
+
+---
+
+## Images API
+
+### Upload Image
+
+Upload an image and save to filesystem.
+
+```http
+POST /api/images
+```
+
+**Content-Type:** `multipart/form-data` or `application/json`
+
+**FormData Request:**
+```
+image: File (JPEG, PNG, GIF, WebP, max 5MB)
+```
+
+**JSON Request:**
+```json
+{
+  "data": "base64-encoded-image-data",
+  "mediaType": "image/png"
+}
+```
+
+**Response:**
+```json
+{
+  "path": "/Users/me/.remote-dev/images/abc123.png",
+  "size": 12345,
+  "mediaType": "image/png"
+}
+```
+
+---
 
 ## WebSocket Protocol
 
@@ -509,16 +1299,21 @@ All messages are JSON-encoded.
 }
 ```
 
+---
+
 ## Error Handling
 
-### HTTP Errors
+### HTTP Status Codes
 
 | Status | Description |
 |--------|-------------|
+| 200 | OK - Request successful |
+| 201 | Created - Resource created |
 | 400 | Bad Request - Invalid parameters |
 | 401 | Unauthorized - Not authenticated |
 | 403 | Forbidden - Not authorized for resource |
 | 404 | Not Found - Resource doesn't exist |
+| 410 | Gone - Resource no longer available |
 | 500 | Internal Server Error |
 
 ### Error Response Format
@@ -530,12 +1325,21 @@ All messages are JSON-encoded.
 }
 ```
 
-Common error codes:
+**Common Error Codes:**
 - `GITHUB_NOT_CONNECTED` - User hasn't linked GitHub
 - `SESSION_NOT_FOUND` - Session doesn't exist
 - `REPOSITORY_NOT_FOUND` - Repository not in cache
 - `CLONE_FAILED` - Repository clone failed
 - `WORKTREE_FAILED` - Worktree creation failed
+- `FOLDER_NOT_FOUND` - Folder doesn't exist
+- `TEMPLATE_NOT_FOUND` - Template doesn't exist
+- `RECORDING_NOT_FOUND` - Recording doesn't exist
+- `API_KEY_NOT_FOUND` - API key doesn't exist or was revoked
+- `API_KEY_EXPIRED` - API key has expired
+- `NAME_REQUIRED` - API key name is required
+- `NAME_TOO_LONG` - API key name exceeds 100 characters
+
+---
 
 ## Rate Limits
 

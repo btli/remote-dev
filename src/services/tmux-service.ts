@@ -2,23 +2,16 @@
  * TmuxService - Manages tmux session lifecycle for terminal persistence
  */
 import { execFile, execFileCheck, execFileNoThrow } from "@/lib/exec";
+import { TmuxServiceError } from "@/lib/errors";
+
+// Re-export for backwards compatibility
+export { TmuxServiceError };
 
 export interface TmuxSessionInfo {
   name: string;
   windowCount: number;
   created: Date;
   attached: boolean;
-}
-
-export class TmuxServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly details?: string
-  ) {
-    super(message);
-    this.name = "TmuxServiceError";
-  }
 }
 
 /**
@@ -77,10 +70,12 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
  * Create a new tmux session
  * @param sessionName - Unique session name (e.g., "rdv-abc123")
  * @param cwd - Working directory for the session
+ * @param startupCommand - Optional command to run after session creation
  */
 export async function createSession(
   sessionName: string,
-  cwd?: string
+  cwd?: string,
+  startupCommand?: string
 ): Promise<void> {
   // Check if session already exists
   if (await sessionExists(sessionName)) {
@@ -104,6 +99,20 @@ export async function createSession(
 
   try {
     await execFile("tmux", args);
+
+    // Enable mouse mode for scrollback support
+    await execFile("tmux", [
+      "set-option",
+      "-t",
+      sessionName,
+      "mouse",
+      "on",
+    ]);
+
+    // Execute startup command if provided
+    if (startupCommand && startupCommand.trim()) {
+      await sendKeys(sessionName, startupCommand.trim());
+    }
   } catch (error) {
     throw new TmuxServiceError(
       `Failed to create tmux session: ${(error as Error).message}`,
@@ -232,4 +241,85 @@ export async function cleanupOrphanedSessions(
 export function generateSessionName(sessionId: string): string {
   // Use first 8 characters of UUID for readability
   return `rdv-${sessionId.substring(0, 8)}`;
+}
+
+/**
+ * Capture the scrollback buffer from a tmux session
+ *
+ * This is useful for Agent API to retrieve terminal output programmatically.
+ * The terminal server sets history-limit to 50000 lines.
+ *
+ * @param sessionName - Tmux session name
+ * @param lines - Number of lines to capture from scrollback (default: 10000)
+ * @returns Terminal output as a string
+ */
+export async function captureOutput(
+  sessionName: string,
+  lines: number = 10000
+): Promise<string> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    // capture-pane flags:
+    // -p: print to stdout instead of internal buffer
+    // -S: start line (negative = from scrollback, -lines means last N lines)
+    // -E: end line (empty = current line)
+    // -J: join wrapped lines
+    const { stdout } = await execFile("tmux", [
+      "capture-pane",
+      "-t",
+      sessionName,
+      "-p",
+      "-S",
+      `-${lines}`,
+      "-J",
+    ]);
+    return stdout;
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to capture output: ${(error as Error).message}`,
+      "CAPTURE_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
+ * Get the current pane content (visible area only, no scrollback)
+ *
+ * Useful for getting just the current visible state of the terminal.
+ *
+ * @param sessionName - Tmux session name
+ * @returns Current visible terminal content
+ */
+export async function capturePane(sessionName: string): Promise<string> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    // Without -S/-E flags, captures only the visible pane
+    const { stdout } = await execFile("tmux", [
+      "capture-pane",
+      "-t",
+      sessionName,
+      "-p",
+      "-J",
+    ]);
+    return stdout;
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to capture pane: ${(error as Error).message}`,
+      "CAPTURE_FAILED",
+      (error as Error).message
+    );
+  }
 }

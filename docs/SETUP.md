@@ -98,18 +98,16 @@ bun run db:push
 
 ### 5. Add Authorized Users
 
-Edit `src/db/seed.ts` to add your email:
-
-```typescript
-const authorizedEmails = [
-  "your-email@example.com",
-];
-```
-
-Run the seed script:
+Set the `AUTHORIZED_USERS` environment variable with comma-separated emails and run the seed script:
 
 ```bash
-bun run db:seed
+AUTHORIZED_USERS="your-email@example.com" bun run db:seed
+```
+
+For multiple users:
+
+```bash
+AUTHORIZED_USERS="user1@example.com,user2@example.com" bun run db:seed
 ```
 
 ### 6. Start the Application
@@ -182,7 +180,7 @@ To start fresh:
 ```bash
 rm sqlite.db
 bun run db:push
-bun run db:seed
+AUTHORIZED_USERS="your-email@example.com" bun run db:seed
 ```
 
 ### Schema Changes
@@ -291,7 +289,7 @@ sudo apt install tmux
 
 2. Re-run seed with your email:
    ```bash
-   bun run db:seed
+   AUTHORIZED_USERS="your-email@example.com" bun run db:seed
    ```
 
 ### GitHub OAuth errors

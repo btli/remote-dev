@@ -1,6 +1,367 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* ============================================================================
+   Nerd Fonts - Self-hosted WOFF2 for optimal mobile performance
+   Run: bun scripts/download-nerd-fonts.ts to regenerate fonts
+   ============================================================================ */
+
+/* JetBrainsMono Nerd Font Mono */
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font Mono';
+  src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* FiraCode Nerd Font Mono */
+@font-face {
+  font-family: 'FiraCode Nerd Font Mono';
+  src: url('/fonts/FiraCode-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'FiraCode Nerd Font Mono';
+  src: url('/fonts/FiraCode-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Hack Nerd Font Mono */
+@font-face {
+  font-family: 'Hack Nerd Font Mono';
+  src: url('/fonts/Hack-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Hack Nerd Font Mono';
+  src: url('/fonts/Hack-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* MesloLGS Nerd Font Mono - Popular for Powerlevel10k */
+@font-face {
+  font-family: 'MesloLGS Nerd Font Mono';
+  src: url('/fonts/MesloLGS-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MesloLGS Nerd Font Mono';
+  src: url('/fonts/MesloLGS-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* CaskaydiaCove Nerd Font Mono (Cascadia Code) */
+@font-face {
+  font-family: 'CaskaydiaCove Nerd Font Mono';
+  src: url('/fonts/CaskaydiaCove-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'CaskaydiaCove Nerd Font Mono';
+  src: url('/fonts/CaskaydiaCove-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* SauceCodePro Nerd Font Mono (Source Code Pro) */
+@font-face {
+  font-family: 'SauceCodePro Nerd Font Mono';
+  src: url('/fonts/SauceCodePro-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'SauceCodePro Nerd Font Mono';
+  src: url('/fonts/SauceCodePro-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* UbuntuMono Nerd Font Mono */
+@font-face {
+  font-family: 'UbuntuMono Nerd Font Mono';
+  src: url('/fonts/UbuntuMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'UbuntuMono Nerd Font Mono';
+  src: url('/fonts/UbuntuMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* RobotoMono Nerd Font Mono */
+@font-face {
+  font-family: 'RobotoMono Nerd Font Mono';
+  src: url('/fonts/RobotoMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'RobotoMono Nerd Font Mono';
+  src: url('/fonts/RobotoMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Inconsolata Nerd Font Mono */
+@font-face {
+  font-family: 'Inconsolata Nerd Font Mono';
+  src: url('/fonts/Inconsolata-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inconsolata Nerd Font Mono';
+  src: url('/fonts/Inconsolata-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* DejaVuSansMono Nerd Font Mono */
+@font-face {
+  font-family: 'DejaVuSansMono Nerd Font Mono';
+  src: url('/fonts/DejaVuSansMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'DejaVuSansMono Nerd Font Mono';
+  src: url('/fonts/DejaVuSansMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Mononoki Nerd Font Mono */
+@font-face {
+  font-family: 'Mononoki Nerd Font Mono';
+  src: url('/fonts/Mononoki-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Mononoki Nerd Font Mono';
+  src: url('/fonts/Mononoki-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* VictorMono Nerd Font Mono */
+@font-face {
+  font-family: 'VictorMono Nerd Font Mono';
+  src: url('/fonts/VictorMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'VictorMono Nerd Font Mono';
+  src: url('/fonts/VictorMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* SpaceMono Nerd Font Mono */
+@font-face {
+  font-family: 'SpaceMono Nerd Font Mono';
+  src: url('/fonts/SpaceMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'SpaceMono Nerd Font Mono';
+  src: url('/fonts/SpaceMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Iosevka Nerd Font Mono */
+@font-face {
+  font-family: 'Iosevka Nerd Font Mono';
+  src: url('/fonts/Iosevka-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Iosevka Nerd Font Mono';
+  src: url('/fonts/Iosevka-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* BlexMono Nerd Font Mono (IBM Plex Mono) */
+@font-face {
+  font-family: 'BlexMono Nerd Font Mono';
+  src: url('/fonts/BlexMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'BlexMono Nerd Font Mono';
+  src: url('/fonts/BlexMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Cousine Nerd Font Mono */
+@font-face {
+  font-family: 'Cousine Nerd Font Mono';
+  src: url('/fonts/Cousine-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Cousine Nerd Font Mono';
+  src: url('/fonts/Cousine-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ZedMono Nerd Font Mono */
+@font-face {
+  font-family: 'ZedMono Nerd Font Mono';
+  src: url('/fonts/ZedMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'ZedMono Nerd Font Mono';
+  src: url('/fonts/ZedMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* 0xProto Nerd Font Mono */
+@font-face {
+  font-family: '0xProto Nerd Font Mono';
+  src: url('/fonts/0xProto-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: '0xProto Nerd Font Mono';
+  src: url('/fonts/0xProto-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ============================================================================
+   OTF-only fonts - Loaded from CDN (can't convert to WOFF2 easily)
+   ============================================================================ */
+
+/* FiraMono Nerd Font Mono (OTF from CDN) */
+@font-face {
+  font-family: 'FiraMono Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/FiraMono/Regular/FiraMonoNerdFontMono-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'FiraMono Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/FiraMono/Bold/FiraMonoNerdFontMono-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* GeistMono Nerd Font Mono (OTF from CDN) */
+@font-face {
+  font-family: 'GeistMono Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/GeistMono/GeistMonoNerdFontMono-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GeistMono Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/GeistMono/GeistMonoNerdFontMono-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* CommitMono Nerd Font Mono (OTF from CDN) */
+@font-face {
+  font-family: 'CommitMono Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/CommitMono/CommitMonoNerdFontMono-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'CommitMono Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/CommitMono/CommitMonoNerdFontMono-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* MonaspaceNeon Nerd Font Mono (OTF from CDN) */
+@font-face {
+  font-family: 'MonaspaceNeon Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/Monaspace/MonaspaceNeon/MonaspaceNeonNerdFontMono-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'MonaspaceNeon Nerd Font Mono';
+  src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@v3.3.0/patched-fonts/Monaspace/MonaspaceNeon/MonaspaceNeonNerdFontMono-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

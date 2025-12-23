@@ -32,6 +32,8 @@ export const accounts = sqliteTable(
   },
   (account) => [
     primaryKey({ columns: [account.provider, account.providerAccountId] }),
+    // Index for faster lookup of user's OAuth accounts
+    index("account_user_idx").on(account.userId),
   ]
 );
 
@@ -79,10 +81,11 @@ export const userSettings = sqliteTable("user_settings", {
   // Terminal preferences
   defaultWorkingDirectory: text("default_working_directory"),
   defaultShell: text("default_shell"),
+  startupCommand: text("startup_command"),
   // Appearance preferences
   theme: text("theme").default("tokyo-night"),
   fontSize: integer("font_size").default(14),
-  fontFamily: text("font_family").default("'JetBrains Mono', monospace"),
+  fontFamily: text("font_family").default("'JetBrainsMono Nerd Font Mono', monospace"),
   // Active project tracking
   activeFolderId: text("active_folder_id"),
   pinnedFolderId: text("pinned_folder_id"),
@@ -127,7 +130,7 @@ export const githubRepositories = sqliteTable(
   ]
 );
 
-// Session folders for organizing terminal sessions
+// Session folders for organizing terminal sessions (supports nesting)
 export const sessionFolders = sqliteTable(
   "session_folder",
   {
@@ -137,6 +140,7 @@ export const sessionFolders = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    parentId: text("parent_id"),
     name: text("name").notNull(),
     collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
@@ -147,7 +151,10 @@ export const sessionFolders = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (table) => [index("session_folder_user_idx").on(table.userId)]
+  (table) => [
+    index("session_folder_user_idx").on(table.userId),
+    index("session_folder_parent_idx").on(table.parentId),
+  ]
 );
 
 // Folder-level preference overrides
@@ -166,10 +173,16 @@ export const folderPreferences = sqliteTable(
     // Terminal preferences (all nullable = inherit from user)
     defaultWorkingDirectory: text("default_working_directory"),
     defaultShell: text("default_shell"),
+    startupCommand: text("startup_command"),
     // Appearance preferences
     theme: text("theme"),
     fontSize: integer("font_size"),
     fontFamily: text("font_family"),
+    // Repository association for worktree support
+    githubRepoId: text("github_repo_id").references(() => githubRepositories.id, {
+      onDelete: "set null",
+    }),
+    localRepoPath: text("local_repo_path"), // Alternative: manual path to local git repo
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -202,6 +215,100 @@ export const splitGroups = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [index("split_group_user_idx").on(table.userId)]
+);
+
+// Session templates for reusable configurations
+export const sessionTemplates = sqliteTable(
+  "session_template",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    // Template settings
+    sessionNamePattern: text("session_name_pattern"), // e.g., "Dev Server - ${n}"
+    projectPath: text("project_path"),
+    startupCommand: text("startup_command"),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    icon: text("icon"), // lucide icon name
+    // Appearance overrides
+    theme: text("theme"),
+    fontSize: integer("font_size"),
+    fontFamily: text("font_family"),
+    // Usage tracking
+    usageCount: integer("usage_count").notNull().default(0),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("session_template_user_idx").on(table.userId),
+    index("session_template_usage_idx").on(table.userId, table.usageCount),
+  ]
+);
+
+// Session recordings for playback
+export const sessionRecordings = sqliteTable(
+  "session_recording",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id"), // Optional: link to original session
+    name: text("name").notNull(),
+    description: text("description"),
+    // Recording metadata
+    duration: integer("duration").notNull(), // Duration in milliseconds
+    terminalCols: integer("terminal_cols").notNull().default(80),
+    terminalRows: integer("terminal_rows").notNull().default(24),
+    // Recording data as JSON: { events: [{ t: number, d: string }] }
+    data: text("data").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("session_recording_user_idx").on(table.userId),
+    index("session_recording_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
+// API keys for programmatic access (Agent API)
+export const apiKeys = sqliteTable(
+  "api_key",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // User-friendly name (e.g., "CI Pipeline", "Orchestrator Agent")
+    keyPrefix: text("key_prefix").notNull(), // First 8 chars for identification (e.g., "rdv_abc1")
+    keyHash: text("key_hash").notNull(), // SHA-256 hash of the full key
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }), // Optional expiration
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("api_key_user_idx").on(table.userId),
+    index("api_key_prefix_idx").on(table.keyPrefix), // Fast lookup by prefix
+  ]
 );
 
 // Terminal sessions with tmux persistence

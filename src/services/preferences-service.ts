@@ -4,7 +4,7 @@
  * Inheritance chain: Default Constants -> User Preferences -> Folder Preferences
  */
 import { db } from "@/db";
-import { userSettings, folderPreferences, sessionFolders } from "@/db/schema";
+import { users, userSettings, folderPreferences, sessionFolders } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type {
   Preferences,
@@ -15,6 +15,10 @@ import type {
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
+import { PreferencesServiceError } from "@/lib/errors";
+
+// Re-export for backwards compatibility
+export { PreferencesServiceError };
 
 /**
  * System-wide default preferences
@@ -24,21 +28,9 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   defaultShell: process.env.SHELL || "/bin/bash",
   theme: "tokyo-night",
   fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
+  fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
+  startupCommand: "",
 } as const;
-
-/**
- * Error class for preferences operations
- */
-export class PreferencesServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string
-  ) {
-    super(message);
-    this.name = "PreferencesServiceError";
-  }
-}
 
 // ============================================================================
 // User Settings Operations
@@ -53,6 +45,19 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
   });
 
   if (!settings) {
+    // Verify user exists before creating settings (prevents FK constraint errors
+    // from stale session cookies referencing deleted users)
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      throw new PreferencesServiceError(
+        "User not found - session may be stale, please re-login",
+        "USER_NOT_FOUND"
+      );
+    }
+
     // Create default settings for new user
     const [newSettings] = await db
       .insert(userSettings)
@@ -241,6 +246,7 @@ export function resolvePreferences(
     theme: "default",
     fontSize: "default",
     fontFamily: "default",
+    startupCommand: "default",
   };
 
   // Start with defaults
@@ -267,6 +273,10 @@ export function resolvePreferences(
     resolved.fontFamily = userSettingsData.fontFamily;
     source.fontFamily = "user";
   }
+  if (userSettingsData.startupCommand !== null) {
+    resolved.startupCommand = userSettingsData.startupCommand;
+    source.startupCommand = "user";
+  }
 
   // Apply folder overrides
   if (folderPrefsData) {
@@ -289,6 +299,10 @@ export function resolvePreferences(
     if (folderPrefsData.fontFamily !== null) {
       resolved.fontFamily = folderPrefsData.fontFamily;
       source.fontFamily = "folder";
+    }
+    if (folderPrefsData.startupCommand !== null) {
+      resolved.startupCommand = folderPrefsData.startupCommand;
+      source.startupCommand = "folder";
     }
   }
 
@@ -349,6 +363,7 @@ function mapDbUserSettings(
     userId: db.userId,
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
+    startupCommand: db.startupCommand,
     theme: db.theme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
@@ -369,9 +384,12 @@ function mapDbFolderPreferences(
     userId: db.userId,
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
+    startupCommand: db.startupCommand,
     theme: db.theme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
+    githubRepoId: db.githubRepoId,
+    localRepoPath: db.localRepoPath,
     createdAt: new Date(db.createdAt),
     updatedAt: new Date(db.updatedAt),
   };

@@ -3,7 +3,7 @@
  */
 import { db } from "@/db";
 import { terminalSessions, githubRepositories } from "@/db/schema";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, inArray } from "drizzle-orm";
 import type {
   TerminalSession,
   CreateSessionInput,
@@ -12,20 +12,17 @@ import type {
   SessionWithMetadata,
 } from "@/types/session";
 import * as TmuxService from "./tmux-service";
+import * as WorktreeService from "./worktree-service";
+import * as GitHubService from "./github-service";
+import { getResolvedPreferences, getFolderPreferences } from "./preferences-service";
+import { SessionServiceError } from "@/lib/errors";
 
-export class SessionServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly sessionId?: string
-  ) {
-    super(message);
-    this.name = "SessionServiceError";
-  }
-}
+// Re-export for backwards compatibility with API routes
+export { SessionServiceError };
 
 /**
- * Create a new terminal session
+ * Create a new terminal session.
+ * SECURITY: Wraps tmux creation with proper cleanup on DB failure.
  */
 export async function createSession(
   userId: string,
@@ -38,7 +35,7 @@ export async function createSession(
   const existingSessions = await db.query.terminalSessions.findMany({
     where: and(
       eq(terminalSessions.userId, userId),
-      eq(terminalSessions.status, "active")
+      inArray(terminalSessions.status, ["active", "suspended"])
     ),
     orderBy: [desc(terminalSessions.tabOrder)],
     limit: 1,
@@ -48,11 +45,131 @@ export async function createSession(
     ? existingSessions[0].tabOrder + 1
     : 0;
 
-  // Create the tmux session first
+  // Fetch resolved preferences
+  const preferences = await getResolvedPreferences(userId, input.folderId);
+
+  // Determine working path and branch name
+  let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
+  let branchName = input.worktreeBranch;
+
+  // Handle worktree creation for feature sessions (with explicit path + description)
+  if (input.createWorktree && input.projectPath && input.featureDescription) {
+    // Generate branch name from feature description
+    const sanitizedBranch = `feature/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
+    branchName = sanitizedBranch;
+
+    // Validate it's a git repo
+    if (!(await WorktreeService.isGitRepo(input.projectPath))) {
+      throw new SessionServiceError(
+        "Project path is not a git repository",
+        "NOT_GIT_REPO",
+        sessionId
+      );
+    }
+
+    // Create the worktree with new branch
+    try {
+      const result = await WorktreeService.createBranchWithWorktree(
+        input.projectPath,
+        sanitizedBranch,
+        input.baseBranch,
+        undefined // Auto-generate worktree path
+      );
+      workingPath = result.worktreePath;
+    } catch (error) {
+      if (error instanceof WorktreeService.WorktreeServiceError) {
+        throw new SessionServiceError(
+          `Failed to create worktree: ${error.message}`,
+          error.code,
+          sessionId
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Handle quick worktree creation from folder (New Worktree menu item)
+  if (input.createWorktree && input.folderId && !input.featureDescription) {
+    // Get folder preferences to find linked repository
+    const folderPrefs = await getFolderPreferences(input.folderId, userId);
+
+    let repoPath: string | null = null;
+    let repoId: string | null = null;
+
+    if (folderPrefs?.githubRepoId) {
+      // Get repo from database
+      const repo = await GitHubService.getRepository(folderPrefs.githubRepoId, userId);
+      if (!repo?.localPath) {
+        throw new SessionServiceError(
+          "Repository is not cloned locally. Clone it first.",
+          "REPO_NOT_CLONED",
+          sessionId
+        );
+      }
+      repoPath = repo.localPath;
+      repoId = repo.id;
+    } else if (folderPrefs?.localRepoPath) {
+      repoPath = folderPrefs.localRepoPath;
+    }
+
+    if (!repoPath) {
+      throw new SessionServiceError(
+        "No repository linked to this folder. Configure in folder preferences.",
+        "NO_REPO_LINKED",
+        sessionId
+      );
+    }
+
+    // Validate it's a git repo
+    if (!(await WorktreeService.isGitRepo(repoPath))) {
+      throw new SessionServiceError(
+        "Linked path is not a git repository",
+        "NOT_GIT_REPO",
+        sessionId
+      );
+    }
+
+    // Generate auto branch name with timestamp
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    const autoBranch = `wt-${timestamp}`;
+    branchName = autoBranch;
+
+    // Create the worktree with new branch
+    try {
+      const result = await WorktreeService.createBranchWithWorktree(
+        repoPath,
+        autoBranch,
+        input.baseBranch,
+        undefined // Auto-generate worktree path
+      );
+      workingPath = result.worktreePath;
+
+      // Update input for database record
+      if (repoId) {
+        input.githubRepoId = repoId;
+      }
+    } catch (error) {
+      if (error instanceof WorktreeService.WorktreeServiceError) {
+        throw new SessionServiceError(
+          `Failed to create worktree: ${error.message}`,
+          error.code,
+          sessionId
+        );
+      }
+      throw error;
+    }
+  }
+
+  // Determine startup command (explicit override takes precedence)
+  const startupCommand = input.startupCommand || preferences.startupCommand || undefined;
+
+  // Create the tmux session
   try {
     await TmuxService.createSession(
       tmuxSessionName,
-      input.projectPath ?? process.env.HOME ?? undefined
+      workingPath ?? undefined,
+      startupCommand
     );
   } catch (error) {
     if (error instanceof TmuxService.TmuxServiceError) {
@@ -65,27 +182,36 @@ export async function createSession(
     throw error;
   }
 
-  // Insert the database record
-  const now = new Date();
-  const [session] = await db
-    .insert(terminalSessions)
-    .values({
-      id: sessionId,
-      userId,
-      name: input.name,
-      tmuxSessionName,
-      projectPath: input.projectPath ?? null,
-      githubRepoId: input.githubRepoId ?? null,
-      worktreeBranch: input.worktreeBranch ?? null,
-      status: "active",
-      tabOrder: nextTabOrder,
-      lastActivityAt: now,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
+  // Insert the database record - clean up tmux session if this fails
+  try {
+    const now = new Date();
+    const [session] = await db
+      .insert(terminalSessions)
+      .values({
+        id: sessionId,
+        userId,
+        name: input.name,
+        tmuxSessionName,
+        projectPath: workingPath ?? null,
+        githubRepoId: input.githubRepoId ?? null,
+        worktreeBranch: branchName ?? null,
+        folderId: input.folderId ?? null,
+        status: "active",
+        tabOrder: nextTabOrder,
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
 
-  return mapDbSessionToSession(session);
+    return mapDbSessionToSession(session);
+  } catch (error) {
+    // SECURITY: Clean up orphaned tmux session if DB insert fails
+    await TmuxService.killSession(tmuxSessionName).catch(() => {
+      console.error(`Failed to clean up orphaned tmux session: ${tmuxSessionName}`);
+    });
+    throw error;
+  }
 }
 
 /**
@@ -149,13 +275,14 @@ export async function getSessionWithMetadata(
  */
 export async function listSessions(
   userId: string,
-  status?: SessionStatus
+  status?: SessionStatus | SessionStatus[]
 ): Promise<TerminalSession[]> {
+  const statusFilter = Array.isArray(status) ? status : status ? [status] : null;
   const sessions = await db.query.terminalSessions.findMany({
-    where: status
+    where: statusFilter && statusFilter.length > 0
       ? and(
           eq(terminalSessions.userId, userId),
-          eq(terminalSessions.status, status)
+          inArray(terminalSessions.status, statusFilter)
         )
       : eq(terminalSessions.userId, userId),
     orderBy: [asc(terminalSessions.tabOrder)],
@@ -179,6 +306,13 @@ export async function updateSession(
       "SESSION_NOT_FOUND",
       sessionId
     );
+  }
+
+  // If status is being changed to closed, kill the tmux session
+  if (updates.status === "closed" && existing.status !== "closed") {
+    await TmuxService.killSession(existing.tmuxSessionName).catch((err) => {
+      console.error(`Failed to kill tmux session during status update: ${err.message}`);
+    });
   }
 
   const [updated] = await db
@@ -221,6 +355,7 @@ export async function touchSession(
 
 /**
  * Suspend a session (detach tmux, keep alive)
+ * SECURITY: Includes userId in WHERE clause to prevent TOCTOU attacks
  */
 export async function suspendSession(
   sessionId: string,
@@ -241,11 +376,17 @@ export async function suspendSession(
       status: "suspended",
       updatedAt: new Date(),
     })
-    .where(eq(terminalSessions.id, sessionId));
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      )
+    );
 }
 
 /**
  * Resume a suspended session
+ * SECURITY: Includes userId in WHERE clause to prevent TOCTOU attacks
  */
 export async function resumeSession(
   sessionId: string,
@@ -276,11 +417,17 @@ export async function resumeSession(
       status: "active",
       updatedAt: new Date(),
     })
-    .where(eq(terminalSessions.id, sessionId));
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      )
+    );
 }
 
 /**
  * Close a session (kill tmux, mark as closed)
+ * SECURITY: Includes userId in WHERE clause to prevent TOCTOU attacks
  */
 export async function closeSession(
   sessionId: string,
@@ -305,7 +452,12 @@ export async function closeSession(
       status: "closed",
       updatedAt: new Date(),
     })
-    .where(eq(terminalSessions.id, sessionId));
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      )
+    );
 }
 
 /**
@@ -339,7 +491,7 @@ export async function recoverSessions(userId: string): Promise<{
   recovered: string[];
   lost: string[];
 }> {
-  const sessions = await listSessions(userId, "active");
+  const sessions = await listSessions(userId, ["active", "suspended"]);
   const recovered: string[] = [];
   const lost: string[] = [];
 
@@ -361,11 +513,16 @@ export async function recoverSessions(userId: string): Promise<{
 }
 
 /**
- * Clean up orphaned tmux sessions that aren't in the database
+ * Clean up orphaned tmux sessions that aren't in the database or are closed
  */
 export async function cleanupOrphanedTmuxSessions(userId: string): Promise<string[]> {
   const sessions = await listSessions(userId);
-  const validSessionNames = new Set(sessions.map((s) => s.tmuxSessionName));
+  // Only active or suspended sessions should have a running tmux instance
+  const validSessionNames = new Set(
+    sessions
+      .filter((s) => s.status === "active" || s.status === "suspended")
+      .map((s) => s.tmuxSessionName)
+  );
   return TmuxService.cleanupOrphanedSessions(validSessionNames, "rdv-");
 }
 
@@ -379,6 +536,7 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     projectPath: dbSession.projectPath,
     githubRepoId: dbSession.githubRepoId,
     worktreeBranch: dbSession.worktreeBranch,
+    folderId: dbSession.folderId,
     splitGroupId: dbSession.splitGroupId,
     splitOrder: dbSession.splitOrder,
     splitSize: dbSession.splitSize ?? 0.5,

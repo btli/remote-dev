@@ -1,6 +1,6 @@
 "use client";
 
-import { X, Plus, Pause } from "lucide-react";
+import { X, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,6 @@ export function TabBar({
         <div className="flex items-center gap-1 flex-1 overflow-x-auto scrollbar-hide">
           {activeSessions.map((session) => {
             const isActive = session.id === activeSessionId;
-            const isSuspended = session.status === "suspended";
 
             return (
               <Tooltip key={session.id}>
@@ -55,9 +54,7 @@ export function TabBar({
                     <span
                       className={cn(
                         "w-1.5 h-1.5 rounded-full",
-                        isSuspended
-                          ? "bg-amber-400"
-                          : isActive
+                        isActive
                           ? "bg-green-400 animate-pulse"
                           : "bg-slate-500"
                       )}
@@ -65,11 +62,6 @@ export function TabBar({
 
                     {/* Session name */}
                     <span className="max-w-[120px] truncate">{session.name}</span>
-
-                    {/* Suspended indicator */}
-                    {isSuspended && (
-                      <Pause className="w-3 h-3 text-amber-400" />
-                    )}
 
                     {/* Close button */}
                     <button

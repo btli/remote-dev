@@ -12,6 +12,7 @@ export interface TerminalSession {
   projectPath: string | null;
   githubRepoId: string | null;
   worktreeBranch: string | null;
+  folderId: string | null;
   // Split group membership (independent from folder)
   splitGroupId: string | null;
   splitOrder: number;
@@ -28,7 +29,31 @@ export interface CreateSessionInput {
   projectPath?: string;
   githubRepoId?: string;
   worktreeBranch?: string;
+  folderId?: string;
+  // Feature session fields
+  startupCommand?: string;      // Override resolved preferences
+  featureDescription?: string;  // Original feature description
+  createWorktree?: boolean;     // Whether to create worktree
+  baseBranch?: string;          // Base branch for new worktree
 }
+
+// AI Agent presets for feature sessions
+export type AgentPreset = "claude" | "clauded" | "gemini" | "geminy" | "custom";
+
+export interface AgentConfig {
+  id: AgentPreset;
+  label: string;
+  command: string;
+  description: string;
+}
+
+export const AGENT_PRESETS: AgentConfig[] = [
+  { id: "claude", label: "Claude", command: "claude", description: "Claude Code AI assistant" },
+  { id: "clauded", label: "Claude (Daemon)", command: "clauded", description: "Claude daemon mode" },
+  { id: "gemini", label: "Gemini", command: "gemini", description: "Google Gemini AI" },
+  { id: "geminy", label: "Geminy", command: "geminy", description: "Gemini daemon mode" },
+  { id: "custom", label: "Custom", command: "", description: "Enter custom command" },
+];
 
 export interface UpdateSessionInput {
   name?: string;
