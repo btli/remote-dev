@@ -4,7 +4,26 @@ Complete API documentation for Remote Dev. For machine-readable format, see [ope
 
 ## Authentication
 
-All API routes require authentication via NextAuth session cookies. Unauthenticated requests return `401 Unauthorized`.
+Remote Dev supports two authentication methods:
+
+### 1. Session Cookies (Browser)
+
+All browser-based requests use NextAuth session cookies. Unauthenticated requests return `401 Unauthorized`.
+
+### 2. API Keys (Programmatic Access)
+
+For automation and coding agents, use API key authentication:
+
+```http
+Authorization: Bearer rdv_<key>
+```
+
+API keys can be created via the `/api/keys` endpoints. They support all session-related operations, enabling workflows like:
+1. Create session with worktree for a GitHub issue
+2. Connect via WebSocket for terminal I/O
+3. Execute commands and capture output
+
+See [API Keys API](#api-keys-api) for key management endpoints.
 
 ## Sessions API
 
@@ -253,6 +272,43 @@ POST /api/sessions/reorder
   "success": true
 }
 ```
+
+### Execute Command
+
+Execute a command in a session (fire-and-forget). Requires API key authentication.
+
+```http
+POST /api/sessions/:id/exec
+Authorization: Bearer rdv_<key>
+```
+
+**Request Body:**
+```json
+{
+  "command": "npm run build",
+  "captureOutput": true,
+  "timeout": 5000
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `command` | string | Yes | Command to execute |
+| `captureOutput` | boolean | No | Capture tmux pane output after command (default: false) |
+| `timeout` | number | No | Wait time in ms before capturing output (default: 1000) |
+
+**Response:**
+```json
+{
+  "success": true,
+  "output": "Build completed successfully\n"
+}
+```
+
+**Notes:**
+- Command is sent to the tmux session as keystrokes followed by Enter
+- If `captureOutput` is true, waits `timeout` ms then captures visible pane content
+- Use WebSocket connection for real-time interactive I/O
 
 ---
 
@@ -949,6 +1005,146 @@ POST /api/github/worktrees/check
 }
 ```
 
+### List Repository Issues
+
+List open issues for a GitHub repository.
+
+```http
+GET /api/github/repositories/:id/issues
+Authorization: Bearer rdv_<key>
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `state` | string | `open` | Issue state: `open`, `closed`, `all` |
+| `page` | number | 1 | Page number |
+| `per_page` | number | 30 | Results per page (max 100) |
+
+**Response:**
+```json
+{
+  "issues": [
+    {
+      "number": 42,
+      "title": "Add dark mode support",
+      "body": "It would be great to have a dark theme...",
+      "state": "open",
+      "labels": [
+        { "name": "enhancement", "color": "a2eeef" }
+      ],
+      "user": {
+        "login": "username",
+        "avatar_url": "https://avatars.githubusercontent.com/u/123"
+      },
+      "created_at": "2024-01-15T10:00:00Z",
+      "updated_at": "2024-01-15T12:00:00Z"
+    }
+  ],
+  "page": 1,
+  "hasMore": true
+}
+```
+
+---
+
+## API Keys API
+
+Manage API keys for programmatic access. All endpoints require session authentication.
+
+### List API Keys
+
+Get all API keys for the current user.
+
+```http
+GET /api/keys
+```
+
+**Response:**
+```json
+{
+  "keys": [
+    {
+      "id": "uuid",
+      "name": "CI Pipeline",
+      "keyPrefix": "rdv_abc12345",
+      "lastUsedAt": "2024-01-15T10:30:00Z",
+      "expiresAt": null,
+      "createdAt": "2024-01-01T09:00:00Z"
+    }
+  ]
+}
+```
+
+### Create API Key
+
+Create a new API key. The full key is only shown once.
+
+```http
+POST /api/keys
+```
+
+**Request Body:**
+```json
+{
+  "name": "Orchestrator Agent",
+  "expiresAt": "2025-01-01T00:00:00Z"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Friendly name (max 100 chars) |
+| `expiresAt` | string | No | ISO 8601 expiration date |
+
+**Response:** `201 Created`
+```json
+{
+  "id": "uuid",
+  "name": "Orchestrator Agent",
+  "key": "rdv_abcdefghijklmnopqrstuvwxyz123456",
+  "keyPrefix": "rdv_abcdefgh",
+  "createdAt": "2024-01-15T09:00:00Z"
+}
+```
+
+⚠️ **Important:** The `key` field contains the full API key and is only returned once. Store it securely.
+
+### Get API Key
+
+Get details about a specific API key.
+
+```http
+GET /api/keys/:id
+```
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "name": "CI Pipeline",
+  "keyPrefix": "rdv_abc12345",
+  "lastUsedAt": "2024-01-15T10:30:00Z",
+  "expiresAt": null,
+  "createdAt": "2024-01-01T09:00:00Z"
+}
+```
+
+### Revoke API Key
+
+Delete an API key, immediately invalidating it.
+
+```http
+DELETE /api/keys/:id
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
 ---
 
 ## Git API
@@ -1138,6 +1334,10 @@ All messages are JSON-encoded.
 - `FOLDER_NOT_FOUND` - Folder doesn't exist
 - `TEMPLATE_NOT_FOUND` - Template doesn't exist
 - `RECORDING_NOT_FOUND` - Recording doesn't exist
+- `API_KEY_NOT_FOUND` - API key doesn't exist or was revoked
+- `API_KEY_EXPIRED` - API key has expired
+- `NAME_REQUIRED` - API key name is required
+- `NAME_TOO_LONG` - API key name exceeds 100 characters
 
 ---
 

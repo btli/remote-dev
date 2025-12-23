@@ -336,6 +336,32 @@ getRecording(recordingId, userId)
 deleteRecording(recordingId, userId)
 ```
 
+### ApiKeyService (`src/services/api-key-service.ts`)
+
+Manages API keys for programmatic access:
+
+```typescript
+// Create API key (returns full key once)
+createApiKey(userId, name, expiresAt?)
+
+// Validate API key (constant-time comparison)
+validateApiKey(key) // -> { userId, keyId } | null
+
+// List user's API keys
+listApiKeys(userId)
+
+// Get API key details
+getApiKey(keyId, userId)
+
+// Revoke API key
+revokeApiKey(keyId, userId)
+```
+
+Security notes:
+- Keys are hashed with SHA-256 (appropriate for high-entropy random keys)
+- Validation uses constant-time comparison to prevent timing attacks
+- Key prefix stored separately for efficient lookup without exposing hash
+
 ## Database Schema
 
 ### Core Tables
@@ -392,16 +418,31 @@ session_template (
 session_recording (
   id, userId, sessionId, name, data, duration, createdAt
 )
+
+-- API Keys (programmatic access)
+api_key (
+  id, userId, name, keyPrefix, keyHash,
+  lastUsedAt, expiresAt, createdAt
+)
 ```
 
 ## Security Considerations
 
 ### Authentication
 
-- Email allowlist in `authorized_user` table
+- **Browser**: Email allowlist in `authorized_user` table
+- **Programmatic**: API key authentication with Bearer tokens
 - JWT session strategy (stateless)
 - GitHub OAuth for repository access
 - No password storage (credentials are just email verification)
+
+### API Key Security
+
+- Keys generated with 256 bits of cryptographic randomness
+- SHA-256 hashing (appropriate for high-entropy keys, faster than bcrypt)
+- Constant-time comparison prevents timing attacks
+- Key prefix stored for identification without exposing hash
+- Optional expiration dates for time-limited access
 
 ### Command Execution
 

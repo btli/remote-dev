@@ -2,7 +2,7 @@
 
 A modern web-based terminal interface for local development, featuring multi-session support, GitHub integration, and persistent sessions via tmux.
 
-![Version](https://img.shields.io/badge/version-0.1.0-green.svg)
+![Version](https://img.shields.io/badge/version-0.2.0-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)
@@ -17,8 +17,9 @@ A modern web-based terminal interface for local development, featuring multi-ses
 - **Split Panes** - Split terminals horizontally or vertically
 - **GitHub Integration** - Connect your GitHub account, browse repositories, and clone with one click
 - **Git Worktrees** - Create isolated worktrees for feature branches automatically
+- **Agent API** - Programmatic access via API keys for automation and coding agents
 - **Modern UI** - Glassmorphism design with Tokyo Night theme, 22 Nerd Fonts
-- **Secure Authentication** - Cloudflare Access (remote) + localhost email auth (local dev)
+- **Secure Authentication** - Cloudflare Access (remote) + localhost email auth (local dev) + API keys
 - **Mobile Support** - Touch-friendly keyboard and responsive design
 
 ## Screenshot
@@ -213,6 +214,7 @@ The application uses a clean service layer architecture:
 - **PreferencesService** - User settings and folder preferences with inheritance
 - **TemplateService** - Session template management
 - **RecordingService** - Session recording storage
+- **ApiKeyService** - API key management for programmatic access
 
 ### API Routes
 
@@ -222,6 +224,7 @@ The application uses a clean service layer architecture:
 | `/api/sessions/[id]` | GET, PATCH, DELETE | Session CRUD |
 | `/api/sessions/[id]/suspend` | POST | Suspend session |
 | `/api/sessions/[id]/resume` | POST | Resume session |
+| `/api/sessions/[id]/exec` | POST | Execute command (Agent API) |
 | `/api/folders` | GET, POST | List/create folders |
 | `/api/folders/[id]` | PATCH, DELETE | Update/delete folder |
 | `/api/preferences` | GET, PATCH | User settings |
@@ -230,7 +233,10 @@ The application uses a clean service layer architecture:
 | `/api/recordings` | GET, POST | List/save recordings |
 | `/api/github/repositories` | GET | List GitHub repos |
 | `/api/github/repositories/[id]` | GET, POST | Get/clone repository |
+| `/api/github/repositories/[id]/issues` | GET | List repository issues |
 | `/api/github/worktrees` | POST, DELETE | Create/delete worktree |
+| `/api/keys` | GET, POST | List/create API keys |
+| `/api/keys/[id]` | GET, DELETE | Get/revoke API key |
 
 See `docs/API.md` for complete API documentation.
 
@@ -251,11 +257,13 @@ tmux list-sessions | grep "^rdv-"
 
 ## Security
 
-- **Dual Authentication Model**:
+- **Multi-Mode Authentication**:
   - **Localhost** (`127.0.0.1`): Email-only auth for convenient local development
   - **Remote/LAN**: Cloudflare Access JWT validation required
+  - **API Keys**: Bearer token auth for programmatic access (agents, automation)
 - **Email Allowlist** - Only pre-authorized emails can authenticate
 - **JWT Sessions** - Secure, stateless session management via NextAuth v5
+- **API Key Security** - SHA-256 hashing, constant-time comparison, optional expiration
 - **No Shell Injection** - All commands use `execFile` with array arguments (no shell interpolation)
 - **WebSocket Token Auth** - Session-specific tokens for terminal connections
 
