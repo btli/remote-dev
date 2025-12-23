@@ -31,6 +31,7 @@ interface PreferencesContextValue {
   folders: Map<string, FolderWithAncestry>;
   activeProject: ActiveProject;
   loading: boolean;
+  error: string | null;
 
   // Computed
   currentPreferences: ResolvedPreferences;
@@ -79,18 +80,27 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     isPinned: false,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const refreshPreferences = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       // Fetch user settings with credentials to ensure cookies are sent
       const userRes = await fetch("/api/preferences", {
         credentials: "include",
       });
       if (!userRes.ok) {
-        // Don't throw - gracefully handle auth or server errors
-        // User might not be authenticated yet during initial load
-        console.warn("Failed to fetch preferences:", userRes.status);
+        // 401 during initial load is expected for unauthenticated users
+        if (userRes.status === 401) {
+          // Not authenticated - this is expected during initial load
+          return;
+        }
+        // All other errors should be surfaced
+        const errorBody = await userRes.json().catch(() => ({}));
+        const errorMessage = errorBody.error || `Failed to fetch preferences (status: ${userRes.status})`;
+        console.error("Preferences fetch failed:", errorMessage);
+        setError(errorMessage);
         return;
       }
       const userData = await userRes.json();
@@ -135,8 +145,9 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           isPinned: false,
         });
       }
-    } catch (error) {
-      console.error("Error fetching preferences:", error);
+    } catch (err) {
+      console.error("Error fetching preferences:", err);
+      setError(err instanceof Error ? err.message : "Failed to load preferences");
     } finally {
       setLoading(false);
     }
@@ -293,12 +304,22 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         });
       }
 
-      // Persist to server (fire and forget, will sync on next load)
+      // Persist to server with proper error handling
       fetch("/api/preferences/active-folder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderId, pinned }),
-      }).catch(console.error);
+      })
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(`Failed to save active folder (${res.status})`);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to persist active folder:", err);
+          // Set error state so UI can display feedback
+          setError("Failed to save active folder selection");
+        });
     },
     [userSettings, folders]
   );
@@ -317,6 +338,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         folders,
         activeProject,
         loading,
+        error,
         currentPreferences,
         updateUserSettings,
         getFolderPreferences: getFolderPreferencesById,

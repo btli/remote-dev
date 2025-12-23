@@ -57,7 +57,11 @@ export async function GET() {
     }
 
     return NextResponse.json(
-      { error: "Failed to fetch preferences" },
+      {
+        error: "Failed to fetch preferences",
+        detail: "An unexpected error occurred while loading your settings. Please try refreshing the page.",
+        code: "PREFERENCES_FETCH_FAILED"
+      },
       { status: 500 }
     );
   }
@@ -108,7 +112,11 @@ export async function PATCH(request: Request) {
   } catch (error) {
     console.error("Error updating preferences:", error);
     return NextResponse.json(
-      { error: "Failed to update preferences" },
+      {
+        error: "Failed to update preferences",
+        detail: "An unexpected error occurred while saving your settings. Please try again.",
+        code: "PREFERENCES_UPDATE_FAILED"
+      },
       { status: 500 }
     );
   }
