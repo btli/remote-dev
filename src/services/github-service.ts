@@ -102,6 +102,72 @@ export async function listBranchesFromAPI(
 }
 
 /**
+ * GitHub Issue type for Agent API
+ */
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  body: string | null;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  user: {
+    login: string;
+    avatar_url: string;
+  } | null;
+  labels: Array<{ name: string; color: string }>;
+  assignees: Array<{ login: string; avatar_url: string }>;
+  milestone: {
+    title: string;
+    number: number;
+  } | null;
+  comments: number;
+}
+
+/**
+ * List issues for a repository
+ *
+ * This is useful for the Agent API orchestrator workflow where an agent
+ * reviews issues and creates worktree sessions to address each one.
+ *
+ * @param accessToken - GitHub access token
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param state - Issue state filter (default: "open")
+ * @param perPage - Number of issues per page (default: 100)
+ * @param page - Page number (default: 1)
+ */
+export async function listIssuesFromAPI(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  state: "open" | "closed" | "all" = "open",
+  perPage: number = 100,
+  page: number = 1
+): Promise<GitHubIssue[]> {
+  return githubFetch<GitHubIssue[]>(
+    accessToken,
+    `/repos/${owner}/${repo}/issues?state=${state}&per_page=${perPage}&page=${page}&sort=updated&direction=desc`
+  );
+}
+
+/**
+ * Get a single issue by number
+ */
+export async function getIssueFromAPI(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  issueNumber: number
+): Promise<GitHubIssue> {
+  return githubFetch<GitHubIssue>(
+    accessToken,
+    `/repos/${owner}/${repo}/issues/${issueNumber}`
+  );
+}
+
+/**
  * Get cached repositories for a user from the database
  */
 export async function getCachedRepositories(

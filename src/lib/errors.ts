@@ -45,3 +45,5 @@ export class PreferencesServiceError extends ServiceError {
     super(message, code);
   }
 }
+
+export class ApiKeyServiceError extends ServiceError {}
