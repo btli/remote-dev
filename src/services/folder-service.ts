@@ -256,6 +256,31 @@ export async function deleteFolder(
 }
 
 /**
+ * Reorder folders (update sortOrder for sibling folders).
+ * Accepts an array of folder IDs in the desired order.
+ * All folders must belong to the same parent (or all be root folders).
+ */
+export async function reorderFolders(
+  userId: string,
+  folderIds: string[]
+): Promise<void> {
+  // Update each folder with its new sort order
+  await Promise.all(
+    folderIds.map((id, index) =>
+      db
+        .update(sessionFolders)
+        .set({ sortOrder: index, updatedAt: new Date() })
+        .where(
+          and(
+            eq(sessionFolders.id, id),
+            eq(sessionFolders.userId, userId)
+          )
+        )
+    )
+  );
+}
+
+/**
  * Move a session to a folder (or remove from folder if folderId is null).
  * SECURITY: Validates that both the session and folder belong to the user.
  */
