@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth-utils";
+import * as ApiKeyService from "@/services/api-key-service";
 
 /**
  * Route context type for dynamic routes
@@ -58,6 +59,79 @@ export function withAuth(
       const params = context?.params ? await context.params : undefined;
 
       return await handler(request, { userId: session.user.id, params });
+    } catch (error) {
+      console.error("Unhandled error in API route:", error);
+      return NextResponse.json(
+        { error: "Internal server error" },
+        { status: 500 }
+      );
+    }
+  };
+}
+
+/**
+ * Wrap an API route handler with authentication that supports both session and API key auth
+ *
+ * This wrapper first tries session-based authentication (NextAuth/Cloudflare Access),
+ * then falls back to API key authentication via Bearer token.
+ *
+ * Use this for endpoints that agents need to access programmatically.
+ *
+ * @param handler - The route handler function to wrap
+ * @returns Wrapped handler that checks auth before calling the original handler
+ *
+ * @example
+ * ```ts
+ * // Works with both browser sessions and API keys
+ * export const POST = withApiAuth(async (request, { userId }) => {
+ *   const data = await executeCommand(userId, request);
+ *   return NextResponse.json(data);
+ * });
+ * ```
+ */
+export function withApiAuth(
+  handler: (
+    request: Request,
+    context: { userId: string; params?: Record<string, string> }
+  ) => Promise<NextResponse>
+): (request: Request, context?: RouteContext) => Promise<NextResponse> {
+  return async (request: Request, context?: RouteContext) => {
+    try {
+      let userId: string | null = null;
+
+      // Try session auth first (for backward compatibility with browser sessions)
+      const session = await getAuthSession();
+      if (session?.user?.id) {
+        userId = session.user.id;
+      }
+
+      // If no session, try API key auth
+      if (!userId) {
+        const authHeader = request.headers.get("authorization");
+        if (authHeader?.startsWith("Bearer ")) {
+          const apiKey = authHeader.substring(7);
+          const validated = await ApiKeyService.validateApiKey(apiKey);
+
+          if (validated) {
+            userId = validated.userId;
+            // Update last used timestamp asynchronously (don't block response)
+            ApiKeyService.touchApiKey(validated.keyId).catch(() => {});
+          }
+        }
+      }
+
+      // No valid auth found
+      if (!userId) {
+        return NextResponse.json(
+          { error: "Unauthorized", code: "UNAUTHORIZED" },
+          { status: 401 }
+        );
+      }
+
+      // Await params if provided (for dynamic routes)
+      const params = context?.params ? await context.params : undefined;
+
+      return await handler(request, { userId, params });
     } catch (error) {
       console.error("Unhandled error in API route:", error);
       return NextResponse.json(
