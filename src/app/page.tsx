@@ -10,6 +10,7 @@ import { SplitProvider } from "@/contexts/SplitContext";
 import { TemplateProvider } from "@/contexts/TemplateContext";
 import { RecordingProvider } from "@/contexts/RecordingContext";
 import { TrashProvider } from "@/contexts/TrashContext";
+import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubConnectButton } from "@/components/header/GitHubConnectButton";
 import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
@@ -68,23 +69,24 @@ export default async function Home() {
       <FolderProvider>
         <TemplateProvider>
           <RecordingProvider>
-            <SessionProvider initialSessions={initialSessions}>
-              <SplitProvider>
-                <TrashProvider>
-                  <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-                    {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
-                    <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
-                      {/* Logo */}
-                      <div className="flex items-center gap-3">
-                        <Image
-                          src="/favicon.svg"
-                          alt="Remote Dev"
-                          width={32}
-                          height={32}
-                          className="rounded-lg"
-                        />
-                        <h1 className="text-lg font-semibold text-white">Remote Dev</h1>
-                      </div>
+            <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
+              <SessionProvider initialSessions={initialSessions}>
+                <SplitProvider>
+                  <TrashProvider>
+                    <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+                      {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
+                      <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
+                        {/* Logo */}
+                        <div className="flex items-center gap-3">
+                          <Image
+                            src="/favicon.svg"
+                            alt="Remote Dev"
+                            width={32}
+                            height={32}
+                            className="rounded-lg"
+                          />
+                          <h1 className="text-lg font-semibold text-white">Remote Dev</h1>
+                        </div>
 
                       {/* User info and actions */}
                       <div className="flex items-center gap-4">
@@ -130,8 +132,9 @@ export default async function Home() {
                 </TrashProvider>
               </SplitProvider>
             </SessionProvider>
-          </RecordingProvider>
-        </TemplateProvider>
+          </GitHubStatsProvider>
+        </RecordingProvider>
+      </TemplateProvider>
       </FolderProvider>
     </PreferencesProvider>
   );

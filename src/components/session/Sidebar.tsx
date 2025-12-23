@@ -916,14 +916,53 @@ export function Sidebar({
             </>
           )}
         </div>
+        <div className="flex items-center gap-0.5">
+          <Button
+            onClick={() => setCreatingFolder(true)}
+            variant="ghost"
+            size="icon-sm"
+            className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+          >
+            <Folder className="w-3.5 h-3.5" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                onClick={(e) => {
+                  // If not opening dropdown, do quick session
+                  if (!e.defaultPrevented) {
+                    onQuickNewSession();
+                  }
+                }}
+                variant="ghost"
+                size="icon-sm"
+                className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuItem onClick={onQuickNewSession}>
+                <Terminal className="w-3.5 h-3.5 mr-2" />
+                Quick Terminal
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onNewSession}>
+                <Settings className="w-3.5 h-3.5 mr-2" />
+                Advanced...
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
 
-        {/* Session List */}
-        <div
-          className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5"
-          onDragOver={(e) => handleDragOver(e, null)}
-          onDragLeave={handleDragLeave}
-          onDrop={(e) => handleDrop(e, null)}
-        >
+      {/* Session List */}
+      <div
+        className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5"
+        onDragOver={(e) => handleDragOver(e, null)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDrop(e, null)}
+      >
           {activeSessions.length === 0 && folders.length === 0 && !creatingFolder ? (
             collapsed ? (
               // Collapsed empty state - just show plus button
@@ -1362,7 +1401,7 @@ export function Sidebar({
               })()}
             </>
           )}
-        </div>
+      </div>
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (

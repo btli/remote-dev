@@ -702,6 +702,30 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [closeSession, logSessionError]
   );
 
+  // Handler for creating a PR worktree from the GitHub integration
+  const handleCreatePRWorktree = useCallback(
+    async (repoId: string, prNumber: number) => {
+      const response = await fetch("/api/github/pr-worktree", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repositoryId: repoId, prNumber }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to create PR worktree");
+      }
+
+      const result = await response.json();
+      // Session is auto-created by the API, refresh session list
+      // The SessionContext should handle the update via its refresh mechanism
+      if (result.session?.id) {
+        setActiveSession(result.session.id);
+      }
+    },
+    [setActiveSession]
+  );
+
   // Close mobile sidebar when selecting a session
   const handleSessionClick = useCallback(
     (sessionId: string) => {
@@ -897,6 +921,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderReorder={handleReorderFolders}
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
+            isGitHubConnected={isGitHubConnected}
+            onCreatePRWorktree={handleCreatePRWorktree}
           />
       </div>
 
