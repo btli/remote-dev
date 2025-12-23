@@ -264,6 +264,31 @@ export const sessionRecordings = sqliteTable(
   ]
 );
 
+// API keys for programmatic access (Agent API)
+export const apiKeys = sqliteTable(
+  "api_key",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // User-friendly name (e.g., "CI Pipeline", "Orchestrator Agent")
+    keyPrefix: text("key_prefix").notNull(), // First 8 chars for identification (e.g., "rdv_abc1")
+    keyHash: text("key_hash").notNull(), // SHA-256 hash of the full key
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }), // Optional expiration
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("api_key_user_idx").on(table.userId),
+    index("api_key_prefix_idx").on(table.keyPrefix), // Fast lookup by prefix
+  ]
+);
+
 // Terminal sessions with tmux persistence
 export const terminalSessions = sqliteTable(
   "terminal_session",

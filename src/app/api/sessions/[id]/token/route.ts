@@ -1,26 +1,38 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withApiAuth, errorResponse } from "@/lib/api";
 import { generateWsToken } from "@/server/terminal";
 import * as SessionService from "@/services/session-service";
 
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+/**
+ * GET /api/sessions/:id/token - Get WebSocket authentication token
+ *
+ * Returns a short-lived token (5 minutes) for connecting to the terminal WebSocket.
+ * Supports both session auth and API key auth for agent access.
+ *
+ * Agent workflow:
+ * 1. GET /api/sessions/:id/token (with API key)
+ * 2. Connect to ws://host:3001?token=<token>&tmuxSession=<tmuxSessionName>
+ * 3. Send: { type: "input", data: "command\n" }
+ * 4. Receive: { type: "output", data: "..." }
+ */
+export const GET = withApiAuth(async (_request, { userId, params }) => {
+  const sessionId = params?.id;
+  if (!sessionId) {
+    return errorResponse("Session ID is required", 400, "ID_REQUIRED");
   }
-
-  const { id: sessionId } = await params;
 
   // Verify the session belongs to this user
-  const terminalSession = await SessionService.getSession(sessionId, session.user.id);
+  const terminalSession = await SessionService.getSession(sessionId, userId);
   if (!terminalSession) {
-    return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    return errorResponse("Session not found", 404, "SESSION_NOT_FOUND");
   }
 
-  const token = generateWsToken(sessionId, session.user.id);
+  const token = generateWsToken(sessionId, userId);
 
-  return NextResponse.json({ token });
-}
+  return NextResponse.json({
+    token,
+    sessionId,
+    tmuxSessionName: terminalSession.tmuxSessionName,
+    expiresIn: 300, // 5 minutes
+  });
+});
