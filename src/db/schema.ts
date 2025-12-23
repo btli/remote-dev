@@ -1,6 +1,7 @@
-import { sqliteTable, text, integer, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
+import type { SplitDirection } from "@/types/split";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -182,6 +183,27 @@ export const folderPreferences = sqliteTable(
   ]
 );
 
+// Split groups for terminal split panes
+export const splitGroups = sqliteTable(
+  "split_group",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    direction: text("direction").$type<SplitDirection>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("split_group_user_idx").on(table.userId)]
+);
+
 // Terminal sessions with tmux persistence
 export const terminalSessions = sqliteTable(
   "terminal_session",
@@ -202,6 +224,12 @@ export const terminalSessions = sqliteTable(
     folderId: text("folder_id").references(() => sessionFolders.id, {
       onDelete: "set null",
     }),
+    // Split group membership (independent from folder)
+    splitGroupId: text("split_group_id").references(() => splitGroups.id, {
+      onDelete: "set null",
+    }),
+    splitOrder: integer("split_order").notNull().default(0),
+    splitSize: real("split_size").default(0.5),
     status: text("status").$type<SessionStatus>().notNull().default("active"),
     tabOrder: integer("tab_order").notNull().default(0),
     lastActivityAt: integer("last_activity_at", { mode: "timestamp_ms" })
@@ -217,5 +245,6 @@ export const terminalSessions = sqliteTable(
   (table) => [
     index("terminal_session_user_status_idx").on(table.userId, table.status),
     index("terminal_session_user_order_idx").on(table.userId, table.tabOrder),
+    index("terminal_session_split_group_idx").on(table.splitGroupId),
   ]
 );

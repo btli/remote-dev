@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from "react";
 import {
   X, Plus, Pause, Terminal, Settings,
-  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2
+  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2,
+  SplitSquareHorizontal, SplitSquareVertical, Minus
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -25,6 +26,7 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { useSplitContext } from "@/contexts/SplitContext";
 
 export interface SessionFolder {
   id: string;
@@ -83,6 +85,13 @@ export function Sidebar({
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // Split context for managing split groups
+  const {
+    createSplit,
+    removeFromSplit,
+    getSplitForSession,
+  } = useSplitContext();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
@@ -199,7 +208,7 @@ export function Sidebar({
     setDragOverFolderId(null);
   };
 
-  const renderSession = (session: TerminalSession, inFolder = false) => {
+  const renderSession = (session: TerminalSession, inFolder = false, inSplit = false) => {
     const isActive = session.id === activeSessionId;
     const isSuspended = session.status === "suspended";
     const isEditing = editingId === session.id;
@@ -221,6 +230,7 @@ export function Sidebar({
                 "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
                 "transition-all duration-200",
                 inFolder && "ml-4",
+                inSplit && "py-1",
                 isActive
                   ? "bg-gradient-to-r from-violet-500/20 via-purple-500/15 to-blue-500/10 border border-white/10"
                   : "hover:bg-white/5 border border-transparent"
@@ -329,6 +339,40 @@ export function Sidebar({
             </ContextMenuSub>
           )}
           <ContextMenuSeparator />
+          {/* Split options */}
+          {(() => {
+            const splitGroup = getSplitForSession(session.id);
+            if (splitGroup) {
+              // Session is in a split - show unsplit option
+              return (
+                <ContextMenuItem
+                  onClick={() => removeFromSplit(session.id)}
+                >
+                  <Minus className="w-3.5 h-3.5 mr-2" />
+                  Unsplit
+                </ContextMenuItem>
+              );
+            } else {
+              // Session is not in a split - show split options
+              return (
+                <>
+                  <ContextMenuItem
+                    onClick={() => createSplit(session.id, "horizontal")}
+                  >
+                    <SplitSquareHorizontal className="w-3.5 h-3.5 mr-2" />
+                    Split Horizontal
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => createSplit(session.id, "vertical")}
+                  >
+                    <SplitSquareVertical className="w-3.5 h-3.5 mr-2" />
+                    Split Vertical
+                  </ContextMenuItem>
+                </>
+              );
+            }
+          })()}
+          <ContextMenuSeparator />
           <ContextMenuItem
             onClick={() => onSessionClose(session.id)}
             className="text-red-400 focus:text-red-400"
@@ -343,7 +387,7 @@ export function Sidebar({
   };
 
   return (
-    <div className="w-52 h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5">
+    <div className="w-full h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
           <div className="flex items-center gap-2">
@@ -375,14 +419,14 @@ export function Sidebar({
                   <Plus className="w-3.5 h-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuContent align="end" className="w-44">
                 <DropdownMenuItem onClick={onQuickNewSession}>
-                  <Terminal className="w-3.5 h-3.5 mr-2" />
+                  <Terminal className="w-3 h-3 mr-2" />
                   Quick Terminal
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onNewSession}>
-                  <Settings className="w-3.5 h-3.5 mr-2" />
+                  <Settings className="w-3 h-3 mr-2" />
                   Advanced...
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -528,7 +572,7 @@ export function Sidebar({
                             <MoreHorizontal className="w-3 h-3" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-36">
+                        <DropdownMenuContent align="end" className="w-48">
                           <DropdownMenuItem
                             onClick={(e: React.MouseEvent) => {
                               e.stopPropagation();
@@ -581,8 +625,68 @@ export function Sidebar({
                 );
               })}
 
-              {/* Root sessions (not in any folder) */}
-              {rootSessions.map((session) => renderSession(session))}
+              {/* Root sessions (not in any folder) - group splits together */}
+              {(() => {
+                // Track which sessions we've rendered (to avoid duplicates from splits)
+                const renderedSessionIds = new Set<string>();
+                const elements: React.ReactNode[] = [];
+
+                rootSessions.forEach((session) => {
+                  // Skip if already rendered as part of a split group
+                  if (renderedSessionIds.has(session.id)) return;
+
+                  const splitGroup = getSplitForSession(session.id);
+
+                  if (splitGroup) {
+                    // Render the entire split group
+                    const splitSessions = splitGroup.sessions
+                      .sort((a, b) => a.splitOrder - b.splitOrder)
+                      .map((ss) => sessions.find((s) => s.id === ss.sessionId))
+                      .filter((s): s is TerminalSession => !!s && !sessionFolders[s.id]);
+
+                    // Mark all sessions in this split as rendered
+                    splitSessions.forEach((s) => renderedSessionIds.add(s.id));
+
+                    if (splitSessions.length > 0) {
+                      elements.push(
+                        <div
+                          key={`split-${splitGroup.id}`}
+                          className={cn(
+                            "relative",
+                            splitGroup.direction === "horizontal"
+                              ? "border-l-2 border-violet-500/40 pl-1 space-y-0.5"
+                              : "flex items-stretch gap-1"
+                          )}
+                        >
+                          {splitGroup.direction === "vertical" && (
+                            <div className="absolute -top-0.5 left-0 right-0 flex items-center gap-0.5 text-[9px] text-violet-400/60">
+                              <SplitSquareVertical className="w-2.5 h-2.5" />
+                              <span>Split</span>
+                            </div>
+                          )}
+                          {splitSessions.map((s, idx) => (
+                            <div
+                              key={s.id}
+                              className={cn(
+                                splitGroup.direction === "vertical" && "flex-1 min-w-0",
+                                splitGroup.direction === "vertical" && idx > 0 && "border-l border-white/10"
+                              )}
+                            >
+                              {renderSession(s, false, true)}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+                  } else {
+                    // Render as a regular session
+                    renderedSessionIds.add(session.id);
+                    elements.push(renderSession(session));
+                  }
+                });
+
+                return elements;
+              })()}
             </>
           )}
         </div>

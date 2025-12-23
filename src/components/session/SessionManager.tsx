@@ -1,16 +1,23 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
+import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
+import { useSplitContext } from "@/contexts/SplitContext";
 import { Terminal as TerminalIcon, Plus, PanelLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
+
+// Sidebar width constraints
+const SIDEBAR_MIN_WIDTH = 160;
+const SIDEBAR_MAX_WIDTH = 400;
+const SIDEBAR_DEFAULT_WIDTH = 208; // 13rem = 208px
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -44,6 +51,56 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     folderName: string;
   } | null>(null);
 
+  // Resizable sidebar state - lazy initial state from localStorage
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") return SIDEBAR_DEFAULT_WIDTH;
+    const savedWidth = localStorage.getItem("sidebar-width");
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10);
+      if (width >= SIDEBAR_MIN_WIDTH && width <= SIDEBAR_MAX_WIDTH) {
+        return width;
+      }
+    }
+    return SIDEBAR_DEFAULT_WIDTH;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  // Handle resize mouse events
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    resizeRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return;
+      const delta = e.clientX - resizeRef.current.startX;
+      const newWidth = Math.min(
+        SIDEBAR_MAX_WIDTH,
+        Math.max(SIDEBAR_MIN_WIDTH, resizeRef.current.startWidth + delta)
+      );
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      localStorage.setItem("sidebar-width", sidebarWidth.toString());
+      resizeRef.current = null;
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing, sidebarWidth]);
+
   // Folder state from context (persisted in database)
   const {
     folders,
@@ -63,6 +120,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setActiveFolder,
     resolvePreferencesForFolder,
   } = usePreferencesContext();
+
+  // Split state from context
+  const {
+    getSplitForSession,
+    updateLayout,
+    setActivePaneInSplit,
+    createSplit,
+    removeFromSplit,
+  } = useSplitContext();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
@@ -99,11 +165,41 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           setActiveSession(activeSessions[currentIndex + 1].id);
         }
       }
+      // Cmd+Shift+E or Ctrl+Shift+E to split horizontal
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "e") {
+        if (activeSessionId) {
+          e.preventDefault();
+          const existingSplit = getSplitForSession(activeSessionId);
+          if (!existingSplit) {
+            createSplit(activeSessionId, "horizontal");
+          }
+        }
+      }
+      // Cmd+Shift+O or Ctrl+Shift+O to split vertical
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "o") {
+        if (activeSessionId) {
+          e.preventDefault();
+          const existingSplit = getSplitForSession(activeSessionId);
+          if (!existingSplit) {
+            createSplit(activeSessionId, "vertical");
+          }
+        }
+      }
+      // Cmd+Shift+U or Ctrl+Shift+U to unsplit
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "u") {
+        if (activeSessionId) {
+          e.preventDefault();
+          const existingSplit = getSplitForSession(activeSessionId);
+          if (existingSplit) {
+            removeFromSplit(activeSessionId);
+          }
+        }
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSessionId, activeSessions, setActiveSession, sessionCounter, createSession, closeSession]);
+  }, [activeSessionId, activeSessions, setActiveSession, sessionCounter, createSession, closeSession, getSplitForSession, createSplit, removeFromSplit]);
 
   const handleCreateSession = useCallback(
     async (data: {
@@ -252,12 +348,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <div
         className={cn(
           // Desktop: always visible
-          "hidden md:block",
+          "hidden md:flex",
           // Mobile: slide-in drawer
-          isMobileSidebarOpen && "!block fixed inset-y-0 left-0 z-40"
+          isMobileSidebarOpen && "!flex fixed inset-y-0 left-0 z-40"
         )}
       >
-        <div className="relative h-full">
+        <div
+          className="relative h-full"
+          style={{ width: isMobileSidebarOpen ? 208 : sidebarWidth }}
+        >
           {/* Mobile close button */}
           <Button
             variant="ghost"
@@ -287,6 +386,26 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderClick={handleFolderClick}
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
+          />
+        </div>
+
+        {/* Resize handle - desktop only */}
+        <div
+          onMouseDown={handleResizeStart}
+          className={cn(
+            "hidden md:flex w-1 cursor-col-resize items-center justify-center",
+            "hover:bg-violet-500/30 active:bg-violet-500/50 transition-colors",
+            "group",
+            isResizing && "bg-violet-500/50"
+          )}
+        >
+          <div
+            className={cn(
+              "w-0.5 h-8 rounded-full bg-slate-600",
+              "group-hover:bg-violet-400 group-active:bg-violet-300",
+              "transition-colors",
+              isResizing && "bg-violet-400"
+            )}
           />
         </div>
       </div>
@@ -351,29 +470,56 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
               {/* Terminal panels - render all but show only active */}
               <div className="relative h-full">
-                {activeSessions.map((session) => {
-                  const folderId = sessionFolders[session.id] || null;
-                  const prefs = resolvePreferencesForFolder(folderId);
-                  return (
-                    <div
-                      key={session.id}
-                      className={
-                        session.id === activeSessionId
-                          ? "absolute inset-0 z-10"
-                          : "hidden"
-                      }
-                    >
-                      <TerminalWithKeyboard
-                        sessionId={session.id}
-                        tmuxSessionName={session.tmuxSessionName}
-                        theme={prefs.theme}
-                        fontSize={prefs.fontSize}
-                        fontFamily={prefs.fontFamily}
-                        onSessionExit={() => closeSession(session.id)}
+                {(() => {
+                  // Check if active session is part of a split group
+                  const activeSplit = activeSessionId
+                    ? getSplitForSession(activeSessionId)
+                    : null;
+
+                  if (activeSplit) {
+                    // Render split pane layout
+                    return (
+                      <SplitPaneLayout
+                        splitGroup={activeSplit}
+                        sessions={activeSessions}
+                        activeSessionId={activeSessionId}
+                        onSessionClick={(sessionId) => {
+                          setActiveSession(sessionId);
+                          setActivePaneInSplit(activeSplit.id, sessionId);
+                        }}
+                        onResize={(layout) => updateLayout(activeSplit.id, layout)}
+                        onSessionExit={closeSession}
+                        resolvePreferences={resolvePreferencesForFolder}
+                        sessionFolders={sessionFolders}
                       />
-                    </div>
-                  );
-                })}
+                    );
+                  }
+
+                  // Render regular sessions (non-split)
+                  return activeSessions.map((session) => {
+                    const folderId = sessionFolders[session.id] || null;
+                    const prefs = resolvePreferencesForFolder(folderId);
+                    return (
+                      <div
+                        key={session.id}
+                        className={
+                          session.id === activeSessionId
+                            ? "absolute inset-0 z-10"
+                            : "hidden"
+                        }
+                      >
+                        <TerminalWithKeyboard
+                          sessionId={session.id}
+                          tmuxSessionName={session.tmuxSessionName}
+                          theme={prefs.theme}
+                          fontSize={prefs.fontSize}
+                          fontFamily={prefs.fontFamily}
+                          onSessionExit={() => closeSession(session.id)}
+                        />
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           </div>
