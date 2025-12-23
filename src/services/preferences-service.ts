@@ -1,36 +1,31 @@
 /**
- * PreferencesService - Manages user and folder preferences with inheritance
+ * PreferencesService - Manages user and folder preferences with hierarchical inheritance
  *
- * Inheritance chain: Default Constants -> User Preferences -> Folder Preferences
+ * Inheritance chain: Default Constants -> User Preferences -> Parent Folders -> Child Folder
+ *
+ * More specific (child) folders override less specific (parent) folders.
  */
 import { db } from "@/db";
 import { users, userSettings, folderPreferences, sessionFolders } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type {
-  Preferences,
   UserSettings,
   FolderPreferences,
+  FolderPreferencesWithMeta,
+  FolderWithAncestry,
   ResolvedPreferences,
-  PreferenceSource,
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
 import { PreferencesServiceError } from "@/lib/errors";
+import {
+  DEFAULT_PREFERENCES,
+  resolvePreferences,
+  buildAncestryChain,
+} from "@/lib/preferences";
 
 // Re-export for backwards compatibility
-export { PreferencesServiceError };
-
-/**
- * System-wide default preferences
- */
-export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
-  defaultWorkingDirectory: process.env.HOME || "~",
-  defaultShell: process.env.SHELL || "/bin/bash",
-  theme: "tokyo-night",
-  fontSize: 14,
-  fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
-  startupCommand: "",
-} as const;
+export { PreferencesServiceError, DEFAULT_PREFERENCES };
 
 // ============================================================================
 // User Settings Operations
@@ -156,6 +151,45 @@ export async function getAllFolderPreferences(
 }
 
 /**
+ * Get all folders for a user (for building hierarchy)
+ */
+export async function getAllFolders(
+  userId: string
+): Promise<FolderWithAncestry[]> {
+  const folders = await db.query.sessionFolders.findMany({
+    where: eq(sessionFolders.userId, userId),
+  });
+
+  return folders.map((f) => ({
+    id: f.id,
+    parentId: f.parentId ?? null,
+    name: f.name,
+  }));
+}
+
+/**
+ * Get folder preferences chain including all ancestors.
+ * Returns an ordered array from root ancestor to target folder.
+ */
+export async function getFolderPreferencesChain(
+  folderId: string,
+  userId: string
+): Promise<FolderPreferencesWithMeta[]> {
+  // Fetch all folders and preferences for this user
+  const [allFolders, allPrefs] = await Promise.all([
+    getAllFolders(userId),
+    getAllFolderPreferences(userId),
+  ]);
+
+  // Build maps for the shared chain builder
+  const foldersMap = new Map(allFolders.map((f) => [f.id, f]));
+  const prefsMap = new Map(allPrefs.map((p) => [p.folderId, p]));
+
+  // Use shared utility to build the chain
+  return buildAncestryChain(folderId, prefsMap, foldersMap);
+}
+
+/**
  * Update or create folder preferences
  */
 export async function updateFolderPreferences(
@@ -233,99 +267,19 @@ export async function deleteFolderPreferences(
 // ============================================================================
 
 /**
- * Resolve preferences with inheritance chain
- * Default -> User -> Folder
- */
-export function resolvePreferences(
-  userSettingsData: UserSettings,
-  folderPrefsData: FolderPreferences | null
-): ResolvedPreferences {
-  const source: Record<keyof Preferences, PreferenceSource> = {
-    defaultWorkingDirectory: "default",
-    defaultShell: "default",
-    theme: "default",
-    fontSize: "default",
-    fontFamily: "default",
-    startupCommand: "default",
-  };
-
-  // Start with defaults
-  const resolved: Preferences = { ...DEFAULT_PREFERENCES };
-
-  // Apply user settings
-  if (userSettingsData.defaultWorkingDirectory !== null) {
-    resolved.defaultWorkingDirectory = userSettingsData.defaultWorkingDirectory;
-    source.defaultWorkingDirectory = "user";
-  }
-  if (userSettingsData.defaultShell !== null) {
-    resolved.defaultShell = userSettingsData.defaultShell;
-    source.defaultShell = "user";
-  }
-  if (userSettingsData.theme !== null) {
-    resolved.theme = userSettingsData.theme;
-    source.theme = "user";
-  }
-  if (userSettingsData.fontSize !== null) {
-    resolved.fontSize = userSettingsData.fontSize;
-    source.fontSize = "user";
-  }
-  if (userSettingsData.fontFamily !== null) {
-    resolved.fontFamily = userSettingsData.fontFamily;
-    source.fontFamily = "user";
-  }
-  if (userSettingsData.startupCommand !== null) {
-    resolved.startupCommand = userSettingsData.startupCommand;
-    source.startupCommand = "user";
-  }
-
-  // Apply folder overrides
-  if (folderPrefsData) {
-    if (folderPrefsData.defaultWorkingDirectory !== null) {
-      resolved.defaultWorkingDirectory = folderPrefsData.defaultWorkingDirectory;
-      source.defaultWorkingDirectory = "folder";
-    }
-    if (folderPrefsData.defaultShell !== null) {
-      resolved.defaultShell = folderPrefsData.defaultShell;
-      source.defaultShell = "folder";
-    }
-    if (folderPrefsData.theme !== null) {
-      resolved.theme = folderPrefsData.theme;
-      source.theme = "folder";
-    }
-    if (folderPrefsData.fontSize !== null) {
-      resolved.fontSize = folderPrefsData.fontSize;
-      source.fontSize = "folder";
-    }
-    if (folderPrefsData.fontFamily !== null) {
-      resolved.fontFamily = folderPrefsData.fontFamily;
-      source.fontFamily = "folder";
-    }
-    if (folderPrefsData.startupCommand !== null) {
-      resolved.startupCommand = folderPrefsData.startupCommand;
-      source.startupCommand = "folder";
-    }
-  }
-
-  return {
-    ...resolved,
-    source,
-    folderId: folderPrefsData?.folderId || null,
-  };
-}
-
-/**
- * Get resolved preferences for a user and optional folder
+ * Get resolved preferences for a user and optional folder.
+ * Includes hierarchical inheritance from parent folders.
  */
 export async function getResolvedPreferences(
   userId: string,
   folderId?: string | null
 ): Promise<ResolvedPreferences> {
   const userSettingsData = await getUserSettings(userId);
-  const folderPrefsData = folderId
-    ? await getFolderPreferences(folderId, userId)
-    : null;
+  const folderPrefsChain = folderId
+    ? await getFolderPreferencesChain(folderId, userId)
+    : [];
 
-  return resolvePreferences(userSettingsData, folderPrefsData);
+  return resolvePreferences(userSettingsData, folderPrefsChain);
 }
 
 /**

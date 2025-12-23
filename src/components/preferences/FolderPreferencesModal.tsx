@@ -21,7 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import type { UpdateFolderPreferencesInput } from "@/types/preferences";
+import type { UpdateFolderPreferencesInput, Preferences } from "@/types/preferences";
+import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
 
 interface GitHubRepo {
@@ -90,9 +91,17 @@ export function FolderPreferencesModal({
     getFolderPreferences,
     updateFolderPreferences,
     deleteFolderPreferences,
-    userSettings,
-    currentPreferences,
+    folders,
+    resolvePreferencesForFolder,
   } = usePreferencesContext();
+
+  // Get parent folder to compute inherited preferences
+  const folder = folders.get(folderId);
+  const parentFolderId = folder?.parentId ?? null;
+
+  // Resolve preferences WITHOUT this folder's overrides (to show what would be inherited)
+  // This walks up to parent folder, grandparent, etc., then user settings, then defaults
+  const inheritedPreferences = resolvePreferencesForFolder(parentFolderId);
 
   const [localSettings, setLocalSettings] = useState<UpdateFolderPreferencesInput>({});
   const [saving, setSaving] = useState(false);
@@ -173,14 +182,21 @@ export function FolderPreferencesModal({
     return folderPrefs?.[key as keyof typeof folderPrefs] as UpdateFolderPreferencesInput[K] | null;
   };
 
-  const getInherited = <K extends keyof UpdateFolderPreferencesInput>(
-    key: K
-  ): string => {
-    const userValue = userSettings?.[key as keyof typeof userSettings];
-    if (userValue !== null && userValue !== undefined) {
-      return String(userValue);
-    }
-    return String(currentPreferences[key as keyof typeof currentPreferences]);
+  /**
+   * Get the inherited value for a preference key.
+   * This comes from parent folders, user settings, or defaults.
+   */
+  const getInherited = <K extends keyof Preferences>(key: K): string => {
+    return String(inheritedPreferences[key]);
+  };
+
+  /**
+   * Get a label describing where the inherited value comes from.
+   * E.g., "Inherited from: ParentFolder" or "User settings" or "Default"
+   */
+  const getInheritedSourceLabel = <K extends keyof Preferences>(key: K): string => {
+    const source = inheritedPreferences.source[key];
+    return getSourceLabel(source);
   };
 
   const setValue = <K extends keyof UpdateFolderPreferencesInput>(
@@ -204,8 +220,9 @@ export function FolderPreferencesModal({
             {folderName} Preferences
           </DialogTitle>
           <DialogDescription className="text-slate-400">
-            Override user settings for sessions in this folder.
-            Leave empty to inherit from user settings.
+            Override settings for sessions in this folder.
+            Leave empty to inherit from{" "}
+            {parentFolderId ? "parent folder" : "user settings"}.
           </DialogDescription>
         </DialogHeader>
 
@@ -223,7 +240,7 @@ export function FolderPreferencesModal({
               onChange={(e) =>
                 setValue("defaultWorkingDirectory", e.target.value || null)
               }
-              placeholder={`Inherit: ${getInherited("defaultWorkingDirectory")}`}
+              placeholder={`${getInheritedSourceLabel("defaultWorkingDirectory")}: ${getInherited("defaultWorkingDirectory")}`}
               className={cn(
                 "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
                 isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
@@ -258,7 +275,7 @@ export function FolderPreferencesModal({
               </SelectTrigger>
               <SelectContent className="bg-slate-800 border-white/10">
                 <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
-                  Inherit from user settings
+                  {getInheritedSourceLabel("defaultShell")}
                 </SelectItem>
                 {SHELL_OPTIONS.map((option) => (
                   <SelectItem
@@ -286,7 +303,7 @@ export function FolderPreferencesModal({
               onChange={(e) =>
                 setValue("startupCommand", e.target.value || null)
               }
-              placeholder={getInherited("startupCommand") ? `Inherit: ${getInherited("startupCommand")}` : "No startup command"}
+              placeholder={getInherited("startupCommand") ? `${getInheritedSourceLabel("startupCommand")}: ${getInherited("startupCommand")}` : "No startup command"}
               className={cn(
                 "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
                 isOverridden("startupCommand") && "border-violet-500/50"
@@ -321,7 +338,7 @@ export function FolderPreferencesModal({
               </SelectTrigger>
               <SelectContent className="bg-slate-800 border-white/10">
                 <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
-                  Inherit from user settings
+                  {getInheritedSourceLabel("theme")}
                 </SelectItem>
                 {THEME_OPTIONS.map((option) => (
                   <SelectItem
@@ -381,7 +398,7 @@ export function FolderPreferencesModal({
               </SelectTrigger>
               <SelectContent className="bg-slate-800 border-white/10">
                 <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
-                  Inherit from user settings
+                  {getInheritedSourceLabel("fontFamily")}
                 </SelectItem>
                 {FONT_OPTIONS.map((option) => (
                   <SelectItem
