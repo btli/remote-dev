@@ -17,8 +17,6 @@ import {
   Settings,
   RefreshCw,
   X,
-  Pause,
-  Play,
   Columns,
   Rows,
   Maximize2,
@@ -44,8 +42,6 @@ interface CommandPaletteProps {
   onNewFolder: () => void;
   onOpenSettings: () => void;
   onCloseActiveSession?: () => void;
-  onSuspendActiveSession?: () => void;
-  onResumeActiveSession?: () => void;
   onRefreshSessions?: () => void;
   onSplitHorizontal?: () => void;
   onSplitVertical?: () => void;
@@ -56,7 +52,6 @@ interface CommandPaletteProps {
   onStopRecording?: () => void;
   onViewRecordings?: () => void;
   activeSessionId?: string | null;
-  activeSessionStatus?: string;
   isSplitMode?: boolean;
   isRecording?: boolean;
 }
@@ -67,8 +62,6 @@ export function CommandPalette({
   onNewFolder,
   onOpenSettings,
   onCloseActiveSession,
-  onSuspendActiveSession,
-  onResumeActiveSession,
   onRefreshSessions,
   onSplitHorizontal,
   onSplitVertical,
@@ -79,7 +72,6 @@ export function CommandPalette({
   onStopRecording,
   onViewRecordings,
   activeSessionId,
-  activeSessionStatus,
   isSplitMode,
   isRecording,
 }: CommandPaletteProps) {
@@ -150,28 +142,6 @@ export function CommandPalette({
             shortcut: "⌘⇧W",
             group: "Active Session",
             onSelect: () => runAction(onCloseActiveSession),
-          },
-        ]
-      : []),
-    ...(activeSessionId && activeSessionStatus === "active" && onSuspendActiveSession
-      ? [
-          {
-            id: "suspend-session",
-            label: "Suspend Active Session",
-            icon: <Pause className="w-4 h-4" />,
-            group: "Active Session",
-            onSelect: () => runAction(onSuspendActiveSession),
-          },
-        ]
-      : []),
-    ...(activeSessionId && activeSessionStatus === "suspended" && onResumeActiveSession
-      ? [
-          {
-            id: "resume-session",
-            label: "Resume Active Session",
-            icon: <Play className="w-4 h-4" />,
-            group: "Active Session",
-            onSelect: () => runAction(onResumeActiveSession),
           },
         ]
       : []),

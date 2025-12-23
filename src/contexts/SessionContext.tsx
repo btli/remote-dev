@@ -73,7 +73,7 @@ function determineActiveSessionId(
   sessions: TerminalSession[],
   currentActiveId: string | null
 ): string | null {
-  const activeSessions = sessions.filter((s) => s.status === "active");
+  const activeSessions = sessions.filter((s) => s.status !== "closed");
   if (activeSessions.length === 0) return null;
 
   // First, try the saved session from localStorage
@@ -121,7 +121,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
 
     case "DELETE": {
       const filteredSessions = state.sessions.filter((s) => s.id !== action.sessionId);
-      const activeSessions = filteredSessions.filter((s) => s.status === "active");
+      const activeSessions = filteredSessions.filter((s) => s.status !== "closed");
       return {
         ...state,
         sessions: filteredSessions,
@@ -172,7 +172,7 @@ export function SessionProvider({
     sessions: initialSessions,
     // Initial active session is determined after hydration via useEffect
     // to properly access localStorage (SSR-safe)
-    activeSessionId: initialSessions.filter((s) => s.status === "active")[0]?.id ?? null,
+    activeSessionId: initialSessions.filter((s) => s.status !== "closed")[0]?.id ?? null,
     loading: false,
     error: null,
   });

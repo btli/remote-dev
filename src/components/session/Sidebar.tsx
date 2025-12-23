@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  X, Plus, Pause, Terminal, Settings,
+  X, Plus, Terminal, Settings,
   Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft
 } from "lucide-react";
@@ -460,7 +460,6 @@ export function Sidebar({
   // renderSession accepts depth for indentation and parentFolderId for drag-drop targeting
   const renderSession = (session: TerminalSession, depth = 0, parentFolderId: string | null = null) => {
     const isActive = session.id === activeSessionId;
-    const isSuspended = session.status === "suspended";
     const isEditing = editingId === session.id;
     const inFolder = parentFolderId !== null;
     const currentFolderId = session.folderId; // Used in context menu - use session.folderId directly
@@ -477,7 +476,7 @@ export function Sidebar({
             <div
               role="button"
               tabIndex={0}
-              aria-label={`${session.name}${isSuspended ? " (suspended)" : ""}`}
+              aria-label={session.name}
               draggable
               onDragStart={(e) => handleDragStart(e, session.id)}
               onDragEnd={handleDragEnd}
@@ -508,9 +507,7 @@ export function Sidebar({
               <span
                 className={cn(
                   "w-2 h-2 rounded-full",
-                  isSuspended
-                    ? "bg-amber-400"
-                    : isActive
+                  isActive
                     ? "bg-green-400 animate-pulse"
                     : "bg-slate-600"
                 )}
@@ -523,7 +520,6 @@ export function Sidebar({
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
             {session.name}
-            {isSuspended && " (suspended)"}
           </TooltipContent>
         </Tooltip>
       );
@@ -555,7 +551,7 @@ export function Sidebar({
             <div
               role="button"
               tabIndex={isEditing ? -1 : 0}
-              aria-label={`${session.name}${isSuspended ? " (suspended)" : ""}`}
+              aria-label={session.name}
               onClick={() => !isEditing && onSessionClick(session.id)}
               onKeyDown={(e) => {
                 if (!isEditing && (e.key === "Enter" || e.key === " ")) {
@@ -577,9 +573,7 @@ export function Sidebar({
             <span
               className={cn(
                 "w-1.5 h-1.5 rounded-full shrink-0",
-                isSuspended
-                  ? "bg-amber-400"
-                  : isActive
+                isActive
                   ? "bg-green-400 animate-pulse"
                   : "bg-slate-600"
               )}
@@ -623,11 +617,6 @@ export function Sidebar({
                 </>
               )}
             </div>
-
-            {/* Suspended indicator */}
-            {isSuspended && !isEditing && (
-              <Pause className="w-3 h-3 text-amber-400 shrink-0" />
-            )}
 
             {/* Close button */}
             {!isEditing && (
