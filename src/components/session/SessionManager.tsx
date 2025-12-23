@@ -51,8 +51,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     loading,
     createSession,
     closeSession,
-    suspendSession,
-    resumeSession,
     updateSession,
     setActiveSession,
     reorderSessions,
@@ -227,11 +225,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           const targetSession = activeSessions[currentIndex - 1];
           setActiveSession(targetSession.id);
           maybeAutoFollowFolder(sessionFolders[targetSession.id] || null);
-          if (targetSession.status === "suspended") {
-            resumeSession(targetSession.id).catch((error) => {
-              logSessionError("resume session", error);
-            });
-          }
         }
       }
       if (e.metaKey && e.key === "]") {
@@ -241,11 +234,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           const targetSession = activeSessions[currentIndex + 1];
           setActiveSession(targetSession.id);
           maybeAutoFollowFolder(sessionFolders[targetSession.id] || null);
-          if (targetSession.status === "suspended") {
-            resumeSession(targetSession.id).catch((error) => {
-              logSessionError("resume session", error);
-            });
-          }
         }
       }
       // Cmd+D to split horizontally
@@ -269,7 +257,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setActiveSession,
     createSession,
     closeSession,
-    resumeSession,
     logSessionError,
     maybeAutoFollowFolder,
   ]);
@@ -611,43 +598,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     (sessionId: string) => {
       setActiveSession(sessionId);
       setIsMobileSidebarOpen(false);
-      const session = sessions.find((s) => s.id === sessionId);
-      if (session?.status === "suspended") {
-        resumeSession(sessionId).catch((error) => {
-          logSessionError("resume session", error);
-        });
-      }
       // Update active folder based on the session's folder
       const folderId = sessionFolders[sessionId] || null;
       maybeAutoFollowFolder(folderId);
     },
-    [
-      sessions,
-      setActiveSession,
-      sessionFolders,
-      maybeAutoFollowFolder,
-      resumeSession,
-      logSessionError,
-    ]
+    [setActiveSession, sessionFolders, maybeAutoFollowFolder]
   );
-
-  const handleSuspendActiveSession = useCallback(async () => {
-    if (!activeSessionId) return;
-    try {
-      await suspendSession(activeSessionId);
-    } catch (error) {
-      logSessionError("suspend session", error);
-    }
-  }, [activeSessionId, suspendSession, logSessionError]);
-
-  const handleResumeActiveSession = useCallback(async () => {
-    if (!activeSessionId) return;
-    try {
-      await resumeSession(activeSessionId);
-    } catch (error) {
-      logSessionError("resume session", error);
-    }
-  }, [activeSessionId, resumeSession, logSessionError]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Split Pane Handlers
@@ -1071,20 +1027,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     renderTerminal={renderTerminalForPane}
                   />
                 ) : (
-                  /* Single terminal mode - render all but show only active */
-                  activeSessions.map((session) => {
+                  /* Single terminal mode - only attach to the active session */
+                  (() => {
+                    const session = activeSessions.find((s) => s.id === activeSessionId);
+                    if (!session) return null;
                     const folderId = sessionFolders[session.id] || null;
                     const prefs = resolvePreferencesForFolder(folderId);
-                    const isActiveSession = session.id === activeSessionId;
                     return (
-                      <div
-                        key={session.id}
-                        className={
-                          isActiveSession
-                            ? "absolute inset-0 z-10"
-                            : "hidden"
-                        }
-                      >
+                      <div className="absolute inset-0 z-10">
                         <TerminalWithKeyboard
                           ref={(ref) => {
                             if (ref) {
@@ -1103,15 +1053,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
                           notificationsEnabled={true}
-                          isRecording={isRecording && isActiveSession}
-                          onOutput={isRecording && isActiveSession ? recordOutput : undefined}
-                          onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
+                          isRecording={isRecording}
+                          onOutput={isRecording ? recordOutput : undefined}
+                          onDimensionsChange={isRecording ? updateDimensions : undefined}
                           onSessionRestart={() => handleSessionRestart(session)}
                           onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
                         />
                       </div>
                     );
-                  })
+                  })()
                 )}
               </div>
             </div>
@@ -1154,12 +1104,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             ? () => handleCloseSession(activeSessionId)
             : undefined
         }
-        onSuspendActiveSession={
-          activeSessionId ? handleSuspendActiveSession : undefined
-        }
-        onResumeActiveSession={
-          activeSessionId ? handleResumeActiveSession : undefined
-        }
         onSplitHorizontal={handleSplitHorizontal}
         onSplitVertical={handleSplitVertical}
         onExitSplitMode={handleExitSplitMode}
@@ -1169,7 +1113,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onStopRecording={handleStopRecording}
         onViewRecordings={() => setIsRecordingsModalOpen(true)}
         activeSessionId={activeSessionId}
-        activeSessionStatus={activeSessions.find((s) => s.id === activeSessionId)?.status}
         isSplitMode={isSplitMode}
         isRecording={isRecording}
       />
