@@ -14,6 +14,7 @@ import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
+import { useSplitContext } from "@/contexts/SplitContext";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -178,6 +179,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     resolvePreferencesForFolder,
   } = usePreferencesContext();
 
+  // Split state from context (for keyboard shortcuts)
+  const {
+    getSplitForSession,
+    createSplit,
+    removeFromSplit,
+  } = useSplitContext();
+
   const activeSessions = sessions.filter((s) => s.status !== "closed");
   const autoFollowEnabled = userSettings?.autoFollowActiveSession ?? true;
 
@@ -288,6 +296,36 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         e.preventDefault();
         splitVerticalRef.current?.();
       }
+      // Cmd+Shift+E or Ctrl+Shift+E to split horizontal (SplitContext)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "e") {
+        if (activeSessionId) {
+          e.preventDefault();
+          const existingSplit = getSplitForSession(activeSessionId);
+          if (!existingSplit) {
+            createSplit(activeSessionId, "horizontal");
+          }
+        }
+      }
+      // Cmd+Shift+O or Ctrl+Shift+O to split vertical (SplitContext)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "o") {
+        if (activeSessionId) {
+          e.preventDefault();
+          const existingSplit = getSplitForSession(activeSessionId);
+          if (!existingSplit) {
+            createSplit(activeSessionId, "vertical");
+          }
+        }
+      }
+      // Cmd+Shift+U or Ctrl+Shift+U to unsplit (SplitContext)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "u") {
+        if (activeSessionId) {
+          e.preventDefault();
+          const existingSplit = getSplitForSession(activeSessionId);
+          if (existingSplit) {
+            removeFromSplit(activeSessionId);
+          }
+        }
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -300,6 +338,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     closeSession,
     logSessionError,
     maybeAutoFollowFolder,
+    getSplitForSession,
+    createSplit,
+    removeFromSplit,
   ]);
 
   const handleCreateSession = useCallback(
