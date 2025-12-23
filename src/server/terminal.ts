@@ -347,7 +347,6 @@ export function createTerminalServer(port: number = 3001) {
                   "-y",
                   String(pending.rows),
                 ],
-                { stdio: "ignore" },
                 () => {}
               );
             }, 50);
