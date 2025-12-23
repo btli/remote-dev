@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput, SessionStatus } from "@/types/session";
 import { resolve } from "path";
@@ -30,8 +30,10 @@ function validateProjectPath(path: string | undefined): string | undefined {
 
 /**
  * GET /api/sessions - List user's terminal sessions
+ *
+ * Supports both session auth and API key auth for agent access.
  */
-export const GET = withAuth(async (request, { userId }) => {
+export const GET = withApiAuth(async (request, { userId }) => {
   try {
     const { searchParams } = new URL(request.url);
     const statusParam = searchParams.get("status");
@@ -59,8 +61,11 @@ export const GET = withAuth(async (request, { userId }) => {
 
 /**
  * POST /api/sessions - Create a new terminal session
+ *
+ * Supports both session auth and API key auth for agent access.
+ * Agents can create sessions with worktrees for issue workflows.
  */
-export const POST = withAuth(async (request, { userId }) => {
+export const POST = withApiAuth(async (request, { userId }) => {
   try {
     const result = await parseJsonBody<{
       name?: string;

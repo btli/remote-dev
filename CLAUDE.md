@@ -74,12 +74,14 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 - **Dual auth model**:
   - **Localhost** (`127.0.0.1`): Email-only credentials auth for local dev
   - **Remote/LAN**: Cloudflare Access JWT validation (via `CF_Authorization` cookie)
+  - **API Keys**: Bearer token auth for programmatic access (agents, automation)
 - **NextAuth v5** with JWT session strategy
 - **Credentials provider** restricted to localhost only (security)
 - **GitHub OAuth** for repository access (optional)
 - Middleware in `src/middleware.ts` protects all routes except `/login` and `/api`
 - Auth configuration in `src/auth.ts` exports `auth`, `signIn`, `signOut`, `handlers`
 - Auth utilities in `src/lib/auth-utils.ts` handle CF Access JWT validation
+- API auth wrapper in `src/lib/api.ts` provides `withApiAuth` for dual session/API key auth
 
 ### Database Layer
 
@@ -100,6 +102,7 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 | `user_settings` | User-level preferences |
 | `session_template` | Reusable session configurations |
 | `session_recording` | Terminal session recordings |
+| `api_key` | API keys for programmatic access |
 
 ### Service Layer
 
@@ -115,6 +118,7 @@ Located in `src/services/`:
 | `PreferencesService` | User settings and folder preferences |
 | `TemplateService` | Session template management |
 | `RecordingService` | Session recording storage |
+| `ApiKeyService` | API key management and validation |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -183,6 +187,7 @@ React Contexts in `src/contexts/`:
 - `POST /api/sessions/:id/resume` - Resume session
 - `POST /api/sessions/:id/folder` - Move session to folder
 - `GET /api/sessions/:id/token` - Get session WebSocket token
+- `POST /api/sessions/:id/exec` - Execute command (fire-and-forget)
 - `POST /api/sessions/reorder` - Reorder tabs
 
 ### Folders
@@ -217,11 +222,18 @@ React Contexts in `src/contexts/`:
 - `POST /api/github/repositories/:id` - Clone repo
 - `GET /api/github/repositories/:id/branches` - List branches
 - `GET /api/github/repositories/:id/folders` - Get folder structure
+- `GET /api/github/repositories/:id/issues` - List repository issues
 - `POST /api/github/worktrees` - Create worktree
 - `DELETE /api/github/worktrees` - Remove worktree
 - `POST /api/github/worktrees/check` - Check worktree status
 - `GET /api/auth/github/link` - Start OAuth flow
 - `GET /api/auth/github/callback` - OAuth callback
+
+### API Keys
+- `GET /api/keys` - List user's API keys
+- `POST /api/keys` - Create new API key
+- `GET /api/keys/:id` - Get API key details
+- `DELETE /api/keys/:id` - Revoke API key
 
 ### Git
 - `GET /api/git/validate` - Validate git repository path
