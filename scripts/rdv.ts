@@ -204,8 +204,7 @@ async function startServer(
   name: string,
   cmd: string[],
   env: Record<string, string>,
-  pidFile: string,
-  logPrefix: string
+  pidFile: string
 ): Promise<SpawnedProcess | null> {
   console.log(`Starting ${name}...`);
 
@@ -257,8 +256,7 @@ async function start(mode: Mode): Promise<void> {
     "Terminal Server",
     ["bun", "run", "tsx", "src/server/index.ts"],
     { TERMINAL_PORT: config.terminalPort.toString() },
-    TERMINAL_PID_FILE,
-    "terminal"
+    TERMINAL_PID_FILE
   );
 
   // Wait for terminal server to be ready
@@ -273,8 +271,7 @@ async function start(mode: Mode): Promise<void> {
       NEXT_PUBLIC_TERMINAL_PORT:
         process.env.NEXT_PUBLIC_TERMINAL_PORT ?? config.terminalPort.toString(),
     },
-    NEXT_PID_FILE,
-    "next"
+    NEXT_PID_FILE
   );
 
   saveMode(mode);
@@ -380,7 +377,6 @@ function status(): void {
 
   const nextPid = readPid(NEXT_PID_FILE);
   const terminalPid = readPid(TERMINAL_PID_FILE);
-  const mode = getRunningMode();
 
   console.log("\nRemote Dev Status");
   console.log("─".repeat(40));
