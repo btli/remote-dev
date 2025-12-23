@@ -843,6 +843,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
     return (
       <TerminalWithKeyboard
+        key={session.id}
         sessionId={session.id}
         tmuxSessionName={session.tmuxSessionName}
         sessionName={session.name}
@@ -1074,6 +1075,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     return (
                       <div className="absolute inset-0 z-10">
                         <TerminalWithKeyboard
+                          key={session.id}
                           ref={(ref) => {
                             if (ref) {
                               terminalRefsMap.current.set(session.id, ref);
