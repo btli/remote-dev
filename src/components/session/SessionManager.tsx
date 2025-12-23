@@ -157,7 +157,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Folder state from context (persisted in database)
   const {
     folders,
-    sessionFolders,
     createFolder,
     updateFolder,
     deleteFolder,
@@ -266,7 +265,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         if (currentIndex > 0) {
           const targetSession = activeSessions[currentIndex - 1];
           setActiveSession(targetSession.id);
-          maybeAutoFollowFolder(sessionFolders[targetSession.id] || null);
+          maybeAutoFollowFolder(targetSession.folderId || null);
         }
       }
       if (e.metaKey && e.key === "]") {
@@ -275,7 +274,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         if (currentIndex < activeSessions.length - 1) {
           const targetSession = activeSessions[currentIndex + 1];
           setActiveSession(targetSession.id);
-          maybeAutoFollowFolder(sessionFolders[targetSession.id] || null);
+          maybeAutoFollowFolder(targetSession.folderId || null);
         }
       }
       // Cmd+D to split horizontally
@@ -295,7 +294,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [
     activeSessionId,
     activeSessions,
-    sessionFolders,
     setActiveSession,
     createSession,
     closeSession,
@@ -328,7 +326,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           (s) => s.githubRepoId === data.githubRepoId
         );
         if (existingRepoSession) {
-          effectiveFolderId = sessionFolders[existingRepoSession.id] || null;
+          effectiveFolderId = existingRepoSession.folderId || null;
         }
       }
 
@@ -356,7 +354,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       createSession,
       wizardFolderId,
       sessions,
-      sessionFolders,
       activeProject.folderId,
       registerSessionFolder,
       maybeAutoFollowFolder,
@@ -587,7 +584,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         });
 
         // Move to the same folder if applicable
-        const folderId = sessionFolders[session.id] || null;
+        const folderId = session.folderId || null;
         if (folderId && newSession) {
           await moveSessionToFolder(newSession.id, folderId);
         }
@@ -595,7 +592,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("restart session", error);
       }
     },
-    [closeSession, createSession, sessionFolders, moveSessionToFolder, logSessionError]
+    [closeSession, createSession, moveSessionToFolder, logSessionError]
   );
 
   // Handle deleting a session (with optional worktree deletion)
@@ -641,10 +638,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setActiveSession(sessionId);
       setIsMobileSidebarOpen(false);
       // Update active folder based on the session's folder
-      const folderId = sessionFolders[sessionId] || null;
+      // Use session.folderId directly for immediate availability (not sessionFolders which loads async)
+      const session = sessions.find(s => s.id === sessionId);
+      const folderId = session?.folderId || null;
       maybeAutoFollowFolder(folderId);
     },
-    [setActiveSession, sessionFolders, maybeAutoFollowFolder]
+    [setActiveSession, sessions, maybeAutoFollowFolder]
   );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -826,7 +825,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const session = activeSessions.find((s) => s.id === sessionId);
     if (!session) return null;
 
-    const folderId = sessionFolders[session.id] || null;
+    const folderId = session.folderId || null;
     const prefs = resolvePreferencesForFolder(folderId);
     const isActiveSession = session.id === activeSessionId;
 
@@ -849,7 +848,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
       />
     );
-  }, [activeSessions, sessionFolders, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions, handleSessionRestart, handleSessionDelete, wsUrl]);
+  }, [activeSessions, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions, handleSessionRestart, handleSessionDelete, wsUrl]);
 
   // On mobile, sidebar is collapsed when drawer is not open
   const effectiveCollapsed = isMobile ? !isMobileSidebarOpen : sidebarCollapsed;
@@ -1073,7 +1072,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                   (() => {
                     const session = activeSessions.find((s) => s.id === activeSessionId);
                     if (!session) return null;
-                    const folderId = sessionFolders[session.id] || null;
+                    const folderId = session.folderId || null;
                     const prefs = resolvePreferencesForFolder(folderId);
                     return (
                       <div className="absolute inset-0 z-10">
