@@ -848,6 +848,16 @@ export function Sidebar({
 
               {/* Recursive folder rendering */}
               {folderTree.map((folderNode) => {
+                // Helper to count sessions recursively in a folder and all descendants
+                const countSessionsRecursively = (node: FolderNode): number => {
+                  const directSessions = activeSessions.filter(s => s.folderId === node.id).length;
+                  const childSessions = node.children.reduce(
+                    (sum, child) => sum + countSessionsRecursively(child),
+                    0
+                  );
+                  return directSessions + childSessions;
+                };
+
                 const renderFolderNode = (node: FolderNode): React.ReactNode => {
                   // Use session.folderId directly for accurate folder membership
                   const folderSessions = activeSessions.filter(
@@ -861,8 +871,8 @@ export function Sidebar({
                   const canDropHere = !draggingFolderId ||
                     (draggingFolderId !== node.id && !isDescendantOf(node.id, draggingFolderId));
 
-                  // Count total items (sessions + subfolders)
-                  const totalItems = folderSessions.length + node.children.length;
+                  // Count total sessions in this folder and all descendants
+                  const totalSessions = countSessionsRecursively(node);
 
                   // Collapsed sidebar view - show folder icon only
                   if (collapsed) {
@@ -909,7 +919,7 @@ export function Sidebar({
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="right" className="text-xs">
-                            {node.name} ({totalItems})
+                            {node.name} ({totalSessions})
                           </TooltipContent>
                         </Tooltip>
                         {/* Child folders and sessions in collapsed view */}
@@ -989,7 +999,7 @@ export function Sidebar({
                         )}
 
                         <span className="text-[10px] text-slate-500">
-                          {totalItems}
+                          {totalSessions}
                         </span>
 
                         <DropdownMenu>
