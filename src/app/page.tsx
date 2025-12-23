@@ -6,6 +6,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
+import { SplitProvider } from "@/contexts/SplitContext";
 import { TemplateProvider } from "@/contexts/TemplateContext";
 import { RecordingProvider } from "@/contexts/RecordingContext";
 import { SessionManager } from "@/components/session/SessionManager";
@@ -51,6 +52,9 @@ export default async function Home() {
     githubRepoId: s.githubRepoId,
     worktreeBranch: s.worktreeBranch,
     folderId: s.folderId,
+    splitGroupId: s.splitGroupId,
+    splitOrder: s.splitOrder,
+    splitSize: s.splitSize ?? 0.5,
     status: s.status as "active" | "suspended" | "closed",
     tabOrder: s.tabOrder,
     lastActivityAt: new Date(s.lastActivityAt),
@@ -63,10 +67,11 @@ export default async function Home() {
       <FolderProvider>
         <TemplateProvider>
           <RecordingProvider>
-          <SessionProvider initialSessions={initialSessions}>
-          <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-            {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
-            <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
+            <SessionProvider initialSessions={initialSessions}>
+              <SplitProvider>
+                <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+                  {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
+                  <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
               {/* Logo */}
               <div className="flex items-center gap-3">
                 <Image
@@ -114,13 +119,14 @@ export default async function Home() {
               </div>
             </header>
 
-            {/* Main content */}
-            <SessionManager
-              isGitHubConnected={isGitHubConnected}
-              userEmail={session.user.email || ""}
-            />
-          </div>
-        </SessionProvider>
+                  {/* Main content */}
+                  <SessionManager
+                    isGitHubConnected={isGitHubConnected}
+                    userEmail={session.user.email || ""}
+                  />
+                </div>
+              </SplitProvider>
+            </SessionProvider>
           </RecordingProvider>
         </TemplateProvider>
       </FolderProvider>
