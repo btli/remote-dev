@@ -99,12 +99,10 @@ export interface FolderPreferencesWithMeta extends FolderPreferences {
 }
 
 /**
- * Extended source tracking including repository fields
+ * Extended source tracking including repository fields.
+ * Derived from ExtendedPreferences to ensure consistency.
  */
-export type ExtendedPreferenceSourceMap = Record<keyof Preferences, PreferenceSource> & {
-  githubRepoId: PreferenceSource;
-  localRepoPath: PreferenceSource;
-};
+export type ExtendedPreferenceSourceMap = Record<keyof ExtendedPreferences, PreferenceSource>;
 
 /**
  * Resolved preferences with inheritance chain metadata

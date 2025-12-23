@@ -105,8 +105,10 @@ export function FolderPreferencesModal({
 
   const [localSettings, setLocalSettings] = useState<UpdateFolderPreferencesInput>({});
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
+  const [repoError, setRepoError] = useState<string | null>(null);
   const [repoMode, setRepoMode] = useState<"github" | "local" | "none">("none");
 
   const folderPrefs = getFolderPreferences(folderId);
@@ -114,14 +116,18 @@ export function FolderPreferencesModal({
   // Fetch GitHub repos when modal opens
   const fetchRepos = useCallback(async () => {
     setLoadingRepos(true);
+    setRepoError(null);
     try {
       const response = await fetch("/api/github/repositories?cached=true");
       if (response.ok) {
         const data = await response.json();
         setRepos(data.repositories || []);
+      } else {
+        setRepoError(`Failed to load repositories (${response.status})`);
       }
     } catch (error) {
       console.error("Failed to fetch repositories:", error);
+      setRepoError("Network error loading repositories");
     } finally {
       setLoadingRepos(false);
     }
@@ -151,11 +157,13 @@ export function FolderPreferencesModal({
     }
 
     setSaving(true);
+    setSaveError(null);
     try {
       await updateFolderPreferences(folderId, localSettings);
       onClose();
     } catch (error) {
       console.error("Failed to save folder preferences:", error);
+      setSaveError(error instanceof Error ? error.message : "Failed to save preferences. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -163,11 +171,13 @@ export function FolderPreferencesModal({
 
   const handleReset = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await deleteFolderPreferences(folderId);
       onClose();
     } catch (error) {
       console.error("Failed to reset folder preferences:", error);
+      setSaveError(error instanceof Error ? error.message : "Failed to reset preferences. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -495,6 +505,10 @@ export function FolderPreferencesModal({
                     <Loader2 className="w-4 h-4 animate-spin mr-2" />
                     Loading repositories...
                   </div>
+                ) : repoError ? (
+                  <p className="text-sm text-red-400 py-2">
+                    {repoError}
+                  </p>
                 ) : repos.length === 0 ? (
                   <p className="text-sm text-slate-500 py-2">
                     No cloned repositories found. Clone a repository first.
@@ -554,19 +568,23 @@ export function FolderPreferencesModal({
           </div>
         </div>
 
-        <div className="flex justify-between pt-4 border-t border-white/5">
-          {folderPrefs && (
-            <Button
-              variant="ghost"
-              onClick={handleReset}
-              disabled={saving}
-              className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-            >
-              <RotateCcw className="w-4 h-4 mr-2" />
-              Reset to Defaults
-            </Button>
+        <div className="flex flex-col gap-2 pt-4 border-t border-white/5">
+          {saveError && (
+            <p className="text-sm text-red-400">{saveError}</p>
           )}
-          <div className="flex gap-2 ml-auto">
+          <div className="flex justify-between">
+            {folderPrefs && (
+              <Button
+                variant="ghost"
+                onClick={handleReset}
+                disabled={saving}
+                className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+              >
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Reset to Defaults
+              </Button>
+            )}
+            <div className="flex gap-2 ml-auto">
             <Button
               variant="ghost"
               onClick={onClose}
@@ -581,6 +599,7 @@ export function FolderPreferencesModal({
             >
               {saving ? "Saving..." : "Save Changes"}
             </Button>
+            </div>
           </div>
         </div>
       </DialogContent>

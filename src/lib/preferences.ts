@@ -65,15 +65,27 @@ export function buildAncestryChain(
 
   // Walk up the parent chain from target to root
   while (currentId) {
-    // Circular reference protection
+    // Circular reference protection - this indicates data corruption
     if (visited.has(currentId)) {
-      console.warn("Circular reference detected in folder hierarchy at:", currentId);
+      console.error(
+        "Data integrity issue: Circular reference detected in folder hierarchy",
+        { folderId: currentId, visited: Array.from(visited) }
+      );
       break;
     }
     visited.add(currentId);
 
     const folder = foldersMap.get(currentId);
-    if (!folder) break;
+    if (!folder) {
+      // Missing folder in hierarchy - may indicate orphaned data or race condition
+      if (currentId !== folderId) {
+        // Only warn if it's not the target folder (target might just not exist yet)
+        console.warn(
+          `Folder ${currentId} not found in hierarchy during ancestry chain build`
+        );
+      }
+      break;
+    }
 
     const prefs = folderPrefsMap.get(currentId);
     if (prefs) {
