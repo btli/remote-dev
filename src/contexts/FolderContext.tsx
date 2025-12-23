@@ -14,6 +14,7 @@ export interface SessionFolder {
   parentId: string | null;
   name: string;
   collapsed: boolean;
+  sortOrder: number;
 }
 
 interface FolderContextValue {
@@ -26,6 +27,7 @@ interface FolderContextValue {
   toggleFolder: (folderId: string) => Promise<void>;
   moveSessionToFolder: (sessionId: string, folderId: string | null) => Promise<void>;
   moveFolderToParent: (folderId: string, parentId: string | null) => Promise<void>;
+  reorderFolders: (folderIds: string[]) => Promise<void>;
   refreshFolders: () => Promise<void>;
   /** Update local sessionFolders state without API call - used for newly created sessions */
   registerSessionFolder: (sessionId: string, folderId: string | null) => void;
@@ -49,11 +51,12 @@ export function FolderProvider({ children }: FolderProviderProps) {
       const data = await response.json();
 
       setFolders(
-        data.folders.map((f: { id: string; parentId: string | null; name: string; collapsed: boolean }) => ({
+        data.folders.map((f: { id: string; parentId: string | null; name: string; collapsed: boolean; sortOrder?: number }) => ({
           id: f.id,
           parentId: f.parentId ?? null,
           name: f.name,
           collapsed: f.collapsed ?? false,
+          sortOrder: f.sortOrder ?? 0,
         }))
       );
       setSessionFolders(data.sessionFolders || {});
@@ -87,6 +90,7 @@ export function FolderProvider({ children }: FolderProviderProps) {
         parentId: folder.parentId ?? null,
         name: folder.name,
         collapsed: folder.collapsed ?? false,
+        sortOrder: folder.sortOrder ?? 0,
       };
 
       setFolders((prev) => [...prev, newFolder]);
@@ -229,6 +233,36 @@ export function FolderProvider({ children }: FolderProviderProps) {
     [refreshFolders]
   );
 
+  const reorderFolders = useCallback(
+    async (folderIds: string[]) => {
+      // Optimistic update - update sortOrder based on array position
+      setFolders((prev) => {
+        const orderMap = new Map(folderIds.map((id, index) => [id, index]));
+        return prev.map((f) => {
+          const newOrder = orderMap.get(f.id);
+          return newOrder !== undefined ? { ...f, sortOrder: newOrder } : f;
+        }).sort((a, b) => a.sortOrder - b.sortOrder);
+      });
+
+      try {
+        const response = await fetch("/api/folders/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folderIds }),
+        });
+
+        if (!response.ok) {
+          await refreshFolders();
+          throw new Error("Failed to reorder folders");
+        }
+      } catch (error) {
+        console.error("Error reordering folders:", error);
+        throw error;
+      }
+    },
+    [refreshFolders]
+  );
+
   return (
     <FolderContext.Provider
       value={{
@@ -241,6 +275,7 @@ export function FolderProvider({ children }: FolderProviderProps) {
         toggleFolder,
         moveSessionToFolder,
         moveFolderToParent,
+        reorderFolders,
         refreshFolders,
         registerSessionFolder,
       }}
