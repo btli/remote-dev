@@ -62,7 +62,11 @@ export async function middleware(request: NextRequest) {
 
   // Protect API routes
   if (isApiRoute) {
-    if (!isLoggedIn) {
+    // Allow API key auth to pass through to route handlers (Bearer token validation happens there)
+    const hasApiKeyHeader = request.headers
+      .get("authorization")
+      ?.startsWith("Bearer ");
+    if (!isLoggedIn && !hasApiKeyHeader) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     return NextResponse.next();

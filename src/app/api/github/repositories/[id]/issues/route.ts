@@ -38,11 +38,17 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
       return errorResponse("Repository not found", 404, "REPO_NOT_FOUND");
     }
 
-    // Parse query parameters
+    // Parse query parameters with validation
     const { searchParams } = new URL(request.url);
     const state = (searchParams.get("state") as "open" | "closed" | "all") ?? "open";
-    const perPage = Math.min(parseInt(searchParams.get("per_page") ?? "100", 10), 100);
-    const page = parseInt(searchParams.get("page") ?? "1", 10);
+
+    const perPageRaw = parseInt(searchParams.get("per_page") ?? "100", 10);
+    const perPage = Number.isNaN(perPageRaw)
+      ? 100
+      : Math.min(Math.max(1, perPageRaw), 100);
+
+    const pageRaw = parseInt(searchParams.get("page") ?? "1", 10);
+    const page = Number.isNaN(pageRaw) || pageRaw < 1 ? 1 : pageRaw;
 
     // Split fullName into owner/repo
     const [owner, repoName] = repo.fullName.split("/");
