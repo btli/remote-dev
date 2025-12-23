@@ -243,9 +243,9 @@ React Contexts in `src/contexts/`:
 
 ## Adding Authorized Users
 
-Edit `src/db/seed.ts` to add emails, then run:
+Set the `AUTHORIZED_USERS` environment variable with comma-separated emails:
 ```bash
-bun run db:seed
+AUTHORIZED_USERS="user@example.com,another@example.com" bun run db:seed
 ```
 
 ## Environment Variables
@@ -261,6 +261,11 @@ GITHUB_CLIENT_ID=<your-client-id>
 GITHUB_CLIENT_SECRET=<your-client-secret>
 TERMINAL_PORT=3001
 NEXTAUTH_URL=http://localhost:3000
+```
+
+For database seeding:
+```bash
+AUTHORIZED_USERS=user@example.com,another@example.com
 ```
 
 ## Documentation
