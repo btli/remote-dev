@@ -39,6 +39,7 @@ export interface SessionFolder {
   parentId: string | null;
   name: string;
   collapsed: boolean;
+  sortOrder: number;
 }
 
 interface FolderNode extends SessionFolder {
@@ -72,6 +73,7 @@ interface SidebarProps {
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
   onFolderMove: (folderId: string, newParentId: string | null) => void;
+  onFolderReorder: (folderIds: string[]) => void;
 }
 
 export function Sidebar({
@@ -100,6 +102,7 @@ export function Sidebar({
   onFolderAdvancedSession,
   onFolderNewWorktree,
   onFolderMove,
+  onFolderReorder,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -112,6 +115,9 @@ export function Sidebar({
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<"before" | "after" | null>(null);
+  // Folder reorder state
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
+  const [dropFolderPosition, setDropFolderPosition] = useState<"before" | "after" | null>(null);
   const [worktreeDialogSession, setWorktreeDialogSession] = useState<TerminalSession | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -143,7 +149,7 @@ export function Sidebar({
     (s) => !s.folderId
   );
 
-  // Build folder tree from flat list
+  // Build folder tree from flat list, sorted by sortOrder
   const buildFolderTree = (folders: SessionFolder[]): FolderNode[] => {
     const folderMap = new Map<string, FolderNode>();
     const rootFolders: FolderNode[] = [];
@@ -165,14 +171,15 @@ export function Sidebar({
       }
     });
 
-    // Third pass: recalculate depths for nested children
-    const setDepths = (nodes: FolderNode[], depth: number) => {
+    // Third pass: recalculate depths and sort children by sortOrder
+    const setDepthsAndSort = (nodes: FolderNode[], depth: number) => {
+      nodes.sort((a, b) => a.sortOrder - b.sortOrder);
       nodes.forEach((node) => {
         node.depth = depth;
-        setDepths(node.children, depth + 1);
+        setDepthsAndSort(node.children, depth + 1);
       });
     };
-    setDepths(rootFolders, 0);
+    setDepthsAndSort(rootFolders, 0);
 
     return rootFolders;
   };
@@ -288,6 +295,8 @@ export function Sidebar({
     setDraggedSessionId(null);
     setDropTargetId(null);
     setDropPosition(null);
+    setDropTargetFolderId(null);
+    setDropFolderPosition(null);
   };
 
   const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
@@ -320,7 +329,95 @@ export function Sidebar({
       setDragOverFolderId(null);
       setDropTargetId(null);
       setDropPosition(null);
+      setDropTargetFolderId(null);
+      setDropFolderPosition(null);
     }
+  };
+
+  // Handler for dragging a folder over another folder (for reordering)
+  const handleFolderDragOver = (e: React.DragEvent, targetFolderId: string, targetParentId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Only handle folder-to-folder reordering
+    if (!draggingFolderId || draggingFolderId === targetFolderId) {
+      setDropTargetFolderId(null);
+      setDropFolderPosition(null);
+      return;
+    }
+
+    // Don't allow dropping on self or descendants
+    if (isDescendantOf(targetFolderId, draggingFolderId)) {
+      e.dataTransfer.dropEffect = "none";
+      return;
+    }
+
+    e.dataTransfer.dropEffect = "move";
+
+    // Check if dragged folder and target have the same parent (siblings)
+    const draggedFolder = folders.find((f) => f.id === draggingFolderId);
+    const draggedParentId = draggedFolder?.parentId ?? null;
+
+    if (draggedParentId === targetParentId) {
+      // Same parent - show reorder indicator
+      const rect = e.currentTarget.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const position = e.clientY < midY ? "before" : "after";
+
+      setDropTargetFolderId(targetFolderId);
+      setDropFolderPosition(position);
+      setDragOverFolderId(null);
+    } else {
+      // Different parent - treat as move to folder (existing behavior)
+      setDragOverFolderId(targetFolderId);
+      setDropTargetFolderId(null);
+      setDropFolderPosition(null);
+    }
+  };
+
+  // Handler for dropping a folder on another folder (for reordering or moving)
+  const handleFolderDrop = (e: React.DragEvent, targetFolderId: string, targetParentId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!draggingFolderId || draggingFolderId === targetFolderId) {
+      setDragOverFolderId(null);
+      setDraggingFolderId(null);
+      setDropTargetFolderId(null);
+      setDropFolderPosition(null);
+      return;
+    }
+
+    const draggedFolder = folders.find((f) => f.id === draggingFolderId);
+    const draggedParentId = draggedFolder?.parentId ?? null;
+
+    if (draggedParentId === targetParentId && dropFolderPosition) {
+      // Same parent - reorder folders
+      const siblings = folders.filter((f) => (f.parentId ?? null) === targetParentId);
+      const currentOrder = siblings.sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.id);
+
+      // Remove dragged item from current position
+      const newOrder = currentOrder.filter((id) => id !== draggingFolderId);
+
+      // Find target position
+      const targetIndex = newOrder.indexOf(targetFolderId);
+      const insertIndex = dropFolderPosition === "before" ? targetIndex : targetIndex + 1;
+
+      // Insert at new position
+      newOrder.splice(insertIndex, 0, draggingFolderId);
+
+      onFolderReorder(newOrder);
+    } else {
+      // Different parent - move folder (existing behavior)
+      if (!isDescendantOf(targetFolderId, draggingFolderId)) {
+        onFolderMove(draggingFolderId, targetFolderId);
+      }
+    }
+
+    setDragOverFolderId(null);
+    setDraggingFolderId(null);
+    setDropTargetFolderId(null);
+    setDropFolderPosition(null);
   };
 
   const handleDrop = (e: React.DragEvent, folderId: string | null) => {
@@ -860,6 +957,10 @@ export function Sidebar({
                   const isBeingDragged = draggingFolderId === node.id;
                   const canDropHere = !draggingFolderId ||
                     (draggingFolderId !== node.id && !isDescendantOf(node.id, draggingFolderId));
+                  // Folder reorder indicators
+                  const isFolderDropTarget = dropTargetFolderId === node.id;
+                  const showFolderDropBefore = isFolderDropTarget && dropFolderPosition === "before";
+                  const showFolderDropAfter = isFolderDropTarget && dropFolderPosition === "after";
 
                   // Count total items (sessions + subfolders)
                   const totalItems = folderSessions.length + node.children.length;
@@ -929,12 +1030,12 @@ export function Sidebar({
                         draggable={!isEditingFolder}
                         onDragStart={(e) => handleFolderDragStart(e, node.id)}
                         onDragEnd={handleDragEnd}
-                        onDragOver={(e) => handleDragOver(e, node.id)}
+                        onDragOver={(e) => handleFolderDragOver(e, node.id, node.parentId)}
                         onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleDrop(e, node.id)}
+                        onDrop={(e) => handleFolderDrop(e, node.id, node.parentId)}
                         style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
                         className={cn(
-                          "group flex items-center gap-1.5 px-2 py-1 rounded-md",
+                          "relative group flex items-center gap-1.5 px-2 py-1 rounded-md",
                           !isEditingFolder && "cursor-grab active:cursor-grabbing",
                           "hover:bg-white/5 transition-all duration-150",
                           isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
@@ -946,6 +1047,10 @@ export function Sidebar({
                           onFolderToggle(node.id);
                         }}
                       >
+                        {/* Drop indicator - before folder */}
+                        {showFolderDropBefore && (
+                          <div className="absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
+                        )}
                         {node.collapsed && !isActive ? (
                           <Folder
                             className={cn(
@@ -1088,6 +1193,10 @@ export function Sidebar({
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
+                        {/* Drop indicator - after folder (inside folder div) */}
+                        {showFolderDropAfter && (
+                          <div className="absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
+                        )}
                       </div>
 
                       {/* Subfolder creation input */}

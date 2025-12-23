@@ -164,6 +164,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     toggleFolder,
     moveSessionToFolder,
     moveFolderToParent,
+    reorderFolders,
     registerSessionFolder,
   } = useFolderContext();
 
@@ -469,6 +470,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       }
     },
     [moveFolderToParent]
+  );
+
+  const handleReorderFolders = useCallback(
+    async (folderIds: string[]) => {
+      try {
+        await reorderFolders(folderIds);
+      } catch (error) {
+        console.error("Failed to reorder folders:", error);
+      }
+    },
+    [reorderFolders]
   );
 
   const handleRenameFolder = useCallback(
@@ -925,6 +937,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderAdvancedSession={handleFolderAdvancedSession}
             onFolderNewWorktree={handleFolderNewWorktree}
             onFolderMove={handleMoveFolder}
+            onFolderReorder={handleReorderFolders}
           />
         </div>
       </div>
