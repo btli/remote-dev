@@ -3,7 +3,7 @@
  */
 import { db } from "@/db";
 import { terminalSessions, githubRepositories } from "@/db/schema";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, inArray } from "drizzle-orm";
 import type {
   TerminalSession,
   CreateSessionInput,
@@ -275,13 +275,14 @@ export async function getSessionWithMetadata(
  */
 export async function listSessions(
   userId: string,
-  status?: SessionStatus
+  status?: SessionStatus | SessionStatus[]
 ): Promise<TerminalSession[]> {
+  const statusFilter = Array.isArray(status) ? status : status ? [status] : null;
   const sessions = await db.query.terminalSessions.findMany({
-    where: status
+    where: statusFilter && statusFilter.length > 0
       ? and(
           eq(terminalSessions.userId, userId),
-          eq(terminalSessions.status, status)
+          inArray(terminalSessions.status, statusFilter)
         )
       : eq(terminalSessions.userId, userId),
     orderBy: [asc(terminalSessions.tabOrder)],

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
-import type { CreateSessionInput } from "@/types/session";
+import type { CreateSessionInput, SessionStatus } from "@/types/session";
 import { resolve } from "path";
 
 /**
@@ -34,7 +34,16 @@ function validateProjectPath(path: string | undefined): string | undefined {
 export const GET = withAuth(async (request, { userId }) => {
   try {
     const { searchParams } = new URL(request.url);
-    const status = searchParams.get("status") as "active" | "suspended" | "closed" | null;
+    const statusParam = searchParams.get("status");
+    const statuses = statusParam
+      ? statusParam
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : [];
+    const status = statuses.length > 1
+      ? (statuses as SessionStatus[])
+      : (statuses[0] as SessionStatus | undefined);
 
     const sessions = await SessionService.listSessions(
       userId,

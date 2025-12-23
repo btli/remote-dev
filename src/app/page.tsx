@@ -2,7 +2,7 @@ import { signOut } from "@/auth";
 import { getAuthSession } from "@/lib/auth-utils";
 import { db } from "@/db";
 import { terminalSessions, accounts } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
@@ -23,11 +23,11 @@ export default async function Home() {
     return null;
   }
 
-  // Fetch user's active sessions
+  // Fetch user's active and suspended sessions
   const dbSessions = await db.query.terminalSessions.findMany({
     where: and(
       eq(terminalSessions.userId, session.user.id),
-      eq(terminalSessions.status, "active")
+      inArray(terminalSessions.status, ["active", "suspended"])
     ),
     orderBy: (sessions, { asc }) => [asc(sessions.tabOrder)],
   });

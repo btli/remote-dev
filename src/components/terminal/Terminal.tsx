@@ -10,6 +10,13 @@ import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
 
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+};
+
 export interface TerminalRef {
   focus: () => void;
 }
@@ -59,6 +66,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const [isDragging, setIsDragging] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const isUnmountingRef = useRef(false);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
@@ -114,6 +122,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     let terminal: XTermType;
     let fitAddon: FitAddonType;
     let mounted = true;
+    isUnmountingRef.current = false;
+    intentionalExitRef.current = false;
 
     // Dynamically import xterm modules (browser-only)
     async function initTerminal() {
@@ -327,6 +337,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         };
 
         ws.onclose = () => {
+          if (isUnmountingRef.current) {
+            return;
+          }
+
           updateStatus("disconnected");
           onWebSocketReadyRef.current?.(null);
 
@@ -483,6 +497,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     return () => {
       mounted = false;
+      isUnmountingRef.current = true;
       cleanup?.();
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
@@ -584,7 +599,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // Upload image to server and return file path
   const uploadImage = useCallback(async (file: File): Promise<string> => {
     const formData = new FormData();
-    formData.append("image", file);
+    const extension = IMAGE_EXTENSIONS[file.type] ?? "";
+    const safeName = `image-${Date.now()}${extension}`;
+    formData.append("image", file, safeName);
 
     const response = await fetch("/api/images", {
       method: "POST",
