@@ -51,8 +51,8 @@ cp .env.example .env.local
 # Initialize the database
 bun run db:push
 
-# Seed authorized users
-bun run db:seed
+# Seed authorized users (replace with your email)
+AUTHORIZED_USERS="your-email@example.com" bun run db:seed
 
 # Start development servers
 bun run dev
@@ -93,19 +93,16 @@ To enable GitHub integration:
 
 ### Adding Authorized Users
 
-Edit `src/db/seed.ts` to add email addresses:
-
-```typescript
-const AUTHORIZED_EMAILS = [
-  "your-email@example.com",
-  // Add more emails as needed
-];
-```
-
-Then run:
+Set the `AUTHORIZED_USERS` environment variable with comma-separated emails:
 
 ```bash
-bun run db:seed
+AUTHORIZED_USERS="your-email@example.com" bun run db:seed
+```
+
+For multiple users:
+
+```bash
+AUTHORIZED_USERS="user1@example.com,user2@example.com" bun run db:seed
 ```
 
 ## Architecture
@@ -273,7 +270,7 @@ For secure remote access, configure [Cloudflare Access](https://www.cloudflare.c
 
 1. Set up a Cloudflare Tunnel to your local machine
 2. Configure an Access Application with your identity provider
-3. Add authorized emails to both Cloudflare Access and `src/db/seed.ts`
+3. Add authorized emails to both Cloudflare Access and via `AUTHORIZED_USERS` env var
 
 The app validates Cloudflare Access JWTs automatically via the `CF_Authorization` cookie.
 
