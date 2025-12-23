@@ -40,6 +40,7 @@ const CONFIG = {
 } as const;
 
 type Mode = keyof typeof CONFIG;
+type SpawnedProcess = ReturnType<typeof spawn>;
 
 function ensurePidDir(): void {
   if (!existsSync(PID_DIR)) {
@@ -205,7 +206,7 @@ async function startServer(
   env: Record<string, string>,
   pidFile: string,
   logPrefix: string
-): Promise<number | null> {
+): Promise<SpawnedProcess | null> {
   console.log(`Starting ${name}...`);
 
   const proc = spawn({
@@ -219,7 +220,7 @@ async function startServer(
   if (proc.pid) {
     writePid(pidFile, proc.pid);
     console.log(`${name} started (PID: ${proc.pid})`);
-    return proc.pid;
+    return proc;
   }
 
   console.error(`Failed to start ${name}`);
@@ -252,7 +253,7 @@ async function start(mode: Mode): Promise<void> {
   console.log(`  Terminal: ws://localhost:${config.terminalPort}\n`);
 
   // Start terminal server first
-  await startServer(
+  const terminalProc = await startServer(
     "Terminal Server",
     ["bun", "run", "tsx", "src/server/index.ts"],
     { TERMINAL_PORT: config.terminalPort.toString() },
@@ -265,28 +266,56 @@ async function start(mode: Mode): Promise<void> {
   await Bun.sleep(1500);
 
   // Start Next.js
-  await startServer("Next.js", [...config.nextCmd], {}, NEXT_PID_FILE, "next");
+  const nextProc = await startServer(
+    "Next.js",
+    [...config.nextCmd],
+    {
+      NEXT_PUBLIC_TERMINAL_PORT:
+        process.env.NEXT_PUBLIC_TERMINAL_PORT ?? config.terminalPort.toString(),
+    },
+    NEXT_PID_FILE,
+    "next"
+  );
 
   saveMode(mode);
 
   console.log(`\nRemote Dev started in ${mode.toUpperCase()} mode`);
   console.log("Press Ctrl+C to stop all servers\n");
 
+  let shuttingDown = false;
+  const shutdown = (reason: string, exitCode: number) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n\n${reason}, shutting down...`);
+    stop(mode);
+    process.exit(exitCode);
+  };
+
   // Handle Ctrl+C gracefully
-  process.on("SIGINT", () => {
-    console.log("\n\nReceived SIGINT, shutting down...");
-    stop();
-    process.exit(0);
-  });
+  process.on("SIGINT", () => shutdown("Received SIGINT", 0));
+  process.on("SIGTERM", () => shutdown("Received SIGTERM", 0));
 
-  process.on("SIGTERM", () => {
-    console.log("\n\nReceived SIGTERM, shutting down...");
-    stop();
-    process.exit(0);
-  });
+  const exitPromises: Promise<{ name: string; code: number | null }>[] = [];
+  if (terminalProc) {
+    exitPromises.push(terminalProc.exited.then((code) => ({
+      name: "Terminal Server",
+      code,
+    })));
+  }
+  if (nextProc) {
+    exitPromises.push(nextProc.exited.then((code) => ({
+      name: "Next.js",
+      code,
+    })));
+  }
 
-  // Keep the script running
-  await new Promise(() => {});
+  if (exitPromises.length === 0) {
+    shutdown("No servers started", 1);
+    return;
+  }
+
+  const { name, code } = await Promise.race(exitPromises);
+  shutdown(`${name} exited (code: ${code ?? "unknown"})`, code ?? 1);
 }
 
 function stop(mode?: Mode): void {
