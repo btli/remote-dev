@@ -251,13 +251,10 @@ export function SplitPaneContainer({
 
       const deltaPercent = (delta / totalSize) * 100;
 
+      const currentPane = findPane(layout, containerId) as ContainerPane | null;
+      const currentRatio = currentPane?.splitRatio ?? 50;
       onLayoutChange(
-        updateSplitRatio(
-          layout,
-          containerId,
-          (findPane(layout, containerId) as ContainerPane | null)?.splitRatio ??
-            50 + deltaPercent
-        )
+        updateSplitRatio(layout, containerId, currentRatio + deltaPercent)
       );
     },
     [layout, onLayoutChange]
