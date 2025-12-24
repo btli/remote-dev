@@ -367,8 +367,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         };
       }
 
-      // Wait for fonts to load before connecting to get accurate cell dimensions
-      // This prevents incorrect initial sizing from font measurement race conditions
+      // Wait for fonts and container layout before connecting
+      // This prevents incorrect initial sizing from various race conditions
       const initAndConnect = async () => {
         // Extract the primary font family name for loading
         const fontMatch = initialFontFamilyRef.current.match(/^['"]?([^'"]+)/);
@@ -388,10 +388,42 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // Wait for all fonts to be ready
         await document.fonts.ready;
 
-        // Wait a frame to ensure container has final dimensions after layout
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        // Wait for container dimensions to stabilize
+        // On hard refresh, the layout may take multiple frames to settle
+        const MIN_CONTAINER_WIDTH = 100;
+        const MIN_CONTAINER_HEIGHT = 80;
+        const MAX_WAIT_ATTEMPTS = 30; // ~500ms max wait
+        const STABLE_FRAMES_REQUIRED = 3; // Dimensions must be stable for 3 frames
 
-        // Now fit with accurate font measurements
+        let lastWidth = 0;
+        let lastHeight = 0;
+        let stableFrames = 0;
+
+        for (let attempt = 0; attempt < MAX_WAIT_ATTEMPTS; attempt++) {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+          const container = terminalRef.current;
+          if (!container) continue;
+
+          const rect = container.getBoundingClientRect();
+
+          // Check if dimensions are valid and stable
+          if (rect.width >= MIN_CONTAINER_WIDTH && rect.height >= MIN_CONTAINER_HEIGHT) {
+            if (rect.width === lastWidth && rect.height === lastHeight) {
+              stableFrames++;
+              if (stableFrames >= STABLE_FRAMES_REQUIRED) {
+                break; // Container dimensions are stable
+              }
+            } else {
+              // Dimensions changed, reset stability counter
+              stableFrames = 0;
+              lastWidth = rect.width;
+              lastHeight = rect.height;
+            }
+          }
+        }
+
+        // Now fit with accurate measurements
         fitAddon.fit();
 
         // Connect with correct dimensions
