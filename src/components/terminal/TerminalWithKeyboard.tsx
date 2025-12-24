@@ -23,6 +23,7 @@ interface TerminalWithKeyboardProps {
   fontFamily?: string;
   notificationsEnabled?: boolean;
   isRecording?: boolean;
+  isActive?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onSessionExit?: (exitCode: number) => void;
   onOutput?: (data: string) => void;
@@ -43,6 +44,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   fontFamily,
   notificationsEnabled,
   isRecording,
+  isActive,
   onStatusChange,
   onSessionExit,
   onOutput,
@@ -129,6 +131,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
           fontFamily={fontFamily}
           notificationsEnabled={notificationsEnabled}
           isRecording={isRecording}
+          isActive={isActive}
           onStatusChange={onStatusChange}
           onWebSocketReady={handleWebSocketReady}
           onSessionExit={handleSessionExit}

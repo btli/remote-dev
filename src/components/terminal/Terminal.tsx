@@ -32,6 +32,7 @@ interface TerminalProps {
   fontFamily?: string;
   notificationsEnabled?: boolean;
   isRecording?: boolean;
+  isActive?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
@@ -50,6 +51,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   fontFamily = "'JetBrainsMono Nerd Font Mono', monospace",
   notificationsEnabled = true,
   isRecording = false,
+  isActive = false,
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
@@ -598,6 +600,38 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       cancelled = true;
     };
   }, [theme, fontSize, fontFamily]);
+
+  // Trigger resize when terminal becomes active (e.g., switching tabs or splits)
+  useEffect(() => {
+    if (!isActive) return;
+
+    const terminal = xtermRef.current;
+    const fitAddon = fitAddonRef.current;
+    const ws = wsRef.current;
+
+    if (!terminal || !fitAddon) return;
+
+    // Small delay to ensure container has finished layout
+    const timeoutId = setTimeout(() => {
+      fitAddon.fit();
+
+      // Send resize to sync tmux dimensions
+      if (ws?.readyState === WebSocket.OPEN && terminal.cols > 0 && terminal.rows > 0) {
+        ws.send(
+          JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          })
+        );
+      }
+
+      // Focus the terminal
+      terminal.focus();
+    }, 50);
+
+    return () => clearTimeout(timeoutId);
+  }, [isActive]);
 
   // Search functions
   const findNext = useCallback(() => {
