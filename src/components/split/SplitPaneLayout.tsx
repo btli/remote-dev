@@ -146,6 +146,7 @@ export function SplitPaneLayout({
                 fontSize={prefs.fontSize}
                 fontFamily={prefs.fontFamily}
                 wsUrl={wsUrl}
+                isActive={isActive}
                 onSessionExit={() => onSessionExit(pane.session!.id)}
               />
             </div>

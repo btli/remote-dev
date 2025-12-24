@@ -51,6 +51,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     updateSession,
     setActiveSession,
     reorderSessions,
+    refreshSessions,
   } = useSessionContext();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -484,7 +485,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         );
         // Use allSettled to handle partial failures gracefully
         const results = await Promise.allSettled(
-          repoSessions.map((s) => moveSessionToFolder(s.id, folderId))
+          repoSessions.map(async (s) => {
+            await moveSessionToFolder(s.id, folderId);
+            // Also update session in SessionContext for immediate UI update
+            await updateSession(s.id, { folderId });
+          })
         );
         const failures = results.filter((r) => r.status === "rejected");
         if (failures.length > 0) {
@@ -493,9 +498,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       } else {
         // No repo association, just move this session
         await moveSessionToFolder(sessionId, folderId);
+        // Also update session in SessionContext for immediate UI update
+        await updateSession(sessionId, { folderId });
       }
     },
-    [sessions, moveSessionToFolder]
+    [sessions, moveSessionToFolder, updateSession]
   );
 
   const handleReorderSessions = useCallback(
@@ -752,10 +759,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
     try {
       await createSplit(activeSessionId, "horizontal", name);
+      // Refresh sessions to get the newly created split session
+      await refreshSessions();
     } catch (error) {
       logSessionError("create split", error);
     }
-  }, [activeSessionId, sessionCounter, createSplit, logSessionError]);
+  }, [activeSessionId, sessionCounter, createSplit, refreshSessions, logSessionError]);
 
   // Update ref when handler changes
   useEffect(() => {
@@ -770,10 +779,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
     try {
       await createSplit(activeSessionId, "vertical", name);
+      // Refresh sessions to get the newly created split session
+      await refreshSessions();
     } catch (error) {
       logSessionError("create split", error);
     }
-  }, [activeSessionId, sessionCounter, createSplit, logSessionError]);
+  }, [activeSessionId, sessionCounter, createSplit, refreshSessions, logSessionError]);
 
   // Update ref when handler changes
   useEffect(() => {
@@ -1095,6 +1106,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           fontFamily={prefs.fontFamily}
                           notificationsEnabled={true}
                           isRecording={isRecording}
+                          isActive={session.id === activeSessionId}
                           onOutput={isRecording ? recordOutput : undefined}
                           onDimensionsChange={isRecording ? updateDimensions : undefined}
                           onSessionRestart={() => handleSessionRestart(session)}
