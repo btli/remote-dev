@@ -5,7 +5,8 @@ import {
   X, Plus, Terminal, Settings,
   Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
-  SplitSquareHorizontal, SplitSquareVertical, Minus
+  SplitSquareHorizontal, SplitSquareVertical, Minus,
+  GitPullRequest, CircleDot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -35,8 +36,6 @@ import {
 } from "@/components/ui/tooltip";
 import { DeleteWorktreeDialog } from "./DeleteWorktreeDialog";
 import { useSplitContext } from "@/contexts/SplitContext";
-import { RepositoriesTab } from "@/components/github/RepositoriesTab";
-import { Github } from "lucide-react";
 
 export interface SessionFolder {
   id: string;
@@ -57,6 +56,13 @@ const MAX_SIDEBAR_WIDTH = 400;
 const DEFAULT_SIDEBAR_WIDTH = 220;
 const COLLAPSED_SIDEBAR_WIDTH = 48;
 
+// Folder repo stats returned by getFolderRepoStats
+export interface FolderRepoStats {
+  prCount: number;
+  issueCount: number;
+  hasChanges: boolean;
+}
+
 interface SidebarProps {
   sessions: TerminalSession[];
   folders: SessionFolder[];
@@ -68,6 +74,7 @@ interface SidebarProps {
   onWidthChange?: (width: number) => void;
   folderHasPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
+  getFolderRepoStats: (folderId: string) => FolderRepoStats | null;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
@@ -88,7 +95,6 @@ interface SidebarProps {
   onFolderReorder: (folderIds: string[]) => void;
   trashCount: number;
   onTrashOpen: () => void;
-  onCreatePRWorktree?: (repoId: string, prNumber: number) => Promise<void>;
 }
 
 export function Sidebar({
@@ -102,6 +108,7 @@ export function Sidebar({
   onWidthChange,
   folderHasPreferences,
   folderHasRepo,
+  getFolderRepoStats,
   onSessionClick,
   onSessionClose,
   onSessionRename,
@@ -122,9 +129,7 @@ export function Sidebar({
   onFolderReorder,
   trashCount,
   onTrashOpen,
-  onCreatePRWorktree,
 }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<"sessions" | "repositories">("sessions");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -145,6 +150,15 @@ export function Sidebar({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const resizeStartXRef = useRef<number>(0);
   const resizeStartWidthRef = useRef<number>(0);
+
+  // Touch drag state for mobile
+  const touchDragRef = useRef<{
+    type: "folder" | "session" | null;
+    id: string | null;
+    startY: number;
+    element: HTMLElement | null;
+    clone: HTMLElement | null;
+  }>({ type: null, id: null, startY: 0, element: null, clone: null });
 
   // Resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -251,7 +265,7 @@ export function Sidebar({
   const folderTree = buildFolderTree(folders);
 
   // Check if a folder is a descendant of another
-  const isDescendantOf = (folderId: string, ancestorId: string): boolean => {
+  const isDescendantOf = useCallback((folderId: string, ancestorId: string): boolean => {
     const folderMap = new Map(folders.map((f) => [f.id, f]));
     let current = folderMap.get(folderId);
     while (current?.parentId) {
@@ -259,7 +273,7 @@ export function Sidebar({
       current = folderMap.get(current.parentId);
     }
     return false;
-  };
+  }, [folders]);
 
   // Focus input when editing starts
   useEffect(() => {
@@ -363,6 +377,120 @@ export function Sidebar({
     setDropFolderPosition(null);
   };
 
+  // Touch handlers for mobile drag-and-drop
+  const handleFolderTouchStart = useCallback((e: React.TouchEvent, folderId: string) => {
+    const touch = e.touches[0];
+    const element = e.currentTarget as HTMLElement;
+
+    // Create a visual clone for dragging feedback
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.style.position = "fixed";
+    clone.style.top = `${touch.clientY - 20}px`;
+    clone.style.left = `${element.getBoundingClientRect().left}px`;
+    clone.style.width = `${element.offsetWidth}px`;
+    clone.style.opacity = "0.8";
+    clone.style.pointerEvents = "none";
+    clone.style.zIndex = "1000";
+    clone.style.backgroundColor = "rgba(139, 92, 246, 0.3)";
+    clone.style.borderRadius = "6px";
+    document.body.appendChild(clone);
+
+    touchDragRef.current = {
+      type: "folder",
+      id: folderId,
+      startY: touch.clientY,
+      element,
+      clone,
+    };
+
+    element.style.opacity = "0.5";
+    setDraggingFolderId(folderId);
+  }, []);
+
+  const handleFolderTouchMove = useCallback((e: React.TouchEvent) => {
+    const drag = touchDragRef.current;
+    if (!drag.id || !drag.clone) return;
+
+    const touch = e.touches[0];
+    drag.clone.style.top = `${touch.clientY - 20}px`;
+
+    // Find folder element under touch point
+    drag.clone.style.display = "none";
+    const elementUnder = document.elementFromPoint(touch.clientX, touch.clientY);
+    drag.clone.style.display = "";
+
+    // Find the closest folder item
+    const folderElement = elementUnder?.closest("[data-folder-id]") as HTMLElement | null;
+
+    if (folderElement && folderElement.dataset.folderId !== drag.id) {
+      const targetFolderId = folderElement.dataset.folderId!;
+      const targetParentId = folderElement.dataset.folderParentId || null;
+      const rect = folderElement.getBoundingClientRect();
+      const relativeY = touch.clientY - rect.top;
+      const threshold = rect.height * 0.25;
+
+      const draggedFolder = folders.find((f) => f.id === drag.id);
+      const draggedParentId = draggedFolder?.parentId ?? null;
+      const areSiblings = draggedParentId === targetParentId;
+
+      if (areSiblings && relativeY < threshold) {
+        setDropTargetFolderId(targetFolderId);
+        setDropFolderPosition("before");
+        setDragOverFolderId(null);
+      } else if (areSiblings && relativeY > rect.height - threshold) {
+        setDropTargetFolderId(targetFolderId);
+        setDropFolderPosition("after");
+        setDragOverFolderId(null);
+      } else {
+        setDragOverFolderId(targetFolderId);
+        setDropTargetFolderId(null);
+        setDropFolderPosition(null);
+      }
+    } else {
+      setDragOverFolderId(null);
+      setDropTargetFolderId(null);
+      setDropFolderPosition(null);
+    }
+  }, [folders]);
+
+  const handleFolderTouchEnd = useCallback(() => {
+    const drag = touchDragRef.current;
+
+    // Clean up clone
+    if (drag.clone) {
+      drag.clone.remove();
+    }
+    if (drag.element) {
+      drag.element.style.opacity = "";
+    }
+
+    // Perform drop if we have a target
+    if (drag.id) {
+      if (dropFolderPosition && dropTargetFolderId) {
+        // Reorder mode
+        const draggedFolder = folders.find((f) => f.id === drag.id);
+        const draggedParentId = draggedFolder?.parentId ?? null;
+        const siblings = folders.filter((f) => (f.parentId ?? null) === draggedParentId);
+        const currentOrder = siblings.sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.id);
+        const newOrder = currentOrder.filter((id) => id !== drag.id);
+        const targetIndex = newOrder.indexOf(dropTargetFolderId);
+        const insertIndex = dropFolderPosition === "before" ? targetIndex : targetIndex + 1;
+        newOrder.splice(insertIndex, 0, drag.id);
+        onFolderReorder(newOrder);
+      } else if (dragOverFolderId && !isDescendantOf(dragOverFolderId, drag.id)) {
+        // Nest mode
+        onFolderMove(drag.id, dragOverFolderId);
+      }
+    }
+
+    // Reset state
+    touchDragRef.current = { type: null, id: null, startY: 0, element: null, clone: null };
+    setDraggingFolderId(null);
+    setDragOverFolderId(null);
+    setDropTargetFolderId(null);
+    setDropFolderPosition(null);
+  }, [folders, dropFolderPosition, dropTargetFolderId, dragOverFolderId, onFolderReorder, onFolderMove, isDescendantOf]);
+
   const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
     e.preventDefault();
     e.stopPropagation();
@@ -398,7 +526,7 @@ export function Sidebar({
     }
   };
 
-  // Handler for dragging a folder over another folder (for reordering)
+  // Handler for dragging a folder over another folder (for reordering or nesting)
   const handleFolderDragOver = (e: React.DragEvent, targetFolderId: string, targetParentId: string | null) => {
     e.preventDefault();
     e.stopPropagation();
@@ -414,7 +542,7 @@ export function Sidebar({
       return;
     }
 
-    // Only handle folder-to-folder reordering
+    // Only handle folder-to-folder operations
     if (!draggingFolderId || draggingFolderId === targetFolderId) {
       setDropTargetFolderId(null);
       setDropFolderPosition(null);
@@ -429,21 +557,29 @@ export function Sidebar({
 
     e.dataTransfer.dropEffect = "move";
 
-    // Check if dragged folder and target have the same parent (siblings)
+    // Use position-based detection:
+    // - Top 25% / Bottom 25%: reorder (before/after) - only for siblings
+    // - Middle 50%: move into folder (nest)
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relativeY = e.clientY - rect.top;
+    const threshold = rect.height * 0.25;
+
     const draggedFolder = folders.find((f) => f.id === draggingFolderId);
     const draggedParentId = draggedFolder?.parentId ?? null;
+    const areSiblings = draggedParentId === targetParentId;
 
-    if (draggedParentId === targetParentId) {
-      // Same parent - show reorder indicator
-      const rect = e.currentTarget.getBoundingClientRect();
-      const midY = rect.top + rect.height / 2;
-      const position = e.clientY < midY ? "before" : "after";
-
+    if (areSiblings && relativeY < threshold) {
+      // Top edge - reorder before (only for siblings)
       setDropTargetFolderId(targetFolderId);
-      setDropFolderPosition(position);
+      setDropFolderPosition("before");
+      setDragOverFolderId(null);
+    } else if (areSiblings && relativeY > rect.height - threshold) {
+      // Bottom edge - reorder after (only for siblings)
+      setDropTargetFolderId(targetFolderId);
+      setDropFolderPosition("after");
       setDragOverFolderId(null);
     } else {
-      // Different parent - treat as move to folder (existing behavior)
+      // Center - move into folder (nest)
       setDragOverFolderId(targetFolderId);
       setDropTargetFolderId(null);
       setDropFolderPosition(null);
@@ -451,7 +587,7 @@ export function Sidebar({
   };
 
   // Handler for dropping a folder on another folder (for reordering or moving)
-  const handleFolderDrop = (e: React.DragEvent, targetFolderId: string, targetParentId: string | null) => {
+  const handleFolderDrop = (e: React.DragEvent, targetFolderId: string) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -475,12 +611,13 @@ export function Sidebar({
       return;
     }
 
-    const draggedFolder = folders.find((f) => f.id === draggingFolderId);
-    const draggedParentId = draggedFolder?.parentId ?? null;
+    // Check current drop mode based on state set by handleFolderDragOver
+    if (dropFolderPosition && dropTargetFolderId === targetFolderId) {
+      // Reorder mode - reorder siblings
+      const draggedFolder = folders.find((f) => f.id === draggingFolderId);
+      const draggedParentId = draggedFolder?.parentId ?? null;
 
-    if (draggedParentId === targetParentId && dropFolderPosition) {
-      // Same parent - reorder folders
-      const siblings = folders.filter((f) => (f.parentId ?? null) === targetParentId);
+      const siblings = folders.filter((f) => (f.parentId ?? null) === draggedParentId);
       const currentOrder = siblings.sort((a, b) => a.sortOrder - b.sortOrder).map((f) => f.id);
 
       // Remove dragged item from current position
@@ -494,8 +631,8 @@ export function Sidebar({
       newOrder.splice(insertIndex, 0, draggingFolderId);
 
       onFolderReorder(newOrder);
-    } else {
-      // Different parent - move folder (existing behavior)
+    } else if (dragOverFolderId === targetFolderId) {
+      // Nest mode - move folder into target
       if (!isDescendantOf(targetFolderId, draggingFolderId)) {
         onFolderMove(draggingFolderId, targetFolderId);
       }
@@ -913,6 +1050,83 @@ export function Sidebar({
     );
   };
 
+  /**
+   * Renders sessions with split group handling.
+   * Consolidates duplicate logic from folder and root session rendering.
+   */
+  const renderSessionsWithSplits = (
+    sessionsToRender: TerminalSession[],
+    options: {
+      folderId: string | null;
+      depth: number;
+      indentStyle?: React.CSSProperties;
+    }
+  ): React.ReactNode[] => {
+    const { folderId, depth, indentStyle } = options;
+    const renderedSessionIds = new Set<string>();
+    const elements: React.ReactNode[] = [];
+
+    sessionsToRender.forEach((session) => {
+      // Skip if already rendered as part of a split group
+      if (renderedSessionIds.has(session.id)) return;
+
+      const splitGroup = getSplitForSession(session.id);
+
+      if (splitGroup) {
+        // Render the entire split group
+        const splitSessions = splitGroup.sessions
+          .sort((a, b) => a.splitOrder - b.splitOrder)
+          .map((ss) => sessions.find((s) => s.id === ss.sessionId))
+          .filter((s): s is TerminalSession => {
+            if (!s) return false;
+            return folderId !== null ? s.folderId === folderId : !s.folderId;
+          });
+
+        // Mark all sessions in this split as rendered
+        splitSessions.forEach((s) => renderedSessionIds.add(s.id));
+
+        if (splitSessions.length > 0) {
+          elements.push(
+            <div
+              key={`split-${splitGroup.id}`}
+              style={indentStyle}
+              className={cn(
+                "relative",
+                splitGroup.direction === "horizontal"
+                  ? "border-l-2 border-violet-500/40 pl-1 space-y-0.5"
+                  : "flex items-stretch gap-1"
+              )}
+            >
+              {splitGroup.direction === "vertical" && (
+                <div className="absolute -top-0.5 left-0 right-0 flex items-center gap-0.5 text-[9px] text-violet-400/60">
+                  <SplitSquareVertical className="w-2.5 h-2.5" />
+                  <span>Split</span>
+                </div>
+              )}
+              {splitSessions.map((s, idx) => (
+                <div
+                  key={s.id}
+                  className={cn(
+                    splitGroup.direction === "vertical" && "flex-1 min-w-0",
+                    splitGroup.direction === "vertical" && idx > 0 && "border-l border-white/10"
+                  )}
+                >
+                  {renderSession(s, 0, folderId, true)}
+                </div>
+              ))}
+            </div>
+          );
+        }
+      } else {
+        // Render as a regular session
+        renderedSessionIds.add(session.id);
+        elements.push(renderSession(session, depth, folderId));
+      }
+    });
+
+    return elements;
+  };
+
   return (
     <TooltipProvider delayDuration={200}>
     <div
@@ -955,69 +1169,43 @@ export function Sidebar({
               <TooltipContent side="right">Expand sidebar</TooltipContent>
             </Tooltip>
           ) : (
-            // Expanded header with tabs
+            // Expanded header
             <>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setActiveTab("sessions")}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
-                    activeTab === "sessions"
-                      ? "bg-violet-500/20 text-violet-300"
-                      : "text-slate-400 hover:text-white hover:bg-white/5"
-                  )}
-                >
-                  <Terminal className="w-3.5 h-3.5" />
-                  Sessions
-                </button>
-                <button
-                  onClick={() => setActiveTab("repositories")}
-                  className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
-                    activeTab === "repositories"
-                      ? "bg-violet-500/20 text-violet-300"
-                      : "text-slate-400 hover:text-white hover:bg-white/5"
-                  )}
-                >
-                  <Github className="w-3.5 h-3.5" />
-                  Repos
-                </button>
+              <div className="flex items-center gap-1.5">
+                <Terminal className="w-3.5 h-3.5 text-violet-400" />
+                <span className="text-xs font-medium text-white">Sessions</span>
               </div>
               <div className="flex items-center gap-0.5">
-                {activeTab === "sessions" && (
-                  <>
+                <Button
+                  onClick={() => setCreatingFolder(true)}
+                  variant="ghost"
+                  size="icon-sm"
+                  className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                >
+                  <Folder className="w-3.5 h-3.5" />
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
                     <Button
-                      onClick={() => setCreatingFolder(true)}
                       variant="ghost"
                       size="icon-sm"
                       className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
                     >
-                      <Folder className="w-3.5 h-3.5" />
+                      <Plus className="w-3.5 h-3.5" />
                     </Button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-40">
-                        <DropdownMenuItem onClick={onQuickNewSession}>
-                          <Terminal className="w-3.5 h-3.5 mr-2" />
-                          Quick Terminal
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={onNewSession}>
-                          <Settings className="w-3.5 h-3.5 mr-2" />
-                          Advanced...
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </>
-                )}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-40">
+                    <DropdownMenuItem onClick={onQuickNewSession}>
+                      <Terminal className="w-3.5 h-3.5 mr-2" />
+                      Quick Terminal
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={onNewSession}>
+                      <Settings className="w-3.5 h-3.5 mr-2" />
+                      Advanced...
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   onClick={() => onCollapsedChange(true)}
                   variant="ghost"
@@ -1031,10 +1219,8 @@ export function Sidebar({
           )}
         </div>
 
-      {/* Tab Content */}
-      {activeTab === "sessions" ? (
-        // Session List
-        <div
+      {/* Session List */}
+      <div
           className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5"
           onDragOver={(e) => handleDragOver(e, null)}
           onDragLeave={handleDragLeave}
@@ -1146,9 +1332,14 @@ export function Sidebar({
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div
+                              data-folder-id={node.id}
+                              data-folder-parent-id={node.parentId || ""}
                               onDragOver={(e) => handleDragOver(e, node.id)}
                               onDragLeave={handleDragLeave}
                               onDrop={(e) => handleDrop(e, node.id)}
+                              onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
+                              onTouchMove={handleFolderTouchMove}
+                              onTouchEnd={handleFolderTouchEnd}
                               onClick={() => {
                                 onFolderClick(node.id);
                                 onFolderToggle(node.id);
@@ -1201,12 +1392,17 @@ export function Sidebar({
                   return (
                     <div key={node.id} className="space-y-0.5">
                       <div
+                        data-folder-id={node.id}
+                        data-folder-parent-id={node.parentId || ""}
                         draggable={!isEditingFolder}
                         onDragStart={(e) => handleFolderDragStart(e, node.id)}
                         onDragEnd={handleDragEnd}
                         onDragOver={(e) => handleFolderDragOver(e, node.id, node.parentId)}
                         onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleFolderDrop(e, node.id, node.parentId)}
+                        onDrop={(e) => handleFolderDrop(e, node.id)}
+                        onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
+                        onTouchMove={handleFolderTouchMove}
+                        onTouchEnd={handleFolderTouchEnd}
                         style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
                         className={cn(
                           "relative group flex items-center gap-1.5 px-2 py-1 rounded-md",
@@ -1266,6 +1462,31 @@ export function Sidebar({
                             {node.name}
                           </span>
                         )}
+
+                        {/* Repo stats badges */}
+                        {(() => {
+                          const repoStats = getFolderRepoStats(node.id);
+                          if (!repoStats) return null;
+                          return (
+                            <div className="flex items-center gap-1 shrink-0">
+                              {repoStats.prCount > 0 && (
+                                <span className="flex items-center gap-0.5 text-[9px] text-violet-400">
+                                  <GitPullRequest className="w-2.5 h-2.5" />
+                                  {repoStats.prCount}
+                                </span>
+                              )}
+                              {repoStats.issueCount > 0 && (
+                                <span className="flex items-center gap-0.5 text-[9px] text-emerald-400">
+                                  <CircleDot className="w-2.5 h-2.5" />
+                                  {repoStats.issueCount}
+                                </span>
+                              )}
+                              {repoStats.hasChanges && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         <span className="text-[10px] text-slate-500">
                           {totalSessions}
@@ -1404,7 +1625,12 @@ export function Sidebar({
                       {!node.collapsed && (
                         <>
                           {node.children.map((child) => renderFolderNode(child))}
-                          {folderSessions.map((session) => renderSession(session, node.depth + 1, node.id))}
+                          {/* Sessions with split group handling */}
+                          {renderSessionsWithSplits(folderSessions, {
+                            folderId: node.id,
+                            depth: node.depth + 1,
+                            indentStyle: { marginLeft: `${(node.depth + 1) * 12}px` },
+                          })}
                         </>
                       )}
                     </div>
@@ -1414,78 +1640,14 @@ export function Sidebar({
                 return renderFolderNode(folderNode);
               })}
 
-              {/* Root sessions (not in any folder) - group splits together */}
-              {(() => {
-                // Track which sessions we've rendered (to avoid duplicates from splits)
-                const renderedSessionIds = new Set<string>();
-                const elements: React.ReactNode[] = [];
-
-                rootSessions.forEach((session) => {
-                  // Skip if already rendered as part of a split group
-                  if (renderedSessionIds.has(session.id)) return;
-
-                  const splitGroup = getSplitForSession(session.id);
-
-                  if (splitGroup) {
-                    // Render the entire split group
-                    const splitSessions = splitGroup.sessions
-                      .sort((a, b) => a.splitOrder - b.splitOrder)
-                      .map((ss) => sessions.find((s) => s.id === ss.sessionId))
-                      .filter((s): s is TerminalSession => !!s && !s.folderId);
-
-                    // Mark all sessions in this split as rendered
-                    splitSessions.forEach((s) => renderedSessionIds.add(s.id));
-
-                    if (splitSessions.length > 0) {
-                      elements.push(
-                        <div
-                          key={`split-${splitGroup.id}`}
-                          className={cn(
-                            "relative",
-                            splitGroup.direction === "horizontal"
-                              ? "border-l-2 border-violet-500/40 pl-1 space-y-0.5"
-                              : "flex items-stretch gap-1"
-                          )}
-                        >
-                          {splitGroup.direction === "vertical" && (
-                            <div className="absolute -top-0.5 left-0 right-0 flex items-center gap-0.5 text-[9px] text-violet-400/60">
-                              <SplitSquareVertical className="w-2.5 h-2.5" />
-                              <span>Split</span>
-                            </div>
-                          )}
-                          {splitSessions.map((s, idx) => (
-                            <div
-                              key={s.id}
-                              className={cn(
-                                splitGroup.direction === "vertical" && "flex-1 min-w-0",
-                                splitGroup.direction === "vertical" && idx > 0 && "border-l border-white/10"
-                              )}
-                            >
-                              {renderSession(s, 0, null, true)}
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    }
-                  } else {
-                    // Render as a regular session
-                    renderedSessionIds.add(session.id);
-                    elements.push(renderSession(session));
-                  }
-                });
-
-                return elements;
-              })()}
+              {/* Root sessions (not in any folder) */}
+              {renderSessionsWithSplits(rootSessions, {
+                folderId: null,
+                depth: 0,
+              })}
             </>
           )}
-        </div>
-      ) : (
-        // Repositories Tab
-        <RepositoriesTab
-          onCreatePRWorktree={onCreatePRWorktree}
-          className="flex-1"
-        />
-      )}
+      </div>
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (

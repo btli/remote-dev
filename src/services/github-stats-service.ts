@@ -11,7 +11,6 @@ import {
   githubBranchProtection,
   folderRepositories,
   githubChangeNotifications,
-  terminalSessions,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import * as GitHubService from "./github-service";
