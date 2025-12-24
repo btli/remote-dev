@@ -3,38 +3,34 @@
  */
 import { execFile, execFileNoThrow, execFileCheck } from "@/lib/exec";
 import type { WorktreeInfo, BranchInfo } from "@/types/github";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, copyFileSync, constants as fsConstants, accessSync } from "fs";
 import { join, basename, dirname } from "path";
 import { WorktreeServiceError } from "@/lib/errors";
 
+/**
+ * Files that should be copied from main repo to worktree.
+ * These are development environment files that are typically gitignored.
+ * Excludes production files for security.
+ */
+const ENV_FILES_TO_COPY = [
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.development.local",
+] as const;
+
+/**
+ * Files that should NOT be copied (for security).
+ * Listed for documentation purposes.
+ */
+// const ENV_FILES_TO_SKIP = [
+//   ".env.production",
+//   ".env.production.local",
+//   ".env.test",
+// ] as const;
+
 // Re-export for backwards compatibility
 export { WorktreeServiceError };
-
-/**
- * Status of a worktree before removal
- */
-export interface WorktreeStatus {
-  exists: boolean;
-  isRegistered: boolean;
-  hasUncommittedChanges: boolean;
-  hasUntrackedFiles: boolean;
-  hasUnpushedCommits: boolean;
-  branch: string | null;
-  uncommittedFileCount: number;
-  untrackedFileCount: number;
-  unpushedCommitCount: number;
-}
-
-/**
- * Result of a worktree removal operation
- */
-export interface RemoveWorktreeResult {
-  success: boolean;
-  alreadyRemoved: boolean;
-  hadUncommittedChanges: boolean;
-  hadUnpushedCommits: boolean;
-  message: string;
-}
 
 /**
  * Check if a directory is a git repository
@@ -205,78 +201,19 @@ export async function createWorktree(
 }
 
 /**
- * Remove a worktree with safety checks
- *
- * @param repoPath - Path to the main repository
- * @param worktreePath - Path to the worktree to remove
- * @param force - Force removal even with uncommitted changes (default: false)
- * @returns Result with details about what was removed/lost
- * @throws WorktreeServiceError with code HAS_UNCOMMITTED_CHANGES if not forced
+ * Remove a worktree
  */
 export async function removeWorktree(
   repoPath: string,
   worktreePath: string,
   force = false
-): Promise<RemoveWorktreeResult> {
-  // Get worktree status before removal
-  const status = await getWorktreeStatus(repoPath, worktreePath);
-
-  // If worktree doesn't exist and isn't registered, it's already removed
-  if (!status.exists && !status.isRegistered) {
-    // Try to prune any stale worktree entries
-    await execFileNoThrow("git", ["-C", repoPath, "worktree", "prune"]);
-
-    return {
-      success: true,
-      alreadyRemoved: true,
-      hadUncommittedChanges: false,
-      hadUnpushedCommits: false,
-      message: "Worktree was already removed",
-    };
-  }
-
-  // Check for uncommitted changes (unless force is true)
-  if (!force && (status.hasUncommittedChanges || status.hasUntrackedFiles)) {
-    const details: string[] = [];
-    if (status.uncommittedFileCount > 0) {
-      details.push(`${status.uncommittedFileCount} uncommitted file(s)`);
-    }
-    if (status.untrackedFileCount > 0) {
-      details.push(`${status.untrackedFileCount} untracked file(s)`);
-    }
-    throw new WorktreeServiceError(
-      `Worktree has ${details.join(" and ")} that will be lost`,
-      "HAS_UNCOMMITTED_CHANGES",
-      `Branch: ${status.branch || "unknown"}`
-    );
-  }
-
-  // Check for unpushed commits (unless force is true)
-  if (!force && status.hasUnpushedCommits) {
-    throw new WorktreeServiceError(
-      `Worktree has ${status.unpushedCommitCount} unpushed commit(s) on branch '${status.branch}'`,
-      "HAS_UNPUSHED_COMMITS",
-      "Push your commits before removing, or use force to proceed anyway"
-    );
-  }
-
-  // If only registered but directory doesn't exist, just prune
-  if (!status.exists && status.isRegistered) {
-    await execFileNoThrow("git", ["-C", repoPath, "worktree", "prune"]);
-    return {
-      success: true,
-      alreadyRemoved: false,
-      hadUncommittedChanges: false,
-      hadUnpushedCommits: false,
-      message: "Pruned stale worktree entry",
-    };
-  }
-
-  // Perform the actual removal
+): Promise<void> {
   const args = ["-C", repoPath, "worktree", "remove"];
+
   if (force) {
     args.push("--force");
   }
+
   args.push(worktreePath);
 
   try {
@@ -289,16 +226,6 @@ export async function removeWorktree(
       err.stderr || err.message
     );
   }
-
-  return {
-    success: true,
-    alreadyRemoved: false,
-    hadUncommittedChanges: status.hasUncommittedChanges || status.hasUntrackedFiles,
-    hadUnpushedCommits: status.hasUnpushedCommits,
-    message: force && (status.hasUncommittedChanges || status.hasUnpushedCommits)
-      ? `Removed worktree (warning: had uncommitted changes or unpushed commits)`
-      : "Worktree removed successfully",
-  };
 }
 
 /**
@@ -581,5 +508,149 @@ export async function getWorktreeStatus(
     uncommittedFileCount,
     untrackedFileCount,
     unpushedCommitCount,
+  };
+}
+
+/**
+ * Result of copying env files to a worktree
+ */
+export interface CopyEnvFilesResult {
+  /** Files that were successfully copied */
+  copied: string[];
+  /** Files that were skipped (didn't exist or weren't readable) */
+  skipped: string[];
+}
+
+/**
+ * Copy environment files from source repository to worktree.
+ *
+ * Copies development-related .env files that are typically gitignored.
+ * This helps new worktrees have the same environment configuration
+ * as the main repository without manual copying.
+ *
+ * Security: Does NOT copy production env files (.env.production, etc.)
+ *
+ * @param sourceRepoPath - Path to the main repository
+ * @param worktreePath - Path to the worktree
+ * @returns Result indicating which files were copied and skipped
+ */
+export function copyEnvFilesToWorktree(
+  sourceRepoPath: string,
+  worktreePath: string
+): CopyEnvFilesResult {
+  const result: CopyEnvFilesResult = {
+    copied: [],
+    skipped: [],
+  };
+
+  for (const envFile of ENV_FILES_TO_COPY) {
+    const sourcePath = join(sourceRepoPath, envFile);
+    const targetPath = join(worktreePath, envFile);
+
+    try {
+      // Check if source file exists and is readable
+      accessSync(sourcePath, fsConstants.R_OK);
+
+      // Check if target already exists (don't overwrite)
+      if (existsSync(targetPath)) {
+        console.log(`Skipping ${envFile}: already exists in worktree`);
+        result.skipped.push(envFile);
+        continue;
+      }
+
+      // Copy the file
+      copyFileSync(sourcePath, targetPath);
+      console.log(`Copied ${envFile} to worktree`);
+      result.copied.push(envFile);
+    } catch {
+      // File doesn't exist or isn't readable - skip silently
+      result.skipped.push(envFile);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Create a new worktree for a branch, optionally copying env files.
+ *
+ * This is a convenience wrapper around createWorktree that also
+ * copies environment files after the worktree is created.
+ *
+ * @param repoPath - Path to the main repository
+ * @param branch - Branch name to checkout in the worktree
+ * @param options - Additional options
+ * @returns The worktree path and copy result
+ */
+export async function createWorktreeWithEnv(
+  repoPath: string,
+  branch: string,
+  options: {
+    worktreePath?: string;
+    createBranch?: boolean;
+    copyEnvFiles?: boolean;
+  } = {}
+): Promise<{ worktreePath: string; envFilesCopied: CopyEnvFilesResult }> {
+  const { worktreePath, createBranch = false, copyEnvFiles = true } = options;
+
+  // Create the worktree
+  const resultPath = await createWorktree(repoPath, branch, worktreePath, createBranch);
+
+  // Copy env files if requested
+  let envResult: CopyEnvFilesResult = { copied: [], skipped: [] };
+  if (copyEnvFiles) {
+    envResult = copyEnvFilesToWorktree(repoPath, resultPath);
+  }
+
+  return {
+    worktreePath: resultPath,
+    envFilesCopied: envResult,
+  };
+}
+
+/**
+ * Create a new branch with worktree, optionally copying env files.
+ *
+ * This is a convenience wrapper around createBranchWithWorktree that also
+ * copies environment files after the worktree is created.
+ *
+ * @param repoPath - Path to the main repository
+ * @param branchName - New branch name
+ * @param options - Additional options
+ * @returns The branch, worktree path, and copy result
+ */
+export async function createBranchWithWorktreeAndEnv(
+  repoPath: string,
+  branchName: string,
+  options: {
+    baseBranch?: string;
+    worktreePath?: string;
+    copyEnvFiles?: boolean;
+  } = {}
+): Promise<{
+  branch: string;
+  worktreePath: string;
+  envFilesCopied: CopyEnvFilesResult;
+}> {
+  const { baseBranch, worktreePath, copyEnvFiles = true } = options;
+
+  // Create the branch and worktree
+  const result = await createBranchWithWorktree(
+    repoPath,
+    branchName,
+    baseBranch,
+    worktreePath
+  );
+
+  // Copy env files if requested
+  let envResult: CopyEnvFilesResult = { copied: [], skipped: [] };
+  if (copyEnvFiles) {
+    envResult = copyEnvFilesToWorktree(repoPath, result.worktreePath);
+  }
+
+  return {
+    branch: result.branch,
+    worktreePath: result.worktreePath,
+    envFilesCopied: envResult,
   };
 }

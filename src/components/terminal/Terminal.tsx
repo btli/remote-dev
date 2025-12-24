@@ -33,6 +33,8 @@ interface TerminalProps {
   notificationsEnabled?: boolean;
   isRecording?: boolean;
   isActive?: boolean;
+  /** Environment variables to inject into new terminal sessions */
+  environmentVars?: Record<string, string> | null;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
@@ -52,6 +54,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   notificationsEnabled = true,
   isRecording = false,
   isActive = false,
+  environmentVars,
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
@@ -273,6 +276,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // Include working directory if specified
         if (projectPath) {
           params.set("cwd", projectPath);
+        }
+        // Include environment variables if specified
+        if (environmentVars && Object.keys(environmentVars).length > 0) {
+          params.set("environmentVars", encodeURIComponent(JSON.stringify(environmentVars)));
         }
 
         const ws = new WebSocket(`${wsUrl}?${params.toString()}`);
@@ -576,7 +583,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       searchAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, environmentVars]);
 
   // Update terminal options when preferences change
   useEffect(() => {

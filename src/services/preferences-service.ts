@@ -17,12 +17,22 @@ import type {
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
+import type { PortValidationResult } from "@/types/environment";
 import { PreferencesServiceError } from "@/lib/errors";
 import {
   DEFAULT_PREFERENCES,
   resolvePreferences,
   buildAncestryChain,
 } from "@/lib/preferences";
+import {
+  parseEnvironmentVars,
+  serializeEnvironmentVars,
+} from "@/lib/environment";
+import {
+  syncPortRegistry,
+  validatePorts,
+  deletePortsForFolder,
+} from "@/services/port-registry-service";
 
 // Re-export for backwards compatibility
 export { PreferencesServiceError, DEFAULT_PREFERENCES };
@@ -190,13 +200,24 @@ export async function getFolderPreferencesChain(
 }
 
 /**
- * Update or create folder preferences
+ * Result of updating folder preferences, including port validation.
+ */
+export interface UpdateFolderPreferencesResult {
+  preferences: FolderPreferences;
+  portValidation: PortValidationResult;
+}
+
+/**
+ * Update or create folder preferences.
+ *
+ * When environmentVars are updated, also syncs the port registry
+ * and returns port conflict validation.
  */
 export async function updateFolderPreferences(
   folderId: string,
   userId: string,
   updates: UpdateFolderPreferencesInput
-): Promise<FolderPreferences> {
+): Promise<UpdateFolderPreferencesResult> {
   // Check if folder exists and belongs to user
   const folder = await db.query.sessionFolders.findFirst({
     where: and(
@@ -209,13 +230,20 @@ export async function updateFolderPreferences(
     throw new PreferencesServiceError("Folder not found", "FOLDER_NOT_FOUND");
   }
 
+  // Prepare database values - serialize environmentVars to JSON
+  const dbUpdates: Record<string, unknown> = { ...updates };
+  if ("environmentVars" in updates) {
+    dbUpdates.environmentVars = serializeEnvironmentVars(updates.environmentVars);
+  }
+
   const existing = await getFolderPreferences(folderId, userId);
+  let result: FolderPreferences;
 
   if (existing) {
     const [updated] = await db
       .update(folderPreferences)
       .set({
-        ...updates,
+        ...dbUpdates,
         updatedAt: new Date(),
       })
       .where(
@@ -226,30 +254,52 @@ export async function updateFolderPreferences(
       )
       .returning();
 
-    return mapDbFolderPreferences(updated);
+    result = mapDbFolderPreferences(updated);
   } else {
     const [created] = await db
       .insert(folderPreferences)
       .values({
         folderId,
         userId,
-        ...updates,
+        ...dbUpdates,
         createdAt: new Date(),
         updatedAt: new Date(),
       })
       .returning();
 
-    return mapDbFolderPreferences(created);
+    result = mapDbFolderPreferences(created);
   }
+
+  // Sync port registry if environmentVars were updated
+  if ("environmentVars" in updates) {
+    await syncPortRegistry(folderId, userId, updates.environmentVars ?? null);
+  }
+
+  // Validate ports and return conflicts
+  const portValidation = await validatePorts(
+    folderId,
+    userId,
+    result.environmentVars
+  );
+
+  return {
+    preferences: result,
+    portValidation,
+  };
 }
 
 /**
- * Delete folder preferences (revert to user defaults)
+ * Delete folder preferences (revert to user defaults).
+ *
+ * Also cleans up the port registry for this folder.
  */
 export async function deleteFolderPreferences(
   folderId: string,
   userId: string
 ): Promise<boolean> {
+  // Clean up port registry first
+  await deletePortsForFolder(folderId, userId);
+
   const result = await db
     .delete(folderPreferences)
     .where(
@@ -305,6 +355,50 @@ export async function getEffectiveActiveFolderId(
   return settings.activeFolderId;
 }
 
+/**
+ * Get resolved environment variables for a folder.
+ *
+ * Resolves environment variables through the folder hierarchy,
+ * handling overrides and disabled variables.
+ *
+ * @param userId - User ID for ownership verification
+ * @param folderId - Folder ID to resolve environment for
+ * @returns Resolved environment or null if no folder specified
+ */
+export async function getResolvedEnvironment(
+  userId: string,
+  folderId?: string | null
+): Promise<import("@/types/environment").ResolvedEnvironment | null> {
+  if (!folderId) {
+    return null;
+  }
+
+  const { resolveEnvironmentVariables } = await import("@/lib/environment");
+
+  const folderPrefsChain = await getFolderPreferencesChain(folderId, userId);
+
+  // User-level env vars not currently supported (could be added later)
+  return resolveEnvironmentVariables(null, folderPrefsChain);
+}
+
+/**
+ * Get the final environment variables for a terminal session.
+ *
+ * Resolves folder environment and returns just the merged variables
+ * (not the full ResolvedEnvironment with metadata).
+ *
+ * @param userId - User ID
+ * @param folderId - Optional folder ID
+ * @returns Record of environment variables or null
+ */
+export async function getEnvironmentForSession(
+  userId: string,
+  folderId?: string | null
+): Promise<Record<string, string> | null> {
+  const resolved = await getResolvedEnvironment(userId, folderId);
+  return resolved?.variables ?? null;
+}
+
 // ============================================================================
 // Database Mappers
 // ============================================================================
@@ -330,21 +424,22 @@ function mapDbUserSettings(
 }
 
 function mapDbFolderPreferences(
-  db: typeof folderPreferences.$inferSelect
+  dbRow: typeof folderPreferences.$inferSelect
 ): FolderPreferences {
   return {
-    id: db.id,
-    folderId: db.folderId,
-    userId: db.userId,
-    defaultWorkingDirectory: db.defaultWorkingDirectory,
-    defaultShell: db.defaultShell,
-    startupCommand: db.startupCommand,
-    theme: db.theme,
-    fontSize: db.fontSize,
-    fontFamily: db.fontFamily,
-    githubRepoId: db.githubRepoId,
-    localRepoPath: db.localRepoPath,
-    createdAt: new Date(db.createdAt),
-    updatedAt: new Date(db.updatedAt),
+    id: dbRow.id,
+    folderId: dbRow.folderId,
+    userId: dbRow.userId,
+    defaultWorkingDirectory: dbRow.defaultWorkingDirectory,
+    defaultShell: dbRow.defaultShell,
+    startupCommand: dbRow.startupCommand,
+    theme: dbRow.theme,
+    fontSize: dbRow.fontSize,
+    fontFamily: dbRow.fontFamily,
+    githubRepoId: dbRow.githubRepoId,
+    localRepoPath: dbRow.localRepoPath,
+    environmentVars: parseEnvironmentVars(dbRow.environmentVars),
+    createdAt: new Date(dbRow.createdAt),
+    updatedAt: new Date(dbRow.updatedAt),
   };
 }
