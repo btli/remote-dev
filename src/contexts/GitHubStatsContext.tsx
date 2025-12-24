@@ -17,7 +17,6 @@ import React, {
 import {
   GITHUB_STATS_TTL_MINUTES,
   type EnrichedRepository,
-  type FolderStats,
   type RefreshResult,
 } from "@/types/github-stats";
 
@@ -136,7 +135,6 @@ interface GitHubStatsContextValue {
   fetchStats: () => Promise<void>;
   markChangesSeen: (repositoryId?: string) => Promise<void>;
   getRepositoryById: (id: string) => EnrichedRepository | undefined;
-  getFolderStats: (folderId: string) => FolderStats | null;
 }
 
 const GitHubStatsContext = createContext<GitHubStatsContextValue | null>(null);
@@ -158,7 +156,6 @@ export function GitHubStatsProvider({
 }: GitHubStatsProviderProps) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const folderStatsCache = useRef<Map<string, FolderStats | null>>(new Map());
 
   // Fetch stats without refreshing from GitHub
   const fetchStats = useCallback(async () => {
@@ -260,17 +257,6 @@ export function GitHubStatsProvider({
     [state.repositories]
   );
 
-  // Get folder stats (with caching)
-  const getFolderStats = useCallback(
-    (folderId: string): FolderStats | null => {
-      // This is a placeholder - in a real implementation,
-      // we'd need to know which repo is linked to which folder
-      // For now, return null and let the component handle it
-      return folderStatsCache.current.get(folderId) ?? null;
-    },
-    []
-  );
-
   // Initial fetch on mount
   useEffect(() => {
     if (isGitHubConnected) {
@@ -311,9 +297,8 @@ export function GitHubStatsProvider({
       fetchStats,
       markChangesSeen,
       getRepositoryById,
-      getFolderStats,
     }),
-    [state, refreshStats, fetchStats, markChangesSeen, getRepositoryById, getFolderStats]
+    [state, refreshStats, fetchStats, markChangesSeen, getRepositoryById]
   );
 
   return (

@@ -6,6 +6,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   type ReactNode,
 } from "react";
 
@@ -263,23 +264,39 @@ export function FolderProvider({ children }: FolderProviderProps) {
     [refreshFolders]
   );
 
+  const contextValue = useMemo(
+    () => ({
+      folders,
+      sessionFolders,
+      loading,
+      createFolder,
+      updateFolder,
+      deleteFolder,
+      toggleFolder,
+      moveSessionToFolder,
+      moveFolderToParent,
+      reorderFolders,
+      refreshFolders,
+      registerSessionFolder,
+    }),
+    [
+      folders,
+      sessionFolders,
+      loading,
+      createFolder,
+      updateFolder,
+      deleteFolder,
+      toggleFolder,
+      moveSessionToFolder,
+      moveFolderToParent,
+      reorderFolders,
+      refreshFolders,
+      registerSessionFolder,
+    ]
+  );
+
   return (
-    <FolderContext.Provider
-      value={{
-        folders,
-        sessionFolders,
-        loading,
-        createFolder,
-        updateFolder,
-        deleteFolder,
-        toggleFolder,
-        moveSessionToFolder,
-        moveFolderToParent,
-        reorderFolders,
-        refreshFolders,
-        registerSessionFolder,
-      }}
-    >
+    <FolderContext.Provider value={contextValue}>
       {children}
     </FolderContext.Provider>
   );

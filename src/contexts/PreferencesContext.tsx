@@ -330,28 +330,48 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     [activeProject.folderId, resolvePreferencesForFolder]
   );
 
+  const contextValue = useMemo(
+    () => ({
+      userSettings,
+      folderPreferences,
+      folders,
+      activeProject,
+      loading,
+      error,
+      currentPreferences,
+      updateUserSettings,
+      getFolderPreferences: getFolderPreferencesById,
+      updateFolderPreferences: updateFolderPreferencesHandler,
+      deleteFolderPreferences: deleteFolderPreferencesHandler,
+      hasFolderPreferences,
+      folderHasRepo,
+      setActiveFolder,
+      resolvePreferencesForFolder,
+      isFromFolder,
+      refreshPreferences,
+    }),
+    [
+      userSettings,
+      folderPreferences,
+      folders,
+      activeProject,
+      loading,
+      error,
+      currentPreferences,
+      updateUserSettings,
+      getFolderPreferencesById,
+      updateFolderPreferencesHandler,
+      deleteFolderPreferencesHandler,
+      hasFolderPreferences,
+      folderHasRepo,
+      setActiveFolder,
+      resolvePreferencesForFolder,
+      refreshPreferences,
+    ]
+  );
+
   return (
-    <PreferencesContext.Provider
-      value={{
-        userSettings,
-        folderPreferences,
-        folders,
-        activeProject,
-        loading,
-        error,
-        currentPreferences,
-        updateUserSettings,
-        getFolderPreferences: getFolderPreferencesById,
-        updateFolderPreferences: updateFolderPreferencesHandler,
-        deleteFolderPreferences: deleteFolderPreferencesHandler,
-        hasFolderPreferences,
-        folderHasRepo,
-        setActiveFolder,
-        resolvePreferencesForFolder,
-        isFromFolder,
-        refreshPreferences,
-      }}
-    >
+    <PreferencesContext.Provider value={contextValue}>
       {children}
     </PreferencesContext.Provider>
   );

@@ -22,7 +22,6 @@ import {
   type EnrichedRepository,
   type RepositoryStats,
   type PullRequest,
-  type FolderStats,
   type RefreshResult,
   type CommitInfo,
   type BranchProtection,
@@ -424,68 +423,8 @@ export async function refreshRepositoryStats(
 }
 
 // =============================================================================
-// Folder Stats Operations
+// Folder-Repository Link Operations
 // =============================================================================
-
-/**
- * Get stats for a folder (if linked to a repository)
- */
-export async function getFolderStats(
-  userId: string,
-  folderId: string
-): Promise<FolderStats | null> {
-  // Check for explicit folder-repository link
-  const folderRepo = await db.query.folderRepositories.findFirst({
-    where: and(
-      eq(folderRepositories.folderId, folderId),
-      eq(folderRepositories.userId, userId)
-    ),
-  });
-
-  if (folderRepo) {
-    const repos = await getEnrichedRepositories(userId);
-    const repo = repos.find((r) => r.id === folderRepo.repositoryId);
-
-    if (repo) {
-      return {
-        folderId,
-        repositoryId: repo.id,
-        repository: repo,
-        prCount: repo.stats.openPRCount,
-        issueCount: repo.stats.openIssueCount,
-        ciStatus: repo.stats.ciStatus?.state ?? null,
-        hasChanges: repo.hasChanges,
-      };
-    }
-  }
-
-  // Check if any session in folder is linked to a repo
-  const session = await db.query.terminalSessions.findFirst({
-    where: and(
-      eq(terminalSessions.folderId, folderId),
-      eq(terminalSessions.userId, userId)
-    ),
-  });
-
-  if (session?.githubRepoId) {
-    const repos = await getEnrichedRepositories(userId);
-    const repo = repos.find((r) => r.id === session.githubRepoId);
-
-    if (repo) {
-      return {
-        folderId,
-        repositoryId: repo.id,
-        repository: repo,
-        prCount: repo.stats.openPRCount,
-        issueCount: repo.stats.openIssueCount,
-        ciStatus: repo.stats.ciStatus?.state ?? null,
-        hasChanges: repo.hasChanges,
-      };
-    }
-  }
-
-  return null;
-}
 
 /**
  * Link a folder to a repository

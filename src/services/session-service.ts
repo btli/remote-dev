@@ -483,49 +483,6 @@ export async function reorderSessions(
   );
 }
 
-/**
- * Recover sessions after server restart
- * Checks if tmux sessions still exist and updates status accordingly
- */
-export async function recoverSessions(userId: string): Promise<{
-  recovered: string[];
-  lost: string[];
-}> {
-  const sessions = await listSessions(userId, ["active", "suspended"]);
-  const recovered: string[] = [];
-  const lost: string[] = [];
-
-  for (const session of sessions) {
-    const exists = await TmuxService.sessionExists(session.tmuxSessionName);
-    if (exists) {
-      recovered.push(session.id);
-    } else {
-      // Mark as closed if tmux session is gone
-      await db
-        .update(terminalSessions)
-        .set({ status: "closed", updatedAt: new Date() })
-        .where(eq(terminalSessions.id, session.id));
-      lost.push(session.id);
-    }
-  }
-
-  return { recovered, lost };
-}
-
-/**
- * Clean up orphaned tmux sessions that aren't in the database or are closed
- */
-export async function cleanupOrphanedTmuxSessions(userId: string): Promise<string[]> {
-  const sessions = await listSessions(userId);
-  // Only active or suspended sessions should have a running tmux instance
-  const validSessionNames = new Set(
-    sessions
-      .filter((s) => s.status === "active" || s.status === "suspended")
-      .map((s) => s.tmuxSessionName)
-  );
-  return TmuxService.cleanupOrphanedSessions(validSessionNames, "rdv-");
-}
-
 // Helper to map database result to TypeScript type
 function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect): TerminalSession {
   return {
