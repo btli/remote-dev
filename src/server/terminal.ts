@@ -90,6 +90,7 @@ interface TerminalSession {
   lastRows: number;
   pendingResize: { cols: number; rows: number } | null;
   resizeTimeout: ReturnType<typeof setTimeout> | null;
+  envInjectionTimeout: ReturnType<typeof setTimeout> | null;
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -165,6 +166,88 @@ function attachToTmuxSession(
   return ptyProcess;
 }
 
+/**
+ * Inject environment variables into a PTY session.
+ *
+ * Sends export commands to set the environment variables in the shell.
+ * This is used for new sessions to set up the environment from folder preferences.
+ *
+ * SECURITY: Values are properly escaped to prevent command injection.
+ */
+function injectEnvironmentVariables(
+  ptyProcess: IPty,
+  envVars: Record<string, string>
+): void {
+  if (!envVars || Object.keys(envVars).length === 0) {
+    return;
+  }
+
+  // Build export commands, escaping values to prevent injection
+  const exports = Object.entries(envVars)
+    .map(([key, value]) => {
+      // SECURITY: Escape single quotes in values to prevent injection
+      // Replace ' with '\'' (end quote, escaped quote, start quote)
+      const escapedValue = value.replace(/'/g, "'\\''");
+      return `export ${key}='${escapedValue}'`;
+    })
+    .join("; ");
+
+  // Send the export commands followed by clear (to hide the export commands)
+  // The \r simulates pressing Enter
+  ptyProcess.write(`${exports}; clear\r`);
+}
+
+/**
+ * Parse environment variables from WebSocket query.
+ *
+ * SECURITY: Validates and sanitizes the input to prevent injection attacks.
+ */
+function parseEnvironmentVarsFromQuery(
+  envVarsJson: string | undefined
+): Record<string, string> | null {
+  if (!envVarsJson) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(decodeURIComponent(envVarsJson));
+
+    // Validate it's an object
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      console.warn("Invalid environmentVars format, expected object");
+      return null;
+    }
+
+    // Validate all keys and values are strings
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      // SECURITY: Only allow valid env var names (uppercase alphanumeric + underscore)
+      if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+        console.warn(`Skipping invalid env var key: ${key}`);
+        continue;
+      }
+
+      if (typeof value !== "string") {
+        console.warn(`Skipping non-string env var value for: ${key}`);
+        continue;
+      }
+
+      // SECURITY: Limit value length to prevent abuse
+      if (value.length > 10240) {
+        console.warn(`Skipping oversized env var value for: ${key}`);
+        continue;
+      }
+
+      result[key] = value;
+    }
+
+    return Object.keys(result).length > 0 ? result : null;
+  } catch (error) {
+    console.warn("Failed to parse environmentVars JSON:", error);
+    return null;
+  }
+}
+
 export function createTerminalServer(port: number = 3001) {
   // Check tmux is installed at startup
   if (!checkTmuxInstalled()) {
@@ -203,6 +286,7 @@ export function createTerminalServer(port: number = 3001) {
     const cols = parseInt(query.cols as string) || 80;
     const rows = parseInt(query.rows as string) || 24;
     const rawCwd = query.cwd as string | undefined;
+    const rawEnvVars = query.environmentVars as string | undefined;
 
     // SECURITY: Validate tmux session name to prevent command injection
     if (!validateSessionName(tmuxSessionName)) {
@@ -213,6 +297,9 @@ export function createTerminalServer(port: number = 3001) {
 
     // SECURITY: Validate cwd to prevent path traversal
     const cwd = validatePath(rawCwd);
+
+    // Parse environment variables from query
+    const envVars = parseEnvironmentVarsFromQuery(rawEnvVars);
 
     // Check if this is an existing session we're reconnecting to
     const isExistingSession = tmuxSessionExists(tmuxSessionName);
@@ -264,11 +351,26 @@ export function createTerminalServer(port: number = 3001) {
       lastRows: rows,
       pendingResize: null,
       resizeTimeout: null,
+      envInjectionTimeout: null,
     };
 
     sessions.set(sessionId, session);
 
     console.log(`Terminal session ${sessionId} started (${cols}x${rows}) - tmux: ${tmuxSessionName}`);
+
+    // Inject environment variables into new sessions (not reconnections)
+    if (!isExistingSession && envVars) {
+      console.log(`Injecting ${Object.keys(envVars).length} environment variables`);
+      // Small delay to ensure the shell is ready to receive commands
+      // Store timeout ID so it can be cancelled if session closes early
+      session.envInjectionTimeout = setTimeout(() => {
+        session.envInjectionTimeout = null;
+        // Only inject if session is still active
+        if (sessions.has(sessionId)) {
+          injectEnvironmentVariables(ptyProcess, envVars);
+        }
+      }, 100);
+    }
 
     ptyProcess.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -286,6 +388,10 @@ export function createTerminalServer(port: number = 3001) {
         clearTimeout(session.resizeTimeout);
         session.resizeTimeout = null;
         session.pendingResize = null;
+      }
+      if (session.envInjectionTimeout) {
+        clearTimeout(session.envInjectionTimeout);
+        session.envInjectionTimeout = null;
       }
       sessions.delete(sessionId);
     });
@@ -375,6 +481,10 @@ export function createTerminalServer(port: number = 3001) {
         session.resizeTimeout = null;
         session.pendingResize = null;
       }
+      if (session.envInjectionTimeout) {
+        clearTimeout(session.envInjectionTimeout);
+        session.envInjectionTimeout = null;
+      }
       sessions.delete(sessionId);
     });
 
@@ -385,6 +495,10 @@ export function createTerminalServer(port: number = 3001) {
         clearTimeout(session.resizeTimeout);
         session.resizeTimeout = null;
         session.pendingResize = null;
+      }
+      if (session.envInjectionTimeout) {
+        clearTimeout(session.envInjectionTimeout);
+        session.envInjectionTimeout = null;
       }
       sessions.delete(sessionId);
     });

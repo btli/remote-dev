@@ -43,6 +43,13 @@
       "when": 1766514097256,
       "tag": "0005_demonic_hannibal_king",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1766602055780,
+      "tag": "0006_modern_fenris",
+      "breakpoints": true
     }
   ]
 }

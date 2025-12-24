@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2 } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -22,8 +22,10 @@ import {
 } from "@/components/ui/select";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import type { UpdateFolderPreferencesInput, Preferences } from "@/types/preferences";
+import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types/environment";
 import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
+import { EnvVarEditor } from "./EnvVarEditor";
 
 interface GitHubRepo {
   id: string;
@@ -111,7 +113,60 @@ export function FolderPreferencesModal({
   const [repoError, setRepoError] = useState<string | null>(null);
   const [repoMode, setRepoMode] = useState<"github" | "local" | "none">("none");
 
+  // Environment variables state
+  const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
+  const [portConflicts, setPortConflicts] = useState<PortConflict[]>([]);
+  const [loadingEnvVars, setLoadingEnvVars] = useState(false);
+
   const folderPrefs = getFolderPreferences(folderId);
+
+  // Fetch resolved environment variables for this folder
+  const fetchResolvedEnvironment = useCallback(async () => {
+    setLoadingEnvVars(true);
+    try {
+      // Fetch from parent folder (not this folder) to get what would be inherited
+      const response = await fetch(
+        `/api/preferences/folders/${folderId}/environment`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        // Filter to only show inherited vars (from parent chain, not this folder's local overrides)
+        const inherited = (data.resolved || []).filter(
+          (v: ResolvedEnvVar) =>
+            v.source.type !== "folder" || v.source.folderId !== folderId
+        );
+        setInheritedEnvVars(inherited);
+        setPortConflicts(data.portConflicts || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch resolved environment:", error);
+    } finally {
+      setLoadingEnvVars(false);
+    }
+  }, [folderId]);
+
+  // Validate ports when local env vars change
+  const validatePortConflicts = useCallback(
+    async (envVars: EnvironmentVariables | null) => {
+      try {
+        const response = await fetch(
+          `/api/preferences/folders/${folderId}/validate-ports`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ environmentVars: envVars }),
+          }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          setPortConflicts(data.conflicts || []);
+        }
+      } catch (error) {
+        console.error("Failed to validate ports:", error);
+      }
+    },
+    [folderId]
+  );
 
   // Fetch GitHub repos when modal opens
   const fetchRepos = useCallback(async () => {
@@ -138,6 +193,7 @@ export function FolderPreferencesModal({
     if (open) {
       setLocalSettings({});
       fetchRepos();
+      fetchResolvedEnvironment();
 
       // Determine initial repo mode based on existing folder preferences
       if (folderPrefs?.githubRepoId) {
@@ -148,7 +204,7 @@ export function FolderPreferencesModal({
         setRepoMode("none");
       }
     }
-  }, [open, folderPrefs?.githubRepoId, folderPrefs?.localRepoPath, fetchRepos]);
+  }, [open, folderPrefs?.githubRepoId, folderPrefs?.localRepoPath, fetchRepos, fetchResolvedEnvironment]);
 
   const handleSave = async () => {
     if (Object.keys(localSettings).length === 0) {
@@ -159,8 +215,16 @@ export function FolderPreferencesModal({
     setSaving(true);
     setSaveError(null);
     try {
-      await updateFolderPreferences(folderId, localSettings);
-      onClose();
+      const validation = await updateFolderPreferences(folderId, localSettings);
+
+      // Update port conflicts from validation result
+      if (validation?.hasConflicts) {
+        setPortConflicts(validation.conflicts);
+        // Don't close - show the warnings
+      } else {
+        setPortConflicts([]);
+        onClose();
+      }
     } catch (error) {
       console.error("Failed to save folder preferences:", error);
       setSaveError(error instanceof Error ? error.message : "Failed to save preferences. Please try again.");
@@ -219,6 +283,28 @@ export function FolderPreferencesModal({
   const isOverridden = (key: keyof UpdateFolderPreferencesInput): boolean => {
     const value = getValue(key);
     return value !== null && value !== undefined;
+  };
+
+  // Get current env vars (local changes or folder prefs or null)
+  const getCurrentEnvVars = (): EnvironmentVariables | null => {
+    if ("environmentVars" in localSettings) {
+      return localSettings.environmentVars ?? null;
+    }
+    return folderPrefs?.environmentVars ?? null;
+  };
+
+  // Handle environment variable changes
+  const handleEnvVarsChange = (envVars: EnvironmentVariables | null) => {
+    setValue("environmentVars", envVars);
+    // Validate ports after change
+    validatePortConflicts(envVars);
+  };
+
+  // Handle using a suggested port
+  const handleUseSuggestedPort = (varName: string, port: number) => {
+    const current = getCurrentEnvVars() || {};
+    const updated = { ...current, [varName]: String(port) };
+    handleEnvVarsChange(updated);
   };
 
   return (
@@ -566,11 +652,65 @@ export function FolderPreferencesModal({
               />
             )}
           </div>
+
+          {/* Environment Variables */}
+          <div className="space-y-3 pt-4 border-t border-white/5">
+            <div className="flex items-center justify-between">
+              <Label className="text-slate-300 flex items-center gap-2">
+                <Terminal className="w-4 h-4" />
+                Environment Variables
+              </Label>
+              {isOverridden("environmentVars") && (
+                <span className="text-xs text-violet-400">Configured</span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              Set environment variables for terminal sessions in this folder.
+              Variables are inherited from parent folders and can be overridden or disabled.
+            </p>
+            {loadingEnvVars ? (
+              <div className="flex items-center justify-center py-4 text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                Loading environment...
+              </div>
+            ) : (
+              <EnvVarEditor
+                localEnvVars={getCurrentEnvVars()}
+                inheritedEnvVars={inheritedEnvVars}
+                portConflicts={portConflicts}
+                onChange={handleEnvVarsChange}
+                onUseSuggestedPort={handleUseSuggestedPort}
+              />
+            )}
+          </div>
         </div>
 
         <div className="flex flex-col gap-2 pt-4 border-t border-white/5">
           {saveError && (
             <p className="text-sm text-red-400">{saveError}</p>
+          )}
+          {portConflicts.length > 0 && (
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <div className="flex items-center gap-2 text-amber-400 mb-2">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-sm font-medium">Port Conflicts Detected</span>
+              </div>
+              <ul className="text-sm text-amber-300/80 space-y-1">
+                {portConflicts.map((conflict, idx) => (
+                  <li key={idx}>
+                    Port {conflict.port} ({conflict.variableName}) conflicts with folder &quot;{conflict.conflictingFolder.name}&quot;
+                    {conflict.suggestedPort && (
+                      <span className="text-slate-400 ml-1">
+                        (suggested: {conflict.suggestedPort})
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-slate-400 mt-2">
+                Changes saved. You may want to update the conflicting ports.
+              </p>
+            </div>
           )}
           <div className="flex justify-between">
             {folderPrefs && (
