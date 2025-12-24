@@ -6,6 +6,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   type ReactNode,
 } from "react";
 import type { TrashItem, TrashItemWithMetadata, RestoreOptions } from "@/types/trash";
@@ -239,22 +240,35 @@ export function TrashProvider({ children }: TrashProviderProps) {
     []
   );
 
+  const contextValue = useMemo(
+    () => ({
+      trashItems,
+      loading,
+      isEmpty: trashItems.length === 0,
+      count: trashItems.length,
+      refreshTrash,
+      getTrashItem,
+      trashSession,
+      restoreItem,
+      deleteItem,
+      cleanupExpired,
+      checkRestoreAvailability,
+    }),
+    [
+      trashItems,
+      loading,
+      refreshTrash,
+      getTrashItem,
+      trashSession,
+      restoreItem,
+      deleteItem,
+      cleanupExpired,
+      checkRestoreAvailability,
+    ]
+  );
+
   return (
-    <TrashContext.Provider
-      value={{
-        trashItems,
-        loading,
-        isEmpty: trashItems.length === 0,
-        count: trashItems.length,
-        refreshTrash,
-        getTrashItem,
-        trashSession,
-        restoreItem,
-        deleteItem,
-        cleanupExpired,
-        checkRestoreAvailability,
-      }}
-    >
+    <TrashContext.Provider value={contextValue}>
       {children}
     </TrashContext.Provider>
   );

@@ -8,7 +8,7 @@ import {
   githubRepositoryStats,
   githubChangeNotifications,
 } from "@/db/schema";
-import { eq, and, lt, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { GITHUB_STATS_TTL_MINUTES, type CacheMetadata } from "@/types/github-stats";
 
 export class CacheServiceError extends Error {
@@ -137,23 +137,6 @@ export async function invalidateUserCaches(userId: string): Promise<void> {
   for (const repo of repos) {
     await invalidateCache(repo.id);
   }
-}
-
-/**
- * Clean up expired caches older than threshold
- */
-export async function cleanupExpiredCaches(
-  olderThanHours: number = 24
-): Promise<number> {
-  const threshold = new Date(
-    Date.now() - olderThanHours * 60 * 60 * 1000
-  );
-
-  const result = await db
-    .delete(githubRepositoryStats)
-    .where(lt(githubRepositoryStats.expiresAt, threshold));
-
-  return result.rowsAffected;
 }
 
 // =============================================================================

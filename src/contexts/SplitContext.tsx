@@ -6,6 +6,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   type ReactNode,
 } from "react";
 import type {
@@ -61,25 +62,27 @@ export function SplitProvider({ children }: SplitProviderProps) {
       setSplits(data.splits || []);
 
       // Initialize active panes for each split (first session by default)
-      const newActivePanes: Record<string, string> = {};
-      for (const split of data.splits || []) {
-        if (split.sessions.length > 0 && !activePanes[split.id]) {
-          newActivePanes[split.id] = split.sessions[0].sessionId;
+      // Use functional updater to avoid dependency on activePanes
+      setActivePanes((prev) => {
+        const newActivePanes: Record<string, string> = { ...prev };
+        for (const split of data.splits || []) {
+          if (split.sessions.length > 0 && !prev[split.id]) {
+            newActivePanes[split.id] = split.sessions[0].sessionId;
+          }
         }
-      }
-      setActivePanes((prev) => ({ ...prev, ...newActivePanes }));
+        return newActivePanes;
+      });
     } catch (error) {
       console.error("Error fetching splits:", error);
     } finally {
       setLoading(false);
     }
-  }, [activePanes]);
+  }, []);
 
   // Fetch splits on mount
   useEffect(() => {
     refreshSplits();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshSplits]);
 
   const createSplit = useCallback(
     async (
@@ -297,23 +300,39 @@ export function SplitProvider({ children }: SplitProviderProps) {
     [splits]
   );
 
+  const contextValue = useMemo(
+    () => ({
+      splits,
+      activePanes,
+      loading,
+      createSplit,
+      addToSplit,
+      removeFromSplit,
+      updateLayout,
+      changeSplitDirection,
+      dissolveSplit,
+      setActivePaneInSplit,
+      getSplitForSession,
+      refreshSplits,
+    }),
+    [
+      splits,
+      activePanes,
+      loading,
+      createSplit,
+      addToSplit,
+      removeFromSplit,
+      updateLayout,
+      changeSplitDirection,
+      dissolveSplit,
+      setActivePaneInSplit,
+      getSplitForSession,
+      refreshSplits,
+    ]
+  );
+
   return (
-    <SplitContext.Provider
-      value={{
-        splits,
-        activePanes,
-        loading,
-        createSplit,
-        addToSplit,
-        removeFromSplit,
-        updateLayout,
-        changeSplitDirection,
-        dissolveSplit,
-        setActivePaneInSplit,
-        getSplitForSession,
-        refreshSplits,
-      }}
-    >
+    <SplitContext.Provider value={contextValue}>
       {children}
     </SplitContext.Provider>
   );

@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   type ReactNode,
 } from "react";
 import type {
@@ -376,20 +377,33 @@ export function SessionProvider({
     [refreshSessions]
   );
 
+  const contextValue = useMemo(
+    () => ({
+      ...state,
+      createSession,
+      updateSession,
+      closeSession,
+      suspendSession,
+      resumeSession,
+      setActiveSession,
+      reorderSessions,
+      refreshSessions,
+    }),
+    [
+      state,
+      createSession,
+      updateSession,
+      closeSession,
+      suspendSession,
+      resumeSession,
+      setActiveSession,
+      reorderSessions,
+      refreshSessions,
+    ]
+  );
+
   return (
-    <SessionContext.Provider
-      value={{
-        ...state,
-        createSession,
-        updateSession,
-        closeSession,
-        suspendSession,
-        resumeSession,
-        setActiveSession,
-        reorderSessions,
-        refreshSessions,
-      }}
-    >
+    <SessionContext.Provider value={contextValue}>
       {children}
     </SessionContext.Provider>
   );
