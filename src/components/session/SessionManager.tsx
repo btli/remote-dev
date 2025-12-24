@@ -9,12 +9,14 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { RecordingsModal } from "@/components/session/RecordingsModal";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
+import { TrashModal } from "@/components/trash/TrashModal";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSplitContext } from "@/contexts/SplitContext";
+import { useTrashContext } from "@/contexts/TrashContext";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -143,6 +145,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     reorderFolders,
     registerSessionFolder,
   } = useFolderContext();
+
+  // Trash state from context
+  const { count: trashCount, trashSession } = useTrashContext();
+  const [isTrashOpen, setIsTrashOpen] = useState(false);
 
   // Preferences state from context
   const {
@@ -427,12 +433,30 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleCloseSession = useCallback(
     async (sessionId: string, options?: { deleteWorktree?: boolean }) => {
       try {
-        await closeSession(sessionId, options);
+        // If explicitly deleting worktree, use the delete option
+        if (options?.deleteWorktree) {
+          await closeSession(sessionId, options);
+          return;
+        }
+
+        // Check if this session has a worktree - if so, trash it instead of closing
+        const session = sessions.find((s) => s.id === sessionId);
+        if (session?.worktreeBranch && session?.projectPath) {
+          // Trash worktree session for recovery
+          const success = await trashSession(sessionId);
+          if (!success) {
+            // Fallback to regular close if trash fails
+            await closeSession(sessionId);
+          }
+        } else {
+          // Regular close for non-worktree sessions
+          await closeSession(sessionId);
+        }
       } catch (error) {
         logSessionError("close session", error);
       }
     },
-    [closeSession, logSessionError]
+    [sessions, trashSession, closeSession, logSessionError]
   );
 
   const handleRenameSession = useCallback(
@@ -668,9 +692,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         }
       }
 
-      // Close the session
+      // Close the session - pass deleteWorktree to bypass trash when worktree was deleted
       try {
-        await closeSession(session.id);
+        await closeSession(session.id, deleteWorktree ? { deleteWorktree: true } : undefined);
       } catch (error) {
         logSessionError("close session", error);
       }
@@ -871,6 +895,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderNewWorktree={handleFolderNewWorktree}
             onFolderMove={handleMoveFolder}
             onFolderReorder={handleReorderFolders}
+            trashCount={trashCount}
+            onTrashOpen={() => setIsTrashOpen(true)}
           />
       </div>
 
@@ -1134,6 +1160,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         duration={recordingDuration}
         sessionName={activeSessions.find((s) => s.id === activeSessionId)?.name}
       />
+
+      {/* Trash Modal */}
+      <TrashModal open={isTrashOpen} onClose={() => setIsTrashOpen(false)} />
     </div>
   );
 }
