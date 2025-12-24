@@ -1,63 +1,44 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
 import type { SplitDirection } from "@/types/split";
 
 /**
  * GET /api/splits - Get all split groups for the current user
  */
-export async function GET() {
+export const GET = withAuth(async (_request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const splits = await SplitService.listSplitGroups(session.user.id);
-
+    const splits = await SplitService.listSplitGroups(userId);
     return NextResponse.json({ splits });
   } catch (error) {
     console.error("Error fetching splits:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch splits" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to fetch splits", 500);
   }
-}
+});
 
 /**
  * POST /api/splits - Create a new split from an existing session
  */
-export async function POST(request: Request) {
+export const POST = withAuth(async (request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await request.json();
-    const { sourceSessionId, direction, newSessionName } = body as {
+    const result = await parseJsonBody<{
       sourceSessionId: string;
       direction: SplitDirection;
       newSessionName?: string;
-    };
+    }>(request);
+    if ("error" in result) return result.error;
+    const { sourceSessionId, direction, newSessionName } = result.data;
 
     if (!sourceSessionId) {
-      return NextResponse.json(
-        { error: "sourceSessionId is required" },
-        { status: 400 }
-      );
+      return errorResponse("sourceSessionId is required", 400, "MISSING_SOURCE_SESSION");
     }
 
     if (!direction || !["horizontal", "vertical"].includes(direction)) {
-      return NextResponse.json(
-        { error: "direction must be 'horizontal' or 'vertical'" },
-        { status: 400 }
-      );
+      return errorResponse("direction must be 'horizontal' or 'vertical'", 400, "INVALID_DIRECTION");
     }
 
     const split = await SplitService.createSplit(
-      session.user.id,
+      userId,
       sourceSessionId,
       direction,
       newSessionName
@@ -67,14 +48,8 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Error creating split:", error);
     if (error instanceof SplitService.SplitServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
-    return NextResponse.json(
-      { error: "Failed to create split" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to create split", 500);
   }
-}
+});

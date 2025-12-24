@@ -1,30 +1,26 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * POST /api/splits/:id/sessions - Add a session to the split
  */
-export async function POST(request: Request, { params }: RouteParams) {
+export const POST = withAuth(async (request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const splitGroupId = params?.id;
+    if (!splitGroupId) {
+      return errorResponse("Split ID is required", 400, "MISSING_ID");
     }
 
-    const { id: splitGroupId } = await params;
-    const body = await request.json();
-    const { sessionId, newSessionName } = body as {
+    const result = await parseJsonBody<{
       sessionId?: string;
       newSessionName?: string;
-    };
+    }>(request);
+    if ("error" in result) return result.error;
+    const { sessionId, newSessionName } = result.data;
 
     const split = await SplitService.addToSplit(
-      session.user.id,
+      userId,
       splitGroupId,
       sessionId,
       newSessionName
@@ -34,48 +30,29 @@ export async function POST(request: Request, { params }: RouteParams) {
   } catch (error) {
     console.error("Error adding to split:", error);
     if (error instanceof SplitService.SplitServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
-    return NextResponse.json(
-      { error: "Failed to add to split" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to add to split", 500);
   }
-}
+});
 
 /**
  * DELETE /api/splits/:id/sessions - Remove a session from the split
  */
-export async function DELETE(request: Request, context: RouteParams) {
-  // Context param required by Next.js App Router but not used in this handler
-  void context;
+export const DELETE = withAuth(async (request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const url = new URL(request.url);
     const sessionId = url.searchParams.get("sessionId");
 
     if (!sessionId) {
-      return NextResponse.json(
-        { error: "sessionId query parameter is required" },
-        { status: 400 }
-      );
+      return errorResponse("sessionId query parameter is required", 400, "MISSING_SESSION_ID");
     }
 
-    await SplitService.removeFromSplit(session.user.id, sessionId);
+    await SplitService.removeFromSplit(userId, sessionId);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error removing from split:", error);
-    return NextResponse.json(
-      { error: "Failed to remove from split" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to remove from split", 500);
   }
-}
+});
