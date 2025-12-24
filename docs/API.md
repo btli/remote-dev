@@ -87,7 +87,7 @@ POST /api/sessions
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | No | Display name (default: "Terminal") |
+| `name` | string | No | Display name (default: folder name or "Terminal") |
 | `projectPath` | string | No | Working directory path (must be absolute) |
 | `githubRepoId` | string | No | Associated GitHub repository UUID |
 | `worktreeBranch` | string | No | Git worktree branch name |
