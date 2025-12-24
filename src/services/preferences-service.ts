@@ -270,17 +270,18 @@ export async function updateFolderPreferences(
     result = mapDbFolderPreferences(created);
   }
 
-  // Sync port registry if environmentVars were updated
-  if ("environmentVars" in updates) {
-    await syncPortRegistry(folderId, userId, updates.environmentVars ?? null);
-  }
-
-  // Validate ports and return conflicts
+  // Validate ports BEFORE syncing to detect conflicts against committed state
+  // This prevents TOCTOU issues where concurrent updates could miss conflicts
   const portValidation = await validatePorts(
     folderId,
     userId,
     result.environmentVars
   );
+
+  // Sync port registry if environmentVars were updated
+  if ("environmentVars" in updates) {
+    await syncPortRegistry(folderId, userId, updates.environmentVars ?? null);
+  }
 
   return {
     preferences: result,

@@ -184,6 +184,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     currentPreferences,
     setActiveFolder,
     resolvePreferencesForFolder,
+    getEnvironmentForFolder,
   } = usePreferencesContext();
 
   // GitHub stats for repo badges on folders
@@ -1130,6 +1131,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     onResize={handleSplitResize}
                     onSessionExit={handlePaneSessionExit}
                     resolvePreferences={resolvePreferencesForFolder}
+                    getEnvironmentForFolder={getEnvironmentForFolder}
                     sessionFolders={sessionFolders}
                     wsUrl={wsUrl}
                   />
@@ -1163,6 +1165,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           notificationsEnabled={true}
                           isRecording={isRecording}
                           isActive={session.id === activeSessionId}
+                          environmentVars={getEnvironmentForFolder(folderId)}
                           onOutput={isRecording ? recordOutput : undefined}
                           onDimensionsChange={isRecording ? updateDimensions : undefined}
                           onSessionRestart={() => handleSessionRestart(session)}

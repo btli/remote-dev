@@ -18,11 +18,13 @@ import type {
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
+import type { PortValidationResult } from "@/types/environment";
 import {
   resolvePreferences,
   buildAncestryChain,
   isFromFolder,
 } from "@/lib/preferences";
+import { resolveEnvironmentVariables } from "@/lib/environment";
 
 interface PreferencesContextValue {
   // State
@@ -44,7 +46,7 @@ interface PreferencesContextValue {
   updateFolderPreferences: (
     folderId: string,
     updates: UpdateFolderPreferencesInput
-  ) => Promise<void>;
+  ) => Promise<PortValidationResult | undefined>;
   deleteFolderPreferences: (folderId: string) => Promise<void>;
   hasFolderPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
@@ -52,6 +54,7 @@ interface PreferencesContextValue {
   // Active project management
   setActiveFolder: (folderId: string | null, pinned?: boolean) => void;
   resolvePreferencesForFolder: (folderId: string | null) => ResolvedPreferences;
+  getEnvironmentForFolder: (folderId: string | null) => Record<string, string> | null;
 
   // Utilities
   isFromFolder: typeof isFromFolder;
@@ -214,7 +217,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   );
 
   const updateFolderPreferencesHandler = useCallback(
-    async (folderId: string, updates: UpdateFolderPreferencesInput) => {
+    async (folderId: string, updates: UpdateFolderPreferencesInput): Promise<PortValidationResult | undefined> => {
       try {
         const response = await fetch(`/api/preferences/folders/${folderId}`, {
           method: "PUT",
@@ -226,12 +229,18 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           throw new Error("Failed to update folder preferences");
         }
 
-        const updated = await response.json();
+        const result = await response.json();
+        // Extract portValidation from response (rest is the preferences)
+        const { portValidation, ...preferences } = result;
+
         setFolderPreferences((prev) => {
           const next = new Map(prev);
-          next.set(folderId, updated);
+          next.set(folderId, preferences);
           return next;
         });
+
+        // Return port validation for UI to display warnings
+        return portValidation as PortValidationResult | undefined;
       } catch (error) {
         console.error("Error updating folder preferences:", error);
         throw error;
@@ -281,6 +290,24 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       return resolvePreferences(userSettings, chain);
     },
     [userSettings, folderPreferences, folders]
+  );
+
+  /**
+   * Get resolved environment variables for a folder.
+   * Returns the merged variables after applying hierarchy inheritance.
+   */
+  const getEnvironmentForFolder = useCallback(
+    (folderId: string | null): Record<string, string> | null => {
+      if (!folderId) return null;
+
+      // Build the ancestry chain
+      const chain = buildAncestryChain(folderId, folderPreferences, folders);
+
+      // Resolve environment variables through the chain
+      const resolved = resolveEnvironmentVariables(null, chain);
+      return resolved?.variables ?? null;
+    },
+    [folderPreferences, folders]
   );
 
   const setActiveFolder = useCallback(
@@ -347,6 +374,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       folderHasRepo,
       setActiveFolder,
       resolvePreferencesForFolder,
+      getEnvironmentForFolder,
       isFromFolder,
       refreshPreferences,
     }),
@@ -366,6 +394,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       folderHasRepo,
       setActiveFolder,
       resolvePreferencesForFolder,
+      getEnvironmentForFolder,
       refreshPreferences,
     ]
   );

@@ -90,6 +90,7 @@ interface TerminalSession {
   lastRows: number;
   pendingResize: { cols: number; rows: number } | null;
   resizeTimeout: ReturnType<typeof setTimeout> | null;
+  envInjectionTimeout: ReturnType<typeof setTimeout> | null;
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -324,15 +325,6 @@ export function createTerminalServer(port: number = 3001) {
         createTmuxSession(tmuxSessionName, cols, rows, cwd);
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
 
-        // Inject environment variables into the new session
-        if (envVars) {
-          console.log(`Injecting ${Object.keys(envVars).length} environment variables`);
-          // Small delay to ensure the shell is ready to receive commands
-          setTimeout(() => {
-            injectEnvironmentVariables(ptyProcess, envVars);
-          }, 100);
-        }
-
         ws.send(JSON.stringify({
           type: "session_created",
           sessionId,
@@ -359,11 +351,26 @@ export function createTerminalServer(port: number = 3001) {
       lastRows: rows,
       pendingResize: null,
       resizeTimeout: null,
+      envInjectionTimeout: null,
     };
 
     sessions.set(sessionId, session);
 
     console.log(`Terminal session ${sessionId} started (${cols}x${rows}) - tmux: ${tmuxSessionName}`);
+
+    // Inject environment variables into new sessions (not reconnections)
+    if (!isExistingSession && envVars) {
+      console.log(`Injecting ${Object.keys(envVars).length} environment variables`);
+      // Small delay to ensure the shell is ready to receive commands
+      // Store timeout ID so it can be cancelled if session closes early
+      session.envInjectionTimeout = setTimeout(() => {
+        session.envInjectionTimeout = null;
+        // Only inject if session is still active
+        if (sessions.has(sessionId)) {
+          injectEnvironmentVariables(ptyProcess, envVars);
+        }
+      }, 100);
+    }
 
     ptyProcess.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -381,6 +388,10 @@ export function createTerminalServer(port: number = 3001) {
         clearTimeout(session.resizeTimeout);
         session.resizeTimeout = null;
         session.pendingResize = null;
+      }
+      if (session.envInjectionTimeout) {
+        clearTimeout(session.envInjectionTimeout);
+        session.envInjectionTimeout = null;
       }
       sessions.delete(sessionId);
     });
@@ -470,6 +481,10 @@ export function createTerminalServer(port: number = 3001) {
         session.resizeTimeout = null;
         session.pendingResize = null;
       }
+      if (session.envInjectionTimeout) {
+        clearTimeout(session.envInjectionTimeout);
+        session.envInjectionTimeout = null;
+      }
       sessions.delete(sessionId);
     });
 
@@ -480,6 +495,10 @@ export function createTerminalServer(port: number = 3001) {
         clearTimeout(session.resizeTimeout);
         session.resizeTimeout = null;
         session.pendingResize = null;
+      }
+      if (session.envInjectionTimeout) {
+        clearTimeout(session.envInjectionTimeout);
+        session.envInjectionTimeout = null;
       }
       sessions.delete(sessionId);
     });
