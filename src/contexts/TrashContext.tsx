@@ -120,20 +120,32 @@ export function TrashProvider({ children }: TrashProviderProps) {
           throw new Error("Failed to trash session");
         }
 
-        // Refresh trash list
+        // Parse response to get the trash item ID
+        const data = await response.json();
+        if (!data.success || !data.trashItemId) {
+          throw new Error("Trash response missing trashItemId");
+        }
+
+        // Refresh trash list to update UI
         await refreshTrash();
 
-        // Find the newly created trash item
-        const newTrashItem = trashItems.find(
-          (item) => item.resourceId === sessionId
-        );
-        return newTrashItem || null;
+        // Return a partial trash item - the full item will be in the refreshed list
+        // The caller just needs to know it succeeded (non-null return)
+        return {
+          id: data.trashItemId,
+          userId: "", // Will be populated by refresh
+          resourceType: "worktree" as const,
+          resourceId: sessionId,
+          resourceName: "",
+          trashedAt: new Date(),
+          expiresAt: new Date(),
+        };
       } catch (error) {
         console.error("Error trashing session:", error);
         return null;
       }
     },
-    [refreshTrash, trashItems]
+    [refreshTrash]
   );
 
   const restoreItem = useCallback(

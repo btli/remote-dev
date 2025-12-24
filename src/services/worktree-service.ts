@@ -240,21 +240,19 @@ export async function createBranchWithWorktree(
     );
   }
 
-  // If base branch specified, try to fetch it (but don't fail if fetch fails)
-  if (baseBranch) {
-    const fetchResult = await execFileNoThrow("git", [
-      "-C",
-      repoPath,
-      "fetch",
-      "origin",
-      baseBranch,
-    ]);
-    if (fetchResult.exitCode !== 0) {
-      console.warn(
-        `Warning: Could not fetch ${baseBranch} from origin: ${fetchResult.stderr}`
-      );
-      // Continue anyway - the branch might exist locally
-    }
+  // Always fetch all refs from origin to ensure remote tracking branches are up to date
+  // This prevents creating worktrees from stale origin/master references
+  const fetchResult = await execFileNoThrow("git", [
+    "-C",
+    repoPath,
+    "fetch",
+    "origin",
+  ]);
+  if (fetchResult.exitCode !== 0) {
+    console.warn(
+      `Warning: Could not fetch from origin: ${fetchResult.stderr}`
+    );
+    // Continue anyway - we'll use whatever refs are available locally
   }
 
   // Create worktree with new branch based on the base branch
