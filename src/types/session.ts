@@ -2,7 +2,7 @@
  * Session types for terminal session management
  */
 
-export type SessionStatus = "active" | "suspended" | "closed";
+export type SessionStatus = "active" | "suspended" | "closed" | "trashed";
 
 export interface TerminalSession {
   id: string;
