@@ -4,26 +4,18 @@
  */
 
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubStatsService from "@/services/github-stats-service";
 import * as CacheService from "@/services/cache-service";
 
-export async function GET() {
+export const GET = withAuth(async (_request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized", code: "UNAUTHORIZED" },
-        { status: 401 }
-      );
-    }
-
     const repositories = await GitHubStatsService.getEnrichedRepositories(
-      session.user.id
+      userId
     );
 
     // Get total unseen changes
-    const changes = await CacheService.getUnseenChanges(session.user.id);
+    const changes = await CacheService.getUnseenChanges(userId);
 
     return NextResponse.json({
       repositories,
@@ -37,32 +29,21 @@ export async function GET() {
   } catch (error) {
     console.error("Error fetching GitHub stats:", error);
     const err = error as Error;
-    return NextResponse.json(
-      { error: err.message, code: "FETCH_ERROR" },
-      { status: 500 }
-    );
+    return errorResponse(err.message, 500, "FETCH_ERROR");
   }
-}
+});
 
-export async function POST() {
+export const POST = withAuth(async (_request, { userId }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized", code: "UNAUTHORIZED" },
-        { status: 401 }
-      );
-    }
-
-    const result = await GitHubStatsService.refreshAllStats(session.user.id);
+    const result = await GitHubStatsService.refreshAllStats(userId);
 
     // Get updated repositories after refresh
     const repositories = await GitHubStatsService.getEnrichedRepositories(
-      session.user.id
+      userId
     );
 
     // Get total unseen changes
-    const changes = await CacheService.getUnseenChanges(session.user.id);
+    const changes = await CacheService.getUnseenChanges(userId);
 
     return NextResponse.json({
       repositories,
@@ -76,9 +57,6 @@ export async function POST() {
   } catch (error) {
     console.error("Error refreshing GitHub stats:", error);
     const err = error as Error;
-    return NextResponse.json(
-      { error: err.message, code: "REFRESH_ERROR" },
-      { status: 500 }
-    );
+    return errorResponse(err.message, 500, "REFRESH_ERROR");
   }
-}
+});

@@ -169,14 +169,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       terminal.open(terminalRef.current);
 
-      // Wait for fonts to load before fitting to get accurate cell dimensions
-      // This prevents the "dots" issue from incorrect initial sizing
-      const initialFit = async () => {
-        await document.fonts.ready;
-        fitAddon.fit();
-      };
-      initialFit();
-
       // Custom keyboard handler for macOS shortcuts
       // xterm.js doesn't translate Cmd/Option key combinations by default
       terminal.attachCustomKeyEventHandler((event) => {
@@ -375,7 +367,38 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         };
       }
 
-      connect();
+      // Wait for fonts to load before connecting to get accurate cell dimensions
+      // This prevents incorrect initial sizing from font measurement race conditions
+      const initAndConnect = async () => {
+        // Extract the primary font family name for loading
+        const fontMatch = initialFontFamilyRef.current.match(/^['"]?([^'"]+)/);
+        const primaryFont = fontMatch ? fontMatch[1] : initialFontFamilyRef.current;
+        const fs = initialFontSizeRef.current;
+
+        try {
+          // Explicitly load the font we need (both weights)
+          await Promise.all([
+            document.fonts.load(`${fs}px "${primaryFont}"`),
+            document.fonts.load(`bold ${fs}px "${primaryFont}"`),
+          ]);
+        } catch {
+          // Font loading failed, continue with fallback
+        }
+
+        // Wait for all fonts to be ready
+        await document.fonts.ready;
+
+        // Wait a frame to ensure container has final dimensions after layout
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+        // Now fit with accurate font measurements
+        fitAddon.fit();
+
+        // Connect with correct dimensions
+        connect();
+      };
+
+      initAndConnect();
 
       terminal.onData((data) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
