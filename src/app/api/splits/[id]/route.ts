@@ -1,107 +1,79 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
 import type { SplitDirection } from "@/types/split";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * GET /api/splits/:id - Get a specific split group
  */
-export async function GET(_request: Request, { params }: RouteParams) {
+export const GET = withAuth(async (_request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const id = params?.id;
+    if (!id) {
+      return errorResponse("Split ID is required", 400, "MISSING_ID");
     }
 
-    const { id } = await params;
-    const split = await SplitService.getSplitGroup(id, session.user.id);
+    const split = await SplitService.getSplitGroup(id, userId);
 
     if (!split) {
-      return NextResponse.json(
-        { error: "Split group not found" },
-        { status: 404 }
-      );
+      return errorResponse("Split group not found", 404, "NOT_FOUND");
     }
 
     return NextResponse.json(split);
   } catch (error) {
     console.error("Error fetching split:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch split" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to fetch split", 500);
   }
-}
+});
 
 /**
  * PATCH /api/splits/:id - Update split direction
  */
-export async function PATCH(request: Request, { params }: RouteParams) {
+export const PATCH = withAuth(async (request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const id = params?.id;
+    if (!id) {
+      return errorResponse("Split ID is required", 400, "MISSING_ID");
     }
 
-    const { id } = await params;
-    const body = await request.json();
-    const { direction } = body as { direction?: SplitDirection };
+    const result = await parseJsonBody<{ direction?: SplitDirection }>(request);
+    if ("error" in result) return result.error;
+    const { direction } = result.data;
 
     if (direction && !["horizontal", "vertical"].includes(direction)) {
-      return NextResponse.json(
-        { error: "direction must be 'horizontal' or 'vertical'" },
-        { status: 400 }
-      );
+      return errorResponse("direction must be 'horizontal' or 'vertical'", 400, "INVALID_DIRECTION");
     }
 
     if (direction) {
-      const updated = await SplitService.changeSplitDirection(
-        session.user.id,
-        id,
-        direction
-      );
+      const updated = await SplitService.changeSplitDirection(userId, id, direction);
       return NextResponse.json(updated);
     }
 
-    return NextResponse.json({ error: "No updates provided" }, { status: 400 });
+    return errorResponse("No updates provided", 400, "NO_UPDATES");
   } catch (error) {
     console.error("Error updating split:", error);
     if (error instanceof SplitService.SplitServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 404 }
-      );
+      return errorResponse(error.message, 404, error.code);
     }
-    return NextResponse.json(
-      { error: "Failed to update split" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to update split", 500);
   }
-}
+});
 
 /**
  * DELETE /api/splits/:id - Dissolve a split group
  */
-export async function DELETE(_request: Request, { params }: RouteParams) {
+export const DELETE = withAuth(async (_request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const id = params?.id;
+    if (!id) {
+      return errorResponse("Split ID is required", 400, "MISSING_ID");
     }
 
-    const { id } = await params;
-    await SplitService.dissolveSplit(session.user.id, id);
+    await SplitService.dissolveSplit(userId, id);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error dissolving split:", error);
-    return NextResponse.json(
-      { error: "Failed to dissolve split" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to dissolve split", 500);
   }
-}
+});

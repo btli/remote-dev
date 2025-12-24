@@ -1,57 +1,41 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * PUT /api/splits/:id/layout - Update pane sizes in a split
  */
-export async function PUT(request: Request, { params }: RouteParams) {
+export const PUT = withAuth(async (request, { userId, params }) => {
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const splitGroupId = params?.id;
+    if (!splitGroupId) {
+      return errorResponse("Split ID is required", 400, "MISSING_ID");
     }
 
-    const { id: splitGroupId } = await params;
-    const body = await request.json();
-    const { layout } = body as {
+    const result = await parseJsonBody<{
       layout: Array<{ sessionId: string; size: number }>;
-    };
+    }>(request);
+    if ("error" in result) return result.error;
+    const { layout } = result.data;
 
     if (!layout || !Array.isArray(layout)) {
-      return NextResponse.json(
-        { error: "layout array is required" },
-        { status: 400 }
-      );
+      return errorResponse("layout array is required", 400, "MISSING_LAYOUT");
     }
 
     // Validate sizes sum to approximately 1
     const totalSize = layout.reduce((sum, item) => sum + item.size, 0);
     if (Math.abs(totalSize - 1) > 0.01) {
-      return NextResponse.json(
-        { error: "layout sizes must sum to 1" },
-        { status: 400 }
-      );
+      return errorResponse("layout sizes must sum to 1", 400, "INVALID_LAYOUT_SIZES");
     }
 
-    await SplitService.updateSplitLayout(session.user.id, splitGroupId, layout);
+    await SplitService.updateSplitLayout(userId, splitGroupId, layout);
 
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error updating split layout:", error);
     if (error instanceof SplitService.SplitServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 404 }
-      );
+      return errorResponse(error.message, 404, error.code);
     }
-    return NextResponse.json(
-      { error: "Failed to update split layout" },
-      { status: 500 }
-    );
+    return errorResponse("Failed to update split layout", 500);
   }
-}
+});
