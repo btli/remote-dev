@@ -8,7 +8,7 @@ import {
   githubRepositoryStats,
   githubChangeNotifications,
 } from "@/db/schema";
-import { eq, and, lt, sql } from "drizzle-orm";
+import { eq, and, lt, sql, inArray } from "drizzle-orm";
 import { GITHUB_STATS_TTL_MINUTES, type CacheMetadata } from "@/types/github-stats";
 
 export class CacheServiceError extends Error {
@@ -62,7 +62,7 @@ export async function getCacheMetadata(
  * Get all stale repository IDs for a user (for batch refresh)
  */
 export async function getStaleRepositoryIds(
-  userId: string,
+  _userId: string,
   repositoryIds: string[]
 ): Promise<string[]> {
   if (repositoryIds.length === 0) {
@@ -70,14 +70,19 @@ export async function getStaleRepositoryIds(
   }
 
   const now = new Date();
+
+  // Batch query: get all stats for the given repository IDs in a single query
+  const allStats = await db.query.githubRepositoryStats.findMany({
+    where: inArray(githubRepositoryStats.repositoryId, repositoryIds),
+  });
+
+  // Build a map for O(1) lookup
+  const statsMap = new Map(allStats.map((s) => [s.repositoryId, s]));
+
+  // Find stale or missing entries
   const staleIds: string[] = [];
-
-  // Check each repository's cache status
   for (const repoId of repositoryIds) {
-    const stats = await db.query.githubRepositoryStats.findFirst({
-      where: eq(githubRepositoryStats.repositoryId, repoId),
-    });
-
+    const stats = statsMap.get(repoId);
     if (!stats || new Date(stats.expiresAt) < now) {
       staleIds.push(repoId);
     }

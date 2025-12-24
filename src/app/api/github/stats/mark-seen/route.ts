@@ -20,7 +20,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as MarkSeenRequest;
+    let body: MarkSeenRequest;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body", code: "INVALID_REQUEST" },
+        { status: 400 }
+      );
+    }
 
     if (body.repositoryId) {
       await CacheService.markChangesSeen(session.user.id, body.repositoryId);

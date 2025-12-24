@@ -718,9 +718,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
       const result = await response.json();
       // Session is auto-created by the API, refresh session list
-      // The SessionContext should handle the update via its refresh mechanism
-      if (result.session?.id) {
-        setActiveSession(result.session.id);
+      if (result.sessionId) {
+        setActiveSession(result.sessionId);
       }
     },
     [setActiveSession]
@@ -921,6 +920,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderReorder={handleReorderFolders}
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
+            onCreatePRWorktree={handleCreatePRWorktree}
           />
       </div>
 

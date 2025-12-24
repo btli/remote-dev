@@ -17,7 +17,15 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as PRWorktreeRequest;
+    let body: PRWorktreeRequest;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body", code: "INVALID_REQUEST" },
+        { status: 400 }
+      );
+    }
 
     // Validate request
     if (!body.repositoryId || typeof body.prNumber !== "number") {
