@@ -739,16 +739,35 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           console.error("Failed to delete worktree:", error);
           // Continue with session deletion even if worktree deletion fails
         }
+
+        // Close the session - bypass trash since worktree was permanently deleted
+        try {
+          await closeSession(session.id, { deleteWorktree: true });
+        } catch (error) {
+          logSessionError("close session", error);
+        }
+        return;
       }
 
-      // Close the session - pass deleteWorktree to bypass trash when worktree was deleted
+      // For worktree sessions without explicit deletion, use trash for recovery
+      if (session.worktreeBranch && session.projectPath) {
+        try {
+          const success = await trashSession(session.id);
+          if (success) return;
+          // Fallback to regular close if trash fails
+        } catch (error) {
+          logSessionError("trash session", error);
+        }
+      }
+
+      // Regular close for non-worktree sessions or if trash failed
       try {
-        await closeSession(session.id, deleteWorktree ? { deleteWorktree: true } : undefined);
+        await closeSession(session.id);
       } catch (error) {
         logSessionError("close session", error);
       }
     },
-    [closeSession, logSessionError]
+    [closeSession, trashSession, logSessionError]
   );
 
   // Close mobile sidebar when selecting a session

@@ -303,26 +303,43 @@ export async function refreshAllStats(userId: string): Promise<RefreshResult> {
         expiresAt,
       };
 
-      if (existingStats) {
-        await db
-          .update(githubRepositoryStats)
-          .set(statsData)
-          .where(eq(githubRepositoryStats.id, existingStats.id));
-      } else {
-        await db.insert(githubRepositoryStats).values(statsData);
+      try {
+        if (existingStats) {
+          await db
+            .update(githubRepositoryStats)
+            .set(statsData)
+            .where(eq(githubRepositoryStats.id, existingStats.id));
+        } else {
+          await db.insert(githubRepositoryStats).values(statsData);
+        }
+      } catch (dbError) {
+        result.errors.push(`DB error for ${repo.name}: ${(dbError as Error).message}`);
+        continue;
       }
 
-      // Update PRs
-      await updatePullRequests(repoId, data.pullRequests);
+      // Update PRs (non-fatal if fails)
+      try {
+        await updatePullRequests(repoId, data.pullRequests);
+      } catch {
+        // Non-fatal - stats already saved
+      }
 
-      // Update branch protection
+      // Update branch protection (non-fatal if fails)
       if (data.branchProtection) {
-        await updateBranchProtection(repoId, data.branchProtection);
+        try {
+          await updateBranchProtection(repoId, data.branchProtection);
+        } catch {
+          // Non-fatal - stats already saved
+        }
       }
 
       // Track changes for notifications
       if (newPRDelta > 0 || newIssueDelta > 0) {
-        await CacheService.trackChanges(userId, repoId, newPRDelta, newIssueDelta);
+        try {
+          await CacheService.trackChanges(userId, repoId, newPRDelta, newIssueDelta);
+        } catch {
+          // Non-fatal
+        }
       }
 
       result.updatedRepos.push(repoId);
@@ -643,9 +660,9 @@ async function updateBranchProtection(
     branch: protection.branch,
     isProtected: protection.isProtected,
     requiresReview: protection.requiresReview,
-    requiredReviewers: protection.requiredReviewers,
+    requiredReviewers: protection.requiredReviewers ?? 0,
     requiresStatusChecks: protection.requiresStatusChecks,
-    requiredChecks: JSON.stringify(protection.requiredChecks),
+    requiredChecks: JSON.stringify(protection.requiredChecks ?? []),
     allowsForcePushes: protection.allowsForcePushes,
     allowsDeletions: protection.allowsDeletions,
     cachedAt: new Date(),

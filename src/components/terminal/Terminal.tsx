@@ -217,10 +217,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           }
         }
 
-        // Shift+Enter - xterm.js may not send Enter when Shift is held
-        // Manually send carriage return to ensure Enter works in terminal apps
-        if (event.shiftKey && event.key === "Enter") {
-          ws.send(JSON.stringify({ type: "input", data: "\r" }));
+        // Shift+Enter - Send Kitty keyboard protocol sequence
+        // xterm.js doesn't yet support extended keyboard protocols (PR #5424 pending)
+        // so we manually send CSI 13;2u (Enter=13, Shift modifier=2)
+        // This allows apps like Claude Code to distinguish Shift+Enter from Enter
+        if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter") {
+          ws.send(JSON.stringify({ type: "input", data: "\x1b[13;2u" }));
+          return false;
+        }
+
+        // Ctrl+Enter - Send CSI 13;5u (Enter=13, Ctrl modifier=5)
+        if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key === "Enter") {
+          ws.send(JSON.stringify({ type: "input", data: "\x1b[13;5u" }));
           return false;
         }
 
@@ -882,9 +890,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [sendImageToTerminal]);
 
-  // Focus terminal on click/mousedown to ensure it maintains focus during selection
+  // Focus terminal on click/mousedown/touch to ensure it maintains focus
   // This fixes the issue where selecting text would quickly lose focus, preventing copy
-  const handleContainerMouseDown = useCallback(() => {
+  // Also ensures mobile keyboard appears when tapping the terminal
+  const handleContainerInteraction = useCallback(() => {
     xtermRef.current?.focus();
   }, []);
 
@@ -895,7 +904,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         isDragging ? "ring-2 ring-blue-500 ring-opacity-50" : ""
       }`}
       style={{ backgroundColor: getThemeBackground(theme) }}
-      onMouseDown={handleContainerMouseDown}
+      onMouseDown={handleContainerInteraction}
+      onTouchStart={handleContainerInteraction}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
