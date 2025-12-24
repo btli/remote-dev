@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -307,10 +308,16 @@ export function FolderPreferencesModal({
     handleEnvVarsChange(updated);
   };
 
+  // Check if any settings in a tab are overridden
+  const hasGeneralOverrides = isOverridden("defaultWorkingDirectory") || isOverridden("defaultShell") || isOverridden("startupCommand");
+  const hasAppearanceOverrides = isOverridden("theme") || isOverridden("fontSize") || isOverridden("fontFamily");
+  const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
+  const hasEnvOverrides = isOverridden("environmentVars");
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[500px] bg-slate-900 border-white/10">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] bg-slate-900 border-white/10 flex flex-col">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-white">
             <Folder className="w-5 h-5 text-violet-400 fill-violet-400/30" />
             {folderName} Preferences
@@ -322,370 +329,390 @@ export function FolderPreferencesModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 mt-4">
-          {/* Working Directory */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300">Working Directory</Label>
-              {isOverridden("defaultWorkingDirectory") && (
-                <span className="text-xs text-violet-400">Overridden</span>
-              )}
-            </div>
-            <Input
-              value={getValue("defaultWorkingDirectory") || ""}
-              onChange={(e) =>
-                setValue("defaultWorkingDirectory", e.target.value || null)
-              }
-              placeholder={`${getInheritedSourceLabel("defaultWorkingDirectory")}: ${getInherited("defaultWorkingDirectory")}`}
-              className={cn(
-                "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
-                isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
-              )}
-            />
-          </div>
+        <Tabs defaultValue="general" className="flex-1 min-h-0 flex flex-col">
+          <TabsList className="w-full bg-slate-800/50 flex-shrink-0">
+            <TabsTrigger value="general" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+              <Settings className="w-3.5 h-3.5" />
+              General
+              {hasGeneralOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+            </TabsTrigger>
+            <TabsTrigger value="appearance" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+              <Palette className="w-3.5 h-3.5" />
+              Appearance
+              {hasAppearanceOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+            </TabsTrigger>
+            <TabsTrigger value="repository" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+              <FolderGit2 className="w-3.5 h-3.5" />
+              Repo
+              {hasRepoOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+            </TabsTrigger>
+            <TabsTrigger value="environment" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+              <Terminal className="w-3.5 h-3.5" />
+              Env
+              {hasEnvOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+            </TabsTrigger>
+          </TabsList>
 
-          {/* Shell */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300">Shell</Label>
-              {isOverridden("defaultShell") && (
-                <span className="text-xs text-violet-400">Overridden</span>
-              )}
-            </div>
-            <Select
-              value={getValue("defaultShell") || INHERIT_VALUE}
-              onValueChange={(value) => setValue("defaultShell", value === INHERIT_VALUE ? null : value)}
-            >
-              <SelectTrigger
-                className={cn(
-                  "bg-slate-800 border-white/10 text-white",
-                  isOverridden("defaultShell") && "border-violet-500/50"
-                )}
-              >
-                <SelectValue
-                  placeholder={`Inherit: ${
-                    SHELL_OPTIONS.find((o) => o.value === getInherited("defaultShell"))
-                      ?.label || getInherited("defaultShell")
-                  }`}
-                />
-              </SelectTrigger>
-              <SelectContent className="bg-slate-800 border-white/10">
-                <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
-                  {getInheritedSourceLabel("defaultShell")}
-                </SelectItem>
-                {SHELL_OPTIONS.map((option) => (
-                  <SelectItem
-                    key={option.value}
-                    value={option.value}
-                    className="text-white focus:bg-violet-500/20"
-                  >
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Startup Command */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300">Startup Command</Label>
-              {isOverridden("startupCommand") && (
-                <span className="text-xs text-violet-400">Overridden</span>
-              )}
-            </div>
-            <Input
-              value={getValue("startupCommand") || ""}
-              onChange={(e) =>
-                setValue("startupCommand", e.target.value || null)
-              }
-              placeholder={getInherited("startupCommand") ? `${getInheritedSourceLabel("startupCommand")}: ${getInherited("startupCommand")}` : "No startup command"}
-              className={cn(
-                "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
-                isOverridden("startupCommand") && "border-violet-500/50"
-              )}
-            />
-          </div>
-
-          {/* Theme */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300">Theme</Label>
-              {isOverridden("theme") && (
-                <span className="text-xs text-violet-400">Overridden</span>
-              )}
-            </div>
-            <Select
-              value={getValue("theme") || INHERIT_VALUE}
-              onValueChange={(value) => setValue("theme", value === INHERIT_VALUE ? null : value)}
-            >
-              <SelectTrigger
-                className={cn(
-                  "bg-slate-800 border-white/10 text-white",
-                  isOverridden("theme") && "border-violet-500/50"
-                )}
-              >
-                <SelectValue
-                  placeholder={`Inherit: ${
-                    THEME_OPTIONS.find((o) => o.value === getInherited("theme"))
-                      ?.label || getInherited("theme")
-                  }`}
-                />
-              </SelectTrigger>
-              <SelectContent className="bg-slate-800 border-white/10">
-                <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
-                  {getInheritedSourceLabel("theme")}
-                </SelectItem>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem
-                    key={option.value}
-                    value={option.value}
-                    className="text-white focus:bg-violet-500/20"
-                  >
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Font Size */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300">Font Size</Label>
-              <span className="text-sm text-slate-400">
-                {getValue("fontSize") || `Inherit: ${getInherited("fontSize")}`}px
-              </span>
-            </div>
-            <Slider
-              value={[getValue("fontSize") || Number(getInherited("fontSize"))]}
-              onValueChange={([value]) => setValue("fontSize", value)}
-              min={10}
-              max={24}
-              step={1}
-              className="w-full"
-            />
-          </div>
-
-          {/* Font Family */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300">Font Family</Label>
-              {isOverridden("fontFamily") && (
-                <span className="text-xs text-violet-400">Overridden</span>
-              )}
-            </div>
-            <Select
-              value={getValue("fontFamily") || INHERIT_VALUE}
-              onValueChange={(value) => setValue("fontFamily", value === INHERIT_VALUE ? null : value)}
-            >
-              <SelectTrigger
-                className={cn(
-                  "bg-slate-800 border-white/10 text-white",
-                  isOverridden("fontFamily") && "border-violet-500/50"
-                )}
-              >
-                <SelectValue
-                  placeholder={`Inherit: ${
-                    FONT_OPTIONS.find((o) => o.value === getInherited("fontFamily"))
-                      ?.label || "JetBrains Mono"
-                  }`}
-                />
-              </SelectTrigger>
-              <SelectContent className="bg-slate-800 border-white/10">
-                <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
-                  {getInheritedSourceLabel("fontFamily")}
-                </SelectItem>
-                {FONT_OPTIONS.map((option) => (
-                  <SelectItem
-                    key={option.value}
-                    value={option.value}
-                    className="text-white focus:bg-violet-500/20"
-                    style={{ fontFamily: option.value }}
-                  >
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Repository Association - for worktree support */}
-          <div className="space-y-3 pt-4 border-t border-white/5">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300 flex items-center gap-2">
-                <FolderGit2 className="w-4 h-4" />
-                Repository
-              </Label>
-              {(isOverridden("githubRepoId") || isOverridden("localRepoPath")) && (
-                <span className="text-xs text-violet-400">Configured</span>
-              )}
-            </div>
-            <p className="text-xs text-slate-500">
-              Link a repository to enable worktree creation from this folder.
-            </p>
-
-            {/* Repo mode selector */}
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setRepoMode("none");
-                  setValue("githubRepoId", null);
-                  setValue("localRepoPath", null);
-                }}
-                className={cn(
-                  "flex-1 text-xs",
-                  repoMode === "none"
-                    ? "bg-slate-700 text-white"
-                    : "text-slate-400 hover:text-white"
-                )}
-              >
-                None
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setRepoMode("github");
-                  setValue("localRepoPath", null);
-                }}
-                className={cn(
-                  "flex-1 text-xs",
-                  repoMode === "github"
-                    ? "bg-slate-700 text-white"
-                    : "text-slate-400 hover:text-white"
-                )}
-              >
-                <Github className="w-3 h-3 mr-1" />
-                GitHub
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setRepoMode("local");
-                  setValue("githubRepoId", null);
-                }}
-                className={cn(
-                  "flex-1 text-xs",
-                  repoMode === "local"
-                    ? "bg-slate-700 text-white"
-                    : "text-slate-400 hover:text-white"
-                )}
-              >
-                <FolderGit2 className="w-3 h-3 mr-1" />
-                Local Path
-              </Button>
-            </div>
-
-            {/* GitHub repo selector */}
-            {repoMode === "github" && (
+          <div className="flex-1 overflow-y-auto min-h-0 py-4">
+            {/* General Tab */}
+            <TabsContent value="general" className="mt-0 space-y-4">
+              {/* Working Directory */}
               <div className="space-y-2">
-                {loadingRepos ? (
-                  <div className="flex items-center justify-center py-4 text-slate-400">
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                    Loading repositories...
-                  </div>
-                ) : repoError ? (
-                  <p className="text-sm text-red-400 py-2">
-                    {repoError}
-                  </p>
-                ) : repos.length === 0 ? (
-                  <p className="text-sm text-slate-500 py-2">
-                    No cloned repositories found. Clone a repository first.
-                  </p>
-                ) : (
-                  <Select
-                    value={getValue("githubRepoId") || ""}
-                    onValueChange={(value) => setValue("githubRepoId", value || null)}
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Working Directory</Label>
+                  {isOverridden("defaultWorkingDirectory") && (
+                    <span className="text-xs text-violet-400">Overridden</span>
+                  )}
+                </div>
+                <Input
+                  value={getValue("defaultWorkingDirectory") || ""}
+                  onChange={(e) =>
+                    setValue("defaultWorkingDirectory", e.target.value || null)
+                  }
+                  placeholder={`${getInheritedSourceLabel("defaultWorkingDirectory")}: ${getInherited("defaultWorkingDirectory")}`}
+                  className={cn(
+                    "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                    isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
+                  )}
+                />
+              </div>
+
+              {/* Shell */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Shell</Label>
+                  {isOverridden("defaultShell") && (
+                    <span className="text-xs text-violet-400">Overridden</span>
+                  )}
+                </div>
+                <Select
+                  value={getValue("defaultShell") || INHERIT_VALUE}
+                  onValueChange={(value) => setValue("defaultShell", value === INHERIT_VALUE ? null : value)}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      "bg-slate-800 border-white/10 text-white",
+                      isOverridden("defaultShell") && "border-violet-500/50"
+                    )}
                   >
-                    <SelectTrigger
-                      className={cn(
-                        "bg-slate-800 border-white/10 text-white",
-                        isOverridden("githubRepoId") && "border-violet-500/50"
-                      )}
-                    >
-                      <SelectValue placeholder="Select a repository..." />
-                    </SelectTrigger>
-                    <SelectContent className="bg-slate-800 border-white/10 max-h-60">
-                      {repos.map((repo) => (
-                        <SelectItem
-                          key={repo.id}
-                          value={repo.id}
-                          className="text-white focus:bg-violet-500/20"
-                          disabled={!repo.localPath}
+                    <SelectValue
+                      placeholder={`Inherit: ${
+                        SHELL_OPTIONS.find((o) => o.value === getInherited("defaultShell"))
+                          ?.label || getInherited("defaultShell")
+                      }`}
+                    />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-white/10">
+                    <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                      {getInheritedSourceLabel("defaultShell")}
+                    </SelectItem>
+                    {SHELL_OPTIONS.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        className="text-white focus:bg-violet-500/20"
+                      >
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Startup Command */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Startup Command</Label>
+                  {isOverridden("startupCommand") && (
+                    <span className="text-xs text-violet-400">Overridden</span>
+                  )}
+                </div>
+                <Input
+                  value={getValue("startupCommand") || ""}
+                  onChange={(e) =>
+                    setValue("startupCommand", e.target.value || null)
+                  }
+                  placeholder={getInherited("startupCommand") ? `${getInheritedSourceLabel("startupCommand")}: ${getInherited("startupCommand")}` : "No startup command"}
+                  className={cn(
+                    "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                    isOverridden("startupCommand") && "border-violet-500/50"
+                  )}
+                />
+                <p className="text-xs text-slate-500">
+                  Command to run when a new session starts in this folder.
+                </p>
+              </div>
+            </TabsContent>
+
+            {/* Appearance Tab */}
+            <TabsContent value="appearance" className="mt-0 space-y-4">
+              {/* Theme */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Theme</Label>
+                  {isOverridden("theme") && (
+                    <span className="text-xs text-violet-400">Overridden</span>
+                  )}
+                </div>
+                <Select
+                  value={getValue("theme") || INHERIT_VALUE}
+                  onValueChange={(value) => setValue("theme", value === INHERIT_VALUE ? null : value)}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      "bg-slate-800 border-white/10 text-white",
+                      isOverridden("theme") && "border-violet-500/50"
+                    )}
+                  >
+                    <SelectValue
+                      placeholder={`Inherit: ${
+                        THEME_OPTIONS.find((o) => o.value === getInherited("theme"))
+                          ?.label || getInherited("theme")
+                      }`}
+                    />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-white/10">
+                    <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                      {getInheritedSourceLabel("theme")}
+                    </SelectItem>
+                    {THEME_OPTIONS.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        className="text-white focus:bg-violet-500/20"
+                      >
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Font Size */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Font Size</Label>
+                  <span className="text-sm text-slate-400">
+                    {getValue("fontSize") || `Inherit: ${getInherited("fontSize")}`}px
+                  </span>
+                </div>
+                <Slider
+                  value={[getValue("fontSize") || Number(getInherited("fontSize"))]}
+                  onValueChange={([value]) => setValue("fontSize", value)}
+                  min={10}
+                  max={24}
+                  step={1}
+                  className="w-full"
+                />
+              </div>
+
+              {/* Font Family */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Font Family</Label>
+                  {isOverridden("fontFamily") && (
+                    <span className="text-xs text-violet-400">Overridden</span>
+                  )}
+                </div>
+                <Select
+                  value={getValue("fontFamily") || INHERIT_VALUE}
+                  onValueChange={(value) => setValue("fontFamily", value === INHERIT_VALUE ? null : value)}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      "bg-slate-800 border-white/10 text-white",
+                      isOverridden("fontFamily") && "border-violet-500/50"
+                    )}
+                  >
+                    <SelectValue
+                      placeholder={`Inherit: ${
+                        FONT_OPTIONS.find((o) => o.value === getInherited("fontFamily"))
+                          ?.label || "JetBrains Mono"
+                      }`}
+                    />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-white/10 max-h-60">
+                    <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                      {getInheritedSourceLabel("fontFamily")}
+                    </SelectItem>
+                    {FONT_OPTIONS.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        className="text-white focus:bg-violet-500/20"
+                        style={{ fontFamily: option.value }}
+                      >
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </TabsContent>
+
+            {/* Repository Tab */}
+            <TabsContent value="repository" className="mt-0 space-y-4">
+              <div className="space-y-2">
+                <p className="text-sm text-slate-400">
+                  Link a repository to enable worktree creation from this folder.
+                </p>
+
+                {/* Repo mode selector */}
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setRepoMode("none");
+                      setValue("githubRepoId", null);
+                      setValue("localRepoPath", null);
+                    }}
+                    className={cn(
+                      "flex-1 text-xs",
+                      repoMode === "none"
+                        ? "bg-slate-700 text-white"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    None
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setRepoMode("github");
+                      setValue("localRepoPath", null);
+                    }}
+                    className={cn(
+                      "flex-1 text-xs",
+                      repoMode === "github"
+                        ? "bg-slate-700 text-white"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    <Github className="w-3 h-3 mr-1" />
+                    GitHub
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setRepoMode("local");
+                      setValue("githubRepoId", null);
+                    }}
+                    className={cn(
+                      "flex-1 text-xs",
+                      repoMode === "local"
+                        ? "bg-slate-700 text-white"
+                        : "text-slate-400 hover:text-white"
+                    )}
+                  >
+                    <FolderGit2 className="w-3 h-3 mr-1" />
+                    Local Path
+                  </Button>
+                </div>
+
+                {/* GitHub repo selector */}
+                {repoMode === "github" && (
+                  <div className="space-y-2 pt-2">
+                    {loadingRepos ? (
+                      <div className="flex items-center justify-center py-4 text-slate-400">
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        Loading repositories...
+                      </div>
+                    ) : repoError ? (
+                      <p className="text-sm text-red-400 py-2">
+                        {repoError}
+                      </p>
+                    ) : repos.length === 0 ? (
+                      <p className="text-sm text-slate-500 py-2">
+                        No cloned repositories found. Clone a repository first.
+                      </p>
+                    ) : (
+                      <Select
+                        value={getValue("githubRepoId") || ""}
+                        onValueChange={(value) => setValue("githubRepoId", value || null)}
+                      >
+                        <SelectTrigger
+                          className={cn(
+                            "bg-slate-800 border-white/10 text-white",
+                            isOverridden("githubRepoId") && "border-violet-500/50"
+                          )}
                         >
-                          <div className="flex flex-col">
-                            <span>{repo.fullName}</span>
-                            {repo.localPath && (
-                              <span className="text-xs text-slate-500 truncate max-w-[300px]">
-                                {repo.localPath}
-                              </span>
-                            )}
-                            {!repo.localPath && (
-                              <span className="text-xs text-amber-500">Not cloned</span>
-                            )}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                          <SelectValue placeholder="Select a repository..." />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-800 border-white/10 max-h-60">
+                          {repos.map((repo) => (
+                            <SelectItem
+                              key={repo.id}
+                              value={repo.id}
+                              className="text-white focus:bg-violet-500/20"
+                              disabled={!repo.localPath}
+                            >
+                              <div className="flex flex-col">
+                                <span>{repo.fullName}</span>
+                                {repo.localPath && (
+                                  <span className="text-xs text-slate-500 truncate max-w-[300px]">
+                                    {repo.localPath}
+                                  </span>
+                                )}
+                                {!repo.localPath && (
+                                  <span className="text-xs text-amber-500">Not cloned</span>
+                                )}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                )}
+
+                {/* Local path input */}
+                {repoMode === "local" && (
+                  <div className="pt-2">
+                    <Input
+                      value={getValue("localRepoPath") || ""}
+                      onChange={(e) => setValue("localRepoPath", e.target.value || null)}
+                      placeholder="/path/to/local/git/repository"
+                      className={cn(
+                        "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                        isOverridden("localRepoPath") && "border-violet-500/50"
+                      )}
+                    />
+                  </div>
                 )}
               </div>
-            )}
+            </TabsContent>
 
-            {/* Local path input */}
-            {repoMode === "local" && (
-              <Input
-                value={getValue("localRepoPath") || ""}
-                onChange={(e) => setValue("localRepoPath", e.target.value || null)}
-                placeholder="/path/to/local/git/repository"
-                className={cn(
-                  "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
-                  isOverridden("localRepoPath") && "border-violet-500/50"
-                )}
-              />
-            )}
-          </div>
-
-          {/* Environment Variables */}
-          <div className="space-y-3 pt-4 border-t border-white/5">
-            <div className="flex items-center justify-between">
-              <Label className="text-slate-300 flex items-center gap-2">
-                <Terminal className="w-4 h-4" />
-                Environment Variables
-              </Label>
-              {isOverridden("environmentVars") && (
-                <span className="text-xs text-violet-400">Configured</span>
+            {/* Environment Tab */}
+            <TabsContent value="environment" className="mt-0 space-y-4">
+              <p className="text-sm text-slate-400">
+                Set environment variables for terminal sessions in this folder.
+                Variables are inherited from parent folders and can be overridden.
+              </p>
+              {loadingEnvVars ? (
+                <div className="flex items-center justify-center py-4 text-slate-400">
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Loading environment...
+                </div>
+              ) : (
+                <EnvVarEditor
+                  localEnvVars={getCurrentEnvVars()}
+                  inheritedEnvVars={inheritedEnvVars}
+                  portConflicts={portConflicts}
+                  onChange={handleEnvVarsChange}
+                  onUseSuggestedPort={handleUseSuggestedPort}
+                />
               )}
-            </div>
-            <p className="text-xs text-slate-500">
-              Set environment variables for terminal sessions in this folder.
-              Variables are inherited from parent folders and can be overridden or disabled.
-            </p>
-            {loadingEnvVars ? (
-              <div className="flex items-center justify-center py-4 text-slate-400">
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                Loading environment...
-              </div>
-            ) : (
-              <EnvVarEditor
-                localEnvVars={getCurrentEnvVars()}
-                inheritedEnvVars={inheritedEnvVars}
-                portConflicts={portConflicts}
-                onChange={handleEnvVarsChange}
-                onUseSuggestedPort={handleUseSuggestedPort}
-              />
-            )}
+            </TabsContent>
           </div>
-        </div>
+        </Tabs>
 
-        <div className="flex flex-col gap-2 pt-4 border-t border-white/5">
+        <div className="flex flex-col gap-2 pt-4 border-t border-white/5 flex-shrink-0">
           {saveError && (
             <p className="text-sm text-red-400">{saveError}</p>
           )}
@@ -721,7 +748,7 @@ export function FolderPreferencesModal({
                 className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
               >
                 <RotateCcw className="w-4 h-4 mr-2" />
-                Reset to Defaults
+                Reset All
               </Button>
             )}
             <div className="flex gap-2 ml-auto">
