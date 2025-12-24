@@ -185,6 +185,9 @@ export const folderPreferences = sqliteTable(
       onDelete: "set null",
     }),
     localRepoPath: text("local_repo_path"), // Alternative: manual path to local git repo
+    // Environment variables as JSON: { "PORT": "3000", "API_URL": "..." }
+    // Use "__DISABLED__" value to explicitly disable an inherited variable
+    environmentVars: text("environment_vars"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -195,6 +198,33 @@ export const folderPreferences = sqliteTable(
   (table) => [
     uniqueIndex("folder_prefs_folder_user_idx").on(table.folderId, table.userId),
     index("folder_prefs_user_idx").on(table.userId),
+  ]
+);
+
+// Port registry for environment variable port conflict detection
+export const portRegistry = sqliteTable(
+  "port_registry",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    folderId: text("folder_id")
+      .notNull()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    port: integer("port").notNull(),
+    variableName: text("variable_name").notNull(), // e.g., "PORT", "DB_PORT"
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("port_registry_user_idx").on(table.userId),
+    index("port_registry_folder_idx").on(table.folderId),
+    // Composite index for fast conflict detection
+    index("port_registry_user_port_idx").on(table.userId, table.port),
   ]
 );
 

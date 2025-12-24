@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2 } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -22,8 +22,10 @@ import {
 } from "@/components/ui/select";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import type { UpdateFolderPreferencesInput, Preferences } from "@/types/preferences";
+import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types/environment";
 import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
+import { EnvVarEditor } from "./EnvVarEditor";
 
 interface GitHubRepo {
   id: string;
@@ -111,7 +113,60 @@ export function FolderPreferencesModal({
   const [repoError, setRepoError] = useState<string | null>(null);
   const [repoMode, setRepoMode] = useState<"github" | "local" | "none">("none");
 
+  // Environment variables state
+  const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
+  const [portConflicts, setPortConflicts] = useState<PortConflict[]>([]);
+  const [loadingEnvVars, setLoadingEnvVars] = useState(false);
+
   const folderPrefs = getFolderPreferences(folderId);
+
+  // Fetch resolved environment variables for this folder
+  const fetchResolvedEnvironment = useCallback(async () => {
+    setLoadingEnvVars(true);
+    try {
+      // Fetch from parent folder (not this folder) to get what would be inherited
+      const response = await fetch(
+        `/api/preferences/folders/${folderId}/environment`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        // Filter to only show inherited vars (from parent chain, not this folder's local overrides)
+        const inherited = (data.resolved || []).filter(
+          (v: ResolvedEnvVar) =>
+            v.source.type !== "folder" || v.source.folderId !== folderId
+        );
+        setInheritedEnvVars(inherited);
+        setPortConflicts(data.portConflicts || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch resolved environment:", error);
+    } finally {
+      setLoadingEnvVars(false);
+    }
+  }, [folderId]);
+
+  // Validate ports when local env vars change
+  const validatePortConflicts = useCallback(
+    async (envVars: EnvironmentVariables | null) => {
+      try {
+        const response = await fetch(
+          `/api/preferences/folders/${folderId}/validate-ports`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ environmentVars: envVars }),
+          }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          setPortConflicts(data.conflicts || []);
+        }
+      } catch (error) {
+        console.error("Failed to validate ports:", error);
+      }
+    },
+    [folderId]
+  );
 
   // Fetch GitHub repos when modal opens
   const fetchRepos = useCallback(async () => {
@@ -138,6 +193,7 @@ export function FolderPreferencesModal({
     if (open) {
       setLocalSettings({});
       fetchRepos();
+      fetchResolvedEnvironment();
 
       // Determine initial repo mode based on existing folder preferences
       if (folderPrefs?.githubRepoId) {
@@ -148,7 +204,7 @@ export function FolderPreferencesModal({
         setRepoMode("none");
       }
     }
-  }, [open, folderPrefs?.githubRepoId, folderPrefs?.localRepoPath, fetchRepos]);
+  }, [open, folderPrefs?.githubRepoId, folderPrefs?.localRepoPath, fetchRepos, fetchResolvedEnvironment]);
 
   const handleSave = async () => {
     if (Object.keys(localSettings).length === 0) {
@@ -219,6 +275,28 @@ export function FolderPreferencesModal({
   const isOverridden = (key: keyof UpdateFolderPreferencesInput): boolean => {
     const value = getValue(key);
     return value !== null && value !== undefined;
+  };
+
+  // Get current env vars (local changes or folder prefs or null)
+  const getCurrentEnvVars = (): EnvironmentVariables | null => {
+    if ("environmentVars" in localSettings) {
+      return localSettings.environmentVars ?? null;
+    }
+    return folderPrefs?.environmentVars ?? null;
+  };
+
+  // Handle environment variable changes
+  const handleEnvVarsChange = (envVars: EnvironmentVariables | null) => {
+    setValue("environmentVars", envVars);
+    // Validate ports after change
+    validatePortConflicts(envVars);
+  };
+
+  // Handle using a suggested port
+  const handleUseSuggestedPort = (varName: string, port: number) => {
+    const current = getCurrentEnvVars() || {};
+    const updated = { ...current, [varName]: String(port) };
+    handleEnvVarsChange(updated);
   };
 
   return (
@@ -563,6 +641,37 @@ export function FolderPreferencesModal({
                   "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
                   isOverridden("localRepoPath") && "border-violet-500/50"
                 )}
+              />
+            )}
+          </div>
+
+          {/* Environment Variables */}
+          <div className="space-y-3 pt-4 border-t border-white/5">
+            <div className="flex items-center justify-between">
+              <Label className="text-slate-300 flex items-center gap-2">
+                <Terminal className="w-4 h-4" />
+                Environment Variables
+              </Label>
+              {isOverridden("environmentVars") && (
+                <span className="text-xs text-violet-400">Configured</span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              Set environment variables for terminal sessions in this folder.
+              Variables are inherited from parent folders and can be overridden or disabled.
+            </p>
+            {loadingEnvVars ? (
+              <div className="flex items-center justify-center py-4 text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                Loading environment...
+              </div>
+            ) : (
+              <EnvVarEditor
+                localEnvVars={getCurrentEnvVars()}
+                inheritedEnvVars={inheritedEnvVars}
+                portConflicts={portConflicts}
+                onChange={handleEnvVarsChange}
+                onUseSuggestedPort={handleUseSuggestedPort}
               />
             )}
           </div>
