@@ -198,13 +198,9 @@ class SchedulerOrchestrator {
           `(${execution.successCount}/${execution.commandCount} commands succeeded)`
       );
 
-      // Update next run time in cached data
-      job.scheduleData = {
-        ...schedule,
-        lastRunAt: execution.completedAt,
-        lastRunStatus: execution.status,
-        nextRunAt: job.cronJob.nextRun() ?? null,
-      };
+      // Note: We intentionally do NOT update the cached scheduleData here.
+      // The database is the source of truth - next execution will reload fresh data.
+      // This avoids race conditions with concurrent API updates.
     } catch (error) {
       console.error(`[Scheduler] Failed to execute schedule ${scheduleId}:`, error);
     }
@@ -223,8 +219,10 @@ class SchedulerOrchestrator {
     }
 
     try {
-      // Fetch the schedule with user context
-      // Note: We need to find it without userId since this is called from API after creation
+      // Fetch schedule without userId context since this is called from API routes
+      // where we've already validated ownership. getEnabledSchedules() returns all
+      // enabled schedules - this is safe because registerSchedule validates the
+      // session exists and adds proper error handling.
       const schedules = await ScheduleService.getEnabledSchedules();
       const schedule = schedules.find((s) => s.id === scheduleId);
 
@@ -274,6 +272,9 @@ class SchedulerOrchestrator {
 
   /**
    * Pause a job (called when schedule is disabled)
+   *
+   * Note: pause() stops the cron from triggering but keeps the job registered.
+   * Use this for temporary disabling. Use removeJob() for permanent removal.
    */
   pauseJob(scheduleId: string): void {
     const job = this.jobs.get(scheduleId);
@@ -285,6 +286,9 @@ class SchedulerOrchestrator {
 
   /**
    * Resume a job (called when schedule is enabled)
+   *
+   * Note: resume() restarts a paused cron job. Only works on jobs that were
+   * paused with pauseJob(). If the job was removed, use addJob() instead.
    */
   resumeJob(scheduleId: string): void {
     const job = this.jobs.get(scheduleId);
@@ -296,6 +300,10 @@ class SchedulerOrchestrator {
 
   /**
    * Remove all jobs for a session (called when session is closed)
+   *
+   * INTEGRATION: This must be called from SessionService when a session is
+   * closed or deleted to ensure orphaned cron jobs are cleaned up.
+   * See: src/app/api/sessions/[id]/route.ts DELETE handler
    */
   removeSessionJobs(sessionId: string): void {
     const toRemove: string[] = [];

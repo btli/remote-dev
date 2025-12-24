@@ -1,5 +1,11 @@
 /**
  * Schedule Types - TypeScript definitions for scheduled command execution
+ *
+ * EXECUTION MODEL NOTE:
+ * Commands are executed via TmuxService.sendKeys(), which is a fire-and-forget
+ * operation. Exit codes and success status reflect whether keystrokes were
+ * successfully sent to tmux, NOT whether the actual command succeeded.
+ * See schedule-service.ts for detailed documentation.
  */
 
 // =============================================================================
@@ -8,11 +14,24 @@
 
 /**
  * Schedule lifecycle status
+ * - active: Schedule is running on its cron schedule
+ * - paused: Schedule is temporarily paused (enabled=false)
+ * - failed: Schedule has failed multiple times (informational)
+ * - completed: All scheduled executions are done (for one-time schedules)
+ *
+ * Note: The `enabled` boolean controls whether the schedule runs.
+ * The `status` field is informational and reflects the schedule's health.
  */
 export type ScheduleStatus = "active" | "paused" | "failed" | "completed";
 
 /**
  * Execution status for schedules and commands
+ * - success: Keystrokes were successfully sent to tmux
+ * - failed: Failed to send keystrokes to tmux (communication error)
+ * - timeout: The sendKeys operation timed out (not command execution timeout)
+ *
+ * IMPORTANT: These statuses reflect tmux communication, NOT actual command results.
+ * A "success" status means the command was typed into tmux, not that it ran successfully.
  */
 export type ExecutionStatus = "success" | "failed" | "timeout";
 
@@ -32,8 +51,20 @@ export interface SessionSchedule {
   timezone: string;
   enabled: boolean;
   status: ScheduleStatus;
+  /**
+   * Maximum retry attempts for transient tmux communication errors.
+   * Retries are triggered when sendKeys fails, NOT based on command exit codes.
+   */
   maxRetries: number;
+  /**
+   * Delay in seconds between retry attempts.
+   */
   retryDelaySeconds: number;
+  /**
+   * Timeout in seconds for the entire schedule execution.
+   * Applies to the total time for sending all commands to tmux.
+   * Note: This does NOT timeout actual command execution in tmux.
+   */
   timeoutSeconds: number;
   lastRunAt: Date | null;
   lastRunStatus: ExecutionStatus | null;

@@ -47,6 +47,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     const { commands, ...updates } = result.data;
 
     // Update schedule metadata if provided
+    // If no updates, still validate ownership/existence to prevent blind command updates
     if (Object.keys(updates).length > 0) {
       await ScheduleService.updateSchedule(scheduleId, userId, updates);
     } else {
@@ -61,8 +62,11 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       await ScheduleService.updateScheduleCommands(scheduleId, userId, commands);
     }
 
-    // Notify orchestrator of changes
-    await schedulerOrchestrator.updateJob(scheduleId);
+    // Notify orchestrator of changes (updateJob is idempotent - safe to call even
+    // if only metadata changed without affecting the cron schedule)
+    if (schedulerOrchestrator.isStarted()) {
+      await schedulerOrchestrator.updateJob(scheduleId);
+    }
 
     // Return updated schedule with commands
     const updated = await ScheduleService.getScheduleWithCommands(scheduleId, userId);

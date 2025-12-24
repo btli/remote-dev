@@ -15,7 +15,7 @@ import {
   commandExecutions,
   terminalSessions,
 } from "@/db/schema";
-import { eq, and, desc, asc, sql } from "drizzle-orm";
+import { eq, and, desc, asc, inArray } from "drizzle-orm";
 import { Cron } from "croner";
 import { ScheduleServiceError } from "@/lib/errors";
 import * as TmuxService from "./tmux-service";
@@ -36,6 +36,9 @@ import type {
 
 // Re-export error class for API routes
 export { ScheduleServiceError };
+
+// Track in-progress executions to prevent concurrent runs of the same schedule
+const executingSchedules = new Set<string>();
 
 // =============================================================================
 // Cron Utilities
@@ -243,9 +246,12 @@ export async function listSchedules(
 
   // Fetch session info for each schedule
   const sessionIds = [...new Set(schedules.map((s) => s.sessionId))];
-  const sessions = await db.query.terminalSessions.findMany({
-    where: sql`${terminalSessions.id} IN ${sessionIds}`,
-  });
+  const sessions =
+    sessionIds.length > 0
+      ? await db.query.terminalSessions.findMany({
+          where: inArray(terminalSessions.id, sessionIds),
+        })
+      : [];
 
   const sessionMap = new Map(sessions.map((s) => [s.id, s]));
 
@@ -449,6 +455,33 @@ export async function setScheduleEnabled(
 // =============================================================================
 // Schedule Execution
 // =============================================================================
+//
+// EXECUTION MODEL OVERVIEW
+// ========================
+// Commands are executed via TmuxService.sendKeys(), which sends keystrokes to
+// a tmux session. This is fundamentally a "fire-and-forget" operation:
+//
+// 1. sendKeys() sends the command text + Enter key to tmux
+// 2. We wait a brief interval for tmux to process the keystrokes
+// 3. We have NO direct visibility into command completion or exit codes
+//
+// IMPLICATIONS:
+// - Exit codes are NOT reliably captured (they reflect sendKeys success, not command success)
+// - A command marked "success" only means keystrokes were sent to tmux successfully
+// - Long-running commands will appear to complete immediately
+// - The actual command runs asynchronously in the tmux session
+//
+// TIMEOUT BEHAVIOR:
+// - The timeout applies to the keystroke sending, not command execution
+// - If a command hangs in tmux, we cannot detect or interrupt it
+// - Timeout is primarily useful for catching tmux communication issues
+//
+// RETRY BEHAVIOR:
+// - Retries are triggered when sendKeys fails (tmux communication errors)
+// - They do NOT retry based on actual command exit codes
+// - Useful for recovering from transient tmux session issues
+//
+// =============================================================================
 
 /**
  * Execute a schedule manually (trigger now)
@@ -491,17 +524,32 @@ export async function executeScheduleNow(
 }
 
 /**
- * Core execution logic - runs commands sequentially
+ * Core execution logic - runs commands sequentially with timeout and retry support
+ *
+ * Note: "success" status indicates keystrokes were sent to tmux successfully.
+ * The actual command execution happens asynchronously in the tmux session.
+ * See EXECUTION MODEL OVERVIEW above for details.
  */
 export async function executeSchedule(
   schedule: SessionScheduleWithCommands,
   tmuxSessionName: string
 ): Promise<ScheduleExecution> {
+  // Prevent concurrent execution of the same schedule
+  if (executingSchedules.has(schedule.id)) {
+    throw new ScheduleServiceError(
+      "Schedule is already executing",
+      "ALREADY_EXECUTING",
+      schedule.id
+    );
+  }
+
+  executingSchedules.add(schedule.id);
   const startedAt = new Date();
   const executionId = crypto.randomUUID();
 
   let successCount = 0;
   let failureCount = 0;
+  let timedOut = false;
   const commandResults: Array<{
     commandId: string;
     command: string;
@@ -514,128 +562,191 @@ export async function executeSchedule(
     errorMessage?: string;
   }> = [];
 
-  // Check if tmux session exists
-  const sessionExists = await TmuxService.sessionExists(tmuxSessionName);
-  if (!sessionExists) {
-    // Record failed execution
+  try {
+    // Check if tmux session exists
+    const sessionExists = await TmuxService.sessionExists(tmuxSessionName);
+    if (!sessionExists) {
+      // Record failed execution
+      const completedAt = new Date();
+      const [execution] = await db
+        .insert(scheduleExecutions)
+        .values({
+          id: executionId,
+          scheduleId: schedule.id,
+          status: "failed",
+          startedAt,
+          completedAt,
+          durationMs: completedAt.getTime() - startedAt.getTime(),
+          commandCount: schedule.commands.length,
+          successCount: 0,
+          failureCount: schedule.commands.length,
+          errorMessage: `Tmux session "${tmuxSessionName}" does not exist`,
+        })
+        .returning();
+
+      // Update schedule metadata
+      await updateScheduleAfterExecution(schedule.id, "failed");
+
+      return mapDbExecutionToExecution(execution);
+    }
+
+    // Execute commands sequentially
+    for (const cmd of schedule.commands) {
+      // Check overall timeout (applies to total execution, not per-command)
+      const elapsedMs = Date.now() - startedAt.getTime();
+      if (schedule.timeoutSeconds > 0 && elapsedMs >= schedule.timeoutSeconds * 1000) {
+        timedOut = true;
+        commandResults.push({
+          commandId: cmd.id,
+          command: cmd.command,
+          status: "timeout",
+          exitCode: null,
+          startedAt: new Date(),
+          completedAt: new Date(),
+          durationMs: 0,
+          errorMessage: `Schedule timeout exceeded (${schedule.timeoutSeconds}s)`,
+        });
+        failureCount++;
+        break;
+      }
+
+      // Apply delay before command
+      if (cmd.delayBeforeSeconds > 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, cmd.delayBeforeSeconds * 1000)
+        );
+      }
+
+      const cmdStartedAt = new Date();
+      let lastError: Error | null = null;
+      let succeeded = false;
+
+      // Retry loop for transient tmux communication errors
+      const maxAttempts = (schedule.maxRetries || 0) + 1;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          // Send command to tmux session with per-command timeout
+          const sendKeysPromise = TmuxService.sendKeys(tmuxSessionName, cmd.command, true);
+
+          // Apply timeout to sendKeys operation (not to command execution in tmux)
+          const timeoutMs = schedule.timeoutSeconds > 0
+            ? Math.max(1000, (schedule.timeoutSeconds * 1000) - (Date.now() - startedAt.getTime()))
+            : 30000; // Default 30s timeout for sendKeys
+
+          await Promise.race([
+            sendKeysPromise,
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Timeout sending command to tmux")), timeoutMs)
+            ),
+          ]);
+
+          // Brief wait for tmux to process the keystroke (not for command completion)
+          await new Promise((resolve) => setTimeout(resolve, 100));
+
+          succeeded = true;
+          break;
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+
+          // Retry if we have attempts left
+          if (attempt < maxAttempts) {
+            console.log(
+              `[ScheduleService] Command attempt ${attempt}/${maxAttempts} failed for schedule ${schedule.id}, ` +
+                `retrying in ${schedule.retryDelaySeconds || 1}s...`
+            );
+            await new Promise((resolve) =>
+              setTimeout(resolve, (schedule.retryDelaySeconds || 1) * 1000)
+            );
+          }
+        }
+      }
+
+      const cmdCompletedAt = new Date();
+
+      if (succeeded) {
+        commandResults.push({
+          commandId: cmd.id,
+          command: cmd.command,
+          status: "success",
+          // Note: Exit code reflects sendKeys success, not actual command result
+          exitCode: 0,
+          startedAt: cmdStartedAt,
+          completedAt: cmdCompletedAt,
+          durationMs: cmdCompletedAt.getTime() - cmdStartedAt.getTime(),
+        });
+        successCount++;
+      } else {
+        const isTimeout = lastError?.message.includes("Timeout");
+        commandResults.push({
+          commandId: cmd.id,
+          command: cmd.command,
+          status: isTimeout ? "timeout" : "failed",
+          exitCode: null,
+          startedAt: cmdStartedAt,
+          completedAt: cmdCompletedAt,
+          durationMs: cmdCompletedAt.getTime() - cmdStartedAt.getTime(),
+          errorMessage: lastError?.message || "Unknown error",
+        });
+        failureCount++;
+
+        // Stop execution if not configured to continue on error
+        if (!cmd.continueOnError) {
+          break;
+        }
+      }
+    }
+
     const completedAt = new Date();
+    const durationMs = completedAt.getTime() - startedAt.getTime();
+    const status: ExecutionStatus = timedOut
+      ? "timeout"
+      : failureCount > 0
+        ? "failed"
+        : "success";
+
+    // Store execution record
     const [execution] = await db
       .insert(scheduleExecutions)
       .values({
         id: executionId,
         scheduleId: schedule.id,
-        status: "failed",
+        status,
         startedAt,
         completedAt,
-        durationMs: completedAt.getTime() - startedAt.getTime(),
+        durationMs,
         commandCount: schedule.commands.length,
-        successCount: 0,
-        failureCount: schedule.commands.length,
-        errorMessage: `Tmux session "${tmuxSessionName}" does not exist`,
+        successCount,
+        failureCount,
       })
       .returning();
 
-    // Update schedule metadata
-    await updateScheduleAfterExecution(schedule.id, "failed");
-
-    return mapDbExecutionToExecution(execution);
-  }
-
-  // Execute commands sequentially
-  for (const cmd of schedule.commands) {
-    // Apply delay before command
-    if (cmd.delayBeforeSeconds > 0) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, cmd.delayBeforeSeconds * 1000)
+    // Store command execution details (truncate output to 5KB to prevent DB bloat)
+    if (commandResults.length > 0) {
+      await db.insert(commandExecutions).values(
+        commandResults.map((r) => ({
+          id: crypto.randomUUID(),
+          executionId,
+          commandId: r.commandId,
+          command: r.command,
+          status: r.status,
+          exitCode: r.exitCode,
+          startedAt: r.startedAt,
+          completedAt: r.completedAt,
+          durationMs: r.durationMs,
+          output: r.output?.substring(0, 5000),
+          errorMessage: r.errorMessage,
+        }))
       );
     }
 
-    const cmdStartedAt = new Date();
-    try {
-      // Send command to tmux session
-      await TmuxService.sendKeys(tmuxSessionName, cmd.command, true);
+    // Update schedule metadata
+    await updateScheduleAfterExecution(schedule.id, status);
 
-      // Brief wait to allow command to start (fire-and-forget style)
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      const cmdCompletedAt = new Date();
-      commandResults.push({
-        commandId: cmd.id,
-        command: cmd.command,
-        status: "success",
-        exitCode: 0,
-        startedAt: cmdStartedAt,
-        completedAt: cmdCompletedAt,
-        durationMs: cmdCompletedAt.getTime() - cmdStartedAt.getTime(),
-      });
-
-      successCount++;
-    } catch (error) {
-      const cmdCompletedAt = new Date();
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      commandResults.push({
-        commandId: cmd.id,
-        command: cmd.command,
-        status: "failed",
-        exitCode: 1,
-        startedAt: cmdStartedAt,
-        completedAt: cmdCompletedAt,
-        durationMs: cmdCompletedAt.getTime() - cmdStartedAt.getTime(),
-        errorMessage: errorMsg,
-      });
-
-      failureCount++;
-
-      // Stop execution if not configured to continue on error
-      if (!cmd.continueOnError) {
-        break;
-      }
-    }
+    return mapDbExecutionToExecution(execution);
+  } finally {
+    // Always remove from executing set
+    executingSchedules.delete(schedule.id);
   }
-
-  const completedAt = new Date();
-  const durationMs = completedAt.getTime() - startedAt.getTime();
-  const status: ExecutionStatus = failureCount > 0 ? "failed" : "success";
-
-  // Store execution record
-  const [execution] = await db
-    .insert(scheduleExecutions)
-    .values({
-      id: executionId,
-      scheduleId: schedule.id,
-      status,
-      startedAt,
-      completedAt,
-      durationMs,
-      commandCount: schedule.commands.length,
-      successCount,
-      failureCount,
-    })
-    .returning();
-
-  // Store command execution details
-  if (commandResults.length > 0) {
-    await db.insert(commandExecutions).values(
-      commandResults.map((r) => ({
-        id: crypto.randomUUID(),
-        executionId,
-        commandId: r.commandId,
-        command: r.command,
-        status: r.status,
-        exitCode: r.exitCode,
-        startedAt: r.startedAt,
-        completedAt: r.completedAt,
-        durationMs: r.durationMs,
-        output: r.output?.substring(0, 5000), // Truncate to 5KB
-        errorMessage: r.errorMessage,
-      }))
-    );
-  }
-
-  // Update schedule metadata
-  await updateScheduleAfterExecution(schedule.id, status);
-
-  return mapDbExecutionToExecution(execution);
 }
 
 /**
