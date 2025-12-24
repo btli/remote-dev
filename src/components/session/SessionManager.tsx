@@ -692,9 +692,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         }
       }
 
-      // Close the session
+      // Close the session - pass deleteWorktree to bypass trash when worktree was deleted
       try {
-        await closeSession(session.id);
+        await closeSession(session.id, deleteWorktree ? { deleteWorktree: true } : undefined);
       } catch (error) {
         logSessionError("close session", error);
       }
