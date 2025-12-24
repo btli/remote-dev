@@ -4,7 +4,7 @@ import * as TrashService from "@/services/trash-service";
 import type { TrashResourceType } from "@/types/trash";
 
 /**
- * GET /api/trash - List trash items
+ * GET /api/trash - List trash items with full metadata
  * Query params:
  *   - type: Filter by resource type (optional)
  */
@@ -12,7 +12,8 @@ export const GET = withAuth(async (request, { userId }) => {
   const { searchParams } = new URL(request.url);
   const resourceType = searchParams.get("type") as TrashResourceType | null;
 
-  const items = await TrashService.listTrashItems(
+  // Return items with full metadata for better UI display
+  const items = await TrashService.listTrashItemsWithMetadata(
     userId,
     resourceType || undefined
   );

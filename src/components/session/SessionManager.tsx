@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, Activity, useEffectEvent } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
@@ -132,16 +132,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     return `${wsProtocol}//${hostname}${port ? `:${port}` : ""}/ws`;
   }, []);
 
-  // Use refs for mutable values to avoid stale closures in keyboard handler
-  const sessionCounterRef = useRef(sessionCounter);
-  const activeFolderNameRef = useRef<string | null>(null);
-  useEffect(() => {
-    sessionCounterRef.current = sessionCounter;
-  }, [sessionCounter]);
-
-  // Refs for split handlers (to avoid stale closures in keyboard handler)
-  const splitHorizontalRef = useRef<(() => void) | null>(null);
-  const splitVerticalRef = useRef<(() => void) | null>(null);
+  // Note: No longer need refs for keyboard handler - useEffectEvent handles this
 
   // Persist sidebar collapsed state to localStorage
   const handleSidebarCollapsedChange = useCallback((collapsed: boolean) => {
@@ -169,8 +160,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   } = useFolderContext();
 
   // Trash state from context
-  const { count: trashCount, trashSession } = useTrashContext();
+  const { count: trashCount, trashSession, getTrashForFolder } = useTrashContext();
   const [isTrashOpen, setIsTrashOpen] = useState(false);
+
+  // Get trash count for a specific folder
+  const getFolderTrashCount = useCallback(
+    (folderId: string) => getTrashForFolder(folderId).length,
+    [getTrashForFolder]
+  );
 
   // Preferences state from context
   const {
@@ -182,11 +179,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setActiveFolder,
     resolvePreferencesForFolder,
   } = usePreferencesContext();
-
-  // Update folder name ref when active project changes (for keyboard handler)
-  useEffect(() => {
-    activeFolderNameRef.current = activeProject.folderName;
-  }, [activeProject.folderName]);
 
   // GitHub stats for repo badges on folders
   const { getRepositoryById } = useGitHubStats();
@@ -291,107 +283,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     },
     [autoFollowEnabled, activeProject.isPinned, activeProject.folderId, setActiveFolder]
   );
-
-  // Keyboard shortcuts
-  // Note: Cmd+T and Cmd+W are intercepted by browsers, so we use alternatives
-  // FIX: Uses refs for mutable values to avoid stale closure issues
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+Enter or Ctrl+Enter for new session (not intercepted by browsers)
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault();
-        // Use refs to get current values (avoids stale closure)
-        const prefix = activeFolderNameRef.current || "Terminal";
-        const name = `${prefix} ${sessionCounterRef.current}`;
-        setSessionCounter((c) => c + 1);
-        createSession({ name }).catch((error) => {
-          logSessionError("create session", error);
-        });
-      }
-      // Cmd+Shift+W or Ctrl+Shift+W to close current session
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "w") {
-        if (activeSessionId) {
-          e.preventDefault();
-          closeSession(activeSessionId).catch((error) => {
-            logSessionError("close session", error);
-          });
-        }
-      }
-      // Cmd+[ or Cmd+] to switch tabs
-      if (e.metaKey && e.key === "[") {
-        e.preventDefault();
-        const currentIndex = activeSessions.findIndex((s) => s.id === activeSessionId);
-        if (currentIndex > 0) {
-          const targetSession = activeSessions[currentIndex - 1];
-          setActiveSession(targetSession.id);
-          maybeAutoFollowFolder(targetSession.folderId || null);
-        }
-      }
-      if (e.metaKey && e.key === "]") {
-        e.preventDefault();
-        const currentIndex = activeSessions.findIndex((s) => s.id === activeSessionId);
-        if (currentIndex < activeSessions.length - 1) {
-          const targetSession = activeSessions[currentIndex + 1];
-          setActiveSession(targetSession.id);
-          maybeAutoFollowFolder(targetSession.folderId || null);
-        }
-      }
-      // Cmd+D to split vertically (side by side)
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "d") {
-        e.preventDefault();
-        splitVerticalRef.current?.();
-      }
-      // Cmd+Shift+D to split horizontally (stacked)
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "D") {
-        e.preventDefault();
-        splitHorizontalRef.current?.();
-      }
-      // Cmd+Shift+E or Ctrl+Shift+E to split vertical (side by side)
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "e") {
-        if (activeSessionId) {
-          e.preventDefault();
-          const existingSplit = getSplitForSession(activeSessionId);
-          if (!existingSplit) {
-            createSplit(activeSessionId, "vertical");
-          }
-        }
-      }
-      // Cmd+Shift+O or Ctrl+Shift+O to split horizontal (stacked)
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "o") {
-        if (activeSessionId) {
-          e.preventDefault();
-          const existingSplit = getSplitForSession(activeSessionId);
-          if (!existingSplit) {
-            createSplit(activeSessionId, "horizontal");
-          }
-        }
-      }
-      // Cmd+Shift+U or Ctrl+Shift+U to unsplit (SplitContext)
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "u") {
-        if (activeSessionId) {
-          e.preventDefault();
-          const existingSplit = getSplitForSession(activeSessionId);
-          if (existingSplit) {
-            removeFromSplit(activeSessionId);
-          }
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    activeSessionId,
-    activeSessions,
-    setActiveSession,
-    createSession,
-    closeSession,
-    logSessionError,
-    maybeAutoFollowFolder,
-    getSplitForSession,
-    createSplit,
-    removeFromSplit,
-  ]);
 
   const handleCreateSession = useCallback(
     async (data: {
@@ -842,14 +733,96 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   /** Enter split mode vertically */
   const handleSplitVertical = useCallback(() => handleSplit("vertical"), [handleSplit]);
 
-  // Update refs when handlers change
-  useEffect(() => {
-    splitHorizontalRef.current = handleSplitHorizontal;
-  }, [handleSplitHorizontal]);
+  // Keyboard shortcut handler - useEffectEvent always reads latest values
+  // Note: Cmd+T and Cmd+W are intercepted by browsers, so we use alternatives
+  const onKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    // Cmd+Enter or Ctrl+Enter for new session (not intercepted by browsers)
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      // useEffectEvent reads latest values automatically - no refs needed
+      const prefix = activeProject.folderName || "Terminal";
+      const name = `${prefix} ${sessionCounter}`;
+      setSessionCounter((c) => c + 1);
+      createSession({ name }).catch((error) => {
+        logSessionError("create session", error);
+      });
+    }
+    // Cmd+Shift+W or Ctrl+Shift+W to close current session
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "w") {
+      if (activeSessionId) {
+        e.preventDefault();
+        closeSession(activeSessionId).catch((error) => {
+          logSessionError("close session", error);
+        });
+      }
+    }
+    // Cmd+[ or Cmd+] to switch tabs
+    if (e.metaKey && e.key === "[") {
+      e.preventDefault();
+      const currentIndex = activeSessions.findIndex((s) => s.id === activeSessionId);
+      if (currentIndex > 0) {
+        const targetSession = activeSessions[currentIndex - 1];
+        setActiveSession(targetSession.id);
+        maybeAutoFollowFolder(targetSession.folderId || null);
+      }
+    }
+    if (e.metaKey && e.key === "]") {
+      e.preventDefault();
+      const currentIndex = activeSessions.findIndex((s) => s.id === activeSessionId);
+      if (currentIndex < activeSessions.length - 1) {
+        const targetSession = activeSessions[currentIndex + 1];
+        setActiveSession(targetSession.id);
+        maybeAutoFollowFolder(targetSession.folderId || null);
+      }
+    }
+    // Cmd+D to split vertically (side by side)
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "d") {
+      e.preventDefault();
+      handleSplitVertical();
+    }
+    // Cmd+Shift+D to split horizontally (stacked)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "D") {
+      e.preventDefault();
+      handleSplitHorizontal();
+    }
+    // Cmd+Shift+E or Ctrl+Shift+E to split vertical (side by side)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "e") {
+      if (activeSessionId) {
+        e.preventDefault();
+        const existingSplit = getSplitForSession(activeSessionId);
+        if (!existingSplit) {
+          createSplit(activeSessionId, "vertical");
+        }
+      }
+    }
+    // Cmd+Shift+O or Ctrl+Shift+O to split horizontal (stacked)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "o") {
+      if (activeSessionId) {
+        e.preventDefault();
+        const existingSplit = getSplitForSession(activeSessionId);
+        if (!existingSplit) {
+          createSplit(activeSessionId, "horizontal");
+        }
+      }
+    }
+    // Cmd+Shift+U or Ctrl+Shift+U to unsplit (SplitContext)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "u") {
+      if (activeSessionId) {
+        e.preventDefault();
+        const existingSplit = getSplitForSession(activeSessionId);
+        if (existingSplit) {
+          removeFromSplit(activeSessionId);
+        }
+      }
+    }
+  });
 
+  // Keyboard shortcuts effect - empty deps since onKeyDown is an effect event
   useEffect(() => {
-    splitVerticalRef.current = handleSplitVertical;
-  }, [handleSplitVertical]);
+    const handleKeyDown = (e: KeyboardEvent) => onKeyDown(e);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   /** Close a session in a split pane */
   const handlePaneSessionExit = useCallback(async (sessionId: string) => {
@@ -974,6 +947,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             folderHasPreferences={hasFolderPreferences}
             folderHasRepo={folderHasRepo}
             getFolderRepoStats={getFolderRepoStats}
+            getFolderTrashCount={getFolderTrashCount}
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}
             onSessionRename={handleRenameSession}
@@ -1195,15 +1169,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isGitHubConnected={isGitHubConnected}
       />
 
-      {/* Folder Preferences Modal */}
-      {folderSettingsModal && (
+      {/* Folder Preferences Modal - Activity preserves form state when closed */}
+      <Activity mode={folderSettingsModal ? "visible" : "hidden"}>
         <FolderPreferencesModal
-          open={true}
+          open={folderSettingsModal !== null}
           onClose={() => setFolderSettingsModal(null)}
-          folderId={folderSettingsModal.folderId}
-          folderName={folderSettingsModal.folderName}
+          folderId={folderSettingsModal?.folderId ?? ""}
+          folderName={folderSettingsModal?.folderName ?? ""}
         />
-      )}
+      </Activity>
 
       {/* Command Palette */}
       <CommandPalette

@@ -34,7 +34,7 @@ export class TrashServiceError extends Error {
 }
 
 /**
- * List all trash items for a user
+ * List all trash items for a user (basic info only)
  * @param userId - User ID to filter by
  * @param resourceType - Optional filter by resource type
  * @returns Array of trash items (without detailed metadata)
@@ -63,6 +63,65 @@ export async function listTrashItems(
     trashedAt: item.trashedAt,
     expiresAt: item.expiresAt,
   }));
+}
+
+/**
+ * List all trash items for a user with full metadata
+ * @param userId - User ID to filter by
+ * @param resourceType - Optional filter by resource type
+ * @returns Array of trash items with metadata
+ */
+export async function listTrashItemsWithMetadata(
+  userId: string,
+  resourceType?: TrashResourceType
+): Promise<TrashItemWithMetadata[]> {
+  const conditions = [eq(trashItems.userId, userId)];
+
+  if (resourceType) {
+    conditions.push(eq(trashItems.resourceType, resourceType));
+  }
+
+  const items = await db.query.trashItems.findMany({
+    where: and(...conditions),
+    orderBy: [desc(trashItems.trashedAt)],
+  });
+
+  const result: TrashItemWithMetadata[] = [];
+
+  for (const item of items) {
+    if (item.resourceType === "worktree") {
+      const metadata = await db.query.worktreeTrashMetadata.findFirst({
+        where: eq(worktreeTrashMetadata.trashItemId, item.id),
+      });
+
+      if (metadata) {
+        result.push({
+          id: item.id,
+          userId: item.userId,
+          resourceType: "worktree",
+          resourceId: item.resourceId,
+          resourceName: item.resourceName,
+          trashedAt: item.trashedAt,
+          expiresAt: item.expiresAt,
+          metadata: {
+            id: metadata.id,
+            trashItemId: metadata.trashItemId,
+            githubRepoId: metadata.githubRepoId,
+            repoName: metadata.repoName,
+            repoLocalPath: metadata.repoLocalPath,
+            worktreeBranch: metadata.worktreeBranch,
+            worktreeOriginalPath: metadata.worktreeOriginalPath,
+            worktreeTrashPath: metadata.worktreeTrashPath,
+            originalFolderId: metadata.originalFolderId,
+            originalFolderName: metadata.originalFolderName,
+            createdAt: metadata.createdAt,
+          },
+        });
+      }
+    }
+  }
+
+  return result;
 }
 
 /**
