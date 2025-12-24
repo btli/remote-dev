@@ -46,8 +46,10 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
     const schedule = await ScheduleService.createSchedule(userId, input);
 
-    // Notify orchestrator to add the job
-    if (schedule.enabled) {
+    // Notify orchestrator to add the job (if orchestrator is ready)
+    // If orchestrator isn't started yet (e.g., during slow startup), the schedule
+    // will be picked up when the orchestrator starts and loads all enabled schedules
+    if (schedule.enabled && schedulerOrchestrator.isStarted()) {
       await schedulerOrchestrator.addJob(schedule.id);
     }
 
