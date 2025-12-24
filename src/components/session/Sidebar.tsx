@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
-  GitPullRequest, CircleDot,
+  GitPullRequest, CircleDot, Clock, CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -95,6 +95,8 @@ interface SidebarProps {
   onFolderReorder: (folderIds: string[]) => void;
   trashCount: number;
   onTrashOpen: () => void;
+  onSessionSchedule?: (sessionId: string) => void;
+  onSchedulesOpen?: () => void;
 }
 
 export function Sidebar({
@@ -130,6 +132,8 @@ export function Sidebar({
   onFolderReorder,
   trashCount,
   onTrashOpen,
+  onSessionSchedule,
+  onSchedulesOpen,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -981,6 +985,13 @@ export function Sidebar({
               </ContextMenuSubContent>
             </ContextMenuSub>
           )}
+          {/* Schedule command option */}
+          {onSessionSchedule && (
+            <ContextMenuItem onClick={() => onSessionSchedule(session.id)}>
+              <Clock className="w-3.5 h-3.5 mr-2" />
+              Schedule Command
+            </ContextMenuItem>
+          )}
           <ContextMenuSeparator />
           {/* Split options */}
           {(() => {
@@ -1656,6 +1667,20 @@ export function Sidebar({
       {/* Footer - hide when collapsed */}
       {!collapsed && (
         <div className="px-3 py-1.5 border-t border-white/5 space-y-1">
+          {/* Schedules button */}
+          {onSchedulesOpen && (
+            <button
+              onClick={onSchedulesOpen}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
+                "text-xs text-slate-400 hover:text-slate-300",
+                "hover:bg-slate-800/50 transition-colors"
+              )}
+            >
+              <CalendarClock className="w-3.5 h-3.5" />
+              <span>Schedules</span>
+            </button>
+          )}
           {/* Trash button - only show when there are items */}
           {trashCount > 0 && (
             <button

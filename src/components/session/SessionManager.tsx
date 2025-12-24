@@ -10,6 +10,7 @@ import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { RecordingsModal } from "@/components/session/RecordingsModal";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
+import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
@@ -162,6 +163,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Trash state from context
   const { count: trashCount, trashSession, getTrashForFolder } = useTrashContext();
   const [isTrashOpen, setIsTrashOpen] = useState(false);
+
+  // Schedule modal state
+  const [isCreateScheduleOpen, setIsCreateScheduleOpen] = useState(false);
+  const [scheduleTargetSession, setScheduleTargetSession] = useState<typeof activeSessions[0] | null>(null);
+  const [isSchedulesOpen, setIsSchedulesOpen] = useState(false);
 
   // Get trash count for a specific folder
   const getFolderTrashCount = useCallback(
@@ -411,6 +417,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       }
     },
     [updateSession, logSessionError]
+  );
+
+  // Open schedule modal for a session
+  const handleScheduleSession = useCallback(
+    (sessionId: string) => {
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session) {
+        setScheduleTargetSession(session);
+        setIsCreateScheduleOpen(true);
+      }
+    },
+    [sessions]
   );
 
   // Folder handlers now use the context methods directly
@@ -968,6 +986,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderReorder={handleReorderFolders}
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
+            onSessionSchedule={handleScheduleSession}
+            onSchedulesOpen={() => setIsSchedulesOpen(true)}
           />
       </div>
 
@@ -1236,6 +1256,22 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
       {/* Trash Modal */}
       <TrashModal open={isTrashOpen} onClose={() => setIsTrashOpen(false)} />
+
+      {/* Create Schedule Modal */}
+      <CreateScheduleModal
+        open={isCreateScheduleOpen}
+        onClose={() => {
+          setIsCreateScheduleOpen(false);
+          setScheduleTargetSession(null);
+        }}
+        session={scheduleTargetSession}
+      />
+
+      {/* Schedules Management Modal */}
+      <SchedulesModal
+        open={isSchedulesOpen}
+        onClose={() => setIsSchedulesOpen(false)}
+      />
     </div>
   );
 }
