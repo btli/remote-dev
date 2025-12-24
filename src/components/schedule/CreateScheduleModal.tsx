@@ -36,6 +36,7 @@ import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { CRON_PRESETS, TIMEZONE_OPTIONS, type ScheduleCommandInput, type ScheduleType } from "@/types/schedule";
 import type { TerminalSession } from "@/types/session";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Calendar, Repeat } from "lucide-react";
 
 interface CreateScheduleModalProps {
@@ -65,9 +66,8 @@ export function CreateScheduleModal({
     { id: crypto.randomUUID(), command: "", delayBeforeSeconds: 0, continueOnError: false },
   ]);
 
-  // One-time schedule state
-  const [scheduledDate, setScheduledDate] = useState("");
-  const [scheduledTime, setScheduledTime] = useState("");
+  // One-time schedule state - using Date object for the DateTimePicker
+  const [scheduledDateTime, setScheduledDateTime] = useState<Date | undefined>(undefined);
 
   // Advanced options
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -93,8 +93,9 @@ export function CreateScheduleModal({
         ]);
         // Default to 1 hour from now for one-time schedules
         const defaultTime = new Date(Date.now() + 60 * 60 * 1000);
-        setScheduledDate(defaultTime.toISOString().split("T")[0]);
-        setScheduledTime(defaultTime.toTimeString().slice(0, 5));
+        defaultTime.setSeconds(0);
+        defaultTime.setMilliseconds(0);
+        setScheduledDateTime(defaultTime);
         setShowAdvanced(false);
         setMaxRetries(3);
         setRetryDelaySeconds(30);
@@ -152,14 +153,8 @@ export function CreateScheduleModal({
     }
 
     if (scheduleType === "one-time") {
-      if (!scheduledDate || !scheduledTime) {
+      if (!scheduledDateTime) {
         setError("Date and time are required for one-time schedules");
-        return false;
-      }
-      // Parse the scheduled datetime and check if it's in the future
-      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
-      if (isNaN(scheduledDateTime.getTime())) {
-        setError("Invalid date or time");
         return false;
       }
       if (scheduledDateTime <= new Date()) {
@@ -199,9 +194,8 @@ export function CreateScheduleModal({
         }));
 
       // Build the schedule input based on type
-      if (scheduleType === "one-time") {
-        // Create ISO 8601 datetime string for one-time schedules
-        const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+      if (scheduleType === "one-time" && scheduledDateTime) {
+        // Get ISO 8601 datetime string for one-time schedules
         const scheduledAt = scheduledDateTime.toISOString();
 
         // Auto-generate name if not provided
@@ -246,24 +240,18 @@ export function CreateScheduleModal({
   // Format next run time preview
   const getNextRunPreview = (): string => {
     if (scheduleType === "one-time") {
-      if (!scheduledDate || !scheduledTime) return "Select date and time";
-      try {
-        const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
-        if (isNaN(scheduledDateTime.getTime())) return "Invalid date/time";
-        const now = new Date();
-        if (scheduledDateTime <= now) return "Time is in the past";
-        // Format as relative time
-        const diffMs = scheduledDateTime.getTime() - now.getTime();
-        const diffMins = Math.floor(diffMs / 60000);
-        const diffHours = Math.floor(diffMins / 60);
-        const diffDays = Math.floor(diffHours / 24);
-        if (diffDays > 0) return `In ${diffDays} day${diffDays > 1 ? "s" : ""}`;
-        if (diffHours > 0) return `In ${diffHours} hour${diffHours > 1 ? "s" : ""}`;
-        if (diffMins > 0) return `In ${diffMins} minute${diffMins > 1 ? "s" : ""}`;
-        return "In less than a minute";
-      } catch {
-        return "Invalid date/time";
-      }
+      if (!scheduledDateTime) return "Select date and time";
+      const now = new Date();
+      if (scheduledDateTime <= now) return "Time is in the past";
+      // Format as relative time
+      const diffMs = scheduledDateTime.getTime() - now.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMins / 60);
+      const diffDays = Math.floor(diffHours / 24);
+      if (diffDays > 0) return `In ${diffDays} day${diffDays > 1 ? "s" : ""}`;
+      if (diffHours > 0) return `In ${diffHours} hour${diffHours > 1 ? "s" : ""}`;
+      if (diffMins > 0) return `In ${diffMins} minute${diffMins > 1 ? "s" : ""}`;
+      return "In less than a minute";
     }
 
     try {
@@ -345,32 +333,14 @@ export function CreateScheduleModal({
               {/* One-time Schedule: Date/Time Picker */}
               {scheduleType === "one-time" && (
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="scheduled-date" className="text-sm text-slate-400">
-                        Date *
-                      </Label>
-                      <Input
-                        id="scheduled-date"
-                        type="date"
-                        value={scheduledDate}
-                        onChange={(e) => setScheduledDate(e.target.value)}
-                        min={new Date().toISOString().split("T")[0]}
-                        className="bg-slate-800/50 border-white/10 focus:border-violet-500"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="scheduled-time" className="text-sm text-slate-400">
-                        Time *
-                      </Label>
-                      <Input
-                        id="scheduled-time"
-                        type="time"
-                        value={scheduledTime}
-                        onChange={(e) => setScheduledTime(e.target.value)}
-                        className="bg-slate-800/50 border-white/10 focus:border-violet-500"
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm text-slate-400">Date & Time *</Label>
+                    <DateTimePicker
+                      date={scheduledDateTime}
+                      onDateChange={setScheduledDateTime}
+                      minDate={new Date()}
+                      placeholder="Select date and time"
+                    />
                   </div>
                   <p className="text-xs text-violet-400/80">{getNextRunPreview()}</p>
                 </div>
