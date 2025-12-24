@@ -19,15 +19,7 @@ import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
-import {
-  SplitPaneContainer,
-  type PaneNode,
-  createInitialLayout,
-  splitPane,
-  closePane,
-  getAllLeaves,
-  findPane,
-} from "@/components/terminal/SplitPane";
+import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
 
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
 
@@ -106,24 +98,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     },
   });
 
-  // Split pane state
-  const [splitPaneLayout, setSplitPaneLayout] = useState<PaneNode | null>(null);
-  const [activePaneId, setActivePaneId] = useState<string | null>(null);
-  const isSplitMode = splitPaneLayout !== null && splitPaneLayout.type === "container";
-
   // Terminal refs for focus management
   const terminalRefsMap = useRef<Map<string, TerminalWithKeyboardRef>>(new Map());
-
-  // Focus terminal when active session changes
-  useEffect(() => {
-    if (activeSessionId && !isSplitMode) {
-      // Small delay to ensure terminal is mounted and visible
-      const timeoutId = setTimeout(() => {
-        terminalRefsMap.current.get(activeSessionId)?.focus();
-      }, 50);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [activeSessionId, isSplitMode]);
 
   // Compute WebSocket URL based on current location (supports cloudflared tunnels)
   const wsUrl = useMemo(() => {
@@ -179,27 +155,44 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     resolvePreferencesForFolder,
   } = usePreferencesContext();
 
-  // Split state from context (for keyboard shortcuts)
+  // Split state from context
   const {
     getSplitForSession,
     createSplit,
     removeFromSplit,
+    updateLayout,
+    dissolveSplit,
   } = useSplitContext();
+
+  // Split pane state - derived from context
+  const activeSplit = activeSessionId ? getSplitForSession(activeSessionId) : null;
+  const isSplitMode = activeSplit !== null && activeSplit.sessions.length > 1;
+
+  // Focus terminal when active session changes
+  useEffect(() => {
+    if (activeSessionId && !isSplitMode) {
+      // Small delay to ensure terminal is mounted and visible
+      const timeoutId = setTimeout(() => {
+        terminalRefsMap.current.get(activeSessionId)?.focus();
+      }, 50);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [activeSessionId, isSplitMode]);
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
   const autoFollowEnabled = userSettings?.autoFollowActiveSession ?? true;
 
   const attachedSessionIds = useMemo(() => {
     const ids = new Set<string>();
-    if (isSplitMode && splitPaneLayout) {
-      for (const leaf of getAllLeaves(splitPaneLayout)) {
-        ids.add(leaf.sessionId);
+    if (isSplitMode && activeSplit) {
+      for (const splitSession of activeSplit.sessions) {
+        ids.add(splitSession.sessionId);
       }
     } else if (activeSessionId) {
       ids.add(activeSessionId);
     }
     return ids;
-  }, [isSplitMode, splitPaneLayout, activeSessionId]);
+  }, [isSplitMode, activeSplit, activeSessionId]);
 
   const logSessionError = useCallback((action: string, error: unknown) => {
     console.error(`Failed to ${action}:`, error);
@@ -710,41 +703,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
 
-    let newSession;
     try {
-      newSession = await createSession({
-        name,
-        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
-        folderId: activeProject.folderId || undefined,
-      });
+      await createSplit(activeSessionId, "horizontal", name);
     } catch (error) {
-      logSessionError("create session", error);
-      return;
+      logSessionError("create split", error);
     }
-
-    if (newSession) {
-      // Create layout if not in split mode
-      if (!splitPaneLayout) {
-        const initialLayout = createInitialLayout(activeSessionId);
-        const newLayout = splitPane(initialLayout, initialLayout.id, "horizontal", newSession.id);
-        setSplitPaneLayout(newLayout);
-        setActivePaneId(initialLayout.id);
-      } else if (activePaneId) {
-        // Split the active pane
-        const newLayout = splitPane(splitPaneLayout, activePaneId, "horizontal", newSession.id);
-        setSplitPaneLayout(newLayout);
-      }
-    }
-  }, [
-    activeSessionId,
-    sessionCounter,
-    createSession,
-    currentPreferences.defaultWorkingDirectory,
-    activeProject.folderId,
-    splitPaneLayout,
-    activePaneId,
-    logSessionError,
-  ]);
+  }, [activeSessionId, sessionCounter, createSplit, logSessionError]);
 
   // Update ref when handler changes
   useEffect(() => {
@@ -757,91 +721,44 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
 
-    let newSession;
     try {
-      newSession = await createSession({
-        name,
-        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
-        folderId: activeProject.folderId || undefined,
-      });
+      await createSplit(activeSessionId, "vertical", name);
     } catch (error) {
-      logSessionError("create session", error);
-      return;
+      logSessionError("create split", error);
     }
-
-    if (newSession) {
-      if (!splitPaneLayout) {
-        const initialLayout = createInitialLayout(activeSessionId);
-        const newLayout = splitPane(initialLayout, initialLayout.id, "vertical", newSession.id);
-        setSplitPaneLayout(newLayout);
-        setActivePaneId(initialLayout.id);
-      } else if (activePaneId) {
-        const newLayout = splitPane(splitPaneLayout, activePaneId, "vertical", newSession.id);
-        setSplitPaneLayout(newLayout);
-      }
-    }
-  }, [
-    activeSessionId,
-    sessionCounter,
-    createSession,
-    currentPreferences.defaultWorkingDirectory,
-    activeProject.folderId,
-    splitPaneLayout,
-    activePaneId,
-    logSessionError,
-  ]);
+  }, [activeSessionId, sessionCounter, createSplit, logSessionError]);
 
   // Update ref when handler changes
   useEffect(() => {
     splitVerticalRef.current = handleSplitVertical;
   }, [handleSplitVertical]);
 
-  /** Close a split pane */
-  const handlePaneClose = useCallback((paneId: string) => {
-    if (!splitPaneLayout) return;
-
-    const pane = findPane(splitPaneLayout, paneId);
-    if (pane?.type === "leaf") {
-      // Close the session associated with this pane
-      closeSession(pane.sessionId).catch((error) => {
-        logSessionError("close session", error);
-      });
+  /** Close a session in a split pane */
+  const handlePaneSessionExit = useCallback(async (sessionId: string) => {
+    try {
+      // Removing from split also handles cleanup when only one session remains
+      await removeFromSplit(sessionId);
+      await closeSession(sessionId);
+    } catch (error) {
+      logSessionError("close session in split", error);
     }
+  }, [removeFromSplit, closeSession, logSessionError]);
 
-    const newLayout = closePane(splitPaneLayout, paneId);
-    if (!newLayout || newLayout.type === "leaf") {
-      // Exit split mode if only one pane remains
-      setSplitPaneLayout(null);
-      setActivePaneId(null);
-    } else {
-      setSplitPaneLayout(newLayout);
-      // Update active pane if needed
-      if (activePaneId === paneId) {
-        const leaves = getAllLeaves(newLayout);
-        if (leaves.length > 0) {
-          setActivePaneId(leaves[0].id);
-        }
+  /** Exit split mode, keeping all sessions as independent */
+  const handleExitSplitMode = useCallback(async () => {
+    if (activeSplit) {
+      try {
+        await dissolveSplit(activeSplit.id);
+      } catch (error) {
+        logSessionError("dissolve split", error);
       }
     }
-  }, [splitPaneLayout, activePaneId, closeSession, logSessionError]);
-
-  /** Exit split mode, keeping only the active session */
-  const handleExitSplitMode = useCallback(() => {
-    setSplitPaneLayout(null);
-    setActivePaneId(null);
-  }, []);
+  }, [activeSplit, dissolveSplit, logSessionError]);
 
   /** Handle pane click in split mode */
-  const handlePaneClick = useCallback((paneId: string) => {
-    setActivePaneId(paneId);
-    // Also update the active session to match the pane
-    if (splitPaneLayout) {
-      const pane = findPane(splitPaneLayout, paneId);
-      if (pane?.type === "leaf") {
-        setActiveSession(pane.sessionId);
-      }
-    }
-  }, [splitPaneLayout, setActiveSession]);
+  const handlePaneClick = useCallback((sessionId: string) => {
+    setActiveSession(sessionId);
+  }, [setActiveSession]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Recording Handlers
@@ -873,36 +790,26 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setIsSaveRecordingModalOpen(false);
   }, [stopRecording]);
 
-  /** Render terminal for split pane */
-  const renderTerminalForPane = useCallback((sessionId: string) => {
-    const session = activeSessions.find((s) => s.id === sessionId);
-    if (!session) return null;
+  /** Handle resize in split mode */
+  const handleSplitResize = useCallback(async (layout: Array<{ sessionId: string; size: number }>) => {
+    if (!activeSplit) return;
+    try {
+      await updateLayout(activeSplit.id, layout);
+    } catch (error) {
+      logSessionError("update split layout", error);
+    }
+  }, [activeSplit, updateLayout, logSessionError]);
 
-    const folderId = session.folderId || null;
-    const prefs = resolvePreferencesForFolder(folderId);
-    const isActiveSession = session.id === activeSessionId;
-
-    return (
-      <TerminalWithKeyboard
-        key={session.id}
-        sessionId={session.id}
-        tmuxSessionName={session.tmuxSessionName}
-        sessionName={session.name}
-        projectPath={session.projectPath}
-        session={session}
-        wsUrl={wsUrl}
-        theme={prefs.theme}
-        fontSize={prefs.fontSize}
-        fontFamily={prefs.fontFamily}
-        notificationsEnabled={true}
-        isRecording={isRecording && isActiveSession}
-        onOutput={isRecording && isActiveSession ? recordOutput : undefined}
-        onDimensionsChange={isRecording && isActiveSession ? updateDimensions : undefined}
-        onSessionRestart={() => handleSessionRestart(session)}
-        onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
-      />
-    );
-  }, [activeSessions, resolvePreferencesForFolder, activeSessionId, isRecording, recordOutput, updateDimensions, handleSessionRestart, handleSessionDelete, wsUrl]);
+  /** Build session-to-folder mapping for SplitPaneLayout */
+  const sessionFolders = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const session of activeSessions) {
+      if (session.folderId) {
+        map[session.id] = session.folderId;
+      }
+    }
+    return map;
+  }, [activeSessions]);
 
   // On mobile, sidebar is collapsed when drawer is not open
   const effectiveCollapsed = isMobile ? !isMobileSidebarOpen : sidebarCollapsed;
@@ -1096,15 +1003,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
               {/* Terminal panels */}
               <div className="relative h-full">
-                {isSplitMode && splitPaneLayout ? (
+                {isSplitMode && activeSplit ? (
                   /* Split pane mode */
-                  <SplitPaneContainer
-                    layout={splitPaneLayout}
-                    activePaneId={activePaneId}
-                    onPaneClick={handlePaneClick}
-                    onPaneClose={handlePaneClose}
-                    onLayoutChange={setSplitPaneLayout}
-                    renderTerminal={renderTerminalForPane}
+                  <SplitPaneLayout
+                    splitGroup={activeSplit}
+                    sessions={activeSessions}
+                    activeSessionId={activeSessionId}
+                    onSessionClick={handlePaneClick}
+                    onResize={handleSplitResize}
+                    onSessionExit={handlePaneSessionExit}
+                    resolvePreferences={resolvePreferencesForFolder}
+                    sessionFolders={sessionFolders}
                   />
                 ) : (
                   /* Single terminal mode - only attach to the active session */
