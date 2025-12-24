@@ -76,6 +76,9 @@ export async function createSession(
         undefined // Auto-generate worktree path
       );
       workingPath = result.worktreePath;
+
+      // Copy .env files from main repo to worktree
+      WorktreeService.copyEnvFilesToWorktree(input.projectPath, result.worktreePath);
     } catch (error) {
       if (error instanceof WorktreeService.WorktreeServiceError) {
         throw new SessionServiceError(
@@ -144,6 +147,9 @@ export async function createSession(
         undefined // Auto-generate worktree path
       );
       workingPath = result.worktreePath;
+
+      // Copy .env files from main repo to worktree
+      WorktreeService.copyEnvFilesToWorktree(repoPath, result.worktreePath);
 
       // Update input for database record
       if (repoId) {

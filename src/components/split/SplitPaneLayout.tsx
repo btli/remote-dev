@@ -31,6 +31,7 @@ interface SplitPaneLayoutProps {
     fontSize?: number;
     fontFamily?: string;
   };
+  getEnvironmentForFolder: (folderId: string | null) => Record<string, string> | null;
   sessionFolders: Record<string, string>;
   wsUrl: string;
 }
@@ -43,6 +44,7 @@ export function SplitPaneLayout({
   onResize,
   onSessionExit,
   resolvePreferences,
+  getEnvironmentForFolder,
   sessionFolders,
   wsUrl,
 }: SplitPaneLayoutProps) {
@@ -147,6 +149,7 @@ export function SplitPaneLayout({
                 fontFamily={prefs.fontFamily}
                 wsUrl={wsUrl}
                 isActive={isActive}
+                environmentVars={getEnvironmentForFolder(folderId)}
                 onSessionExit={() => onSessionExit(pane.session!.id)}
               />
             </div>

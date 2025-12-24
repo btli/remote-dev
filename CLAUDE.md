@@ -106,6 +106,7 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 | `split_group` | Split pane groups with direction |
 | `trash_item` | Polymorphic trash items with 30-day retention |
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
+| `port_registry` | Port allocations for environment variable conflict detection |
 
 ### Service Layer
 
@@ -125,6 +126,7 @@ Located in `src/services/`:
 | `SplitService` | Split pane group management |
 | `TrashService` | Polymorphic trash management, cleanup scheduling |
 | `WorktreeTrashService` | Worktree-specific trash operations, restore logic |
+| `PortRegistryService` | Port allocation tracking and conflict detection |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -215,6 +217,8 @@ React Contexts in `src/contexts/`:
 - `PUT /api/preferences/folders/:folderId` - Set folder preferences
 - `DELETE /api/preferences/folders/:folderId` - Reset folder preferences
 - `POST /api/preferences/active-folder` - Set active folder
+- `GET /api/preferences/folders/:folderId/environment` - Get resolved environment variables
+- `POST /api/preferences/folders/:folderId/validate-ports` - Validate port conflicts
 
 ### Templates
 - `GET /api/templates` - List session templates

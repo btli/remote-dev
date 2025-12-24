@@ -8,6 +8,8 @@
  * (child) folders overriding less specific (parent) folders.
  */
 
+import type { EnvironmentVariables } from "./environment";
+
 /**
  * Core preference keys that can be customized at any level
  */
@@ -78,6 +80,9 @@ export interface FolderPreferences {
   // Repository association for worktree support
   githubRepoId: string | null;
   localRepoPath: string | null;
+  // Environment variables (stored as JSON in database)
+  // Use "__DISABLED__" value to explicitly disable an inherited variable
+  environmentVars: EnvironmentVariables | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -150,4 +155,7 @@ export interface UpdateFolderPreferencesInput {
   // Repository association for worktree support
   githubRepoId?: string | null;
   localRepoPath?: string | null;
+  // Environment variables (stored as JSON in database)
+  // Use "__DISABLED__" value to explicitly disable an inherited variable
+  environmentVars?: EnvironmentVariables | null;
 }
