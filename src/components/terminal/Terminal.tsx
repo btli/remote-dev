@@ -101,6 +101,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const fontSizeRef = useRef(fontSize);
   const fontFamilyRef = useRef(fontFamily);
 
+  // FIX: Use ref for environmentVars to prevent re-initialization on every render.
+  // Environment variables are only used during initial WebSocket connection.
+  // Without this, getEnvironmentForFolder() returning a new object on each render
+  // would cause the terminal to constantly disconnect and reconnect.
+  const environmentVarsRef = useRef(environmentVars);
+
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
     onWebSocketReadyRef.current = onWebSocketReady;
@@ -112,7 +118,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     themeRef.current = theme;
     fontSizeRef.current = fontSize;
     fontFamilyRef.current = fontFamily;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, theme, fontSize, fontFamily]);
+    // Keep environmentVars in sync (only used during initial connection)
+    environmentVarsRef.current = environmentVars;
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, theme, fontSize, fontFamily, environmentVars]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -284,9 +292,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         if (projectPath) {
           params.set("cwd", projectPath);
         }
-        // Include environment variables if specified
-        if (environmentVars && Object.keys(environmentVars).length > 0) {
-          params.set("environmentVars", encodeURIComponent(JSON.stringify(environmentVars)));
+        // Include environment variables if specified (use ref for stable identity)
+        const envVars = environmentVarsRef.current;
+        if (envVars && Object.keys(envVars).length > 0) {
+          params.set("environmentVars", encodeURIComponent(JSON.stringify(envVars)));
         }
 
         const ws = new WebSocket(`${wsUrl}?${params.toString()}`);
@@ -590,7 +599,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       searchAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, environmentVars]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus]);
 
   // Update terminal options when preferences change
   useEffect(() => {
