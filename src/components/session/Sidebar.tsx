@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   X, Plus, Terminal, Settings,
-  Folder, FolderOpen, MoreHorizontal, Pencil, Trash2, Sparkles, GitBranch,
+  Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock,
@@ -1388,208 +1388,172 @@ export function Sidebar({
 
                   return (
                     <div key={node.id} className="space-y-0.5">
-                      <div
-                        data-folder-id={node.id}
-                        data-folder-parent-id={node.parentId || ""}
-                        draggable={!isEditingFolder}
-                        onDragStart={(e) => handleFolderDragStart(e, node.id)}
-                        onDragEnd={handleDragEnd}
-                        onDragOver={(e) => handleFolderDragOver(e, node.id, node.parentId)}
-                        onDragLeave={handleDragLeave}
-                        onDrop={(e) => handleFolderDrop(e, node.id)}
-                        onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
-                        onTouchMove={handleFolderTouchMove}
-                        onTouchEnd={handleFolderTouchEnd}
-                        style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
-                        className={cn(
-                          "relative group flex items-center gap-1.5 px-2 py-1 rounded-md",
-                          !isEditingFolder && "cursor-grab active:cursor-grabbing",
-                          "hover:bg-white/5 transition-all duration-150",
-                          isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
-                          isActive && "bg-violet-500/10",
-                          isBeingDragged && "opacity-50"
-                        )}
-                        onClick={() => {
-                          onFolderClick(node.id);
-                          onFolderToggle(node.id);
-                        }}
-                      >
-                        {/* Drop indicator - before folder */}
-                        {showFolderDropBefore && (
-                          <div className="absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
-                        )}
-                        {node.collapsed && !isActive ? (
-                          <Folder
+                      <ContextMenu>
+                        <ContextMenuTrigger asChild>
+                          <div
+                            data-folder-id={node.id}
+                            data-folder-parent-id={node.parentId || ""}
+                            draggable={!isEditingFolder}
+                            onDragStart={(e) => handleFolderDragStart(e, node.id)}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={(e) => handleFolderDragOver(e, node.id, node.parentId)}
+                            onDragLeave={handleDragLeave}
+                            onDrop={(e) => handleFolderDrop(e, node.id)}
+                            onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
+                            onTouchMove={handleFolderTouchMove}
+                            onTouchEnd={handleFolderTouchEnd}
+                            style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
                             className={cn(
-                              "w-3.5 h-3.5 shrink-0",
-                              "text-violet-400"
+                              "relative group flex items-center gap-1.5 px-2 py-1 rounded-md",
+                              !isEditingFolder && "cursor-grab active:cursor-grabbing",
+                              "hover:bg-white/5 transition-all duration-150",
+                              isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
+                              isActive && "bg-violet-500/10",
+                              isBeingDragged && "opacity-50"
                             )}
-                          />
-                        ) : (
-                          <FolderOpen
-                            className={cn(
-                              "w-3.5 h-3.5 shrink-0",
-                              isActive
-                                ? "text-violet-300 fill-violet-400"
-                                : "text-violet-400"
-                            )}
-                          />
-                        )}
-
-                        {isEditingFolder ? (
-                          <input
-                            ref={inputRef}
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            onBlur={handleSaveEdit}
-                            onClick={(e) => e.stopPropagation()}
-                            className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
-                          />
-                        ) : (
-                          <span
-                            className="flex-1 text-xs text-slate-300 truncate"
-                            onDoubleClick={(e) => {
-                              e.stopPropagation();
-                              handleStartEdit(node.id, "folder", node.name, e);
+                            onClick={() => {
+                              onFolderClick(node.id);
+                              onFolderToggle(node.id);
                             }}
-                            title="Double-click to rename"
                           >
-                            {node.name}
-                          </span>
-                        )}
-
-                        {/* Repo stats badges */}
-                        {(() => {
-                          const repoStats = getFolderRepoStats(node.id);
-                          if (!repoStats) return null;
-                          return (
-                            <div className="flex items-center gap-1 shrink-0">
-                              {repoStats.prCount > 0 && (
-                                <span className="flex items-center gap-0.5 text-[9px] text-violet-400">
-                                  <GitPullRequest className="w-2.5 h-2.5" />
-                                  {repoStats.prCount}
-                                </span>
-                              )}
-                              {repoStats.issueCount > 0 && (
-                                <span className="flex items-center gap-0.5 text-[9px] text-emerald-400">
-                                  <CircleDot className="w-2.5 h-2.5" />
-                                  {repoStats.issueCount}
-                                </span>
-                              )}
-                              {repoStats.hasChanges && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-                              )}
-                            </div>
-                          );
-                        })()}
-
-                        <span className="text-[10px] text-slate-500">
-                          {totalSessions}
-                        </span>
-
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              onClick={(e) => e.stopPropagation()}
-                              className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-white/10 text-slate-500"
-                            >
-                              <MoreHorizontal className="w-3 h-3" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-36">
-                            <DropdownMenuItem
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                onFolderNewSession(node.id);
-                              }}
-                            >
-                              <Terminal className="w-3 h-3 mr-2" />
-                              New Session
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                onFolderAdvancedSession(node.id);
-                              }}
-                            >
-                              <Sparkles className="w-3 h-3 mr-2" />
-                              Advanced...
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                onFolderNewWorktree(node.id);
-                              }}
-                              disabled={!folderHasRepo(node.id)}
-                              className={!folderHasRepo(node.id) ? "opacity-50" : ""}
-                              title={!folderHasRepo(node.id) ? "Link a repository in folder preferences first" : undefined}
-                            >
-                              <GitBranch className="w-3 h-3 mr-2" />
-                              New Worktree
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                handleStartSubfolderCreate(node.id);
-                              }}
-                            >
-                              <Folder className="w-3 h-3 mr-2" />
-                              New Subfolder
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                onFolderSettings(node.id, node.name);
-                              }}
-                            >
-                              <Settings className="w-3 h-3 mr-2" />
-                              Preferences
-                              {hasPrefs && (
-                                <span className="ml-auto text-[10px] text-violet-400">Custom</span>
-                              )}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                handleStartEdit(node.id, "folder", node.name, e);
-                              }}
-                            >
-                              <Pencil className="w-3 h-3 mr-2" />
-                              Rename
-                            </DropdownMenuItem>
-                            {node.parentId && (
-                              <DropdownMenuItem
-                                onClick={(e: React.MouseEvent) => {
-                                  e.stopPropagation();
-                                  onFolderMove(node.id, null);
-                                }}
-                              >
-                                <FolderOpen className="w-3 h-3 mr-2" />
-                                Move to Root
-                              </DropdownMenuItem>
+                            {/* Drop indicator - before folder */}
+                            {showFolderDropBefore && (
+                              <div className="absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
                             )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation();
-                                onFolderDelete(node.id);
-                              }}
-                              className="text-red-400 focus:text-red-400"
-                            >
-                              <Trash2 className="w-3 h-3 mr-2" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                        {/* Drop indicator - after folder (inside folder div) */}
-                        {showFolderDropAfter && (
-                          <div className="absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
-                        )}
-                      </div>
+                            {node.collapsed && !isActive ? (
+                              <Folder
+                                className={cn(
+                                  "w-3.5 h-3.5 shrink-0",
+                                  "text-violet-400"
+                                )}
+                              />
+                            ) : (
+                              <FolderOpen
+                                className={cn(
+                                  "w-3.5 h-3.5 shrink-0",
+                                  isActive
+                                    ? "text-violet-300 fill-violet-400"
+                                    : "text-violet-400"
+                                )}
+                              />
+                            )}
+
+                            {isEditingFolder ? (
+                              <input
+                                ref={inputRef}
+                                type="text"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                onBlur={handleSaveEdit}
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
+                              />
+                            ) : (
+                              <span
+                                className="flex-1 text-xs text-slate-300 truncate"
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStartEdit(node.id, "folder", node.name, e);
+                                }}
+                                title="Double-click to rename"
+                              >
+                                {node.name}
+                              </span>
+                            )}
+
+                            {/* Repo stats badges */}
+                            {(() => {
+                              const repoStats = getFolderRepoStats(node.id);
+                              if (!repoStats) return null;
+                              return (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {repoStats.prCount > 0 && (
+                                    <span className="flex items-center gap-0.5 text-[9px] text-violet-400">
+                                      <GitPullRequest className="w-2.5 h-2.5" />
+                                      {repoStats.prCount}
+                                    </span>
+                                  )}
+                                  {repoStats.issueCount > 0 && (
+                                    <span className="flex items-center gap-0.5 text-[9px] text-emerald-400">
+                                      <CircleDot className="w-2.5 h-2.5" />
+                                      {repoStats.issueCount}
+                                    </span>
+                                  )}
+                                  {repoStats.hasChanges && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+                                  )}
+                                </div>
+                              );
+                            })()}
+
+                            <span className="text-[10px] text-slate-500 ml-auto">
+                              {totalSessions}
+                            </span>
+
+                            {/* Drop indicator - after folder (inside folder div) */}
+                            {showFolderDropAfter && (
+                              <div className="absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
+                            )}
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent className="w-48">
+                          <ContextMenuItem onClick={() => onFolderNewSession(node.id)}>
+                            <Terminal className="w-3.5 h-3.5 mr-2" />
+                            New Session
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => onFolderAdvancedSession(node.id)}>
+                            <Sparkles className="w-3.5 h-3.5 mr-2" />
+                            Advanced...
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => onFolderNewWorktree(node.id)}
+                            disabled={!folderHasRepo(node.id)}
+                            className={!folderHasRepo(node.id) ? "opacity-50" : ""}
+                            title={!folderHasRepo(node.id) ? "Link a repository in folder preferences first" : undefined}
+                          >
+                            <GitBranch className="w-3.5 h-3.5 mr-2" />
+                            New Worktree
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => handleStartSubfolderCreate(node.id)}>
+                            <Folder className="w-3.5 h-3.5 mr-2" />
+                            New Subfolder
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => onFolderSettings(node.id, node.name)}>
+                            <Settings className="w-3.5 h-3.5 mr-2" />
+                            Preferences
+                            {hasPrefs && (
+                              <span className="ml-auto text-[10px] text-violet-400">Custom</span>
+                            )}
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => {
+                              setEditingId(node.id);
+                              setEditingType("folder");
+                              setEditValue(node.name);
+                            }}
+                          >
+                            <Pencil className="w-3.5 h-3.5 mr-2" />
+                            Rename
+                          </ContextMenuItem>
+                          {node.parentId && (
+                            <ContextMenuItem onClick={() => onFolderMove(node.id, null)}>
+                              <FolderOpen className="w-3.5 h-3.5 mr-2" />
+                              Move to Root
+                            </ContextMenuItem>
+                          )}
+                          <ContextMenuSeparator />
+                          <ContextMenuItem
+                            onClick={() => onFolderDelete(node.id)}
+                            className="text-red-400 focus:text-red-400"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 mr-2" />
+                            Delete
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
 
                       {/* Subfolder creation input */}
                       {creatingFolder && creatingSubfolderId === node.id && !node.collapsed && (
