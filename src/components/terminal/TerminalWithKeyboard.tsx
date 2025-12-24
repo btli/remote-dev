@@ -24,6 +24,8 @@ interface TerminalWithKeyboardProps {
   notificationsEnabled?: boolean;
   isRecording?: boolean;
   isActive?: boolean;
+  /** Environment variables to inject into new terminal sessions */
+  environmentVars?: Record<string, string> | null;
   onStatusChange?: (status: ConnectionStatus) => void;
   onSessionExit?: (exitCode: number) => void;
   onOutput?: (data: string) => void;
@@ -45,6 +47,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   notificationsEnabled,
   isRecording,
   isActive,
+  environmentVars,
   onStatusChange,
   onSessionExit,
   onOutput,
@@ -132,6 +135,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
           notificationsEnabled={notificationsEnabled}
           isRecording={isRecording}
           isActive={isActive}
+          environmentVars={environmentVars}
           onStatusChange={onStatusChange}
           onWebSocketReady={handleWebSocketReady}
           onSessionExit={handleSessionExit}

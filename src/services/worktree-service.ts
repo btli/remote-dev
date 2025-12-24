@@ -33,6 +33,32 @@ const ENV_FILES_TO_COPY = [
 export { WorktreeServiceError };
 
 /**
+ * Status of a worktree before removal
+ */
+export interface WorktreeStatus {
+  exists: boolean;
+  isRegistered: boolean;
+  hasUncommittedChanges: boolean;
+  hasUntrackedFiles: boolean;
+  hasUnpushedCommits: boolean;
+  branch: string | null;
+  uncommittedFileCount: number;
+  untrackedFileCount: number;
+  unpushedCommitCount: number;
+}
+
+/**
+ * Result of a worktree removal operation
+ */
+export interface RemoveWorktreeResult {
+  success: boolean;
+  alreadyRemoved: boolean;
+  hadUncommittedChanges: boolean;
+  hadUnpushedCommits: boolean;
+  message: string;
+}
+
+/**
  * Check if a directory is a git repository
  */
 export async function isGitRepo(path: string): Promise<boolean> {
@@ -201,19 +227,78 @@ export async function createWorktree(
 }
 
 /**
- * Remove a worktree
+ * Remove a worktree with safety checks
+ *
+ * @param repoPath - Path to the main repository
+ * @param worktreePath - Path to the worktree to remove
+ * @param force - Force removal even with uncommitted changes (default: false)
+ * @returns Result with details about what was removed/lost
+ * @throws WorktreeServiceError with code HAS_UNCOMMITTED_CHANGES if not forced
  */
 export async function removeWorktree(
   repoPath: string,
   worktreePath: string,
   force = false
-): Promise<void> {
-  const args = ["-C", repoPath, "worktree", "remove"];
+): Promise<RemoveWorktreeResult> {
+  // Get worktree status before removal
+  const status = await getWorktreeStatus(repoPath, worktreePath);
 
+  // If worktree doesn't exist and isn't registered, it's already removed
+  if (!status.exists && !status.isRegistered) {
+    // Try to prune any stale worktree entries
+    await execFileNoThrow("git", ["-C", repoPath, "worktree", "prune"]);
+
+    return {
+      success: true,
+      alreadyRemoved: true,
+      hadUncommittedChanges: false,
+      hadUnpushedCommits: false,
+      message: "Worktree was already removed",
+    };
+  }
+
+  // Check for uncommitted changes (unless force is true)
+  if (!force && (status.hasUncommittedChanges || status.hasUntrackedFiles)) {
+    const details: string[] = [];
+    if (status.uncommittedFileCount > 0) {
+      details.push(`${status.uncommittedFileCount} uncommitted file(s)`);
+    }
+    if (status.untrackedFileCount > 0) {
+      details.push(`${status.untrackedFileCount} untracked file(s)`);
+    }
+    throw new WorktreeServiceError(
+      `Worktree has ${details.join(" and ")} that will be lost`,
+      "HAS_UNCOMMITTED_CHANGES",
+      `Branch: ${status.branch || "unknown"}`
+    );
+  }
+
+  // Check for unpushed commits (unless force is true)
+  if (!force && status.hasUnpushedCommits) {
+    throw new WorktreeServiceError(
+      `Worktree has ${status.unpushedCommitCount} unpushed commit(s) on branch '${status.branch}'`,
+      "HAS_UNPUSHED_COMMITS",
+      "Push your commits before removing, or use force to proceed anyway"
+    );
+  }
+
+  // If only registered but directory doesn't exist, just prune
+  if (!status.exists && status.isRegistered) {
+    await execFileNoThrow("git", ["-C", repoPath, "worktree", "prune"]);
+    return {
+      success: true,
+      alreadyRemoved: false,
+      hadUncommittedChanges: false,
+      hadUnpushedCommits: false,
+      message: "Pruned stale worktree entry",
+    };
+  }
+
+  // Perform the actual removal
+  const args = ["-C", repoPath, "worktree", "remove"];
   if (force) {
     args.push("--force");
   }
-
   args.push(worktreePath);
 
   try {
@@ -226,6 +311,16 @@ export async function removeWorktree(
       err.stderr || err.message
     );
   }
+
+  return {
+    success: true,
+    alreadyRemoved: false,
+    hadUncommittedChanges: status.hasUncommittedChanges || status.hasUntrackedFiles,
+    hadUnpushedCommits: status.hasUnpushedCommits,
+    message: force && (status.hasUncommittedChanges || status.hasUnpushedCommits)
+      ? `Removed worktree (warning: had uncommitted changes or unpushed commits)`
+      : "Worktree removed successfully",
+  };
 }
 
 /**

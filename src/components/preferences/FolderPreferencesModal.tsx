@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -215,8 +215,16 @@ export function FolderPreferencesModal({
     setSaving(true);
     setSaveError(null);
     try {
-      await updateFolderPreferences(folderId, localSettings);
-      onClose();
+      const validation = await updateFolderPreferences(folderId, localSettings);
+
+      // Update port conflicts from validation result
+      if (validation?.hasConflicts) {
+        setPortConflicts(validation.conflicts);
+        // Don't close - show the warnings
+      } else {
+        setPortConflicts([]);
+        onClose();
+      }
     } catch (error) {
       console.error("Failed to save folder preferences:", error);
       setSaveError(error instanceof Error ? error.message : "Failed to save preferences. Please try again.");
@@ -680,6 +688,29 @@ export function FolderPreferencesModal({
         <div className="flex flex-col gap-2 pt-4 border-t border-white/5">
           {saveError && (
             <p className="text-sm text-red-400">{saveError}</p>
+          )}
+          {portConflicts.length > 0 && (
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <div className="flex items-center gap-2 text-amber-400 mb-2">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="text-sm font-medium">Port Conflicts Detected</span>
+              </div>
+              <ul className="text-sm text-amber-300/80 space-y-1">
+                {portConflicts.map((conflict, idx) => (
+                  <li key={idx}>
+                    Port {conflict.port} ({conflict.variableName}) conflicts with folder &quot;{conflict.conflictingFolder.name}&quot;
+                    {conflict.suggestedPort && (
+                      <span className="text-slate-400 ml-1">
+                        (suggested: {conflict.suggestedPort})
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-slate-400 mt-2">
+                Changes saved. You may want to update the conflicting ports.
+              </p>
+            </div>
           )}
           <div className="flex justify-between">
             {folderPrefs && (
