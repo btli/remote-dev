@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * Helper to determine if a string is a valid UUID
@@ -39,89 +35,49 @@ async function getRepositoryByIdOrGitHubId(
  * GET /api/github/repositories/:id - Get a single repository
  * Accepts either database UUID or GitHub numeric ID
  */
-export async function GET(request: Request, { params }: RouteParams) {
-  try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const GET = withAuth(async (_request, { userId, params }) => {
+  const repository = await getRepositoryByIdOrGitHubId(params!.id, userId);
 
-    const { id } = await params;
-    const repository = await getRepositoryByIdOrGitHubId(id, session.user.id);
-
-    if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(repository);
-  } catch (error) {
-    console.error("Error getting repository:", error);
-    return NextResponse.json(
-      { error: "Failed to get repository" },
-      { status: 500 }
-    );
+  if (!repository) {
+    return errorResponse("Repository not found", 404);
   }
-}
+
+  return NextResponse.json(repository);
+});
 
 /**
  * POST /api/github/repositories/:id - Clone repository to local cache
  * Accepts either database UUID or GitHub numeric ID
  */
-export async function POST(request: Request, { params }: RouteParams) {
-  try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const accessToken = await GitHubService.getAccessToken(session.user.id);
-    if (!accessToken) {
-      return NextResponse.json(
-        { error: "GitHub not connected" },
-        { status: 400 }
-      );
-    }
-
-    const { id } = await params;
-    const repository = await getRepositoryByIdOrGitHubId(id, session.user.id);
-
-    if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
-    }
-
-    // Clone the repository
-    const result = await GitHubService.cloneRepository(
-      accessToken,
-      repository.fullName
-    );
-
-    if (!result.success) {
-      return NextResponse.json(
-        { error: result.error || "Clone failed" },
-        { status: 500 }
-      );
-    }
-
-    // Update the local path in database using the database ID
-    await GitHubService.updateLocalPath(repository.id, result.localPath);
-
-    return NextResponse.json({
-      success: true,
-      localPath: result.localPath,
-      // Return database ID so it can be used as foreign key in session creation
-      repositoryId: repository.id,
-    });
-  } catch (error) {
-    console.error("Error cloning repository:", error);
-    return NextResponse.json(
-      { error: "Failed to clone repository" },
-      { status: 500 }
-    );
+export const POST = withAuth(async (_request, { userId, params }) => {
+  const accessToken = await GitHubService.getAccessToken(userId);
+  if (!accessToken) {
+    return errorResponse("GitHub not connected", 400);
   }
-}
+
+  const repository = await getRepositoryByIdOrGitHubId(params!.id, userId);
+
+  if (!repository) {
+    return errorResponse("Repository not found", 404);
+  }
+
+  // Clone the repository
+  const result = await GitHubService.cloneRepository(
+    accessToken,
+    repository.fullName
+  );
+
+  if (!result.success) {
+    return errorResponse(result.error || "Clone failed", 500);
+  }
+
+  // Update the local path in database using the database ID
+  await GitHubService.updateLocalPath(repository.id, result.localPath);
+
+  return NextResponse.json({
+    success: true,
+    localPath: result.localPath,
+    // Return database ID so it can be used as foreign key in session creation
+    repositoryId: repository.id,
+  });
+});

@@ -1,39 +1,19 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * POST /api/sessions/:id/suspend - Suspend a session (detach tmux)
  */
-export async function POST(request: Request, { params }: RouteParams) {
+export const POST = withAuth(async (_request, { userId, params }) => {
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { id } = await params;
-    await SessionService.suspendSession(id, session.user.id);
-
+    await SessionService.suspendSession(params!.id, userId);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error suspending session:", error);
-
     if (error instanceof SessionService.SessionServiceError) {
       const status = error.code === "SESSION_NOT_FOUND" ? 404 : 400;
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status }
-      );
+      return errorResponse(error.message, status, error.code);
     }
-
-    return NextResponse.json(
-      { error: "Failed to suspend session" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});

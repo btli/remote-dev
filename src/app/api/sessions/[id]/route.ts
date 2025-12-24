@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 import * as WorktreeService from "@/services/worktree-service";
 import * as GitHubService from "@/services/github-service";
@@ -7,83 +7,49 @@ import * as TrashService from "@/services/trash-service";
 import { getFolderPreferences } from "@/services/preferences-service";
 import type { UpdateSessionInput } from "@/types/session";
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
-
 /**
  * GET /api/sessions/:id - Get a single session
  */
-export async function GET(request: Request, { params }: RouteParams) {
-  try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const GET = withAuth(async (_request, { userId, params }) => {
+  const terminalSession = await SessionService.getSessionWithMetadata(
+    params!.id,
+    userId
+  );
 
-    const { id } = await params;
-    const terminalSession = await SessionService.getSessionWithMetadata(
-      id,
-      session.user.id
-    );
-
-    if (!terminalSession) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-
-    return NextResponse.json(terminalSession);
-  } catch (error) {
-    console.error("Error getting session:", error);
-    return NextResponse.json(
-      { error: "Failed to get session" },
-      { status: 500 }
-    );
+  if (!terminalSession) {
+    return errorResponse("Session not found", 404);
   }
-}
+
+  return NextResponse.json(terminalSession);
+});
 
 /**
  * PATCH /api/sessions/:id - Update a session
  */
-export async function PATCH(request: Request, { params }: RouteParams) {
+export const PATCH = withAuth(async (request, { userId, params }) => {
+  const body = await request.json();
+  const updates: UpdateSessionInput = {};
+
+  if (body.name !== undefined) updates.name = body.name;
+  if (body.status !== undefined) updates.status = body.status;
+  if (body.tabOrder !== undefined) updates.tabOrder = body.tabOrder;
+  if (body.projectPath !== undefined) updates.projectPath = body.projectPath;
+
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { id } = await params;
-    const body = await request.json();
-    const updates: UpdateSessionInput = {};
-
-    if (body.name !== undefined) updates.name = body.name;
-    if (body.status !== undefined) updates.status = body.status;
-    if (body.tabOrder !== undefined) updates.tabOrder = body.tabOrder;
-    if (body.projectPath !== undefined) updates.projectPath = body.projectPath;
-
     const updated = await SessionService.updateSession(
-      id,
-      session.user.id,
+      params!.id,
+      userId,
       updates
     );
-
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Error updating session:", error);
-
     if (error instanceof SessionService.SessionServiceError) {
       const status = error.code === "SESSION_NOT_FOUND" ? 404 : 400;
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status }
-      );
+      return errorResponse(error.message, status, error.code);
     }
-
-    return NextResponse.json(
-      { error: "Failed to update session" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});
 
 /**
  * DELETE /api/sessions/:id - Close a session
@@ -92,28 +58,23 @@ export async function PATCH(request: Request, { params }: RouteParams) {
  * - deleteWorktree=true: Also delete the git worktree from disk
  * - trash=true: Move worktree to trash instead of permanent close
  */
-export async function DELETE(request: Request, { params }: RouteParams) {
+export const DELETE = withAuth(async (request, { userId, params }) => {
+  const id = params!.id;
+  const { searchParams } = new URL(request.url);
+  const deleteWorktree = searchParams.get("deleteWorktree") === "true";
+  const shouldTrash = searchParams.get("trash") === "true";
+
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { id } = await params;
-    const { searchParams } = new URL(request.url);
-    const deleteWorktree = searchParams.get("deleteWorktree") === "true";
-    const shouldTrash = searchParams.get("trash") === "true";
-
     // Get session details for worktree operations
     const terminalSession = await SessionService.getSessionWithMetadata(
       id,
-      session.user.id
+      userId
     );
 
     // Handle trash request for worktree sessions
     if (shouldTrash && terminalSession?.worktreeBranch && terminalSession?.projectPath) {
       const trashItem = await TrashService.trashResource(
-        session.user.id,
+        userId,
         "worktree",
         id
       );
@@ -128,7 +89,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       if (terminalSession.githubRepoId) {
         const repo = await GitHubService.getRepository(
           terminalSession.githubRepoId,
-          session.user.id
+          userId
         );
         mainRepoPath = repo?.localPath ?? null;
       }
@@ -137,7 +98,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       if (!mainRepoPath && terminalSession.folderId) {
         const folderPrefs = await getFolderPreferences(
           terminalSession.folderId,
-          session.user.id
+          userId
         );
         mainRepoPath = folderPrefs?.localRepoPath ?? null;
       }
@@ -159,30 +120,18 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       }
     }
 
-    await SessionService.closeSession(id, session.user.id);
-
+    await SessionService.closeSession(id, userId);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error closing session:", error);
-
     if (error instanceof SessionService.SessionServiceError) {
       const status = error.code === "SESSION_NOT_FOUND" ? 404 : 400;
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status }
-      );
+      return errorResponse(error.message, status, error.code);
     }
 
     if (error instanceof TrashService.TrashServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
 
-    return NextResponse.json(
-      { error: "Failed to close session" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});

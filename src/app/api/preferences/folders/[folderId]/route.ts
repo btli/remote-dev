@@ -1,117 +1,72 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import {
   getFolderPreferences,
   updateFolderPreferences,
   deleteFolderPreferences,
 } from "@/services/preferences-service";
 
-interface RouteParams {
-  params: Promise<{ folderId: string }>;
-}
-
 /**
  * GET /api/preferences/folders/[folderId]
  * Returns folder-specific preference overrides
  */
-export async function GET(request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const GET = withAuth(async (_request, { userId, params }) => {
+  const prefs = await getFolderPreferences(params!.folderId, userId);
+  if (!prefs) {
+    return errorResponse("Not found", 404);
   }
-
-  const { folderId } = await params;
-
-  try {
-    const prefs = await getFolderPreferences(folderId, session.user.id);
-    if (!prefs) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    return NextResponse.json(prefs);
-  } catch (error) {
-    console.error("Error fetching folder preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch folder preferences" },
-      { status: 500 }
-    );
-  }
-}
+  return NextResponse.json(prefs);
+});
 
 /**
  * PUT /api/preferences/folders/[folderId]
  * Creates or updates folder-specific preference overrides
  */
-export async function PUT(request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const PUT = withAuth(async (request, { userId, params }) => {
+  const updates = await request.json();
+
+  // Validate updates
+  const allowedFields = [
+    "defaultWorkingDirectory",
+    "defaultShell",
+    "startupCommand",
+    "theme",
+    "fontSize",
+    "fontFamily",
+    "githubRepoId",
+    "localRepoPath",
+  ];
+
+  const filteredUpdates: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (allowedFields.includes(key)) {
+      filteredUpdates[key] = value;
+    }
   }
 
-  const { folderId } = await params;
-
   try {
-    const updates = await request.json();
-
-    // Validate updates
-    const allowedFields = [
-      "defaultWorkingDirectory",
-      "defaultShell",
-      "startupCommand",
-      "theme",
-      "fontSize",
-      "fontFamily",
-      "githubRepoId",
-      "localRepoPath",
-    ];
-
-    const filteredUpdates: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(updates)) {
-      if (allowedFields.includes(key)) {
-        filteredUpdates[key] = value;
-      }
-    }
-
     const updated = await updateFolderPreferences(
-      folderId,
-      session.user.id,
+      params!.folderId,
+      userId,
       filteredUpdates
     );
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Error updating folder preferences:", error);
     if (error instanceof Error && error.message === "Folder not found") {
-      return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+      return errorResponse("Folder not found", 404);
     }
-    return NextResponse.json(
-      { error: "Failed to update folder preferences" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});
 
 /**
  * DELETE /api/preferences/folders/[folderId]
  * Removes folder-specific preference overrides (reverts to user defaults)
  */
-export async function DELETE(request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const DELETE = withAuth(async (_request, { userId, params }) => {
+  const deleted = await deleteFolderPreferences(params!.folderId, userId);
+  if (!deleted) {
+    return errorResponse("Not found", 404);
   }
-
-  const { folderId } = await params;
-
-  try {
-    const deleted = await deleteFolderPreferences(folderId, session.user.id);
-    if (!deleted) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error deleting folder preferences:", error);
-    return NextResponse.json(
-      { error: "Failed to delete folder preferences" },
-      { status: 500 }
-    );
-  }
-}
+  return NextResponse.json({ success: true });
+});

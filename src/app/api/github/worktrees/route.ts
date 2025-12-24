@@ -1,55 +1,38 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 import * as WorktreeService from "@/services/worktree-service";
 
 /**
  * POST /api/github/worktrees - Create a git worktree for a branch
  */
-export async function POST(request: Request) {
+export const POST = withAuth(async (request, { userId }) => {
+  const body = await request.json();
+  const { repositoryId, branch, createNewBranch, baseBranch } = body;
+
+  if (!repositoryId || !branch) {
+    return errorResponse("repositoryId and branch are required", 400);
+  }
+
+  const repository = await GitHubService.getRepository(repositoryId, userId);
+
+  if (!repository) {
+    return errorResponse("Repository not found", 404);
+  }
+
+  if (!repository.localPath) {
+    return errorResponse("Repository not cloned. Clone it first.", 400, "NOT_CLONED");
+  }
+
+  console.log("Creating worktree:", {
+    repositoryId,
+    branch,
+    createNewBranch,
+    baseBranch,
+    localPath: repository.localPath,
+  });
+
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await request.json();
-    const { repositoryId, branch, createNewBranch, baseBranch } = body;
-
-    if (!repositoryId || !branch) {
-      return NextResponse.json(
-        { error: "repositoryId and branch are required" },
-        { status: 400 }
-      );
-    }
-
-    const repository = await GitHubService.getRepository(
-      repositoryId,
-      session.user.id
-    );
-
-    if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
-    }
-
-    if (!repository.localPath) {
-      return NextResponse.json(
-        { error: "Repository not cloned. Clone it first.", code: "NOT_CLONED" },
-        { status: 400 }
-      );
-    }
-
-    console.log("Creating worktree:", {
-      repositoryId,
-      branch,
-      createNewBranch,
-      baseBranch,
-      localPath: repository.localPath,
-    });
-
     let worktreePath: string;
 
     if (createNewBranch) {
@@ -74,81 +57,48 @@ export async function POST(request: Request) {
       branch,
     });
   } catch (error) {
-    console.error("Error creating worktree:", error);
-
     if (error instanceof WorktreeService.WorktreeServiceError) {
       return NextResponse.json(
         { error: error.message, code: error.code, details: error.details },
         { status: 400 }
       );
     }
-
-    return NextResponse.json(
-      { error: "Failed to create worktree" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});
 
 /**
  * DELETE /api/github/worktrees - Remove a git worktree
  */
-export async function DELETE(request: Request) {
+export const DELETE = withAuth(async (request, { userId }) => {
+  const body = await request.json();
+  const { repositoryId, worktreePath, force } = body;
+
+  if (!repositoryId || !worktreePath) {
+    return errorResponse("repositoryId and worktreePath are required", 400);
+  }
+
+  const repository = await GitHubService.getRepository(repositoryId, userId);
+
+  if (!repository) {
+    return errorResponse("Repository not found", 404);
+  }
+
+  if (!repository.localPath) {
+    return errorResponse("Repository not cloned", 400);
+  }
+
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const body = await request.json();
-    const { repositoryId, worktreePath, force } = body;
-
-    if (!repositoryId || !worktreePath) {
-      return NextResponse.json(
-        { error: "repositoryId and worktreePath are required" },
-        { status: 400 }
-      );
-    }
-
-    const repository = await GitHubService.getRepository(
-      repositoryId,
-      session.user.id
-    );
-
-    if (!repository) {
-      return NextResponse.json(
-        { error: "Repository not found" },
-        { status: 404 }
-      );
-    }
-
-    if (!repository.localPath) {
-      return NextResponse.json(
-        { error: "Repository not cloned" },
-        { status: 400 }
-      );
-    }
-
     await WorktreeService.removeWorktree(
       repository.localPath,
       worktreePath,
       force
     );
-
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error removing worktree:", error);
-
     if (error instanceof WorktreeService.WorktreeServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
-
-    return NextResponse.json(
-      { error: "Failed to remove worktree" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});
