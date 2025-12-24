@@ -99,8 +99,17 @@ export async function createSession(
     let repoPath: string | null = null;
     let repoId: string | null = null;
 
-    if (folderPrefs?.githubRepoId) {
-      // Get repo from database
+    // Priority: localRepoPath (user's preferred location) > githubRepoId.localPath (cached clone)
+    // This ensures worktrees are created relative to where the user actually works
+    if (folderPrefs?.localRepoPath) {
+      // User's explicit local repository path takes priority
+      repoPath = folderPrefs.localRepoPath;
+      // Still get repoId for metadata if available
+      if (folderPrefs.githubRepoId) {
+        repoId = folderPrefs.githubRepoId;
+      }
+    } else if (folderPrefs?.githubRepoId) {
+      // Fallback to GitHub repo's cached location
       const repo = await GitHubService.getRepository(folderPrefs.githubRepoId, userId);
       if (!repo?.localPath) {
         throw new SessionServiceError(
@@ -111,8 +120,6 @@ export async function createSession(
       }
       repoPath = repo.localPath;
       repoId = repo.id;
-    } else if (folderPrefs?.localRepoPath) {
-      repoPath = folderPrefs.localRepoPath;
     }
 
     if (!repoPath) {
