@@ -9,17 +9,28 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import type { TrashItem, TrashItemWithMetadata, RestoreOptions } from "@/types/trash";
+import type { TrashItem, TrashItemWithMetadata, WorktreeTrashItem, RestoreOptions } from "@/types/trash";
+
+/** Trash items grouped by folder */
+export interface TrashByFolder {
+  folderId: string | null;
+  folderName: string | null;
+  items: WorktreeTrashItem[];
+}
 
 interface TrashContextValue {
-  /** List of trash items */
-  trashItems: TrashItem[];
+  /** List of trash items with full metadata */
+  trashItems: TrashItemWithMetadata[];
   /** Loading state */
   loading: boolean;
   /** Whether trash has any items */
   isEmpty: boolean;
   /** Number of items in trash */
   count: number;
+  /** Trash items grouped by original folder */
+  trashByFolder: TrashByFolder[];
+  /** Get trash items for a specific folder */
+  getTrashForFolder: (folderId: string | null) => WorktreeTrashItem[];
 
   /** Refresh trash list from server */
   refreshTrash: () => Promise<void>;
@@ -54,7 +65,7 @@ interface TrashProviderProps {
 }
 
 export function TrashProvider({ children }: TrashProviderProps) {
-  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
+  const [trashItems, setTrashItems] = useState<TrashItemWithMetadata[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refreshTrash = useCallback(async () => {
@@ -64,10 +75,17 @@ export function TrashProvider({ children }: TrashProviderProps) {
       const data = await response.json();
 
       setTrashItems(
-        data.items.map((item: TrashItem) => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data.items.map((item: any) => ({
           ...item,
           trashedAt: new Date(item.trashedAt),
           expiresAt: new Date(item.expiresAt),
+          metadata: item.metadata
+            ? {
+                ...item.metadata,
+                createdAt: new Date(item.metadata.createdAt),
+              }
+            : undefined,
         }))
       );
     } catch (error) {
@@ -76,6 +94,41 @@ export function TrashProvider({ children }: TrashProviderProps) {
       setLoading(false);
     }
   }, []);
+
+  // Group trash items by original folder
+  const trashByFolder = useMemo((): TrashByFolder[] => {
+    const folderMap = new Map<string | null, WorktreeTrashItem[]>();
+
+    for (const item of trashItems) {
+      if (item.resourceType === "worktree") {
+        const worktreeItem = item as WorktreeTrashItem;
+        const folderId = worktreeItem.metadata?.originalFolderId ?? null;
+
+        if (!folderMap.has(folderId)) {
+          folderMap.set(folderId, []);
+        }
+        folderMap.get(folderId)!.push(worktreeItem);
+      }
+    }
+
+    return Array.from(folderMap.entries()).map(([folderId, items]) => ({
+      folderId,
+      folderName: items[0]?.metadata?.originalFolderName ?? null,
+      items,
+    }));
+  }, [trashItems]);
+
+  // Get trash items for a specific folder
+  const getTrashForFolder = useCallback(
+    (folderId: string | null): WorktreeTrashItem[] => {
+      return trashItems.filter(
+        (item) =>
+          item.resourceType === "worktree" &&
+          (item as WorktreeTrashItem).metadata?.originalFolderId === folderId
+      ) as WorktreeTrashItem[];
+    },
+    [trashItems]
+  );
 
   // Fetch trash on mount
   useEffect(() => {
@@ -258,6 +311,8 @@ export function TrashProvider({ children }: TrashProviderProps) {
       loading,
       isEmpty: trashItems.length === 0,
       count: trashItems.length,
+      trashByFolder,
+      getTrashForFolder,
       refreshTrash,
       getTrashItem,
       trashSession,
@@ -269,6 +324,8 @@ export function TrashProvider({ children }: TrashProviderProps) {
     [
       trashItems,
       loading,
+      trashByFolder,
+      getTrashForFolder,
       refreshTrash,
       getTrashItem,
       trashSession,

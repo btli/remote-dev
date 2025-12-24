@@ -2,9 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { Trash2, RotateCcw, Calendar, GitBranch } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useTrashContext } from "@/contexts/TrashContext";
+import { useSessionContext } from "@/contexts/SessionContext";
 import { getDaysUntilExpiry } from "@/types/trash";
-import type { TrashItem, WorktreeTrashItem, TrashItemWithMetadata } from "@/types/trash";
+import type { WorktreeTrashItem, TrashItemWithMetadata } from "@/types/trash";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +36,8 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
     cleanupExpired,
   } = useTrashContext();
 
+  const { refreshSessions } = useSessionContext();
+
   const [selectedItem, setSelectedItem] = useState<TrashItemWithMetadata | null>(null);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -48,7 +52,7 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
     }
   }, [open, cleanupExpired]);
 
-  const handleRestoreClick = async (item: TrashItem) => {
+  const handleRestoreClick = async (item: TrashItemWithMetadata) => {
     const availability = await checkRestoreAvailability(item.id);
     if (!availability) return;
 
@@ -58,9 +62,9 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
     setShowRestoreDialog(true);
   };
 
-  const handleDeleteClick = async (item: TrashItem) => {
+  const handleDeleteClick = async (item: TrashItemWithMetadata) => {
     const fullItem = await checkRestoreAvailability(item.id);
-    setSelectedItem(fullItem?.item || (item as TrashItemWithMetadata));
+    setSelectedItem(fullItem?.item || item);
     setShowDeleteDialog(true);
   };
 
@@ -73,7 +77,8 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
       if (success) {
         setShowRestoreDialog(false);
         setSelectedItem(null);
-        await refreshTrash();
+        // Refresh both trash and sessions to update UI
+        await Promise.all([refreshTrash(), refreshSessions()]);
       }
     } finally {
       setIsProcessing(false);
@@ -173,7 +178,7 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
 }
 
 interface TrashItemRowProps {
-  item: TrashItem;
+  item: TrashItemWithMetadata;
   onRestore: () => void;
   onDelete: () => void;
 }
@@ -181,6 +186,40 @@ interface TrashItemRowProps {
 function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
   const daysLeft = getDaysUntilExpiry(item.expiresAt);
   const isExpiringSoon = daysLeft <= 7;
+
+  // Build the folder/repo path for worktree items
+  const getItemPath = (): string | null => {
+    if (item.resourceType === "worktree") {
+      const worktreeItem = item as WorktreeTrashItem;
+      const parts: string[] = [];
+
+      // Add folder name if available
+      if (worktreeItem.metadata?.originalFolderName) {
+        parts.push(worktreeItem.metadata.originalFolderName);
+      }
+
+      // Add repo name if available and different from folder
+      if (worktreeItem.metadata?.repoName &&
+          worktreeItem.metadata.repoName !== worktreeItem.metadata?.originalFolderName) {
+        parts.push(worktreeItem.metadata.repoName);
+      }
+
+      return parts.length > 0 ? parts.join(" › ") : null;
+    }
+    return null;
+  };
+
+  // Get the branch name for worktree items
+  const getBranchName = (): string | null => {
+    if (item.resourceType === "worktree") {
+      const worktreeItem = item as WorktreeTrashItem;
+      return worktreeItem.metadata?.worktreeBranch || null;
+    }
+    return null;
+  };
+
+  const itemPath = getItemPath();
+  const branchName = getBranchName();
 
   return (
     <div className="group flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors">
@@ -192,14 +231,29 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
       {/* Info */}
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-white truncate">{item.resourceName}</p>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <Calendar className="w-3 h-3" />
-          <span className={isExpiringSoon ? "text-amber-400" : ""}>
+
+        {/* Folder/Repo path */}
+        {itemPath && (
+          <p className="text-xs text-slate-400 truncate">{itemPath}</p>
+        )}
+
+        {/* Branch and expiry info */}
+        <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
+          {branchName && (
+            <span className="flex items-center gap-1">
+              <GitBranch className="w-3 h-3" />
+              <span className="font-mono text-[10px] bg-slate-700/50 px-1 py-0.5 rounded truncate max-w-[120px]">
+                {branchName}
+              </span>
+            </span>
+          )}
+          <span className={cn("flex items-center gap-1", isExpiringSoon && "text-amber-400")}>
+            <Calendar className="w-3 h-3" />
             {daysLeft === 0
               ? "Expires today"
               : daysLeft === 1
               ? "1 day left"
-              : `${daysLeft} days left`}
+              : `${daysLeft}d left`}
           </span>
         </div>
       </div>

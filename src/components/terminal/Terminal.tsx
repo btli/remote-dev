@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle, Activity } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
@@ -918,8 +918,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         </div>
       )}
 
-      {/* Search overlay */}
-      {isSearchOpen && (
+      {/* Search overlay - Activity preserves search state when hidden */}
+      <Activity mode={isSearchOpen ? "visible" : "hidden"}>
         <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-lg px-2 py-1.5 shadow-lg">
           <Search className="w-3.5 h-3.5 text-slate-400" />
           <input
@@ -957,7 +957,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             </button>
           </div>
         </div>
-      )}
+      </Activity>
 
       {isDragging && (
         <div className="absolute inset-0 bg-blue-500/10 flex items-center justify-center pointer-events-none z-10">

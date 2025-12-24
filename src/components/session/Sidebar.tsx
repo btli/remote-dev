@@ -34,7 +34,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { DeleteWorktreeDialog } from "./DeleteWorktreeDialog";
 import { useSplitContext } from "@/contexts/SplitContext";
 
 export interface SessionFolder {
@@ -75,6 +74,7 @@ interface SidebarProps {
   folderHasPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
   getFolderRepoStats: (folderId: string) => FolderRepoStats | null;
+  getFolderTrashCount: (folderId: string) => number;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
@@ -109,6 +109,7 @@ export function Sidebar({
   folderHasPreferences,
   folderHasRepo,
   getFolderRepoStats,
+  getFolderTrashCount,
   onSessionClick,
   onSessionClose,
   onSessionRename,
@@ -145,7 +146,6 @@ export function Sidebar({
   // Folder reorder state
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
   const [dropFolderPosition, setDropFolderPosition] = useState<"before" | "after" | null>(null);
-  const [worktreeDialogSession, setWorktreeDialogSession] = useState<TerminalSession | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const resizeStartXRef = useRef<number>(0);
@@ -202,25 +202,11 @@ export function Sidebar({
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
-  // Handler for session close that checks for worktree
+  // Handler for session close - worktree sessions are automatically trashed by SessionManager
   const handleSessionCloseRequest = useCallback((session: TerminalSession) => {
-    if (session.worktreeBranch) {
-      // Session has a worktree - show confirmation dialog
-      setWorktreeDialogSession(session);
-    } else {
-      // No worktree - close directly
-      onSessionClose(session.id);
-    }
+    // Close directly - SessionManager handles trashing worktree sessions automatically
+    onSessionClose(session.id);
   }, [onSessionClose]);
-
-  // Handler for confirming worktree deletion
-  const handleWorktreeDeleteConfirm = useCallback(async () => {
-    if (!worktreeDialogSession) return;
-
-    // Close session with deleteWorktree flag - context handles the API call
-    await onSessionClose(worktreeDialogSession.id, { deleteWorktree: true });
-    setWorktreeDialogSession(null);
-  }, [worktreeDialogSession, onSessionClose]);
 
   // Sessions not in any folder - use session.folderId directly for accurate rendering
   const rootSessions = activeSessions.filter(
@@ -1631,6 +1617,24 @@ export function Sidebar({
                             depth: node.depth + 1,
                             indentStyle: { marginLeft: `${(node.depth + 1) * 12}px` },
                           })}
+                          {/* Trash indicator for folder */}
+                          {getFolderTrashCount(node.id) > 0 && (
+                            <div
+                              style={{ marginLeft: `${(node.depth + 1) * 12}px` }}
+                              onClick={onTrashOpen}
+                              className={cn(
+                                "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
+                                "text-slate-500 hover:text-slate-400 hover:bg-white/5",
+                                "transition-colors duration-150"
+                              )}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="text-xs">.trash</span>
+                              <span className="ml-auto text-[10px] text-slate-600">
+                                {getFolderTrashCount(node.id)}
+                              </span>
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
@@ -1675,15 +1679,6 @@ export function Sidebar({
           </div>
         </div>
       )}
-
-      {/* Worktree deletion confirmation dialog */}
-      <DeleteWorktreeDialog
-        open={worktreeDialogSession !== null}
-        onClose={() => setWorktreeDialogSession(null)}
-        onConfirm={handleWorktreeDeleteConfirm}
-        sessionName={worktreeDialogSession?.name || ""}
-        branchName={worktreeDialogSession?.worktreeBranch || ""}
-      />
     </div>
     </TooltipProvider>
   );

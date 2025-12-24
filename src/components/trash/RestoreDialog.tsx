@@ -42,9 +42,14 @@ export function RestoreDialog({
   isProcessing,
 }: RestoreDialogProps) {
   const { folders } = useFolderContext();
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(
-    originalFolderId || null
-  );
+  // Track user's override selection - undefined means use original
+  const [folderOverride, setFolderOverride] = useState<string | null | undefined>(undefined);
+
+  // Reset override when dialog closes
+  const handleClose = () => {
+    setFolderOverride(undefined);
+    onClose();
+  };
 
   if (!item || item.resourceType !== "worktree") {
     return null;
@@ -53,12 +58,15 @@ export function RestoreDialog({
   const metadata = item.metadata;
   const needsFolderSelection = !originalFolderId && metadata?.originalFolderId;
 
+  // Use override if set, otherwise use original
+  const effectiveFolderId = folderOverride !== undefined ? folderOverride : originalFolderId;
+
   const handleRestore = async () => {
-    await onRestore(undefined, selectedFolderId);
+    await onRestore(undefined, effectiveFolderId);
   };
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -110,9 +118,9 @@ export function RestoreDialog({
                 </div>
               </Label>
               <Select
-                value={selectedFolderId || "__root__"}
+                value={effectiveFolderId || "__root__"}
                 onValueChange={(val) =>
-                  setSelectedFolderId(val === "__root__" ? null : val)
+                  setFolderOverride(val === "__root__" ? null : val)
                 }
               >
                 <SelectTrigger className="w-full">
@@ -150,7 +158,7 @@ export function RestoreDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={isProcessing}>
+          <Button variant="ghost" onClick={handleClose} disabled={isProcessing}>
             Cancel
           </Button>
           <Button onClick={handleRestore} disabled={isProcessing}>
