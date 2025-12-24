@@ -1397,38 +1397,43 @@ export function Sidebar({
 
                   return (
                     <div key={node.id} className="space-y-0.5">
-                      <ContextMenu>
-                        <ContextMenuTrigger asChild>
-                          <div
-                            data-folder-id={node.id}
-                            data-folder-parent-id={node.parentId || ""}
-                            draggable={!isEditingFolder}
-                            onDragStart={(e) => handleFolderDragStart(e, node.id)}
-                            onDragEnd={handleDragEnd}
-                            onDragOver={(e) => handleFolderDragOver(e, node.id, node.parentId)}
-                            onDragLeave={handleDragLeave}
-                            onDrop={(e) => handleFolderDrop(e, node.id)}
-                            onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
-                            onTouchMove={handleFolderTouchMove}
-                            onTouchEnd={handleFolderTouchEnd}
-                            style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
-                            className={cn(
-                              "relative group flex items-center gap-1.5 px-2 py-1 rounded-md",
-                              !isEditingFolder && "cursor-grab active:cursor-grabbing",
-                              "hover:bg-white/5 transition-all duration-150",
-                              isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
-                              isActive && "bg-violet-500/10",
-                              isBeingDragged && "opacity-50"
-                            )}
-                            onClick={() => {
-                              onFolderClick(node.id);
-                              onFolderToggle(node.id);
-                            }}
-                          >
-                            {/* Drop indicator - before folder */}
-                            {showFolderDropBefore && (
-                              <div className="absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
-                            )}
+                      <div
+                        data-folder-id={node.id}
+                        data-folder-parent-id={node.parentId || ""}
+                        draggable={!isEditingFolder}
+                        onDragStart={(e) => handleFolderDragStart(e, node.id)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => handleFolderDragOver(e, node.id, node.parentId)}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e) => handleFolderDrop(e, node.id)}
+                        onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
+                        onTouchMove={handleFolderTouchMove}
+                        onTouchEnd={handleFolderTouchEnd}
+                        className={cn(
+                          "relative",
+                          !isEditingFolder && "cursor-grab active:cursor-grabbing",
+                          isBeingDragged && "opacity-50"
+                        )}
+                      >
+                        {/* Drop indicator - before folder */}
+                        {showFolderDropBefore && (
+                          <div className="absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
+                        )}
+                        <ContextMenu>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
+                              className={cn(
+                                "group flex items-center gap-1.5 px-2 py-1 rounded-md",
+                                "hover:bg-white/5 transition-all duration-150",
+                                isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
+                                isActive && "bg-violet-500/10"
+                              )}
+                              onClick={() => {
+                                onFolderClick(node.id);
+                                onFolderToggle(node.id);
+                              }}
+                            >
                             {node.collapsed && !isActive ? (
                               <Folder
                                 className={cn(
@@ -1507,11 +1512,6 @@ export function Sidebar({
                             )}>
                               {totalSessions}
                             </span>
-
-                            {/* Drop indicator - after folder (inside folder div) */}
-                            {showFolderDropAfter && (
-                              <div className="absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
-                            )}
                           </div>
                         </ContextMenuTrigger>
                         <ContextMenuContent className="w-48">
@@ -1595,7 +1595,12 @@ export function Sidebar({
                             </>
                           )}
                         </ContextMenuContent>
-                      </ContextMenu>
+                        </ContextMenu>
+                        {/* Drop indicator - after folder */}
+                        {showFolderDropAfter && (
+                          <div className="absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
+                        )}
+                      </div>
 
                       {/* Subfolder creation input */}
                       {creatingFolder && creatingSubfolderId === node.id && !node.collapsed && (
