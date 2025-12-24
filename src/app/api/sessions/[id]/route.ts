@@ -105,14 +105,24 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
 
       if (mainRepoPath) {
         try {
-          await WorktreeService.removeWorktree(
+          const result = await WorktreeService.removeWorktree(
             mainRepoPath,
             terminalSession.projectPath,
             true // force removal
           );
-          console.log(
-            `Removed worktree at ${terminalSession.projectPath} for session ${id}`
-          );
+          if (result.alreadyRemoved) {
+            console.log(
+              `Worktree at ${terminalSession.projectPath} was already removed`
+            );
+          } else if (result.hadUncommittedChanges || result.hadUnpushedCommits) {
+            console.warn(
+              `Removed worktree at ${terminalSession.projectPath} with data loss: ${result.message}`
+            );
+          } else {
+            console.log(
+              `Removed worktree at ${terminalSession.projectPath} for session ${id}`
+            );
+          }
         } catch (worktreeError) {
           console.error("Failed to remove worktree:", worktreeError);
           // Continue with session closure even if worktree removal fails

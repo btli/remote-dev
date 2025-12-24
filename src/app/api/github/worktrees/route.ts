@@ -89,15 +89,22 @@ export const DELETE = withAuth(async (request, { userId }) => {
   }
 
   try {
-    await WorktreeService.removeWorktree(
+    const result = await WorktreeService.removeWorktree(
       repository.localPath,
       worktreePath,
       force
     );
-    return NextResponse.json({ success: true });
+    return NextResponse.json(result);
   } catch (error) {
     if (error instanceof WorktreeService.WorktreeServiceError) {
-      return errorResponse(error.message, 400, error.code);
+      // Use 409 Conflict for safety-related blocks (uncommitted changes, unpushed commits)
+      const status = error.code === "HAS_UNCOMMITTED_CHANGES" || error.code === "HAS_UNPUSHED_COMMITS"
+        ? 409
+        : 400;
+      return NextResponse.json(
+        { error: error.message, code: error.code, details: error.details },
+        { status }
+      );
     }
     throw error;
   }
