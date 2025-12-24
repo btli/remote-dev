@@ -1422,6 +1422,9 @@ export function Sidebar({
                         <ContextMenu>
                           <ContextMenuTrigger asChild>
                             <div
+                              role="button"
+                              tabIndex={isEditingFolder ? -1 : 0}
+                              aria-label={node.name}
                               style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
                               className={cn(
                                 "group flex items-center gap-1.5 px-2 py-1 rounded-md",
@@ -1432,6 +1435,13 @@ export function Sidebar({
                               onClick={() => {
                                 onFolderClick(node.id);
                                 onFolderToggle(node.id);
+                              }}
+                              onKeyDown={(e) => {
+                                if (!isEditingFolder && (e.key === "Enter" || e.key === " ")) {
+                                  e.preventDefault();
+                                  onFolderClick(node.id);
+                                  onFolderToggle(node.id);
+                                }
                               }}
                             >
                             {node.collapsed && !isActive ? (
