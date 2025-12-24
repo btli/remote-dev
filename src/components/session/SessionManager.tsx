@@ -207,7 +207,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   } = useFolderContext();
 
   // Trash state from context
-  const { count: trashCount, trashSession, getTrashForFolder } = useTrashContext();
+  const { count: trashCount, trashSession, getTrashForFolder, deleteItem: deleteTrashItem } = useTrashContext();
   const [isTrashOpen, setIsTrashOpen] = useState(false);
 
   // Schedule modal state
@@ -219,6 +219,24 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const getFolderTrashCount = useCallback(
     (folderId: string) => getTrashForFolder(folderId).length,
     [getTrashForFolder]
+  );
+
+  // Empty all trash items in a specific folder
+  const handleEmptyTrash = useCallback(
+    async (folderId: string) => {
+      const trashItems = getTrashForFolder(folderId);
+      if (trashItems.length === 0) return;
+
+      // Delete all trash items for this folder
+      const results = await Promise.allSettled(
+        trashItems.map((item) => deleteTrashItem(item.id))
+      );
+      const failures = results.filter((r) => r.status === "rejected");
+      if (failures.length > 0) {
+        console.error("Some trash items failed to delete:", failures);
+      }
+    },
+    [getTrashForFolder, deleteTrashItem]
   );
 
   // Preferences state from context
@@ -1022,6 +1040,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderMove={handleMoveFolder}
             onFolderReorder={handleReorderFolders}
             onFolderEmpty={handleEmptyFolder}
+            onEmptyTrash={handleEmptyTrash}
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
             onSessionSchedule={handleScheduleSession}
