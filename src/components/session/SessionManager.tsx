@@ -427,20 +427,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   ]);
 
   const handleCloseSession = useCallback(
-    async (sessionId: string, options?: { deleteWorktree?: boolean }) => {
+    async (sessionId: string, _options?: { deleteWorktree?: boolean }) => {
       try {
-        // If explicitly deleting worktree, use the delete option
-        if (options?.deleteWorktree) {
-          await closeSession(sessionId, options);
-          return;
-        }
-
         // Check if this session has a worktree - if so, trash it instead of closing
+        // Both "keep worktree" and "delete worktree" options go to trash for recovery
         const session = sessions.find((s) => s.id === sessionId);
         if (session?.worktreeBranch && session?.projectPath) {
           // Trash worktree session for recovery
           const success = await trashSession(sessionId);
-          if (!success) {
+          if (success) {
+            // Refresh sessions to remove trashed session from sidebar
+            await refreshSessions();
+          } else {
             // Fallback to regular close if trash fails
             await closeSession(sessionId);
           }
@@ -452,7 +450,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("close session", error);
       }
     },
-    [sessions, trashSession, closeSession, logSessionError]
+    [sessions, trashSession, closeSession, refreshSessions, logSessionError]
   );
 
   const handleRenameSession = useCallback(
@@ -700,45 +698,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   // Handle deleting a session (with optional worktree deletion)
+  // Both options ("keep worktree" and "delete worktree") go to trash for recovery
   const handleSessionDelete = useCallback(
-    async (session: typeof activeSessions[0], deleteWorktree?: boolean) => {
-      // If deleting worktree, call the worktree delete API first
-      if (deleteWorktree && session.githubRepoId && session.projectPath) {
-        try {
-          const response = await fetch("/api/github/worktrees", {
-            method: "DELETE",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              repositoryId: session.githubRepoId,
-              worktreePath: session.projectPath,
-              force: true, // Force delete since session is closed
-            }),
-          });
-
-          if (!response.ok) {
-            const error = await response.json().catch(() => ({ error: "Unknown error" }));
-            console.error("Failed to delete worktree:", error);
-            // Continue with session deletion even if worktree deletion fails
-          }
-        } catch (error) {
-          console.error("Failed to delete worktree:", error);
-          // Continue with session deletion even if worktree deletion fails
-        }
-
-        // Close the session - bypass trash since worktree was permanently deleted
-        try {
-          await closeSession(session.id, { deleteWorktree: true });
-        } catch (error) {
-          logSessionError("close session", error);
-        }
-        return;
-      }
-
-      // For worktree sessions without explicit deletion, use trash for recovery
+    async (session: typeof activeSessions[0], _deleteWorktree?: boolean) => {
+      // For worktree sessions, always use trash for recovery
+      // The trash system moves the worktree to .trash directory
       if (session.worktreeBranch && session.projectPath) {
         try {
           const success = await trashSession(session.id);
-          if (success) return;
+          if (success) {
+            // Refresh sessions to remove trashed session from sidebar
+            await refreshSessions();
+            return;
+          }
           // Fallback to regular close if trash fails
         } catch (error) {
           logSessionError("trash session", error);
@@ -752,7 +724,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("close session", error);
       }
     },
-    [closeSession, trashSession, logSessionError]
+    [closeSession, trashSession, refreshSessions, logSessionError]
   );
 
   // Close mobile sidebar when selecting a session
