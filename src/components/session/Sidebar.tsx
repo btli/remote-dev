@@ -93,6 +93,7 @@ interface SidebarProps {
   onFolderNewWorktree: (folderId: string) => void;
   onFolderMove: (folderId: string, newParentId: string | null) => void;
   onFolderReorder: (folderIds: string[]) => void;
+  onFolderEmpty: (folderId: string) => void;
   trashCount: number;
   onTrashOpen: () => void;
   onSessionSchedule?: (sessionId: string) => void;
@@ -130,6 +131,7 @@ export function Sidebar({
   onFolderNewWorktree,
   onFolderMove,
   onFolderReorder,
+  onFolderEmpty,
   trashCount,
   onTrashOpen,
   onSessionSchedule,
@@ -1322,6 +1324,9 @@ export function Sidebar({
                   // Count total sessions in this folder and all descendants
                   const totalSessions = countSessionsRecursively(node);
 
+                  // Check if this is a .trash folder
+                  const isTrashFolder = node.name === ".trash";
+
                   // Collapsed sidebar view - show folder icon only
                   if (collapsed) {
                     return (
@@ -1354,18 +1359,22 @@ export function Sidebar({
                                 <Folder
                                   className={cn(
                                     "w-4 h-4",
-                                    isActive
-                                      ? "text-violet-300 fill-violet-400"
-                                      : "text-violet-400"
+                                    isTrashFolder
+                                      ? "text-red-400/70"
+                                      : isActive
+                                        ? "text-violet-300 fill-violet-400"
+                                        : "text-violet-400"
                                   )}
                                 />
                               ) : (
                                 <FolderOpen
                                   className={cn(
                                     "w-4 h-4",
-                                    isActive
-                                      ? "text-violet-300 fill-violet-400"
-                                      : "text-violet-400"
+                                    isTrashFolder
+                                      ? "text-red-400/70"
+                                      : isActive
+                                        ? "text-violet-300 fill-violet-400"
+                                        : "text-violet-400"
                                   )}
                                 />
                               )}
@@ -1424,16 +1433,18 @@ export function Sidebar({
                               <Folder
                                 className={cn(
                                   "w-3.5 h-3.5 shrink-0",
-                                  "text-violet-400"
+                                  isTrashFolder ? "text-red-400/70" : "text-violet-400"
                                 )}
                               />
                             ) : (
                               <FolderOpen
                                 className={cn(
                                   "w-3.5 h-3.5 shrink-0",
-                                  isActive
-                                    ? "text-violet-300 fill-violet-400"
-                                    : "text-violet-400"
+                                  isTrashFolder
+                                    ? "text-red-400/70"
+                                    : isActive
+                                      ? "text-violet-300 fill-violet-400"
+                                      : "text-violet-400"
                                 )}
                               />
                             )}
@@ -1451,7 +1462,10 @@ export function Sidebar({
                               />
                             ) : (
                               <span
-                                className="flex-1 text-xs text-slate-300 truncate"
+                                className={cn(
+                                  "flex-1 text-xs truncate",
+                                  isTrashFolder ? "text-red-400/70" : "text-slate-300"
+                                )}
                                 onDoubleClick={(e) => {
                                   e.stopPropagation();
                                   handleStartEdit(node.id, "folder", node.name, e);
@@ -1487,7 +1501,10 @@ export function Sidebar({
                               );
                             })()}
 
-                            <span className="text-[10px] text-slate-500 ml-auto">
+                            <span className={cn(
+                              "text-[10px] ml-auto",
+                              isTrashFolder ? "text-red-400/50" : "text-slate-500"
+                            )}>
                               {totalSessions}
                             </span>
 
@@ -1498,60 +1515,85 @@ export function Sidebar({
                           </div>
                         </ContextMenuTrigger>
                         <ContextMenuContent className="w-48">
-                          <ContextMenuItem onClick={() => onFolderNewSession(node.id)}>
-                            <Terminal className="w-3.5 h-3.5 mr-2" />
-                            New Session
-                          </ContextMenuItem>
-                          <ContextMenuItem onClick={() => onFolderAdvancedSession(node.id)}>
-                            <Sparkles className="w-3.5 h-3.5 mr-2" />
-                            Advanced...
-                          </ContextMenuItem>
-                          <ContextMenuItem
-                            onClick={() => onFolderNewWorktree(node.id)}
-                            disabled={!folderHasRepo(node.id)}
-                            className={!folderHasRepo(node.id) ? "opacity-50" : ""}
-                            title={!folderHasRepo(node.id) ? "Link a repository in folder preferences first" : undefined}
-                          >
-                            <GitBranch className="w-3.5 h-3.5 mr-2" />
-                            New Worktree
-                          </ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem onClick={() => handleStartSubfolderCreate(node.id)}>
-                            <Folder className="w-3.5 h-3.5 mr-2" />
-                            New Subfolder
-                          </ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem onClick={() => onFolderSettings(node.id, node.name)}>
-                            <Settings className="w-3.5 h-3.5 mr-2" />
-                            Preferences
-                            {hasPrefs && (
-                              <span className="ml-auto text-[10px] text-violet-400">Custom</span>
-                            )}
-                          </ContextMenuItem>
-                          <ContextMenuItem
-                            onClick={() => {
-                              setEditingId(node.id);
-                              setEditingType("folder");
-                              setEditValue(node.name);
-                            }}
-                          >
-                            <Pencil className="w-3.5 h-3.5 mr-2" />
-                            Rename
-                          </ContextMenuItem>
-                          {node.parentId && (
-                            <ContextMenuItem onClick={() => onFolderMove(node.id, null)}>
-                              <FolderOpen className="w-3.5 h-3.5 mr-2" />
-                              Move to Root
-                            </ContextMenuItem>
+                          {isTrashFolder ? (
+                            /* Simplified context menu for .trash folders */
+                            <>
+                              <ContextMenuItem onClick={() => {
+                                onFolderClick(node.id);
+                                if (node.collapsed) onFolderToggle(node.id);
+                              }}>
+                                <FolderOpen className="w-3.5 h-3.5 mr-2" />
+                                View Contents
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem
+                                onClick={() => onFolderEmpty(node.id)}
+                                disabled={totalSessions === 0}
+                                className="text-red-400 focus:text-red-400"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                Empty Trash
+                              </ContextMenuItem>
+                            </>
+                          ) : (
+                            /* Regular folder context menu */
+                            <>
+                              <ContextMenuItem onClick={() => onFolderNewSession(node.id)}>
+                                <Terminal className="w-3.5 h-3.5 mr-2" />
+                                New Session
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => onFolderAdvancedSession(node.id)}>
+                                <Sparkles className="w-3.5 h-3.5 mr-2" />
+                                Advanced...
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => onFolderNewWorktree(node.id)}
+                                disabled={!folderHasRepo(node.id)}
+                                className={!folderHasRepo(node.id) ? "opacity-50" : ""}
+                                title={!folderHasRepo(node.id) ? "Link a repository in folder preferences first" : undefined}
+                              >
+                                <GitBranch className="w-3.5 h-3.5 mr-2" />
+                                New Worktree
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onClick={() => handleStartSubfolderCreate(node.id)}>
+                                <Folder className="w-3.5 h-3.5 mr-2" />
+                                New Subfolder
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onClick={() => onFolderSettings(node.id, node.name)}>
+                                <Settings className="w-3.5 h-3.5 mr-2" />
+                                Preferences
+                                {hasPrefs && (
+                                  <span className="ml-auto text-[10px] text-violet-400">Custom</span>
+                                )}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => {
+                                  setEditingId(node.id);
+                                  setEditingType("folder");
+                                  setEditValue(node.name);
+                                }}
+                              >
+                                <Pencil className="w-3.5 h-3.5 mr-2" />
+                                Rename
+                              </ContextMenuItem>
+                              {node.parentId && (
+                                <ContextMenuItem onClick={() => onFolderMove(node.id, null)}>
+                                  <FolderOpen className="w-3.5 h-3.5 mr-2" />
+                                  Move to Root
+                                </ContextMenuItem>
+                              )}
+                              <ContextMenuSeparator />
+                              <ContextMenuItem
+                                onClick={() => onFolderDelete(node.id)}
+                                className="text-red-400 focus:text-red-400"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                Delete
+                              </ContextMenuItem>
+                            </>
                           )}
-                          <ContextMenuSeparator />
-                          <ContextMenuItem
-                            onClick={() => onFolderDelete(node.id)}
-                            className="text-red-400 focus:text-red-400"
-                          >
-                            <Trash2 className="w-3.5 h-3.5 mr-2" />
-                            Delete
-                          </ContextMenuItem>
                         </ContextMenuContent>
                       </ContextMenu>
 

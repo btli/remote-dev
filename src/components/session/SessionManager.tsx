@@ -580,6 +580,24 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     []
   );
 
+  // Empty all sessions in a folder (used for .trash folder)
+  const handleEmptyFolder = useCallback(
+    async (folderId: string) => {
+      const folderSessions = sessions.filter((s) => s.folderId === folderId && s.status !== "closed");
+      if (folderSessions.length === 0) return;
+
+      // Close all sessions in the folder permanently
+      const results = await Promise.allSettled(
+        folderSessions.map((s) => closeSession(s.id, { deleteWorktree: true }))
+      );
+      const failures = results.filter((r) => r.status === "rejected");
+      if (failures.length > 0) {
+        console.error("Some sessions failed to close:", failures);
+      }
+    },
+    [sessions, closeSession]
+  );
+
   // Get repo stats for a folder (for sidebar badges)
   // Uses resolvePreferencesForFolder to include inherited repo from parent folders
   const getFolderRepoStats = useCallback(
@@ -1031,6 +1049,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderNewWorktree={handleFolderNewWorktree}
             onFolderMove={handleMoveFolder}
             onFolderReorder={handleReorderFolders}
+            onFolderEmpty={handleEmptyFolder}
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
             onSessionSchedule={handleScheduleSession}
