@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as ScheduleService from "@/services/schedule-service";
-import { schedulerOrchestrator } from "@/services/scheduler-orchestrator";
+import { notifyScheduleCreated } from "@/lib/scheduler-client";
 import type { CreateScheduleInput } from "@/types/schedule";
 
 /**
@@ -64,11 +64,13 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
     const schedule = await ScheduleService.createSchedule(userId, input);
 
-    // Notify orchestrator to add the job (if orchestrator is ready)
-    // If orchestrator isn't started yet (e.g., during slow startup), the schedule
-    // will be picked up when the orchestrator starts and loads all enabled schedules
-    if (schedule.enabled && schedulerOrchestrator.isStarted()) {
-      await schedulerOrchestrator.addJob(schedule.id);
+    // Notify terminal server's scheduler to add the job
+    // This is fire-and-forget - if terminal server is down, the schedule
+    // will be picked up when it starts and loads all enabled schedules
+    if (schedule.enabled) {
+      notifyScheduleCreated(schedule.id).catch((err) =>
+        console.warn("[API] Failed to notify scheduler of new schedule:", err)
+      );
     }
 
     return NextResponse.json(schedule, { status: 201 });

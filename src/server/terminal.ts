@@ -1,10 +1,12 @@
 import { WebSocketServer, WebSocket } from "ws";
+import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import { parse } from "url";
 import { execFile, execFileSync } from "child_process";
 import { createHmac, timingSafeEqual } from "crypto";
 import { resolve as pathResolve } from "path";
+import { schedulerOrchestrator } from "../services/scheduler-orchestrator";
 
 /**
  * Validate a tmux session name to prevent command injection.
@@ -248,6 +250,112 @@ function parseEnvironmentVarsFromQuery(
   }
 }
 
+/**
+ * Handle internal API requests (scheduler notifications, health checks)
+ */
+async function handleInternalApi(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<boolean> {
+  const { pathname } = parse(req.url || "", true);
+
+  // Health check endpoint
+  if (pathname === "/health" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", scheduler: schedulerOrchestrator.isStarted() }));
+    return true;
+  }
+
+  // Internal scheduler API - requires internal secret
+  if (pathname?.startsWith("/internal/scheduler/")) {
+    const internalSecret = process.env.AUTH_SECRET || "development-secret";
+    const authHeader = req.headers.authorization;
+
+    if (authHeader !== `Bearer ${internalSecret}`) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return true;
+    }
+
+    // Parse request body for POST requests
+    let body = "";
+    if (req.method === "POST") {
+      await new Promise<void>((resolve) => {
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", resolve);
+      });
+    }
+
+    const action = pathname.replace("/internal/scheduler/", "");
+
+    try {
+      switch (action) {
+        case "add": {
+          const { scheduleId } = JSON.parse(body);
+          await schedulerOrchestrator.addJob(scheduleId);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+          break;
+        }
+        case "update": {
+          const { scheduleId } = JSON.parse(body);
+          await schedulerOrchestrator.updateJob(scheduleId);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+          break;
+        }
+        case "remove": {
+          const { scheduleId } = JSON.parse(body);
+          schedulerOrchestrator.removeJob(scheduleId);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+          break;
+        }
+        case "pause": {
+          const { scheduleId } = JSON.parse(body);
+          schedulerOrchestrator.pauseJob(scheduleId);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+          break;
+        }
+        case "resume": {
+          const { scheduleId } = JSON.parse(body);
+          schedulerOrchestrator.resumeJob(scheduleId);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+          break;
+        }
+        case "remove-session": {
+          const { sessionId } = JSON.parse(body);
+          schedulerOrchestrator.removeSessionJobs(sessionId);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+          break;
+        }
+        case "status": {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            running: schedulerOrchestrator.isStarted(),
+            jobCount: schedulerOrchestrator.getJobCount(),
+            jobs: schedulerOrchestrator.getStatus(),
+          }));
+          break;
+        }
+        default:
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Unknown action" }));
+      }
+    } catch (error) {
+      console.error("[InternalAPI] Scheduler error:", error);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal error" }));
+    }
+    return true;
+  }
+
+  return false;
+}
+
 export function createTerminalServer(port: number = 3001) {
   // Check tmux is installed at startup
   if (!checkTmuxInstalled()) {
@@ -258,9 +366,25 @@ export function createTerminalServer(port: number = 3001) {
     console.log("tmux detected - session persistence enabled");
   }
 
-  const wss = new WebSocketServer({ port });
+  // Create HTTP server to handle both WebSocket upgrades and internal API
+  const server = createServer(async (req, res) => {
+    // Try to handle as internal API request
+    const handled = await handleInternalApi(req, res);
+    if (!handled) {
+      // Not an API request - return 404 for regular HTTP
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("WebSocket endpoint only");
+    }
+  });
 
-  console.log(`Terminal WebSocket server running on ws://localhost:${port}`);
+  // Attach WebSocket server to HTTP server
+  const wss = new WebSocketServer({ server });
+
+  server.listen(port, () => {
+    console.log(`Terminal server running on http://localhost:${port}`);
+    console.log(`  - WebSocket: ws://localhost:${port}`);
+    console.log(`  - Internal API: http://localhost:${port}/internal/scheduler/*`);
+  });
 
   wss.on("connection", (ws, req) => {
     const query = parse(req.url || "", true).query;

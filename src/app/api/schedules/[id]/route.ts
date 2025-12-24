@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as ScheduleService from "@/services/schedule-service";
-import { schedulerOrchestrator } from "@/services/scheduler-orchestrator";
+import { notifyScheduleUpdated, notifyScheduleDeleted } from "@/lib/scheduler-client";
 import type { UpdateScheduleInput, ScheduleCommandInput } from "@/types/schedule";
 
 /**
@@ -62,11 +62,11 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       await ScheduleService.updateScheduleCommands(scheduleId, userId, commands);
     }
 
-    // Notify orchestrator of changes (updateJob is idempotent - safe to call even
-    // if only metadata changed without affecting the cron schedule)
-    if (schedulerOrchestrator.isStarted()) {
-      await schedulerOrchestrator.updateJob(scheduleId);
-    }
+    // Notify terminal server's scheduler of changes
+    // Fire-and-forget - schedule is already saved in database
+    notifyScheduleUpdated(scheduleId).catch((err) =>
+      console.warn("[API] Failed to notify scheduler of schedule update:", err)
+    );
 
     // Return updated schedule with commands
     const updated = await ScheduleService.getScheduleWithCommands(scheduleId, userId);
@@ -91,11 +91,14 @@ export const DELETE = withApiAuth(async (request, { userId, params }) => {
       return errorResponse("Schedule ID is required", 400, "ID_REQUIRED");
     }
 
-    // Remove from orchestrator first
-    schedulerOrchestrator.removeJob(scheduleId);
-
-    // Delete from database
+    // Delete from database first
     await ScheduleService.deleteSchedule(scheduleId, userId);
+
+    // Notify terminal server's scheduler to remove the job
+    // Fire-and-forget - if it fails, the job will be orphaned but harmless
+    notifyScheduleDeleted(scheduleId).catch((err) =>
+      console.warn("[API] Failed to notify scheduler of schedule deletion:", err)
+    );
 
     return NextResponse.json({ success: true });
   } catch (error) {
