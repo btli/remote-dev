@@ -156,6 +156,40 @@ export function GitHubStatsProvider({
 }: GitHubStatsProviderProps) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const hasTriggeredStaleRefresh = useRef(false);
+
+  // Refresh stats from GitHub (triggers API fetch) - defined first for use in fetchStats
+  const refreshStats = useCallback(async () => {
+    if (!isGitHubConnected) return;
+
+    dispatch({ type: "SET_REFRESHING", isRefreshing: true });
+
+    try {
+      const response = await fetch("/api/github/stats", {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to refresh stats: ${response.status}`);
+      }
+
+      const data = await response.json();
+      dispatch({
+        type: "REFRESH_COMPLETE",
+        repositories: data.repositories,
+        result: data.result,
+        hasChanges: data.changes.hasChanges,
+        totalNewPRs: data.changes.totalPRs,
+        totalNewIssues: data.changes.totalIssues,
+      });
+      dispatch({ type: "SET_LAST_REFRESH", lastRefresh: new Date() });
+    } catch (error) {
+      const err = error as Error;
+      dispatch({ type: "SET_ERROR", error: err.message });
+    } finally {
+      dispatch({ type: "SET_REFRESHING", isRefreshing: false });
+    }
+  }, [isGitHubConnected]);
 
   // Fetch stats without refreshing from GitHub
   const fetchStats = useCallback(async () => {
@@ -177,44 +211,19 @@ export function GitHubStatsProvider({
         totalNewPRs: data.changes.totalPRs,
         totalNewIssues: data.changes.totalIssues,
       });
+
+      // Auto-trigger refresh if we have stale/missing data (once per session)
+      if (data.hasStaleData && !hasTriggeredStaleRefresh.current) {
+        hasTriggeredStaleRefresh.current = true;
+        refreshStats();
+      }
     } catch (error) {
       const err = error as Error;
       dispatch({ type: "SET_ERROR", error: err.message });
     } finally {
       dispatch({ type: "SET_LOADING", isLoading: false });
     }
-  }, [isGitHubConnected]);
-
-  // Refresh stats from GitHub (triggers API fetch)
-  const refreshStats = useCallback(async () => {
-    if (!isGitHubConnected) return;
-
-    dispatch({ type: "SET_REFRESHING", isRefreshing: true });
-
-    try {
-      const response = await fetch("/api/github/stats", {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to refresh stats");
-      }
-
-      const data = await response.json();
-      dispatch({
-        type: "REFRESH_COMPLETE",
-        repositories: data.repositories,
-        result: data.result,
-        hasChanges: data.changes.hasChanges,
-        totalNewPRs: data.changes.totalPRs,
-        totalNewIssues: data.changes.totalIssues,
-      });
-    } catch (error) {
-      const err = error as Error;
-      dispatch({ type: "SET_ERROR", error: err.message });
-      dispatch({ type: "SET_REFRESHING", isRefreshing: false });
-    }
-  }, [isGitHubConnected]);
+  }, [isGitHubConnected, refreshStats]);
 
   // Mark changes as seen
   const markChangesSeen = useCallback(async (repositoryId?: string) => {

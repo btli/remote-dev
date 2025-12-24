@@ -122,32 +122,8 @@ const REPO_STATS_QUERY = `
   }
 `;
 
-// GraphQL query for batched repository stats (up to 10 repos at once)
-const BATCH_REPOS_QUERY = `
-  query BatchRepositoryStats(
-    $repo0: String!, $owner0: String!,
-    $repo1: String!, $owner1: String!,
-    $repo2: String!, $owner2: String!,
-    $repo3: String!, $owner3: String!,
-    $repo4: String!, $owner4: String!,
-    $repo5: String!, $owner5: String!,
-    $repo6: String!, $owner6: String!,
-    $repo7: String!, $owner7: String!,
-    $repo8: String!, $owner8: String!,
-    $repo9: String!, $owner9: String!
-  ) {
-    repo0: repository(owner: $owner0, name: $repo0) { ...RepoFields }
-    repo1: repository(owner: $owner1, name: $repo1) { ...RepoFields }
-    repo2: repository(owner: $owner2, name: $repo2) { ...RepoFields }
-    repo3: repository(owner: $owner3, name: $repo3) { ...RepoFields }
-    repo4: repository(owner: $owner4, name: $repo4) { ...RepoFields }
-    repo5: repository(owner: $owner5, name: $repo5) { ...RepoFields }
-    repo6: repository(owner: $owner6, name: $repo6) { ...RepoFields }
-    repo7: repository(owner: $owner7, name: $repo7) { ...RepoFields }
-    repo8: repository(owner: $owner8, name: $repo8) { ...RepoFields }
-    repo9: repository(owner: $owner9, name: $repo9) { ...RepoFields }
-  }
-
+// GraphQL fragment for repository fields (reused by dynamic query builder)
+const REPO_FIELDS_FRAGMENT = `
   fragment RepoFields on Repository {
     name
     nameWithOwner
@@ -240,6 +216,28 @@ const BATCH_REPOS_QUERY = `
     }
   }
 `;
+
+/**
+ * Build a dynamic GraphQL query for the exact number of repos in the batch
+ * This avoids padding with fake repos that cause API errors
+ */
+function buildBatchQuery(count: number): string {
+  const params = Array.from({ length: count }, (_, i) =>
+    `$repo${i}: String!, $owner${i}: String!`
+  ).join(",\n    ");
+
+  const repos = Array.from({ length: count }, (_, i) =>
+    `repo${i}: repository(owner: $owner${i}, name: $repo${i}) { ...RepoFields }`
+  ).join("\n    ");
+
+  return `
+  query BatchRepositoryStats(
+    ${params}
+  ) {
+    ${repos}
+  }
+  ${REPO_FIELDS_FRAGMENT}`;
+}
 
 /**
  * Create authenticated GraphQL client
@@ -534,24 +532,20 @@ export async function fetchBatchedStats(
   for (let i = 0; i < repositories.length; i += batchSize) {
     const batch = repositories.slice(i, i + batchSize);
 
-    // Pad batch to 10 with empty values for GraphQL query
-    const paddedBatch = [...batch];
-    while (paddedBatch.length < batchSize) {
-      // Use a non-existent repo for padding (will return null)
-      paddedBatch.push({ id: "", fullName: "github/null-repo-padding" });
-    }
-
-    // Build variables for batched query
+    // Build variables for batched query (no padding needed with dynamic query)
     const variables: Record<string, string> = {};
-    for (let j = 0; j < paddedBatch.length; j++) {
-      const [owner, name] = paddedBatch[j].fullName.split("/");
+    for (let j = 0; j < batch.length; j++) {
+      const [owner, name] = batch[j].fullName.split("/");
       variables[`owner${j}`] = owner;
       variables[`repo${j}`] = name;
     }
 
+    // Build dynamic query for exact batch size
+    const query = buildBatchQuery(batch.length);
+
     try {
       const response = await client<Record<string, GraphQLRepositoryStats | null>>(
-        BATCH_REPOS_QUERY,
+        query,
         variables
       );
 
