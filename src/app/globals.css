@@ -572,3 +572,36 @@
   display: none; /* Chrome, Safari, Opera */
 }
 
+/* ============================================================================
+   Date/Time Input Styling - Dark theme compatible
+   ============================================================================ */
+
+/* Dark mode date/time inputs */
+.dark input[type="date"],
+.dark input[type="time"],
+.dark input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+/* Style the calendar/clock icons */
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="time"]::-webkit-calendar-picker-indicator,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.dark input[type="date"]::-webkit-calendar-picker-indicator:hover,
+.dark input[type="time"]::-webkit-calendar-picker-indicator:hover,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* Firefox date/time inputs */
+.dark input[type="date"]::-moz-calendar-picker-indicator,
+.dark input[type="time"]::-moz-calendar-picker-indicator {
+  filter: invert(0.7);
+}
+
