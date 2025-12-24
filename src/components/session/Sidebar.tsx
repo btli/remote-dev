@@ -357,6 +357,17 @@ export function Sidebar({
     e.preventDefault();
     e.stopPropagation();
 
+    // If dragging a session, delegate to session-to-folder logic
+    if (draggedSessionId) {
+      e.dataTransfer.dropEffect = "move";
+      if (dragOverFolderId !== targetFolderId) {
+        setDragOverFolderId(targetFolderId);
+      }
+      setDropTargetId(null);
+      setDropPosition(null);
+      return;
+    }
+
     // Only handle folder-to-folder reordering
     if (!draggingFolderId || draggingFolderId === targetFolderId) {
       setDropTargetFolderId(null);
@@ -397,6 +408,18 @@ export function Sidebar({
   const handleFolderDrop = (e: React.DragEvent, targetFolderId: string, targetParentId: string | null) => {
     e.preventDefault();
     e.stopPropagation();
+
+    // If dropping a session onto a folder, delegate to handleDrop
+    const dragType = e.dataTransfer.getData("type");
+    const dragId = e.dataTransfer.getData("text/plain");
+    if (dragType === "session" || (!draggingFolderId && dragId)) {
+      onSessionMove(dragId, targetFolderId);
+      setDragOverFolderId(null);
+      setDropTargetId(null);
+      setDropPosition(null);
+      setDraggedSessionId(null);
+      return;
+    }
 
     if (!draggingFolderId || draggingFolderId === targetFolderId) {
       setDragOverFolderId(null);
