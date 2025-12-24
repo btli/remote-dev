@@ -485,6 +485,83 @@
   }
 }
 
+/* ============================================================================
+   Custom Scrollbar Styling - Modern, minimal, theme-matching
+   ============================================================================ */
+
+/* Webkit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 10%);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(1 0 0 / 20%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: oklch(1 0 0 / 30%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(1 0 0 / 10%) transparent;
+}
+
+/* Light mode overrides */
+:root:not(.dark) ::-webkit-scrollbar-thumb {
+  background: oklch(0 0 0 / 10%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+:root:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0 0 0 / 20%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+:root:not(.dark) ::-webkit-scrollbar-thumb:active {
+  background: oklch(0 0 0 / 30%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+:root:not(.dark) * {
+  scrollbar-color: oklch(0 0 0 / 10%) transparent;
+}
+
+/* Utility class to completely hide scrollbars */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* Hide xterm scrollbar */
 .xterm-viewport {
   scrollbar-width: none; /* Firefox */
