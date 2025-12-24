@@ -67,6 +67,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
     return false;
   });
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    // Initialize from localStorage if available
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("sidebar-width");
+      if (saved) {
+        const width = parseInt(saved, 10);
+        if (!isNaN(width) && width >= 180 && width <= 400) {
+          return width;
+        }
+      }
+    }
+    return 220; // Default width
+  });
 
   // Track mobile state for responsive sidebar behavior
   useEffect(() => {
@@ -132,6 +145,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleSidebarCollapsedChange = useCallback((collapsed: boolean) => {
     setSidebarCollapsed(collapsed);
     localStorage.setItem("sidebar-collapsed", String(collapsed));
+  }, []);
+
+  // Persist sidebar width to localStorage
+  const handleSidebarWidthChange = useCallback((width: number) => {
+    setSidebarWidth(width);
+    localStorage.setItem("sidebar-width", String(width));
   }, []);
 
   // Folder state from context (persisted in database)
@@ -909,6 +928,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                 handleSidebarCollapsedChange(collapsed);
               }
             }}
+            width={sidebarWidth}
+            onWidthChange={handleSidebarWidthChange}
             folderHasPreferences={hasFolderPreferences}
             folderHasRepo={folderHasRepo}
             onSessionClick={handleSessionClick}

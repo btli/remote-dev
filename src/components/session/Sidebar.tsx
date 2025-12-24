@@ -51,6 +51,12 @@ interface FolderNode extends SessionFolder {
   depth: number;
 }
 
+// Sidebar width constraints
+const MIN_SIDEBAR_WIDTH = 180;
+const MAX_SIDEBAR_WIDTH = 400;
+const DEFAULT_SIDEBAR_WIDTH = 220;
+const COLLAPSED_SIDEBAR_WIDTH = 48;
+
 interface SidebarProps {
   sessions: TerminalSession[];
   folders: SessionFolder[];
@@ -58,6 +64,8 @@ interface SidebarProps {
   activeFolderId: string | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
+  width?: number;
+  onWidthChange?: (width: number) => void;
   folderHasPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
   onSessionClick: (sessionId: string) => void;
@@ -90,6 +98,8 @@ export function Sidebar({
   activeFolderId,
   collapsed,
   onCollapsedChange,
+  width = DEFAULT_SIDEBAR_WIDTH,
+  onWidthChange,
   folderHasPreferences,
   folderHasRepo,
   onSessionClick,
@@ -125,6 +135,7 @@ export function Sidebar({
   const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
   const [dropPosition, setDropPosition] = useState<"before" | "after" | null>(null);
   // Folder reorder state
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
@@ -132,6 +143,41 @@ export function Sidebar({
   const [worktreeDialogSession, setWorktreeDialogSession] = useState<TerminalSession | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const resizeStartXRef = useRef<number>(0);
+  const resizeStartWidthRef = useRef<number>(0);
+
+  // Resize handlers
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = width;
+  }, [width]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - resizeStartXRef.current;
+      const newWidth = Math.min(
+        MAX_SIDEBAR_WIDTH,
+        Math.max(MIN_SIDEBAR_WIDTH, resizeStartWidthRef.current + delta)
+      );
+      onWidthChange?.(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizing, onWidthChange]);
 
   // Split context for managing split groups
   const {
@@ -869,11 +915,25 @@ export function Sidebar({
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className={cn(
-      "h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5",
-      "transition-all duration-200",
-      collapsed ? "w-12" : "w-52"
-    )}>
+    <div
+      className={cn(
+        "h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5",
+        "transition-[width] duration-200 relative shrink-0",
+        isResizing && "select-none"
+      )}
+      style={{ width: collapsed ? COLLAPSED_SIDEBAR_WIDTH : width }}
+    >
+        {/* Resize handle */}
+        {!collapsed && (
+          <div
+            className={cn(
+              "absolute top-0 right-0 w-1 h-full cursor-ew-resize z-10",
+              "hover:bg-violet-500/50 transition-colors",
+              isResizing && "bg-violet-500/50"
+            )}
+            onMouseDown={handleResizeStart}
+          />
+        )}
         {/* Header */}
         <div className={cn(
           "flex items-center border-b border-white/5",
