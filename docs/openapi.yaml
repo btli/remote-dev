@@ -1200,7 +1200,7 @@ components:
       properties:
         name:
           type: string
-          default: Terminal
+          description: Display name. Defaults to parent folder name with counter (e.g., "remote-dev 1") or "Terminal N" if no folder.
         projectPath:
           type: string
         githubRepoId:
