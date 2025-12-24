@@ -124,10 +124,7 @@ export default async function Home() {
                     </header>
 
                     {/* Main content */}
-                    <SessionManager
-                      isGitHubConnected={isGitHubConnected}
-                      userEmail={session.user.email || ""}
-                    />
+                    <SessionManager isGitHubConnected={isGitHubConnected} />
                   </div>
                 </TrashProvider>
               </SplitProvider>

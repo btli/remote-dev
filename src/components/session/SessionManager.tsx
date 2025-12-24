@@ -17,6 +17,8 @@ import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSplitContext } from "@/contexts/SplitContext";
 import { useTrashContext } from "@/contexts/TrashContext";
+import { useGitHubStats } from "@/contexts/GitHubStatsContext";
+import type { FolderRepoStats } from "./Sidebar";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -36,7 +38,6 @@ const TerminalWithKeyboard = dynamic(
 
 interface SessionManagerProps {
   isGitHubConnected?: boolean;
-  userEmail?: string;
 }
 
 export function SessionManager({ isGitHubConnected = false }: SessionManagerProps) {
@@ -180,6 +181,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setActiveFolder,
     resolvePreferencesForFolder,
   } = usePreferencesContext();
+
+  // GitHub stats for repo badges on folders
+  const { getRepositoryById } = useGitHubStats();
 
   // Split state from context
   const {
@@ -592,6 +596,25 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     []
   );
 
+  // Get repo stats for a folder (for sidebar badges)
+  // Uses resolvePreferencesForFolder to include inherited repo from parent folders
+  const getFolderRepoStats = useCallback(
+    (folderId: string): FolderRepoStats | null => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      if (!prefs?.githubRepoId) return null;
+
+      const repo = getRepositoryById(prefs.githubRepoId);
+      if (!repo) return null;
+
+      return {
+        prCount: repo.stats.openPRCount,
+        issueCount: repo.stats.openIssueCount,
+        hasChanges: repo.hasChanges ?? false,
+      };
+    },
+    [resolvePreferencesForFolder, getRepositoryById]
+  );
+
   const handleFolderNewSession = useCallback(
     async (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
@@ -728,29 +751,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [closeSession, logSessionError]
   );
 
-  // Handler for creating a PR worktree from the GitHub integration
-  const handleCreatePRWorktree = useCallback(
-    async (repoId: string, prNumber: number) => {
-      const response = await fetch("/api/github/pr-worktree", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repositoryId: repoId, prNumber }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to create PR worktree");
-      }
-
-      const result = await response.json();
-      // Session is auto-created by the API, refresh session list
-      if (result.sessionId) {
-        setActiveSession(result.sessionId);
-      }
-    },
-    [setActiveSession]
-  );
-
   // Close mobile sidebar when selecting a session
   const handleSessionClick = useCallback(
     (sessionId: string) => {
@@ -769,15 +769,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Split Pane Handlers
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** Enter split mode with a second session */
-  const handleSplitHorizontal = useCallback(async () => {
+  /** Core split handler - creates a split with the given direction */
+  const handleSplit = useCallback(async (direction: "horizontal" | "vertical") => {
     if (!activeSessionId) return;
 
     const name = `Terminal ${sessionCounter}`;
     setSessionCounter((c) => c + 1);
 
     try {
-      await createSplit(activeSessionId, "horizontal", name);
+      await createSplit(activeSessionId, direction, name);
       // Refresh sessions to get the newly created split session
       await refreshSessions();
     } catch (error) {
@@ -785,27 +785,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
   }, [activeSessionId, sessionCounter, createSplit, refreshSessions, logSessionError]);
 
-  // Update ref when handler changes
+  /** Enter split mode horizontally */
+  const handleSplitHorizontal = useCallback(() => handleSplit("horizontal"), [handleSplit]);
+
+  /** Enter split mode vertically */
+  const handleSplitVertical = useCallback(() => handleSplit("vertical"), [handleSplit]);
+
+  // Update refs when handlers change
   useEffect(() => {
     splitHorizontalRef.current = handleSplitHorizontal;
   }, [handleSplitHorizontal]);
 
-  const handleSplitVertical = useCallback(async () => {
-    if (!activeSessionId) return;
-
-    const name = `Terminal ${sessionCounter}`;
-    setSessionCounter((c) => c + 1);
-
-    try {
-      await createSplit(activeSessionId, "vertical", name);
-      // Refresh sessions to get the newly created split session
-      await refreshSessions();
-    } catch (error) {
-      logSessionError("create split", error);
-    }
-  }, [activeSessionId, sessionCounter, createSplit, refreshSessions, logSessionError]);
-
-  // Update ref when handler changes
   useEffect(() => {
     splitVerticalRef.current = handleSplitVertical;
   }, [handleSplitVertical]);
@@ -932,6 +922,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onWidthChange={handleSidebarWidthChange}
             folderHasPreferences={hasFolderPreferences}
             folderHasRepo={folderHasRepo}
+            getFolderRepoStats={getFolderRepoStats}
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}
             onSessionRename={handleRenameSession}
@@ -952,7 +943,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderReorder={handleReorderFolders}
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
-            onCreatePRWorktree={handleCreatePRWorktree}
           />
       </div>
 
