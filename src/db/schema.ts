@@ -355,3 +355,63 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_split_group_idx").on(table.splitGroupId),
   ]
 );
+
+// Trash items - generic container for any trashable resource
+export const trashItems = sqliteTable(
+  "trash_item",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    resourceType: text("resource_type").notNull(), // "worktree" | future types
+    resourceId: text("resource_id").notNull(), // Original resource ID (e.g., session ID)
+    resourceName: text("resource_name").notNull(), // Display name
+    trashedAt: integer("trashed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // 30 days
+  },
+  (table) => [
+    index("trash_item_user_type_idx").on(table.userId, table.resourceType),
+    index("trash_item_expires_idx").on(table.expiresAt),
+    index("trash_item_resource_idx").on(table.resourceType, table.resourceId),
+  ]
+);
+
+// Worktree-specific trash metadata
+export const worktreeTrashMetadata = sqliteTable(
+  "worktree_trash_metadata",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    trashItemId: text("trash_item_id")
+      .notNull()
+      .unique()
+      .references(() => trashItems.id, { onDelete: "cascade" }),
+    // Repository context
+    githubRepoId: text("github_repo_id").references(() => githubRepositories.id, {
+      onDelete: "set null",
+    }),
+    repoName: text("repo_name").notNull(),
+    repoLocalPath: text("repo_local_path").notNull(),
+    // Worktree details
+    worktreeBranch: text("worktree_branch").notNull(),
+    worktreeOriginalPath: text("worktree_original_path").notNull(),
+    worktreeTrashPath: text("worktree_trash_path").notNull(),
+    // Folder organization (snapshot at trash time)
+    originalFolderId: text("original_folder_id"),
+    originalFolderName: text("original_folder_name"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("worktree_trash_repo_idx").on(table.githubRepoId),
+  ]
+);

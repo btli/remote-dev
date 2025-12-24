@@ -3,6 +3,7 @@ import { getAuthSession } from "@/lib/auth-utils";
 import * as SessionService from "@/services/session-service";
 import * as WorktreeService from "@/services/worktree-service";
 import * as GitHubService from "@/services/github-service";
+import * as TrashService from "@/services/trash-service";
 import { getFolderPreferences } from "@/services/preferences-service";
 import type { UpdateSessionInput } from "@/types/session";
 
@@ -89,6 +90,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
  *
  * Query params:
  * - deleteWorktree=true: Also delete the git worktree from disk
+ * - trash=true: Move worktree to trash instead of permanent close
  */
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
@@ -100,49 +102,59 @@ export async function DELETE(request: Request, { params }: RouteParams) {
     const { id } = await params;
     const { searchParams } = new URL(request.url);
     const deleteWorktree = searchParams.get("deleteWorktree") === "true";
+    const shouldTrash = searchParams.get("trash") === "true";
+
+    // Get session details for worktree operations
+    const terminalSession = await SessionService.getSessionWithMetadata(
+      id,
+      session.user.id
+    );
+
+    // Handle trash request for worktree sessions
+    if (shouldTrash && terminalSession?.worktreeBranch && terminalSession?.projectPath) {
+      const trashItem = await TrashService.trashResource(
+        session.user.id,
+        "worktree",
+        id
+      );
+      return NextResponse.json({ success: true, trashItemId: trashItem.id });
+    }
 
     // If deleteWorktree is requested, handle worktree cleanup first
-    if (deleteWorktree) {
-      const terminalSession = await SessionService.getSessionWithMetadata(
-        id,
-        session.user.id
-      );
+    if (deleteWorktree && terminalSession?.worktreeBranch && terminalSession?.projectPath) {
+      let mainRepoPath: string | null = null;
 
-      if (terminalSession?.worktreeBranch && terminalSession?.projectPath) {
-        let mainRepoPath: string | null = null;
+      // Try to get the main repo path from GitHub repository
+      if (terminalSession.githubRepoId) {
+        const repo = await GitHubService.getRepository(
+          terminalSession.githubRepoId,
+          session.user.id
+        );
+        mainRepoPath = repo?.localPath ?? null;
+      }
 
-        // Try to get the main repo path from GitHub repository
-        if (terminalSession.githubRepoId) {
-          const repo = await GitHubService.getRepository(
-            terminalSession.githubRepoId,
-            session.user.id
+      // Fall back to folder preferences for local repo path
+      if (!mainRepoPath && terminalSession.folderId) {
+        const folderPrefs = await getFolderPreferences(
+          terminalSession.folderId,
+          session.user.id
+        );
+        mainRepoPath = folderPrefs?.localRepoPath ?? null;
+      }
+
+      if (mainRepoPath) {
+        try {
+          await WorktreeService.removeWorktree(
+            mainRepoPath,
+            terminalSession.projectPath,
+            true // force removal
           );
-          mainRepoPath = repo?.localPath ?? null;
-        }
-
-        // Fall back to folder preferences for local repo path
-        if (!mainRepoPath && terminalSession.folderId) {
-          const folderPrefs = await getFolderPreferences(
-            terminalSession.folderId,
-            session.user.id
+          console.log(
+            `Removed worktree at ${terminalSession.projectPath} for session ${id}`
           );
-          mainRepoPath = folderPrefs?.localRepoPath ?? null;
-        }
-
-        if (mainRepoPath) {
-          try {
-            await WorktreeService.removeWorktree(
-              mainRepoPath,
-              terminalSession.projectPath,
-              true // force removal
-            );
-            console.log(
-              `Removed worktree at ${terminalSession.projectPath} for session ${id}`
-            );
-          } catch (worktreeError) {
-            console.error("Failed to remove worktree:", worktreeError);
-            // Continue with session closure even if worktree removal fails
-          }
+        } catch (worktreeError) {
+          console.error("Failed to remove worktree:", worktreeError);
+          // Continue with session closure even if worktree removal fails
         }
       }
     }
@@ -158,6 +170,13 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status }
+      );
+    }
+
+    if (error instanceof TrashService.TrashServiceError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: 400 }
       );
     }
 

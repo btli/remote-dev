@@ -104,6 +104,8 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 | `session_recording` | Terminal session recordings |
 | `api_key` | API keys for programmatic access |
 | `split_group` | Split pane groups with direction |
+| `trash_item` | Polymorphic trash items with 30-day retention |
+| `worktree_trash_metadata` | Worktree-specific trash metadata |
 
 ### Service Layer
 
@@ -121,6 +123,8 @@ Located in `src/services/`:
 | `RecordingService` | Session recording storage |
 | `ApiKeyService` | API key management and validation |
 | `SplitService` | Split pane group management |
+| `TrashService` | Polymorphic trash management, cleanup scheduling |
+| `WorktreeTrashService` | Worktree-specific trash operations, restore logic |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -162,6 +166,7 @@ React Contexts in `src/contexts/`:
 | `TemplateContext` | Session templates state |
 | `RecordingContext` | Recording state management |
 | `SplitContext` | Split pane groups and active pane tracking |
+| `TrashContext` | Trash items state and operations |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -258,6 +263,15 @@ React Contexts in `src/contexts/`:
 - `POST /api/splits/:id/sessions` - Add session to split
 - `DELETE /api/splits/:id/sessions` - Remove session from split
 - `PUT /api/splits/:id/layout` - Update pane sizes
+
+### Trash
+- `GET /api/trash` - List trash items
+- `POST /api/trash` - Trigger cleanup of expired items
+- `GET /api/trash/:id` - Get trash item details
+- `DELETE /api/trash/:id` - Permanently delete from trash
+- `GET /api/trash/:id/restore` - Check restore availability
+- `POST /api/trash/:id/restore` - Restore from trash
+- `POST /api/cron/trash-cleanup` - Scheduled cleanup endpoint (30-day retention)
 
 ## Adding Authorized Users
 
