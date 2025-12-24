@@ -5,7 +5,7 @@ import * as WorktreeService from "@/services/worktree-service";
 import * as GitHubService from "@/services/github-service";
 import * as TrashService from "@/services/trash-service";
 import * as ScheduleService from "@/services/schedule-service";
-import { schedulerOrchestrator } from "@/services/scheduler-orchestrator";
+import { notifySessionJobsRemoved } from "@/lib/scheduler-client";
 import { getFolderPreferences } from "@/services/preferences-service";
 import type { UpdateSessionInput } from "@/types/session";
 
@@ -136,7 +136,10 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
     try {
       const disabledCount = await ScheduleService.disableSessionSchedules(id);
       if (disabledCount > 0) {
-        schedulerOrchestrator.removeSessionJobs(id);
+        // Notify terminal server's scheduler to remove the jobs
+        notifySessionJobsRemoved(id).catch((err) =>
+          console.warn("[API] Failed to notify scheduler of session job removal:", err)
+        );
         console.log(`Disabled ${disabledCount} schedules for session ${id}`);
       }
     } catch (scheduleError) {
