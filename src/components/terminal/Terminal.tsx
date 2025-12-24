@@ -92,11 +92,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
 
-  // FIX: Capture initial theme/font values to avoid recreating terminal on changes
-  // Updates are handled by a separate useEffect that modifies terminal.options
-  const initialThemeRef = useRef(theme);
-  const initialFontSizeRef = useRef(fontSize);
-  const initialFontFamilyRef = useRef(fontFamily);
+  // FIX: Use refs for theme/font to avoid recreating terminal on changes.
+  // These refs are kept in sync with props so that:
+  // 1. If terminal hasn't initialized yet, it will use the latest values
+  // 2. If terminal already exists, the update effect applies changes directly
+  // This prevents race conditions where preferences load after terminal mounts.
+  const themeRef = useRef(theme);
+  const fontSizeRef = useRef(fontSize);
+  const fontFamilyRef = useRef(fontFamily);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
@@ -105,7 +108,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity]);
+    // Keep theme/font refs in sync for pending terminal initialization
+    themeRef.current = theme;
+    fontSizeRef.current = fontSize;
+    fontFamilyRef.current = fontFamily;
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, theme, fontSize, fontFamily]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -153,9 +160,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       terminal = new XTerm({
         cursorBlink: true,
-        fontSize: initialFontSizeRef.current,
-        fontFamily: initialFontFamilyRef.current,
-        theme: getTerminalTheme(initialThemeRef.current),
+        fontSize: fontSizeRef.current,
+        fontFamily: fontFamilyRef.current,
+        theme: getTerminalTheme(themeRef.current),
         allowProposedApi: true,
         scrollback: 10000,
       });
@@ -386,9 +393,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // This prevents incorrect initial sizing from various race conditions
       const initAndConnect = async () => {
         // Extract the primary font family name for loading
-        const fontMatch = initialFontFamilyRef.current.match(/^['"]?([^'"]+)/);
-        const primaryFont = fontMatch ? fontMatch[1] : initialFontFamilyRef.current;
-        const fs = initialFontSizeRef.current;
+        const fontMatch = fontFamilyRef.current.match(/^['"]?([^'"]+)/);
+        const primaryFont = fontMatch ? fontMatch[1] : fontFamilyRef.current;
+        const fs = fontSizeRef.current;
 
         try {
           // Explicitly load the font we need (both weights)

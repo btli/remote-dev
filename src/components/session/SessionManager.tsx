@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, Activity, useEffectEvent } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, Activity, useEffectEvent } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
@@ -61,40 +61,62 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [sessionCounter, setSessionCounter] = useState(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  // Start with defaults to ensure SSR/client consistency
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(220);
+  // Use useSyncExternalStore for localStorage values to avoid hydration mismatches
+  // and prevent cascading renders from setState in effects.
+  // The SSR snapshot returns defaults; client reads from localStorage.
+  const sidebarCollapsed = useSyncExternalStore(
+    // Subscribe: listen for storage events (from other tabs) and custom events
+    (callback) => {
+      const handler = (e: StorageEvent | CustomEvent) => {
+        if (e instanceof StorageEvent && e.key !== "sidebar-collapsed") return;
+        callback();
+      };
+      window.addEventListener("storage", handler);
+      window.addEventListener("sidebar-collapsed-change", handler as EventListener);
+      return () => {
+        window.removeEventListener("storage", handler);
+        window.removeEventListener("sidebar-collapsed-change", handler as EventListener);
+      };
+    },
+    // Get snapshot (client)
+    () => localStorage.getItem("sidebar-collapsed") === "true",
+    // Get server snapshot (SSR) - return default to match initial render
+    () => false
+  );
 
-  // Sync from localStorage synchronously before paint using useLayoutEffect
-  // This prevents hydration mismatch AND avoids the visual flash/layout shift
-  useLayoutEffect(() => {
-    let didUpdate = false;
-
-    const savedCollapsed = localStorage.getItem("sidebar-collapsed");
-    if (savedCollapsed === "true") {
-      setSidebarCollapsed(true);
-      didUpdate = true;
-    }
-
-    const savedWidth = localStorage.getItem("sidebar-width");
-    if (savedWidth) {
-      const width = parseInt(savedWidth, 10);
-      if (!isNaN(width) && width >= 180 && width <= 400) {
-        setSidebarWidth(width);
-        didUpdate = true;
+  const sidebarWidth = useSyncExternalStore(
+    (callback) => {
+      const handler = (e: StorageEvent | CustomEvent) => {
+        if (e instanceof StorageEvent && e.key !== "sidebar-width") return;
+        callback();
+      };
+      window.addEventListener("storage", handler);
+      window.addEventListener("sidebar-width-change", handler as EventListener);
+      return () => {
+        window.removeEventListener("storage", handler);
+        window.removeEventListener("sidebar-width-change", handler as EventListener);
+      };
+    },
+    () => {
+      const saved = localStorage.getItem("sidebar-width");
+      if (saved) {
+        const width = parseInt(saved, 10);
+        if (!isNaN(width) && width >= 180 && width <= 400) return width;
       }
-    }
+      return 220;
+    },
+    () => 220
+  );
 
-    // If sidebar dimensions changed, trigger resize for terminals to recalculate
-    if (didUpdate) {
-      // Wait for fonts and layout before triggering resize
-      // This ensures terminal calculates correct cell dimensions
-      document.fonts.ready.then(() => {
-        requestAnimationFrame(() => {
-          window.dispatchEvent(new Event("resize"));
-        });
-      });
-    }
+  // Helper to update localStorage and trigger re-render
+  const setSidebarCollapsed = useCallback((collapsed: boolean) => {
+    localStorage.setItem("sidebar-collapsed", String(collapsed));
+    window.dispatchEvent(new CustomEvent("sidebar-collapsed-change"));
+  }, []);
+
+  const setSidebarWidth = useCallback((width: number) => {
+    localStorage.setItem("sidebar-width", String(width));
+    window.dispatchEvent(new CustomEvent("sidebar-width-change"));
   }, []);
 
   // Track mobile state for responsive sidebar behavior
@@ -150,17 +172,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Note: No longer need refs for keyboard handler - useEffectEvent handles this
 
-  // Persist sidebar collapsed state to localStorage
-  const handleSidebarCollapsedChange = useCallback((collapsed: boolean) => {
-    setSidebarCollapsed(collapsed);
-    localStorage.setItem("sidebar-collapsed", String(collapsed));
-  }, []);
-
-  // Persist sidebar width to localStorage
-  const handleSidebarWidthChange = useCallback((width: number) => {
-    setSidebarWidth(width);
-    localStorage.setItem("sidebar-width", String(width));
-  }, []);
+  // setSidebarCollapsed and setSidebarWidth already persist to localStorage
+  // and trigger re-renders via useSyncExternalStore
 
   // Folder state from context (persisted in database)
   const {
@@ -973,11 +986,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                 // On mobile, toggling collapsed state controls the drawer
                 setIsMobileSidebarOpen(!collapsed);
               } else {
-                handleSidebarCollapsedChange(collapsed);
+                setSidebarCollapsed(collapsed);
               }
             }}
             width={sidebarWidth}
-            onWidthChange={handleSidebarWidthChange}
+            onWidthChange={setSidebarWidth}
             folderHasPreferences={hasFolderPreferences}
             folderHasRepo={folderHasRepo}
             getFolderRepoStats={getFolderRepoStats}
