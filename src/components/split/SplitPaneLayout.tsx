@@ -32,6 +32,7 @@ interface SplitPaneLayoutProps {
     fontFamily?: string;
   };
   sessionFolders: Record<string, string>;
+  wsUrl: string;
 }
 
 export function SplitPaneLayout({
@@ -43,6 +44,7 @@ export function SplitPaneLayout({
   onSessionExit,
   resolvePreferences,
   sessionFolders,
+  wsUrl,
 }: SplitPaneLayoutProps) {
   const isHorizontal = splitGroup.direction === "horizontal";
 
@@ -143,6 +145,7 @@ export function SplitPaneLayout({
                 theme={prefs.theme}
                 fontSize={prefs.fontSize}
                 fontFamily={prefs.fontFamily}
+                wsUrl={wsUrl}
                 onSessionExit={() => onSessionExit(pane.session!.id)}
               />
             </div>
