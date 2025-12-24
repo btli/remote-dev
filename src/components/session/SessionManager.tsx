@@ -37,6 +37,56 @@ const TerminalWithKeyboard = dynamic(
   { ssr: false }
 );
 
+// Stable subscription functions for useSyncExternalStore (must be outside component)
+// These listen for both cross-tab storage events and same-tab custom events
+function subscribeToSidebarCollapsed(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "sidebar-collapsed") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("sidebar-collapsed-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("sidebar-collapsed-change", handler);
+  };
+}
+
+function subscribeToSidebarWidth(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "sidebar-width") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("sidebar-width-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("sidebar-width-change", handler);
+  };
+}
+
+function getSidebarCollapsed() {
+  return localStorage.getItem("sidebar-collapsed") === "true";
+}
+
+function getSidebarWidth() {
+  const saved = localStorage.getItem("sidebar-width");
+  if (saved) {
+    const width = parseInt(saved, 10);
+    if (!isNaN(width) && width >= 180 && width <= 400) return width;
+  }
+  return 220;
+}
+
+// SSR snapshots (return defaults for hydration)
+function getServerSidebarCollapsed() {
+  return false;
+}
+
+function getServerSidebarWidth() {
+  return 220;
+}
+
 interface SessionManagerProps {
   isGitHubConnected?: boolean;
 }
@@ -63,49 +113,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isMobile, setIsMobile] = useState(false);
   // Use useSyncExternalStore for localStorage values to avoid hydration mismatches
   // and prevent cascading renders from setState in effects.
-  // The SSR snapshot returns defaults; client reads from localStorage.
+  // Functions are defined outside the component for stable identity.
   const sidebarCollapsed = useSyncExternalStore(
-    // Subscribe: listen for storage events (from other tabs) and custom events
-    (callback) => {
-      const handler = (e: StorageEvent | CustomEvent) => {
-        if (e instanceof StorageEvent && e.key !== "sidebar-collapsed") return;
-        callback();
-      };
-      window.addEventListener("storage", handler);
-      window.addEventListener("sidebar-collapsed-change", handler as EventListener);
-      return () => {
-        window.removeEventListener("storage", handler);
-        window.removeEventListener("sidebar-collapsed-change", handler as EventListener);
-      };
-    },
-    // Get snapshot (client)
-    () => localStorage.getItem("sidebar-collapsed") === "true",
-    // Get server snapshot (SSR) - return default to match initial render
-    () => false
+    subscribeToSidebarCollapsed,
+    getSidebarCollapsed,
+    getServerSidebarCollapsed
   );
 
   const sidebarWidth = useSyncExternalStore(
-    (callback) => {
-      const handler = (e: StorageEvent | CustomEvent) => {
-        if (e instanceof StorageEvent && e.key !== "sidebar-width") return;
-        callback();
-      };
-      window.addEventListener("storage", handler);
-      window.addEventListener("sidebar-width-change", handler as EventListener);
-      return () => {
-        window.removeEventListener("storage", handler);
-        window.removeEventListener("sidebar-width-change", handler as EventListener);
-      };
-    },
-    () => {
-      const saved = localStorage.getItem("sidebar-width");
-      if (saved) {
-        const width = parseInt(saved, 10);
-        if (!isNaN(width) && width >= 180 && width <= 400) return width;
-      }
-      return 220;
-    },
-    () => 220
+    subscribeToSidebarWidth,
+    getSidebarWidth,
+    getServerSidebarWidth
   );
 
   // Helper to update localStorage and trigger re-render
