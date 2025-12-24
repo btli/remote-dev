@@ -4,6 +4,8 @@ import * as SessionService from "@/services/session-service";
 import * as WorktreeService from "@/services/worktree-service";
 import * as GitHubService from "@/services/github-service";
 import * as TrashService from "@/services/trash-service";
+import * as ScheduleService from "@/services/schedule-service";
+import { schedulerOrchestrator } from "@/services/scheduler-orchestrator";
 import { getFolderPreferences } from "@/services/preferences-service";
 import type { UpdateSessionInput } from "@/types/session";
 
@@ -128,6 +130,18 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
           // Continue with session closure even if worktree removal fails
         }
       }
+    }
+
+    // Disable any scheduled commands for this session
+    try {
+      const disabledCount = await ScheduleService.disableSessionSchedules(id);
+      if (disabledCount > 0) {
+        schedulerOrchestrator.removeSessionJobs(id);
+        console.log(`Disabled ${disabledCount} schedules for session ${id}`);
+      }
+    } catch (scheduleError) {
+      console.error("Failed to disable schedules:", scheduleError);
+      // Continue with session closure even if schedule cleanup fails
     }
 
     await SessionService.closeSession(id, userId);

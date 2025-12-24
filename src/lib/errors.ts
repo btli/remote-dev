@@ -47,3 +47,13 @@ export class PreferencesServiceError extends ServiceError {
 }
 
 export class ApiKeyServiceError extends ServiceError {}
+
+export class ScheduleServiceError extends ServiceError {
+  constructor(
+    message: string,
+    code: string,
+    public readonly scheduleId?: string
+  ) {
+    super(message, code, scheduleId);
+  }
+}

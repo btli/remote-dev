@@ -49,6 +49,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "croner": "^9.1.0",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",
     "jose": "^6.1.3",
