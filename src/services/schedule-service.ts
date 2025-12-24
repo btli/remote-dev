@@ -371,6 +371,15 @@ export async function updateSchedule(
         );
       }
       nextRunAt = scheduledAt;
+
+      // Reset status and enabled when schedule time changes
+      // This allows one-time schedules to be re-run after editing
+      if (updates.status === undefined) {
+        updates.status = "active";
+      }
+      if (updates.enabled === undefined) {
+        updates.enabled = true;
+      }
     }
   } else {
     // For recurring schedules, use cron expression
