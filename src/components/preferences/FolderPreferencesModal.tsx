@@ -223,8 +223,8 @@ export function FolderPreferencesModal({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[500px] bg-slate-900 border-white/10">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] bg-slate-900 border-white/10 flex flex-col">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-white">
             <Folder className="w-5 h-5 text-violet-400 fill-violet-400/30" />
             {folderName} Preferences
@@ -236,7 +236,7 @@ export function FolderPreferencesModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 mt-4">
+        <div className="space-y-4 mt-4 flex-1 min-h-0 overflow-y-auto pr-2">
           {/* Working Directory */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -568,7 +568,7 @@ export function FolderPreferencesModal({
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 pt-4 border-t border-white/5">
+        <div className="flex flex-col gap-2 pt-4 border-t border-white/5 flex-shrink-0">
           {saveError && (
             <p className="text-sm text-red-400">{saveError}</p>
           )}
