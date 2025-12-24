@@ -94,6 +94,7 @@ interface SidebarProps {
   onFolderMove: (folderId: string, newParentId: string | null) => void;
   onFolderReorder: (folderIds: string[]) => void;
   onFolderEmpty: (folderId: string) => void;
+  onEmptyTrash: (folderId: string) => void;
   trashCount: number;
   onTrashOpen: () => void;
   onSessionSchedule?: (sessionId: string) => void;
@@ -132,6 +133,7 @@ export function Sidebar({
   onFolderMove,
   onFolderReorder,
   onFolderEmpty,
+  onEmptyTrash,
   trashCount,
   onTrashOpen,
   onSessionSchedule,
@@ -1651,21 +1653,48 @@ export function Sidebar({
                           })}
                           {/* Trash indicator for folder */}
                           {getFolderTrashCount(node.id) > 0 && (
-                            <div
-                              style={{ marginLeft: `${(node.depth + 1) * 12}px` }}
-                              onClick={onTrashOpen}
-                              className={cn(
-                                "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-                                "text-slate-500 hover:text-slate-400 hover:bg-white/5",
-                                "transition-colors duration-150"
-                              )}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span className="text-xs">.trash</span>
-                              <span className="ml-auto text-[10px] text-slate-600">
-                                {getFolderTrashCount(node.id)}
-                              </span>
-                            </div>
+                            <ContextMenu>
+                              <ContextMenuTrigger asChild>
+                                <div
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-label="Trash"
+                                  style={{ marginLeft: `${(node.depth + 1) * 12}px` }}
+                                  onClick={onTrashOpen}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      onTrashOpen();
+                                    }
+                                  }}
+                                  className={cn(
+                                    "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
+                                    "text-red-400/70 hover:text-red-400 hover:bg-red-500/10",
+                                    "transition-colors duration-150"
+                                  )}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span className="text-xs">.trash</span>
+                                  <span className="ml-auto text-[10px] text-red-400/50">
+                                    {getFolderTrashCount(node.id)}
+                                  </span>
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent className="w-48">
+                                <ContextMenuItem onClick={onTrashOpen}>
+                                  <FolderOpen className="w-3.5 h-3.5 mr-2" />
+                                  View Trash
+                                </ContextMenuItem>
+                                <ContextMenuSeparator />
+                                <ContextMenuItem
+                                  onClick={() => onEmptyTrash(node.id)}
+                                  className="text-red-400 focus:text-red-400"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                  Empty Permanently
+                                </ContextMenuItem>
+                              </ContextMenuContent>
+                            </ContextMenu>
                           )}
                         </>
                       )}
