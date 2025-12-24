@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as TrashService from "@/services/trash-service";
 import * as WorktreeTrashService from "@/services/worktree-trash-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
 
 /**
  * POST /api/trash/:id/restore - Restore from trash
@@ -13,34 +9,22 @@ interface RouteParams {
  *   - restorePath: Optional override path (for worktrees)
  *   - targetFolderId: Optional folder to restore to
  */
-export async function POST(request: Request, { params }: RouteParams) {
+export const POST = withAuth(async (request, { userId, params }) => {
+  const body = await request.json().catch(() => ({}));
+  const { restorePath, targetFolderId } = body;
+
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { id } = await params;
-    const body = await request.json().catch(() => ({}));
-    const { restorePath, targetFolderId } = body;
-
-    await TrashService.restoreResource(id, session.user.id, {
+    await TrashService.restoreResource(params!.id, userId, {
       restorePath,
       targetFolderId,
     });
-
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error restoring from trash:", error);
-
     if (error instanceof TrashService.TrashServiceError) {
       if (error.code === "NOT_FOUND") {
-        return NextResponse.json({ error: "Not found" }, { status: 404 });
+        return errorResponse("Not found", 404);
       }
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 }
-      );
+      return errorResponse(error.message, 400, error.code);
     }
 
     if (error instanceof WorktreeTrashService.WorktreeTrashServiceError) {
@@ -50,51 +34,33 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
-    return NextResponse.json(
-      { error: "Failed to restore from trash" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});
 
 /**
  * GET /api/trash/:id/restore - Check if original path is available
  * Returns info about whether restore can proceed automatically
  */
-export async function GET(request: Request, { params }: RouteParams) {
-  try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { id } = await params;
-
-    const item = await TrashService.getTrashItem(id, session.user.id);
-    if (!item) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-
-    const isPathAvailable = await WorktreeTrashService.isOriginalPathAvailable(
-      id,
-      session.user.id
-    );
-
-    const originalFolderId = await WorktreeTrashService.getOriginalFolderIfExists(
-      id,
-      session.user.id
-    );
-
-    return NextResponse.json({
-      isPathAvailable,
-      originalFolderId,
-      item,
-    });
-  } catch (error) {
-    console.error("Error checking restore availability:", error);
-    return NextResponse.json(
-      { error: "Failed to check restore availability" },
-      { status: 500 }
-    );
+export const GET = withAuth(async (_request, { userId, params }) => {
+  const item = await TrashService.getTrashItem(params!.id, userId);
+  if (!item) {
+    return errorResponse("Not found", 404);
   }
-}
+
+  const isPathAvailable = await WorktreeTrashService.isOriginalPathAvailable(
+    params!.id,
+    userId
+  );
+
+  const originalFolderId = await WorktreeTrashService.getOriginalFolderIfExists(
+    params!.id,
+    userId
+  );
+
+  return NextResponse.json({
+    isPathAvailable,
+    originalFolderId,
+    item,
+  });
+});

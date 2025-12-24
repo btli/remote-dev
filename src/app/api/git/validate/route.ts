@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import { isGitRepo, getBranches } from "@/services/worktree-service";
 
 /**
@@ -10,39 +10,26 @@ import { isGitRepo, getBranches } from "@/services/worktree-service";
  *   - isGitRepo: boolean
  *   - branches: string[] (local branch names, if it's a git repo)
  */
-export async function GET(request: Request) {
-  try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const GET = withAuth(async (request) => {
+  const { searchParams } = new URL(request.url);
+  const path = searchParams.get("path");
 
-    const { searchParams } = new URL(request.url);
-    const path = searchParams.get("path");
-
-    if (!path) {
-      return NextResponse.json({ error: "Path required" }, { status: 400 });
-    }
-
-    const isRepo = await isGitRepo(path);
-    if (!isRepo) {
-      return NextResponse.json({ isGitRepo: false });
-    }
-
-    const branches = await getBranches(path);
-    const branchNames = branches
-      .filter((b) => !b.isRemote)
-      .map((b) => b.name);
-
-    return NextResponse.json({
-      isGitRepo: true,
-      branches: branchNames,
-    });
-  } catch (error) {
-    console.error("Error validating git repo:", error);
-    return NextResponse.json(
-      { error: "Failed to validate path" },
-      { status: 500 }
-    );
+  if (!path) {
+    return errorResponse("Path required", 400);
   }
-}
+
+  const isRepo = await isGitRepo(path);
+  if (!isRepo) {
+    return NextResponse.json({ isGitRepo: false });
+  }
+
+  const branches = await getBranches(path);
+  const branchNames = branches
+    .filter((b) => !b.isRemote)
+    .map((b) => b.name);
+
+  return NextResponse.json({
+    isGitRepo: true,
+    branches: branchNames,
+  });
+});

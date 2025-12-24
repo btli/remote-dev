@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 
 /**
@@ -9,17 +9,11 @@ import * as GitHubService from "@/services/github-service";
  * - cached=true: Return only locally cached/cloned repositories from database
  * - page, perPage, sort: Pagination and sorting for API fetch
  */
-export async function GET(request: Request) {
+export const GET = withAuth(async (request, { userId }) => {
+  const { searchParams } = new URL(request.url);
+  const cached = searchParams.get("cached") === "true";
+
   try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const cached = searchParams.get("cached") === "true";
-    const userId = session.user.id;
-
     // If cached=true, return only locally cached repos from database
     if (cached) {
       const cachedRepos = await GitHubService.getCachedRepositories(userId);
@@ -41,10 +35,7 @@ export async function GET(request: Request) {
     // Otherwise, fetch from GitHub API
     const accessToken = await GitHubService.getAccessToken(userId);
     if (!accessToken) {
-      return NextResponse.json(
-        { error: "GitHub not connected", code: "GITHUB_NOT_CONNECTED" },
-        { status: 400 }
-      );
+      return errorResponse("GitHub not connected", 400, "GITHUB_NOT_CONNECTED");
     }
 
     const page = parseInt(searchParams.get("page") || "1", 10);
@@ -101,18 +92,9 @@ export async function GET(request: Request) {
       hasMore: repos.length === perPage,
     });
   } catch (error) {
-    console.error("Error listing GitHub repositories:", error);
-
     if (error instanceof GitHubService.GitHubServiceError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: error.statusCode || 500 }
-      );
+      return errorResponse(error.message, error.statusCode || 500, error.code);
     }
-
-    return NextResponse.json(
-      { error: "Failed to list repositories" },
-      { status: 500 }
-    );
+    throw error;
   }
-}
+});

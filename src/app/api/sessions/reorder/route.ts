@@ -1,35 +1,18 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 
 /**
  * POST /api/sessions/reorder - Reorder sessions (update tab order)
  */
-export async function POST(request: Request) {
-  try {
-    const session = await getAuthSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+export const POST = withAuth(async (request, { userId }) => {
+  const body = await request.json();
+  const { sessionIds } = body;
 
-    const body = await request.json();
-    const { sessionIds } = body;
-
-    if (!Array.isArray(sessionIds)) {
-      return NextResponse.json(
-        { error: "sessionIds must be an array" },
-        { status: 400 }
-      );
-    }
-
-    await SessionService.reorderSessions(session.user.id, sessionIds);
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Error reordering sessions:", error);
-    return NextResponse.json(
-      { error: "Failed to reorder sessions" },
-      { status: 500 }
-    );
+  if (!Array.isArray(sessionIds)) {
+    return errorResponse("sessionIds must be an array", 400);
   }
-}
+
+  await SessionService.reorderSessions(userId, sessionIds);
+  return NextResponse.json({ success: true });
+});

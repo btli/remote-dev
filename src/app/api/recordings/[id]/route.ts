@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import {
   getRecording,
   getParsedRecording,
@@ -8,104 +8,43 @@ import {
 } from "@/services/recording-service";
 import type { UpdateRecordingInput } from "@/types/recording";
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
+export const GET = withAuth(async (request, { userId, params }) => {
+  // Check if parsed data is requested
+  const url = new URL(request.url);
+  const parsed = url.searchParams.get("parsed") === "true";
 
-export async function GET(request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
-
-  try {
-    // Check if parsed data is requested
-    const url = new URL(request.url);
-    const parsed = url.searchParams.get("parsed") === "true";
-
-    if (parsed) {
-      const recording = await getParsedRecording(id, session.user.id);
-      if (!recording) {
-        return NextResponse.json(
-          { error: "Recording not found" },
-          { status: 404 }
-        );
-      }
-      return NextResponse.json(recording);
-    }
-
-    const recording = await getRecording(id, session.user.id);
+  if (parsed) {
+    const recording = await getParsedRecording(params!.id, userId);
     if (!recording) {
-      return NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 }
-      );
+      return errorResponse("Recording not found", 404);
     }
     return NextResponse.json(recording);
-  } catch (error) {
-    console.error("Failed to get recording:", error);
-    return NextResponse.json(
-      { error: "Failed to get recording" },
-      { status: 500 }
-    );
-  }
-}
-
-export async function PATCH(request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id } = await params;
-
-  try {
-    const body = (await request.json()) as UpdateRecordingInput;
-    const recording = await updateRecording(id, session.user.id, body);
-
-    if (!recording) {
-      return NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json(recording);
-  } catch (error) {
-    console.error("Failed to update recording:", error);
-    return NextResponse.json(
-      { error: "Failed to update recording" },
-      { status: 500 }
-    );
+  const recording = await getRecording(params!.id, userId);
+  if (!recording) {
+    return errorResponse("Recording not found", 404);
   }
-}
+  return NextResponse.json(recording);
+});
 
-export async function DELETE(request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const PATCH = withAuth(async (request, { userId, params }) => {
+  const body = (await request.json()) as UpdateRecordingInput;
+  const recording = await updateRecording(params!.id, userId, body);
+
+  if (!recording) {
+    return errorResponse("Recording not found", 404);
   }
 
-  const { id } = await params;
+  return NextResponse.json(recording);
+});
 
-  try {
-    const deleted = await deleteRecording(id, session.user.id);
+export const DELETE = withAuth(async (_request, { userId, params }) => {
+  const deleted = await deleteRecording(params!.id, userId);
 
-    if (!deleted) {
-      return NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error("Failed to delete recording:", error);
-    return NextResponse.json(
-      { error: "Failed to delete recording" },
-      { status: 500 }
-    );
+  if (!deleted) {
+    return errorResponse("Recording not found", 404);
   }
-}
+
+  return NextResponse.json({ success: true });
+});

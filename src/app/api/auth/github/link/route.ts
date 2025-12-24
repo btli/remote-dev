@@ -1,27 +1,18 @@
-import { getAuthSession } from "@/lib/auth-utils";
 import { NextResponse } from "next/server";
+import { withAuth, errorResponse } from "@/lib/api";
 
-export async function GET() {
-  const session = await getAuthSession();
-
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth(async (_request, { userId }) => {
   // Redirect to GitHub OAuth with state parameter to indicate this is an account link
   const clientId = process.env.GITHUB_CLIENT_ID;
   if (!clientId) {
-    return NextResponse.json(
-      { error: "GitHub OAuth not configured" },
-      { status: 500 }
-    );
+    return errorResponse("GitHub OAuth not configured", 500);
   }
 
   const redirectUri = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/auth/github/callback`;
   const scope = "read:user user:email repo";
   const state = Buffer.from(
     JSON.stringify({
-      userId: session.user.id,
+      userId,
       action: "link",
     })
   ).toString("base64");
@@ -33,4 +24,4 @@ export async function GET() {
   githubAuthUrl.searchParams.set("state", state);
 
   return NextResponse.redirect(githubAuthUrl.toString());
-}
+});

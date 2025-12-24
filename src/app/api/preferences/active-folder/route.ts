@@ -1,35 +1,19 @@
 import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
+import { withAuth, errorResponse } from "@/lib/api";
 import { setActiveFolder } from "@/services/preferences-service";
 
 /**
  * POST /api/preferences/active-folder
  * Sets the active folder for quick terminal creation
  */
-export async function POST(request: Request) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const POST = withAuth(async (request, { userId }) => {
+  const { folderId, pinned = false } = await request.json();
+
+  // folderId can be null to clear the active folder
+  if (folderId !== null && typeof folderId !== "string") {
+    return errorResponse("Invalid folderId", 400);
   }
 
-  try {
-    const { folderId, pinned = false } = await request.json();
-
-    // folderId can be null to clear the active folder
-    if (folderId !== null && typeof folderId !== "string") {
-      return NextResponse.json(
-        { error: "Invalid folderId" },
-        { status: 400 }
-      );
-    }
-
-    const updated = await setActiveFolder(session.user.id, folderId, pinned);
-    return NextResponse.json(updated);
-  } catch (error) {
-    console.error("Error setting active folder:", error);
-    return NextResponse.json(
-      { error: "Failed to set active folder" },
-      { status: 500 }
-    );
-  }
-}
+  const updated = await setActiveFolder(userId, folderId, pinned);
+  return NextResponse.json(updated);
+});
