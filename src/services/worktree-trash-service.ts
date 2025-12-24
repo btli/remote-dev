@@ -12,13 +12,14 @@ import {
   terminalSessions,
   githubRepositories,
   sessionFolders,
+  folderPreferences,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { existsSync, mkdirSync, renameSync, rmSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { TrashItem, RestoreResult } from "@/types/trash";
 import * as TmuxService from "./tmux-service";
-import { sanitizeBranchName } from "./worktree-service";
+import { sanitizeBranchName, getRepoRoot } from "./worktree-service";
 
 export class WorktreeTrashServiceError extends Error {
   constructor(
@@ -95,11 +96,26 @@ export async function trashWorktreeSession(
     );
   }
 
-  // Get repository info
+  // Get repository info - use multiple strategies to find the main repo
   let repoName = "unknown";
   let repoLocalPath = "";
 
-  if (session.githubRepoId) {
+  // Strategy 1: Check folder preferences for localRepoPath (user's preferred location)
+  if (session.folderId) {
+    const prefs = await db.query.folderPreferences.findFirst({
+      where: and(
+        eq(folderPreferences.folderId, session.folderId),
+        eq(folderPreferences.userId, userId)
+      ),
+    });
+    if (prefs?.localRepoPath) {
+      repoLocalPath = prefs.localRepoPath;
+      repoName = basename(prefs.localRepoPath);
+    }
+  }
+
+  // Strategy 2: Check GitHub repo from database
+  if (!repoLocalPath && session.githubRepoId) {
     const repo = await db.query.githubRepositories.findFirst({
       where: eq(githubRepositories.id, session.githubRepoId),
     });
@@ -109,17 +125,36 @@ export async function trashWorktreeSession(
     }
   }
 
-  // If we couldn't find repo path from database, derive from worktree path
+  // Strategy 3: Use git to find the actual repo root from worktree
   if (!repoLocalPath) {
-    // Worktrees are typically at {repoPath}/{repoName}-{branch}
-    // So the repo is in the parent directory
-    const worktreeDir = dirname(session.projectPath);
-    const possibleRepoPath = join(worktreeDir, basename(worktreeDir).split("-")[0]);
-    if (existsSync(possibleRepoPath)) {
-      repoLocalPath = possibleRepoPath;
-    } else {
-      repoLocalPath = worktreeDir;
+    const gitRoot = await getRepoRoot(session.projectPath);
+    if (gitRoot) {
+      // Git worktrees report their own path as root, so check .git file
+      // A worktree has a .git FILE (not directory) pointing to the main repo
+      const gitPath = join(session.projectPath, ".git");
+      if (existsSync(gitPath)) {
+        // This is likely a worktree - derive main repo from path pattern
+        // Worktrees are typically at {repoPath}-{branch}, so main repo removes the suffix
+        const parentDir = dirname(session.projectPath);
+        const worktreeBasename = basename(session.projectPath);
+        // Try to find the main repo by removing branch suffix
+        const dashIndex = worktreeBasename.lastIndexOf("-");
+        if (dashIndex > 0) {
+          const possibleRepoName = worktreeBasename.substring(0, dashIndex);
+          const possibleRepoPath = join(parentDir, possibleRepoName);
+          if (existsSync(possibleRepoPath)) {
+            repoLocalPath = possibleRepoPath;
+            repoName = possibleRepoName;
+          }
+        }
+      }
     }
+  }
+
+  // Strategy 4: Fallback - use parent directory
+  if (!repoLocalPath) {
+    repoLocalPath = dirname(session.projectPath);
+    repoName = basename(repoLocalPath);
   }
 
   // Get folder info for snapshot
