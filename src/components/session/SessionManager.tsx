@@ -285,33 +285,33 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           maybeAutoFollowFolder(targetSession.folderId || null);
         }
       }
-      // Cmd+D to split horizontally
+      // Cmd+D to split vertically (side by side)
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "d") {
-        e.preventDefault();
-        splitHorizontalRef.current?.();
-      }
-      // Cmd+Shift+D to split vertically
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "D") {
         e.preventDefault();
         splitVerticalRef.current?.();
       }
-      // Cmd+Shift+E or Ctrl+Shift+E to split horizontal (SplitContext)
+      // Cmd+Shift+D to split horizontally (stacked)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "D") {
+        e.preventDefault();
+        splitHorizontalRef.current?.();
+      }
+      // Cmd+Shift+E or Ctrl+Shift+E to split vertical (side by side)
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "e") {
         if (activeSessionId) {
           e.preventDefault();
           const existingSplit = getSplitForSession(activeSessionId);
           if (!existingSplit) {
-            createSplit(activeSessionId, "horizontal");
+            createSplit(activeSessionId, "vertical");
           }
         }
       }
-      // Cmd+Shift+O or Ctrl+Shift+O to split vertical (SplitContext)
+      // Cmd+Shift+O or Ctrl+Shift+O to split horizontal (stacked)
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "o") {
         if (activeSessionId) {
           e.preventDefault();
           const existingSplit = getSplitForSession(activeSessionId);
           if (!existingSplit) {
-            createSplit(activeSessionId, "vertical");
+            createSplit(activeSessionId, "horizontal");
           }
         }
       }
@@ -1022,8 +1022,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={handleSplitHorizontal}
-                    title="Split horizontally (⌘D)"
+                    onClick={handleSplitVertical}
+                    title="Split vertically (⌘D)"
                     className="w-7 h-7 bg-slate-800/80 hover:bg-slate-700/80 text-slate-400 hover:text-white"
                   >
                     <Columns className="w-4 h-4" />
@@ -1031,8 +1031,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={handleSplitVertical}
-                    title="Split vertically (⌘⇧D)"
+                    onClick={handleSplitHorizontal}
+                    title="Split horizontally (⌘⇧D)"
                     className="w-7 h-7 bg-slate-800/80 hover:bg-slate-700/80 text-slate-400 hover:text-white"
                   >
                     <Rows className="w-4 h-4" />

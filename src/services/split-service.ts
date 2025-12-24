@@ -164,11 +164,12 @@ export async function createSplit(
     })
     .where(eq(terminalSessions.id, sourceSessionId));
 
-  // Create a new session for the other pane
+  // Create a new session for the other pane (inherit folder from source)
   const name = newSessionName || `${sourceSession.name} (split)`;
   const newSession = await SessionService.createSession(userId, {
     name,
     projectPath: sourceSession.projectPath ?? undefined,
+    folderId: sourceSession.folderId ?? undefined,
   });
 
   // Add new session to the split group
@@ -257,12 +258,13 @@ export async function addToSplit(
         )
       );
   } else {
-    // Create new session
+    // Create new session (inherit folder from first session in split)
     const name = newSessionName || `Terminal ${nextOrder + 1}`;
     const firstSession = currentSessions[0];
     const newSession = await SessionService.createSession(userId, {
       name,
       projectPath: firstSession?.projectPath ?? undefined,
+      folderId: firstSession?.folderId ?? undefined,
     });
 
     await db
