@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/tooltip";
 import { DeleteWorktreeDialog } from "./DeleteWorktreeDialog";
 import { useSplitContext } from "@/contexts/SplitContext";
+import { RepositoriesTab } from "@/components/github/RepositoriesTab";
+import { Github } from "lucide-react";
 
 export interface SessionFolder {
   id: string;
@@ -78,6 +80,7 @@ interface SidebarProps {
   onFolderReorder: (folderIds: string[]) => void;
   trashCount: number;
   onTrashOpen: () => void;
+  onCreatePRWorktree?: (repoId: string, prNumber: number) => Promise<void>;
 }
 
 export function Sidebar({
@@ -109,7 +112,9 @@ export function Sidebar({
   onFolderReorder,
   trashCount,
   onTrashOpen,
+  onCreatePRWorktree,
 }: SidebarProps) {
+  const [activeTab, setActiveTab] = useState<"sessions" | "repositories">("sessions");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -867,43 +872,69 @@ export function Sidebar({
               <TooltipContent side="right">Expand sidebar</TooltipContent>
             </Tooltip>
           ) : (
-            // Expanded header
+            // Expanded header with tabs
             <>
-              <div className="flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-violet-400" />
-                <span className="text-xs font-medium text-white">Sessions</span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setActiveTab("sessions")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
+                    activeTab === "sessions"
+                      ? "bg-violet-500/20 text-violet-300"
+                      : "text-slate-400 hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  Sessions
+                </button>
+                <button
+                  onClick={() => setActiveTab("repositories")}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors",
+                    activeTab === "repositories"
+                      ? "bg-violet-500/20 text-violet-300"
+                      : "text-slate-400 hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  <Github className="w-3.5 h-3.5" />
+                  Repos
+                </button>
               </div>
               <div className="flex items-center gap-0.5">
-                <Button
-                  onClick={() => setCreatingFolder(true)}
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
-                >
-                  <Folder className="w-3.5 h-3.5" />
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
+                {activeTab === "sessions" && (
+                  <>
                     <Button
+                      onClick={() => setCreatingFolder(true)}
                       variant="ghost"
                       size="icon-sm"
                       className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Folder className="w-3.5 h-3.5" />
                     </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-40">
-                    <DropdownMenuItem onClick={onQuickNewSession}>
-                      <Terminal className="w-3.5 h-3.5 mr-2" />
-                      Quick Terminal
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={onNewSession}>
-                      <Settings className="w-3.5 h-3.5 mr-2" />
-                      Advanced...
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-40">
+                        <DropdownMenuItem onClick={onQuickNewSession}>
+                          <Terminal className="w-3.5 h-3.5 mr-2" />
+                          Quick Terminal
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={onNewSession}>
+                          <Settings className="w-3.5 h-3.5 mr-2" />
+                          Advanced...
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
+                )}
                 <Button
                   onClick={() => onCollapsedChange(true)}
                   variant="ghost"
@@ -917,7 +948,9 @@ export function Sidebar({
           )}
         </div>
 
-        {/* Session List */}
+      {/* Tab Content */}
+      {activeTab === "sessions" ? (
+        // Session List
         <div
           className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5"
           onDragOver={(e) => handleDragOver(e, null)}
@@ -1363,6 +1396,13 @@ export function Sidebar({
             </>
           )}
         </div>
+      ) : (
+        // Repositories Tab
+        <RepositoriesTab
+          onCreatePRWorktree={onCreatePRWorktree}
+          className="flex-1"
+        />
+      )}
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (
