@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * RepositoriesTab - Main repository browser tab for the sidebar
+ * RepositoriesTab - Repository browser matching sessions tab style
  */
 
 import { useState } from "react";
@@ -9,42 +9,52 @@ import { cn } from "@/lib/utils";
 import {
   RefreshCw,
   ExternalLink,
-  Settings,
-  Github,
+  ChevronRight,
+  ChevronDown,
+  GitPullRequest,
+  CircleDot,
+  FolderGit,
   Clock,
-  Search,
+  Lock,
+  Globe,
   AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { RepositoryCard } from "./RepositoryCard";
-import { ChangeIndicator } from "./StatusBadge";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { useGitHubStats, useGitHubChanges } from "@/contexts/GitHubStatsContext";
-import type { EnrichedRepository } from "@/types/github-stats";
+import type { EnrichedRepository, PullRequest } from "@/types/github-stats";
 
 interface RepositoriesTabProps {
   onCreatePRWorktree?: (repoId: string, prNumber: number) => Promise<void>;
-  onOpenSettings?: () => void;
   className?: string;
 }
 
 export function RepositoriesTab({
   onCreatePRWorktree,
-  onOpenSettings,
   className,
 }: RepositoriesTabProps) {
   const { state, refreshStats, markChangesSeen } = useGitHubStats();
   const { hasChanges, totalNewPRs, totalNewIssues } = useGitHubChanges();
-  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedRepos, setExpandedRepos] = useState<Set<string>>(new Set());
+  const [creatingWorktree, setCreatingWorktree] = useState<number | null>(null);
 
-  const filteredRepos = state.repositories.filter((repo) => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      repo.name.toLowerCase().includes(query) ||
-      repo.fullName.toLowerCase().includes(query)
-    );
-  });
+  const toggleRepo = (repoId: string) => {
+    setExpandedRepos((prev) => {
+      const next = new Set(prev);
+      if (next.has(repoId)) {
+        next.delete(repoId);
+      } else {
+        next.add(repoId);
+      }
+      return next;
+    });
+  };
 
   const handleRefresh = async () => {
     await refreshStats();
@@ -54,22 +64,37 @@ export function RepositoriesTab({
     await markChangesSeen();
   };
 
-  const formatLastRefresh = () => {
-    if (!state.lastRefresh) return "Never";
+  const handleCreateWorktree = async (repoId: string, prNumber: number) => {
+    if (!onCreatePRWorktree) return;
+    setCreatingWorktree(prNumber);
+    try {
+      await onCreatePRWorktree(repoId, prNumber);
+    } finally {
+      setCreatingWorktree(null);
+    }
+  };
 
+  const openGitHub = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const formatRelativeTime = (dateString: string) => {
+    const date = new Date(dateString);
     const now = new Date();
-    const diff = now.getTime() - state.lastRefresh.getTime();
-    const mins = Math.floor(diff / 60000);
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
 
-    if (mins < 1) return "Just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return state.lastRefresh.toLocaleDateString();
+    if (diffMins < 1) return "now";
+    if (diffMins < 60) return `${diffMins}m`;
+    if (diffHours < 24) return `${diffHours}h`;
+    if (diffDays < 30) return `${diffDays}d`;
+    return date.toLocaleDateString();
   };
 
   // Group repositories by owner
-  const groupedRepos = filteredRepos.reduce(
+  const groupedRepos = state.repositories.reduce(
     (acc, repo) => {
       const owner = repo.owner;
       if (!acc[owner]) acc[owner] = [];
@@ -81,178 +106,386 @@ export function RepositoriesTab({
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-        <div className="flex items-center gap-2">
-          <Github className="w-4 h-4 text-violet-400" />
-          <span className="text-xs font-medium text-white">Repositories</span>
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/5">
+        <div className="flex items-center gap-1.5">
           {hasChanges && (
-            <ChangeIndicator
-              count={totalNewPRs + totalNewIssues}
-              pulse
-            />
+            <button
+              onClick={handleMarkSeen}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-500/20 text-violet-300 hover:bg-violet-500/30 transition-colors"
+              title="Mark all as seen"
+            >
+              <AlertCircle className="w-3 h-3" />
+              {totalNewPRs + totalNewIssues} new
+            </button>
           )}
         </div>
         <div className="flex items-center gap-0.5">
-          {hasChanges && (
-            <Button
-              onClick={handleMarkSeen}
-              variant="ghost"
-              size="icon-sm"
-              className="h-6 w-6 text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
-              title="Mark all as seen"
-            >
-              <AlertCircle className="w-3.5 h-3.5" />
-            </Button>
-          )}
           <Button
             onClick={handleRefresh}
             variant="ghost"
             size="icon-sm"
-            className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+            className="h-5 w-5 text-slate-400 hover:text-white hover:bg-white/10"
             disabled={state.isRefreshing}
-            title="Refresh stats"
+            title="Refresh"
           >
             <RefreshCw
-              className={cn(
-                "w-3.5 h-3.5",
-                state.isRefreshing && "animate-spin"
-              )}
+              className={cn("w-3 h-3", state.isRefreshing && "animate-spin")}
             />
           </Button>
-          {onOpenSettings && (
-            <Button
-              onClick={onOpenSettings}
-              variant="ghost"
-              size="icon-sm"
-              className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
-              title="Settings"
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </Button>
-          )}
         </div>
       </div>
 
-      {/* Search */}
-      {state.repositories.length > 3 && (
-        <div className="px-3 py-2 border-b border-white/5">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search repositories..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className={cn(
-                "w-full bg-slate-800/50 border border-white/10 rounded-md",
-                "pl-8 pr-3 py-1.5 text-xs text-white",
-                "placeholder:text-slate-500",
-                "focus:outline-none focus:border-violet-500/50"
-              )}
-            />
+      {/* Repository list */}
+      <div className="flex-1 overflow-y-auto py-1 px-1.5 space-y-0.5">
+        {state.isLoading && state.repositories.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-slate-500">
+            <RefreshCw className="w-4 h-4 animate-spin mb-2" />
+            <span className="text-[10px]">Loading...</span>
           </div>
-        </div>
-      )}
-
-      {/* Repository List */}
-      <ScrollArea className="flex-1">
-        <div className="p-2 space-y-3">
-          {state.isLoading && state.repositories.length === 0 ? (
-            <LoadingState />
-          ) : state.repositories.length === 0 ? (
-            <EmptyState />
-          ) : filteredRepos.length === 0 ? (
-            <NoResultsState query={searchQuery} />
-          ) : (
-            Object.entries(groupedRepos).map(([owner, repos]) => (
-              <div key={owner} className="space-y-1.5">
-                <div className="flex items-center gap-2 px-1">
-                  <span className="text-xs text-slate-500 font-medium">
-                    {owner}
-                  </span>
-                  <span className="text-[10px] text-slate-600">
-                    {repos.length} repos
-                  </span>
-                </div>
-                <div className="space-y-1.5">
-                  {repos.map((repo) => (
-                    <RepositoryCard
-                      key={repo.id}
-                      repository={repo}
-                      onCreatePRWorktree={onCreatePRWorktree}
-                      onRefresh={async (id) => {
-                        // Single repo refresh
-                        await fetch(`/api/github/stats/${id}`, {
-                          method: "POST",
-                        });
-                        await refreshStats();
-                      }}
-                      showRecentCommits
-                      isCompact
-                    />
-                  ))}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </ScrollArea>
+        ) : state.repositories.length === 0 ? (
+          <div className="text-center py-8 px-2">
+            <FolderGit className="w-5 h-5 mx-auto text-slate-600 mb-2" />
+            <p className="text-[10px] text-slate-500">No repositories</p>
+          </div>
+        ) : (
+          Object.entries(groupedRepos).map(([owner, repos]) => (
+            <OwnerGroup
+              key={owner}
+              owner={owner}
+              repos={repos}
+              expandedRepos={expandedRepos}
+              onToggleRepo={toggleRepo}
+              onOpenGitHub={openGitHub}
+              onCreateWorktree={
+                onCreatePRWorktree
+                  ? (repoId, prNumber) => handleCreateWorktree(repoId, prNumber)
+                  : undefined
+              }
+              creatingWorktree={creatingWorktree}
+              formatRelativeTime={formatRelativeTime}
+            />
+          ))
+        )}
+      </div>
 
       {/* Footer */}
-      <div className="px-3 py-1.5 border-t border-white/5">
-        <div className="flex items-center justify-between text-[10px] text-slate-500">
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3" />
-            Updated {formatLastRefresh()}
+      {state.lastRefresh && (
+        <div className="px-2 py-1 border-t border-white/5">
+          <span className="flex items-center gap-1 text-[9px] text-slate-600">
+            <Clock className="w-2.5 h-2.5" />
+            Updated {formatRelativeTime(state.lastRefresh.toISOString())}
           </span>
-          <button
-            onClick={() =>
-              window.open("https://github.com", "_blank", "noopener,noreferrer")
-            }
-            className="flex items-center gap-1 hover:text-slate-400 transition-colors"
-          >
-            <ExternalLink className="w-3 h-3" />
-            GitHub
-          </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+// =============================================================================
+// Owner Group
+// =============================================================================
+
+interface OwnerGroupProps {
+  owner: string;
+  repos: EnrichedRepository[];
+  expandedRepos: Set<string>;
+  onToggleRepo: (repoId: string) => void;
+  onOpenGitHub: (url: string) => void;
+  onCreateWorktree?: (repoId: string, prNumber: number) => void;
+  creatingWorktree: number | null;
+  formatRelativeTime: (dateString: string) => string;
+}
+
+function OwnerGroup({
+  owner,
+  repos,
+  expandedRepos,
+  onToggleRepo,
+  onOpenGitHub,
+  onCreateWorktree,
+  creatingWorktree,
+  formatRelativeTime,
+}: OwnerGroupProps) {
+  return (
+    <div className="space-y-0.5">
+      {/* Owner header */}
+      <div className="flex items-center gap-1.5 px-1 py-0.5">
+        <span className="text-[10px] text-slate-500 font-medium truncate">
+          {owner}
+        </span>
+        <span className="text-[9px] text-slate-600">({repos.length})</span>
       </div>
+
+      {/* Repos */}
+      {repos.map((repo) => (
+        <RepoItem
+          key={repo.id}
+          repo={repo}
+          isExpanded={expandedRepos.has(repo.id)}
+          onToggle={() => onToggleRepo(repo.id)}
+          onOpenGitHub={onOpenGitHub}
+          onCreateWorktree={onCreateWorktree}
+          creatingWorktree={creatingWorktree}
+          formatRelativeTime={formatRelativeTime}
+        />
+      ))}
     </div>
   );
 }
 
 // =============================================================================
-// Sub-components
+// Repo Item (like a session item)
 // =============================================================================
 
-function LoadingState() {
+interface RepoItemProps {
+  repo: EnrichedRepository;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onOpenGitHub: (url: string) => void;
+  onCreateWorktree?: (repoId: string, prNumber: number) => void;
+  creatingWorktree: number | null;
+  formatRelativeTime: (dateString: string) => string;
+}
+
+function RepoItem({
+  repo,
+  isExpanded,
+  onToggle,
+  onOpenGitHub,
+  onCreateWorktree,
+  creatingWorktree,
+  formatRelativeTime,
+}: RepoItemProps) {
+  const hasPRs = repo.pullRequests.length > 0;
+  const hasContent = hasPRs;
+
   return (
-    <div className="flex flex-col items-center justify-center py-8 text-slate-500">
-      <RefreshCw className="w-6 h-6 animate-spin mb-2" />
-      <span className="text-xs">Loading repositories...</span>
+    <div className="space-y-0.5">
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => hasContent && onToggle()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                if (hasContent) onToggle();
+              }
+            }}
+            className={cn(
+              "group relative flex items-center gap-1.5 px-2 py-1 rounded-md ml-2",
+              "transition-all duration-150",
+              "hover:bg-white/5 border border-transparent",
+              isExpanded && "bg-white/5"
+            )}
+          >
+            {/* Expand chevron */}
+            {hasContent ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggle();
+                }}
+                className="text-slate-500 hover:text-white shrink-0"
+              >
+                {isExpanded ? (
+                  <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronRight className="w-3 h-3" />
+                )}
+              </button>
+            ) : (
+              <span className="w-3" />
+            )}
+
+            {/* Privacy icon */}
+            {repo.isPrivate ? (
+              <Lock className="w-3 h-3 text-amber-400/70 shrink-0" />
+            ) : (
+              <Globe className="w-3 h-3 text-slate-500 shrink-0" />
+            )}
+
+            {/* Repo name */}
+            <span className="text-xs text-slate-300 group-hover:text-white truncate flex-1">
+              {repo.name}
+            </span>
+
+            {/* Stats badges */}
+            <div className="flex items-center gap-1 shrink-0">
+              {repo.stats.openPRCount > 0 && (
+                <span className="flex items-center gap-0.5 text-[9px] text-violet-400">
+                  <GitPullRequest className="w-2.5 h-2.5" />
+                  {repo.stats.openPRCount}
+                </span>
+              )}
+              {repo.stats.openIssueCount > 0 && (
+                <span className="flex items-center gap-0.5 text-[9px] text-emerald-400">
+                  <CircleDot className="w-2.5 h-2.5" />
+                  {repo.stats.openIssueCount}
+                </span>
+              )}
+              {repo.hasChanges && (
+                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+              )}
+            </div>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-44">
+          <ContextMenuItem onClick={() => onOpenGitHub(repo.url)}>
+            <ExternalLink className="w-3 h-3 mr-2" />
+            Open on GitHub
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onOpenGitHub(`${repo.url}/pulls`)}>
+            <GitPullRequest className="w-3 h-3 mr-2" />
+            View PRs
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onOpenGitHub(`${repo.url}/issues`)}>
+            <CircleDot className="w-3 h-3 mr-2" />
+            View Issues
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {/* Expanded content - PRs */}
+      {isExpanded && hasPRs && (
+        <div className="ml-6 space-y-0.5">
+          {repo.pullRequests.slice(0, 5).map((pr) => (
+            <PRItem
+              key={pr.id}
+              pr={pr}
+              repoId={repo.id}
+              onOpenGitHub={onOpenGitHub}
+              onCreateWorktree={onCreateWorktree}
+              isCreating={creatingWorktree === pr.number}
+              formatRelativeTime={formatRelativeTime}
+            />
+          ))}
+          {repo.pullRequests.length > 5 && (
+            <button
+              onClick={() => onOpenGitHub(`${repo.url}/pulls`)}
+              className="text-[10px] text-violet-400 hover:text-violet-300 px-2 py-0.5"
+            >
+              +{repo.pullRequests.length - 5} more
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center py-8 text-center">
-      <Github className="w-8 h-8 text-slate-600 mb-3" />
-      <p className="text-xs text-slate-500 mb-1">No repositories</p>
-      <p className="text-[10px] text-slate-600 max-w-[180px]">
-        Clone a repository from GitHub to see it here with stats
-      </p>
-    </div>
-  );
+// =============================================================================
+// PR Item (like a nested session)
+// =============================================================================
+
+interface PRItemProps {
+  pr: PullRequest;
+  repoId: string;
+  onOpenGitHub: (url: string) => void;
+  onCreateWorktree?: (repoId: string, prNumber: number) => void;
+  isCreating: boolean;
+  formatRelativeTime: (dateString: string) => string;
 }
 
-function NoResultsState({ query }: { query: string }) {
+function PRItem({
+  pr,
+  repoId,
+  onOpenGitHub,
+  onCreateWorktree,
+  isCreating,
+  formatRelativeTime,
+}: PRItemProps) {
   return (
-    <div className="flex flex-col items-center justify-center py-8 text-center">
-      <Search className="w-6 h-6 text-slate-600 mb-2" />
-      <p className="text-xs text-slate-500">
-        No repositories matching &quot;{query}&quot;
-      </p>
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => onOpenGitHub(pr.url)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onOpenGitHub(pr.url);
+            }
+          }}
+          className={cn(
+            "group flex items-center gap-1.5 px-2 py-1 rounded-md",
+            "hover:bg-white/5 transition-colors cursor-pointer"
+          )}
+        >
+          {/* PR indicator */}
+          <GitPullRequest className="w-3 h-3 text-violet-400 shrink-0" />
+
+          {/* PR info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-violet-400 font-medium shrink-0">
+                #{pr.number}
+              </span>
+              <span className="text-[10px] text-slate-400 truncate">
+                {pr.title}
+              </span>
+            </div>
+          </div>
+
+          {/* Badges */}
+          <div className="flex items-center gap-1 shrink-0">
+            {pr.isNew && (
+              <span className="text-[8px] px-1 py-0.5 bg-violet-500/20 text-violet-400 rounded">
+                new
+              </span>
+            )}
+            {pr.isDraft && (
+              <span className="text-[8px] px-1 py-0.5 bg-slate-500/20 text-slate-400 rounded">
+                draft
+              </span>
+            )}
+            <span className="text-[9px] text-slate-600">
+              {formatRelativeTime(pr.updatedAt)}
+            </span>
+          </div>
+
+          {/* Worktree button */}
+          {onCreateWorktree && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateWorktree(repoId, pr.number);
+              }}
+              disabled={isCreating}
+              className={cn(
+                "p-0.5 rounded opacity-0 group-hover:opacity-100",
+                "hover:bg-white/10 transition-all duration-150",
+                "text-slate-500 hover:text-violet-400"
+              )}
+              title="Create worktree"
+            >
+              {isCreating ? (
+                <span className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin block" />
+              ) : (
+                <FolderGit className="w-3 h-3" />
+              )}
+            </button>
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-44">
+        <ContextMenuItem onClick={() => onOpenGitHub(pr.url)}>
+          <ExternalLink className="w-3 h-3 mr-2" />
+          Open on GitHub
+        </ContextMenuItem>
+        {onCreateWorktree && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={() => onCreateWorktree(repoId, pr.number)}>
+              <FolderGit className="w-3 h-3 mr-2" />
+              Create Worktree
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
