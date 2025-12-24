@@ -3,6 +3,7 @@ import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 import type { SplitDirection } from "@/types/split";
 import type { CIStatusState, PRState } from "@/types/github-stats";
+import type { ScheduleStatus, ExecutionStatus } from "@/types/schedule";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -598,5 +599,145 @@ export const githubChangeNotifications = sqliteTable(
   (table) => [
     uniqueIndex("github_notifications_user_repo_idx").on(table.userId, table.repositoryId),
     index("github_notifications_user_idx").on(table.userId),
+  ]
+);
+
+// =============================================================================
+// Scheduled Commands Tables
+// =============================================================================
+
+/**
+ * Scheduled command execution for terminal sessions.
+ * Supports cron-based scheduling with timezone awareness.
+ */
+export const sessionSchedules = sqliteTable(
+  "session_schedule",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => terminalSessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(), // User-friendly name (e.g., "Daily Git Sync")
+    cronExpression: text("cron_expression").notNull(), // Full cron syntax: "0 9 * * 1-5"
+    timezone: text("timezone").notNull().default("America/Los_Angeles"), // IANA timezone
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    status: text("status").$type<ScheduleStatus>().notNull().default("active"),
+    // Execution control
+    maxRetries: integer("max_retries").notNull().default(0), // 0 = no retries
+    retryDelaySeconds: integer("retry_delay_seconds").notNull().default(60),
+    timeoutSeconds: integer("timeout_seconds").notNull().default(300), // 5 min default
+    // Execution tracking
+    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
+    lastRunStatus: text("last_run_status").$type<ExecutionStatus>(),
+    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }), // Cached for UI display
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("session_schedule_user_idx").on(table.userId),
+    index("session_schedule_session_idx").on(table.sessionId),
+    index("session_schedule_next_run_idx").on(table.enabled, table.nextRunAt),
+  ]
+);
+
+/**
+ * Individual commands within a schedule.
+ * Executed sequentially with optional delays between commands.
+ */
+export const scheduleCommands = sqliteTable(
+  "schedule_command",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    scheduleId: text("schedule_id")
+      .notNull()
+      .references(() => sessionSchedules.id, { onDelete: "cascade" }),
+    command: text("command").notNull(), // Shell command to execute
+    order: integer("order").notNull(), // Execution order (0-based)
+    delayBeforeSeconds: integer("delay_before_seconds").notNull().default(0), // Wait before running
+    continueOnError: integer("continue_on_error", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("schedule_command_schedule_idx").on(table.scheduleId),
+    index("schedule_command_order_idx").on(table.scheduleId, table.order),
+  ]
+);
+
+/**
+ * Execution history for audit and debugging.
+ * Stores output, errors, and timing for each run.
+ */
+export const scheduleExecutions = sqliteTable(
+  "schedule_execution",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    scheduleId: text("schedule_id")
+      .notNull()
+      .references(() => sessionSchedules.id, { onDelete: "cascade" }),
+    status: text("status").$type<ExecutionStatus>().notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    // Execution details
+    commandCount: integer("command_count").notNull(),
+    successCount: integer("success_count").notNull(),
+    failureCount: integer("failure_count").notNull(),
+    // Error tracking
+    errorMessage: text("error_message"),
+    // Output storage (optional, can be large)
+    output: text("output"), // Combined stdout/stderr (truncated to 10KB)
+  },
+  (table) => [
+    index("schedule_execution_schedule_idx").on(table.scheduleId),
+    index("schedule_execution_started_idx").on(table.scheduleId, table.startedAt),
+  ]
+);
+
+/**
+ * Per-command execution results within a schedule run.
+ * Detailed tracking for multi-command schedules.
+ */
+export const commandExecutions = sqliteTable(
+  "command_execution",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => scheduleExecutions.id, { onDelete: "cascade" }),
+    commandId: text("command_id")
+      .notNull()
+      .references(() => scheduleCommands.id, { onDelete: "cascade" }),
+    command: text("command").notNull(), // Snapshot of command (in case it changes)
+    status: text("status").$type<ExecutionStatus>().notNull(),
+    exitCode: integer("exit_code"),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    output: text("output"), // Truncated to 5KB per command
+    errorMessage: text("error_message"),
+  },
+  (table) => [
+    index("command_execution_execution_idx").on(table.executionId),
+    index("command_execution_command_idx").on(table.commandId),
   ]
 );
