@@ -37,9 +37,27 @@ export const POST = withApiAuth(async (request, { userId }) => {
     if (!input.name) {
       return errorResponse("Schedule name is required", 400, "NAME_REQUIRED");
     }
-    if (!input.cronExpression) {
-      return errorResponse("Cron expression is required", 400, "CRON_REQUIRED");
+
+    // Validate schedule type-specific fields
+    const scheduleType = input.scheduleType || "one-time";
+    if (scheduleType === "recurring") {
+      if (!input.cronExpression) {
+        return errorResponse("Cron expression is required for recurring schedules", 400, "CRON_REQUIRED");
+      }
+    } else if (scheduleType === "one-time") {
+      if (!input.scheduledAt) {
+        return errorResponse("Scheduled time is required for one-time schedules", 400, "SCHEDULED_AT_REQUIRED");
+      }
+      // Validate scheduledAt is in the future
+      const scheduledDate = new Date(input.scheduledAt);
+      if (isNaN(scheduledDate.getTime())) {
+        return errorResponse("Invalid scheduled time format", 400, "INVALID_SCHEDULED_AT");
+      }
+      if (scheduledDate <= new Date()) {
+        return errorResponse("Scheduled time must be in the future", 400, "SCHEDULED_AT_IN_PAST");
+      }
     }
+
     if (!input.commands || input.commands.length === 0) {
       return errorResponse("At least one command is required", 400, "COMMANDS_REQUIRED");
     }

@@ -172,7 +172,25 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
 
       const schedule = await response.json();
 
-      dispatch({ type: "UPDATE", scheduleId, updates });
+      // Use the returned schedule data for state update (properly typed)
+      dispatch({
+        type: "UPDATE",
+        scheduleId,
+        updates: {
+          name: schedule.name,
+          scheduleType: schedule.scheduleType,
+          cronExpression: schedule.cronExpression,
+          scheduledAt: schedule.scheduledAt ? new Date(schedule.scheduledAt) : null,
+          timezone: schedule.timezone,
+          enabled: schedule.enabled,
+          status: schedule.status,
+          maxRetries: schedule.maxRetries,
+          retryDelaySeconds: schedule.retryDelaySeconds,
+          timeoutSeconds: schedule.timeoutSeconds,
+          nextRunAt: schedule.nextRunAt ? new Date(schedule.nextRunAt) : null,
+          updatedAt: schedule.updatedAt ? new Date(schedule.updatedAt) : new Date(),
+        },
+      });
 
       return schedule;
     },

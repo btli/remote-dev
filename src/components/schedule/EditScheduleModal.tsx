@@ -30,10 +30,13 @@ import {
   ChevronDown,
   ChevronUp,
   GripVertical,
+  Calendar,
+  Repeat,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
-import { CRON_PRESETS, TIMEZONE_OPTIONS, type ScheduleCommandInput } from "@/types/schedule";
+import { CRON_PRESETS, TIMEZONE_OPTIONS, type ScheduleCommandInput, type ScheduleType } from "@/types/schedule";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface EditScheduleModalProps {
   open: boolean;
@@ -50,8 +53,11 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
 
   // Form state
   const [name, setName] = useState("");
+  const [scheduleType, setScheduleType] = useState<ScheduleType>("recurring");
   const [cronExpression, setCronExpression] = useState("");
   const [cronPreset, setCronPreset] = useState("");
+  const [scheduledDate, setScheduledDate] = useState("");
+  const [scheduledTime, setScheduledTime] = useState("");
   const [timezone, setTimezone] = useState("America/Los_Angeles");
   const [commands, setCommands] = useState<CommandRow[]>([]);
   const [enabled, setEnabled] = useState(true);
@@ -82,12 +88,23 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
       }
 
       setName(schedule.name);
-      setCronExpression(schedule.cronExpression);
+      setScheduleType(schedule.scheduleType || "recurring");
+      setCronExpression(schedule.cronExpression || "");
       setTimezone(schedule.timezone);
       setEnabled(schedule.enabled);
       setMaxRetries(schedule.maxRetries);
       setRetryDelaySeconds(schedule.retryDelaySeconds);
       setTimeoutSeconds(schedule.timeoutSeconds);
+
+      // Parse scheduledAt for one-time schedules
+      if (schedule.scheduledAt) {
+        const dt = new Date(schedule.scheduledAt);
+        setScheduledDate(dt.toISOString().split("T")[0]);
+        setScheduledTime(dt.toTimeString().slice(0, 5));
+      } else {
+        setScheduledDate("");
+        setScheduledTime("");
+      }
 
       // Map commands
       const mappedCommands = schedule.commands.map((cmd) => ({
@@ -158,13 +175,31 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
 
   // Validation
   const validateForm = (): boolean => {
-    if (!name.trim()) {
-      setError("Schedule name is required");
+    // Name is only required for recurring schedules
+    if (scheduleType === "recurring" && !name.trim()) {
+      setError("Schedule name is required for recurring schedules");
       return false;
     }
-    if (!cronExpression.trim()) {
-      setError("Cron expression is required");
-      return false;
+    if (scheduleType === "recurring") {
+      if (!cronExpression.trim()) {
+        setError("Cron expression is required for recurring schedules");
+        return false;
+      }
+    } else {
+      // One-time schedule
+      if (!scheduledDate || !scheduledTime) {
+        setError("Date and time are required for one-time schedules");
+        return false;
+      }
+      const scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`);
+      if (isNaN(scheduledAt.getTime())) {
+        setError("Invalid date/time format");
+        return false;
+      }
+      if (scheduledAt <= new Date()) {
+        setError("Scheduled time must be in the future");
+        return false;
+      }
     }
     const validCommands = commands.filter((c) => c.command.trim());
     if (validCommands.length === 0) {
@@ -190,19 +225,35 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
           continueOnError: continueOnError || false,
         }));
 
-      await updateSchedule(
-        scheduleId,
-        {
-          name: name.trim(),
-          cronExpression: cronExpression.trim(),
-          timezone,
-          enabled,
-          maxRetries,
-          retryDelaySeconds,
-          timeoutSeconds,
-        },
-        validCommands
-      );
+      // Build update object based on schedule type
+      let scheduleName = name.trim();
+
+      // Auto-generate name for one-time schedules if not provided
+      if (scheduleType === "one-time" && !scheduleName) {
+        const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+        scheduleName = `${scheduledDateTime.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} - ${validCommands[0].command.slice(0, 30)}${validCommands[0].command.length > 30 ? "..." : ""}`;
+      }
+
+      const updates: Record<string, unknown> = {
+        name: scheduleName,
+        scheduleType,
+        timezone,
+        enabled,
+        maxRetries,
+        retryDelaySeconds,
+        timeoutSeconds,
+      };
+
+      if (scheduleType === "recurring") {
+        updates.cronExpression = cronExpression.trim();
+        updates.scheduledAt = null;
+      } else {
+        // One-time schedule
+        updates.cronExpression = null;
+        updates.scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
+      }
+
+      await updateSchedule(scheduleId, updates, validCommands);
 
       await refreshSchedules();
       onClose();
@@ -236,14 +287,18 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
               {/* Schedule Name */}
               <div className="space-y-2">
                 <Label htmlFor="edit-schedule-name" className="text-sm text-slate-300">
-                  Schedule Name *
+                  Schedule Name {scheduleType === "recurring" && "*"}
                 </Label>
                 <Input
                   id="edit-schedule-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                  placeholder={scheduleType === "one-time" ? "Auto-generated if empty" : ""}
                   className="bg-slate-800/50 border-white/10 focus:border-violet-500"
                 />
+                {scheduleType === "one-time" && (
+                  <p className="text-xs text-slate-500">Optional for one-time commands</p>
+                )}
               </div>
 
               {/* Enabled toggle */}
@@ -259,33 +314,95 @@ export function EditScheduleModal({ open, onClose, scheduleId }: EditScheduleMod
                   Timing
                 </h4>
 
-                <div className="space-y-2">
-                  <Label className="text-sm text-slate-400">Quick Presets</Label>
-                  <Select value={cronPreset} onValueChange={handlePresetChange}>
-                    <SelectTrigger className="bg-slate-800/50 border-white/10">
-                      <SelectValue placeholder="Select a preset..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CRON_PRESETS.map((preset) => (
-                        <SelectItem key={preset.value} value={preset.value}>
-                          {preset.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {/* Schedule Type Toggle */}
+                <Tabs
+                  value={scheduleType}
+                  onValueChange={(value) => setScheduleType(value as ScheduleType)}
+                  className="w-full"
+                >
+                  <TabsList className="grid w-full grid-cols-2 bg-slate-800/50">
+                    <TabsTrigger
+                      value="one-time"
+                      className="data-[state=active]:bg-violet-600 data-[state=active]:text-white flex items-center gap-2"
+                    >
+                      <Calendar className="w-4 h-4" />
+                      One-time
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="recurring"
+                      className="data-[state=active]:bg-violet-600 data-[state=active]:text-white flex items-center gap-2"
+                    >
+                      <Repeat className="w-4 h-4" />
+                      Recurring
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
 
-                <div className="space-y-2">
-                  <Label className="text-sm text-slate-400">Cron Expression</Label>
-                  <Input
-                    value={cronExpression}
-                    onChange={(e) => {
-                      setCronExpression(e.target.value);
-                      setCronPreset("");
-                    }}
-                    className="bg-slate-800/50 border-white/10 focus:border-violet-500 font-mono"
-                  />
-                </div>
+                {/* One-time Schedule: Date/Time Picker */}
+                {scheduleType === "one-time" && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-scheduled-date" className="text-sm text-slate-400">
+                          Date *
+                        </Label>
+                        <Input
+                          id="edit-scheduled-date"
+                          type="date"
+                          value={scheduledDate}
+                          onChange={(e) => setScheduledDate(e.target.value)}
+                          min={new Date().toISOString().split("T")[0]}
+                          className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-scheduled-time" className="text-sm text-slate-400">
+                          Time *
+                        </Label>
+                        <Input
+                          id="edit-scheduled-time"
+                          type="time"
+                          value={scheduledTime}
+                          onChange={(e) => setScheduledTime(e.target.value)}
+                          className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Recurring Schedule: Cron Expression */}
+                {scheduleType === "recurring" && (
+                  <>
+                    <div className="space-y-2">
+                      <Label className="text-sm text-slate-400">Quick Presets</Label>
+                      <Select value={cronPreset} onValueChange={handlePresetChange}>
+                        <SelectTrigger className="bg-slate-800/50 border-white/10">
+                          <SelectValue placeholder="Select a preset..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CRON_PRESETS.map((preset) => (
+                            <SelectItem key={preset.value} value={preset.value}>
+                              {preset.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-sm text-slate-400">Cron Expression</Label>
+                      <Input
+                        value={cronExpression}
+                        onChange={(e) => {
+                          setCronExpression(e.target.value);
+                          setCronPreset("");
+                        }}
+                        className="bg-slate-800/50 border-white/10 focus:border-violet-500 font-mono"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <div className="space-y-2">
                   <Label className="text-sm text-slate-400">Timezone</Label>

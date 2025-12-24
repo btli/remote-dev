@@ -104,6 +104,11 @@ class SchedulerOrchestrator {
       return;
     }
 
+    // Skip completed one-time schedules
+    if (schedule.scheduleType === "one-time" && schedule.status === "completed") {
+      return;
+    }
+
     // Remove existing job if present
     this.removeJobInternal(schedule.id);
 
@@ -122,12 +127,46 @@ class SchedulerOrchestrator {
     const tmuxSessionName = session.tmuxSessionName;
 
     try {
+      // Determine cron pattern based on schedule type
+      let cronPattern: string | Date;
+      let scheduleTypeLabel: string;
+
+      if (schedule.scheduleType === "one-time") {
+        // For one-time schedules, use the scheduledAt timestamp
+        if (!schedule.scheduledAt) {
+          console.error(
+            `[Scheduler] One-time schedule ${schedule.id} has no scheduledAt`
+          );
+          return;
+        }
+        // Check if the scheduled time is in the past
+        if (schedule.scheduledAt <= new Date()) {
+          console.warn(
+            `[Scheduler] One-time schedule ${schedule.id} scheduled time is in the past`
+          );
+          return;
+        }
+        // Croner accepts Date objects for one-time scheduling
+        cronPattern = schedule.scheduledAt;
+        scheduleTypeLabel = `one-time at ${schedule.scheduledAt.toISOString()}`;
+      } else {
+        // For recurring schedules, use the cron expression
+        if (!schedule.cronExpression) {
+          console.error(
+            `[Scheduler] Recurring schedule ${schedule.id} has no cronExpression`
+          );
+          return;
+        }
+        cronPattern = schedule.cronExpression;
+        scheduleTypeLabel = `"${schedule.cronExpression}"`;
+      }
+
       // Create cron job
       const cronJob = new Cron(
-        schedule.cronExpression,
+        cronPattern,
         {
           timezone: schedule.timezone,
-          catch: (error) => {
+          catch: (error: unknown) => {
             console.error(
               `[Scheduler] Schedule ${schedule.id} cron error:`,
               error
@@ -135,7 +174,7 @@ class SchedulerOrchestrator {
           },
         },
         async () => {
-          await this.executeJob(schedule.id, tmuxSessionName);
+          await this.executeJob(schedule.id, tmuxSessionName, schedule.scheduleType === "one-time");
         }
       );
 
@@ -148,7 +187,7 @@ class SchedulerOrchestrator {
       const nextRun = cronJob.nextRun();
       console.log(
         `[Scheduler] Registered: ${schedule.name} (${schedule.id}) - ` +
-          `"${schedule.cronExpression}" ${schedule.timezone} - ` +
+          `${scheduleTypeLabel} ${schedule.timezone} - ` +
           `Next run: ${nextRun?.toISOString() ?? "never"}`
       );
     } catch (error) {
@@ -164,9 +203,10 @@ class SchedulerOrchestrator {
    */
   private async executeJob(
     scheduleId: string,
-    tmuxSessionName: string
+    tmuxSessionName: string,
+    isOneTime = false
   ): Promise<void> {
-    console.log(`[Scheduler] Executing schedule ${scheduleId}...`);
+    console.log(`[Scheduler] Executing ${isOneTime ? "one-time " : ""}schedule ${scheduleId}...`);
 
     const job = this.jobs.get(scheduleId);
     if (!job) {
@@ -198,11 +238,24 @@ class SchedulerOrchestrator {
           `(${execution.successCount}/${execution.commandCount} commands succeeded)`
       );
 
+      // For one-time schedules, remove the job after execution
+      // (The schedule service already marked it as completed and disabled)
+      if (isOneTime) {
+        this.removeJobInternal(scheduleId);
+        console.log(`[Scheduler] One-time schedule ${scheduleId} removed after execution`);
+      }
+
       // Note: We intentionally do NOT update the cached scheduleData here.
       // The database is the source of truth - next execution will reload fresh data.
       // This avoids race conditions with concurrent API updates.
     } catch (error) {
       console.error(`[Scheduler] Failed to execute schedule ${scheduleId}:`, error);
+
+      // Still remove one-time jobs even if they failed
+      if (isOneTime) {
+        this.removeJobInternal(scheduleId);
+        console.log(`[Scheduler] One-time schedule ${scheduleId} removed after failed execution`);
+      }
     }
   }
 
@@ -331,7 +384,9 @@ class SchedulerOrchestrator {
   getStatus(): Array<{
     scheduleId: string;
     name: string;
-    cronExpression: string;
+    scheduleType: string;
+    cronExpression: string | null;
+    scheduledAt: Date | null;
     isRunning: boolean;
     isPaused: boolean;
     nextRun: Date | null;
@@ -341,7 +396,9 @@ class SchedulerOrchestrator {
     return Array.from(this.jobs.values()).map((job) => ({
       scheduleId: job.scheduleId,
       name: job.scheduleData.name,
+      scheduleType: job.scheduleData.scheduleType,
       cronExpression: job.scheduleData.cronExpression,
+      scheduledAt: job.scheduleData.scheduledAt,
       isRunning: job.cronJob.isBusy(),
       isPaused: !job.cronJob.isRunning(),
       nextRun: job.cronJob.nextRun(),

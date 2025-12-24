@@ -32,6 +32,8 @@ import {
   AlertCircle,
   Loader2,
   RefreshCw,
+  Calendar,
+  Repeat,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
@@ -131,6 +133,15 @@ export function SchedulesModal({ open, onClose }: SchedulesModalProps) {
   };
 
   const getStatusBadge = (schedule: SessionScheduleWithSession) => {
+    // One-time schedule that has completed
+    if (schedule.scheduleType === "one-time" && schedule.status === "completed") {
+      return (
+        <Badge variant="outline" className="text-xs text-blue-400 border-blue-400/30">
+          <CheckCircle2 className="w-3 h-3 mr-1" />
+          Completed
+        </Badge>
+      );
+    }
     if (schedule.status === "failed") {
       return (
         <Badge variant="destructive" className="text-xs">
@@ -164,6 +175,18 @@ export function SchedulesModal({ open, onClose }: SchedulesModalProps) {
       );
     }
     return null;
+  };
+
+  // Format scheduled time for one-time schedules
+  const formatScheduledAt = (date: Date | null): string => {
+    if (!date) return "Not set";
+    const d = new Date(date);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
   };
 
   return (
@@ -233,6 +256,7 @@ export function SchedulesModal({ open, onClose }: SchedulesModalProps) {
                     onDelete={() => handleDelete(schedule.id)}
                     formatNextRun={formatNextRun}
                     formatLastRun={formatLastRun}
+                    formatScheduledAt={formatScheduledAt}
                     getStatusBadge={getStatusBadge}
                   />
                 ))}
@@ -291,6 +315,7 @@ interface ScheduleRowProps {
   onDelete: () => void;
   formatNextRun: (date: Date | null) => string;
   formatLastRun: (date: Date | null) => string;
+  formatScheduledAt: (date: Date | null) => string;
   getStatusBadge: (schedule: SessionScheduleWithSession) => React.ReactNode;
 }
 
@@ -305,8 +330,11 @@ function ScheduleRow({
   onDelete,
   formatNextRun,
   formatLastRun,
+  formatScheduledAt,
   getStatusBadge,
 }: ScheduleRowProps) {
+  const isOneTime = schedule.scheduleType === "one-time";
+  const isCompleted = isOneTime && schedule.status === "completed";
   return (
     <div
       className={cn(
@@ -328,6 +356,12 @@ function ScheduleRow({
       {/* Main content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
+          {/* Schedule type icon */}
+          {isOneTime ? (
+            <Calendar className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+          ) : (
+            <Repeat className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+          )}
           <h4 className="text-sm font-medium text-white truncate">{schedule.name}</h4>
           {getStatusBadge(schedule)}
         </div>
@@ -340,15 +374,24 @@ function ScheduleRow({
 
         {/* Timing info */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs">
-          <span className="text-slate-400">
-            <span className="text-slate-500">Cron:</span>{" "}
-            <code className="bg-slate-700/50 px-1 py-0.5 rounded font-mono">
-              {schedule.cronExpression}
-            </code>
-          </span>
-          <span className="text-slate-400">
-            <span className="text-slate-500">Next:</span> {formatNextRun(schedule.nextRunAt)}
-          </span>
+          {isOneTime ? (
+            <span className="text-slate-400">
+              <span className="text-slate-500">At:</span>{" "}
+              <span className="text-violet-400">{formatScheduledAt(schedule.scheduledAt)}</span>
+            </span>
+          ) : (
+            <span className="text-slate-400">
+              <span className="text-slate-500">Cron:</span>{" "}
+              <code className="bg-slate-700/50 px-1 py-0.5 rounded font-mono">
+                {schedule.cronExpression}
+              </code>
+            </span>
+          )}
+          {!isCompleted && (
+            <span className="text-slate-400">
+              <span className="text-slate-500">Next:</span> {formatNextRun(schedule.nextRunAt)}
+            </span>
+          )}
           <span className="text-slate-400">
             <span className="text-slate-500">Last:</span> {formatLastRun(schedule.lastRunAt)}
           </span>

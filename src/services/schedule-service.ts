@@ -32,6 +32,7 @@ import type {
   ScheduleCommandInput,
   ExecutionStatus,
   ScheduleStatus,
+  ScheduleType,
 } from "@/types/schedule";
 
 // Re-export error class for API routes
@@ -107,13 +108,50 @@ export async function createSchedule(
   userId: string,
   input: CreateScheduleInput
 ): Promise<SessionScheduleWithCommands> {
-  // Validate cron expression
   const timezone = input.timezone || "America/Los_Angeles";
-  if (!validateCronExpression(input.cronExpression, timezone)) {
-    throw new ScheduleServiceError(
-      "Invalid cron expression or timezone",
-      "INVALID_CRON_EXPRESSION"
-    );
+  const scheduleType: ScheduleType = input.scheduleType || "one-time";
+
+  // Validate based on schedule type
+  let nextRunAt: Date | null = null;
+  let scheduledAt: Date | null = null;
+
+  if (scheduleType === "one-time") {
+    // One-time schedule requires scheduledAt
+    if (!input.scheduledAt) {
+      throw new ScheduleServiceError(
+        "Scheduled time is required for one-time schedules",
+        "SCHEDULED_AT_REQUIRED"
+      );
+    }
+    scheduledAt = new Date(input.scheduledAt);
+    if (isNaN(scheduledAt.getTime())) {
+      throw new ScheduleServiceError(
+        "Invalid scheduled time format",
+        "INVALID_SCHEDULED_AT"
+      );
+    }
+    if (scheduledAt <= new Date()) {
+      throw new ScheduleServiceError(
+        "Scheduled time must be in the future",
+        "SCHEDULED_AT_IN_PAST"
+      );
+    }
+    nextRunAt = scheduledAt;
+  } else {
+    // Recurring schedule requires cron expression
+    if (!input.cronExpression) {
+      throw new ScheduleServiceError(
+        "Cron expression is required for recurring schedules",
+        "CRON_EXPRESSION_REQUIRED"
+      );
+    }
+    if (!validateCronExpression(input.cronExpression, timezone)) {
+      throw new ScheduleServiceError(
+        "Invalid cron expression or timezone",
+        "INVALID_CRON_EXPRESSION"
+      );
+    }
+    nextRunAt = calculateNextRun(input.cronExpression, timezone);
   }
 
   // Validate session ownership
@@ -138,7 +176,6 @@ export async function createSchedule(
 
   const scheduleId = crypto.randomUUID();
   const now = new Date();
-  const nextRunAt = calculateNextRun(input.cronExpression, timezone);
 
   // Insert schedule
   const [schedule] = await db
@@ -148,7 +185,9 @@ export async function createSchedule(
       userId,
       sessionId: input.sessionId,
       name: input.name,
-      cronExpression: input.cronExpression,
+      scheduleType,
+      cronExpression: scheduleType === "recurring" ? input.cronExpression : null,
+      scheduledAt,
       timezone,
       enabled: input.enabled ?? true,
       status: "active",
@@ -300,28 +339,78 @@ export async function updateSchedule(
     );
   }
 
-  // Recalculate next run if cron/timezone changed
+  const scheduleType = updates.scheduleType ?? existing.scheduleType ?? "recurring";
+
+  // Recalculate next run based on schedule type
   let nextRunAt: Date | null | undefined;
-  if (updates.cronExpression || updates.timezone) {
-    const cronExpr = updates.cronExpression ?? existing.cronExpression;
-    const tz = updates.timezone ?? existing.timezone;
-    if (!validateCronExpression(cronExpr, tz)) {
-      throw new ScheduleServiceError(
-        "Invalid cron expression or timezone",
-        "INVALID_CRON_EXPRESSION",
-        scheduleId
-      );
+  let scheduledAt: Date | null | undefined;
+
+  if (scheduleType === "one-time") {
+    // For one-time schedules, use scheduledAt
+    if (updates.scheduledAt !== undefined) {
+      if (updates.scheduledAt === null) {
+        throw new ScheduleServiceError(
+          "Scheduled time is required for one-time schedules",
+          "SCHEDULED_AT_REQUIRED",
+          scheduleId
+        );
+      }
+      scheduledAt = new Date(updates.scheduledAt);
+      if (isNaN(scheduledAt.getTime())) {
+        throw new ScheduleServiceError(
+          "Invalid scheduled time format",
+          "INVALID_SCHEDULED_AT",
+          scheduleId
+        );
+      }
+      if (scheduledAt <= new Date()) {
+        throw new ScheduleServiceError(
+          "Scheduled time must be in the future",
+          "SCHEDULED_AT_IN_PAST",
+          scheduleId
+        );
+      }
+      nextRunAt = scheduledAt;
     }
-    nextRunAt = calculateNextRun(cronExpr, tz);
+  } else {
+    // For recurring schedules, use cron expression
+    if (updates.cronExpression !== undefined || updates.timezone) {
+      const cronExpr = updates.cronExpression ?? existing.cronExpression;
+      if (!cronExpr) {
+        throw new ScheduleServiceError(
+          "Cron expression is required for recurring schedules",
+          "CRON_EXPRESSION_REQUIRED",
+          scheduleId
+        );
+      }
+      const tz = updates.timezone ?? existing.timezone;
+      if (!validateCronExpression(cronExpr, tz)) {
+        throw new ScheduleServiceError(
+          "Invalid cron expression or timezone",
+          "INVALID_CRON_EXPRESSION",
+          scheduleId
+        );
+      }
+      nextRunAt = calculateNextRun(cronExpr, tz);
+    }
+  }
+
+  // Build update object
+  const updateData: Record<string, unknown> = {
+    ...updates,
+    updatedAt: new Date(),
+  };
+
+  if (nextRunAt !== undefined) {
+    updateData.nextRunAt = nextRunAt;
+  }
+  if (scheduledAt !== undefined) {
+    updateData.scheduledAt = scheduledAt;
   }
 
   const [updated] = await db
     .update(sessionSchedules)
-    .set({
-      ...updates,
-      nextRunAt: nextRunAt !== undefined ? nextRunAt : undefined,
-      updatedAt: new Date(),
-    })
+    .set(updateData)
     .where(
       and(
         eq(sessionSchedules.id, scheduleId),
@@ -763,7 +852,29 @@ async function updateScheduleAfterExecution(
   if (!schedule) return;
 
   const now = new Date();
-  const nextRunAt = calculateNextRun(schedule.cronExpression, schedule.timezone);
+  const isOneTime = schedule.scheduleType === "one-time";
+
+  // For one-time schedules, mark as completed and disable after execution
+  if (isOneTime) {
+    await db
+      .update(sessionSchedules)
+      .set({
+        lastRunAt: now,
+        lastRunStatus: status,
+        nextRunAt: null, // No next run for one-time
+        status: "completed",
+        enabled: false,
+        consecutiveFailures: 0,
+        updatedAt: now,
+      })
+      .where(eq(sessionSchedules.id, scheduleId));
+    return;
+  }
+
+  // For recurring schedules, calculate next run
+  const nextRunAt = schedule.cronExpression
+    ? calculateNextRun(schedule.cronExpression, schedule.timezone)
+    : null;
   const consecutiveFailures =
     status === "failed" ? (schedule.consecutiveFailures || 0) + 1 : 0;
 
@@ -921,7 +1032,9 @@ function mapDbScheduleToSchedule(
     userId: dbSchedule.userId,
     sessionId: dbSchedule.sessionId,
     name: dbSchedule.name,
+    scheduleType: (dbSchedule.scheduleType ?? "recurring") as ScheduleType,
     cronExpression: dbSchedule.cronExpression,
+    scheduledAt: dbSchedule.scheduledAt ? new Date(dbSchedule.scheduledAt) : null,
     timezone: dbSchedule.timezone,
     enabled: dbSchedule.enabled,
     status: dbSchedule.status as ScheduleStatus,

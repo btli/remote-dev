@@ -3,7 +3,7 @@ import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 import type { SplitDirection } from "@/types/split";
 import type { CIStatusState, PRState } from "@/types/github-stats";
-import type { ScheduleStatus, ExecutionStatus } from "@/types/schedule";
+import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -653,7 +653,9 @@ export const sessionSchedules = sqliteTable(
       .notNull()
       .references(() => terminalSessions.id, { onDelete: "cascade" }),
     name: text("name").notNull(), // User-friendly name (e.g., "Daily Git Sync")
-    cronExpression: text("cron_expression").notNull(), // Full cron syntax: "0 9 * * 1-5"
+    scheduleType: text("schedule_type").$type<ScheduleType>().notNull().default("one-time"),
+    cronExpression: text("cron_expression"), // Full cron syntax: "0 9 * * 1-5" (null for one-time)
+    scheduledAt: integer("scheduled_at", { mode: "timestamp_ms" }), // For one-time schedules
     timezone: text("timezone").notNull().default("America/Los_Angeles"), // IANA timezone
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     status: text("status").$type<ScheduleStatus>().notNull().default("active"),

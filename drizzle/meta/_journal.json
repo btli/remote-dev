@@ -50,6 +50,13 @@
       "when": 1766602055780,
       "tag": "0006_modern_fenris",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1766604584133,
+      "tag": "0007_confused_iron_patriot",
+      "breakpoints": true
     }
   ]
 }

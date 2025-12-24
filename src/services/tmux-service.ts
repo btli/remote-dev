@@ -157,13 +157,21 @@ export async function sendKeys(
     );
   }
 
-  const args = ["send-keys", "-t", sessionName, command];
-  if (pressEnter) {
-    args.push("Enter");
-  }
-
   try {
-    await execFile("tmux", args);
+    // Send command text in literal mode (-l) to avoid tmux interpreting
+    // special characters like !, #, \, etc. This ensures the exact text
+    // is sent to the terminal/application.
+    if (command) {
+      await execFile("tmux", ["send-keys", "-t", sessionName, "-l", command]);
+    }
+
+    // Send Enter key separately. This works reliably across shells and
+    // interactive applications (like claude CLI, vim, etc.) because:
+    // 1. The text was sent literally without interpretation
+    // 2. Enter/C-m is a recognized tmux key binding that sends the actual keypress
+    if (pressEnter) {
+      await execFile("tmux", ["send-keys", "-t", sessionName, "Enter"]);
+    }
   } catch (error) {
     throw new TmuxServiceError(
       `Failed to send keys to tmux session: ${(error as Error).message}`,

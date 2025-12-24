@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo, Activity, useEffectEvent } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, Activity, useEffectEvent } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
@@ -61,27 +61,41 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [sessionCounter, setSessionCounter] = useState(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    // Initialize from localStorage if available
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("sidebar-collapsed");
-      return saved === "true";
+  // Start with defaults to ensure SSR/client consistency
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(220);
+
+  // Sync from localStorage synchronously before paint using useLayoutEffect
+  // This prevents hydration mismatch AND avoids the visual flash/layout shift
+  useLayoutEffect(() => {
+    let didUpdate = false;
+
+    const savedCollapsed = localStorage.getItem("sidebar-collapsed");
+    if (savedCollapsed === "true") {
+      setSidebarCollapsed(true);
+      didUpdate = true;
     }
-    return false;
-  });
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    // Initialize from localStorage if available
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("sidebar-width");
-      if (saved) {
-        const width = parseInt(saved, 10);
-        if (!isNaN(width) && width >= 180 && width <= 400) {
-          return width;
-        }
+
+    const savedWidth = localStorage.getItem("sidebar-width");
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10);
+      if (!isNaN(width) && width >= 180 && width <= 400) {
+        setSidebarWidth(width);
+        didUpdate = true;
       }
     }
-    return 220; // Default width
-  });
+
+    // If sidebar dimensions changed, trigger resize for terminals to recalculate
+    if (didUpdate) {
+      // Wait for fonts and layout before triggering resize
+      // This ensures terminal calculates correct cell dimensions
+      document.fonts.ready.then(() => {
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("resize"));
+        });
+      });
+    }
+  }, []);
 
   // Track mobile state for responsive sidebar behavior
   useEffect(() => {
@@ -90,6 +104,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
+
   const [folderSettingsModal, setFolderSettingsModal] = useState<{
     folderId: string;
     folderName: string;

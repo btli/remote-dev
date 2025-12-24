@@ -13,6 +13,13 @@
 // =============================================================================
 
 /**
+ * Schedule type - one-time or recurring
+ * - one-time: Executes once at a specific datetime, then auto-completes
+ * - recurring: Executes on a cron schedule repeatedly
+ */
+export type ScheduleType = "one-time" | "recurring";
+
+/**
  * Schedule lifecycle status
  * - active: Schedule is running on its cron schedule
  * - paused: Schedule is temporarily paused (enabled=false)
@@ -47,7 +54,9 @@ export interface SessionSchedule {
   userId: string;
   sessionId: string;
   name: string;
-  cronExpression: string;
+  scheduleType: ScheduleType;
+  cronExpression: string | null; // Null for one-time schedules
+  scheduledAt: Date | null; // For one-time schedules only
   timezone: string;
   enabled: boolean;
   status: ScheduleStatus;
@@ -166,7 +175,9 @@ export interface ScheduleCommandInput {
 export interface CreateScheduleInput {
   sessionId: string;
   name: string;
-  cronExpression: string;
+  scheduleType?: ScheduleType; // Default: "one-time"
+  cronExpression?: string; // Required for recurring schedules
+  scheduledAt?: string; // ISO 8601 datetime for one-time schedules
   timezone?: string;
   commands: ScheduleCommandInput[];
   enabled?: boolean;
@@ -180,7 +191,9 @@ export interface CreateScheduleInput {
  */
 export interface UpdateScheduleInput {
   name?: string;
-  cronExpression?: string;
+  scheduleType?: ScheduleType;
+  cronExpression?: string | null;
+  scheduledAt?: string | null; // ISO 8601 datetime
   timezone?: string;
   enabled?: boolean;
   status?: ScheduleStatus;
