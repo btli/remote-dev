@@ -1669,13 +1669,13 @@ export function Sidebar({
                                   }}
                                   className={cn(
                                     "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-                                    "text-red-400/70 hover:text-red-400 hover:bg-red-500/10",
+                                    "text-slate-500 hover:text-slate-400 hover:bg-white/5",
                                     "transition-colors duration-150"
                                   )}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                   <span className="text-xs">.trash</span>
-                                  <span className="ml-auto text-[10px] text-red-400/50">
+                                  <span className="ml-auto text-[10px] text-slate-600">
                                     {getFolderTrashCount(node.id)}
                                   </span>
                                 </div>
