@@ -1040,6 +1040,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     onSessionExit={handlePaneSessionExit}
                     resolvePreferences={resolvePreferencesForFolder}
                     sessionFolders={sessionFolders}
+                    wsUrl={wsUrl}
                   />
                 ) : (
                   /* Single terminal mode - only attach to the active session */
