@@ -2,6 +2,7 @@ import { sqliteTable, text, integer, real, primaryKey, index, uniqueIndex } from
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 import type { SplitDirection } from "@/types/split";
+import type { CIStatusState, PRState } from "@/types/github-stats";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -413,5 +414,189 @@ export const worktreeTrashMetadata = sqliteTable(
   },
   (table) => [
     index("worktree_trash_repo_idx").on(table.githubRepoId),
+  ]
+);
+
+// =============================================================================
+// GitHub Stats Tables
+// =============================================================================
+
+// Repository stats cache - stores aggregated stats from GitHub API
+export const githubRepositoryStats = sqliteTable(
+  "github_repository_stats",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    repositoryId: text("repository_id")
+      .notNull()
+      .unique()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    openPRCount: integer("open_pr_count").notNull().default(0),
+    openIssueCount: integer("open_issue_count").notNull().default(0),
+    ciStatus: text("ci_status").$type<CIStatusState>(),
+    ciStatusDetails: text("ci_status_details"), // JSON: { totalCount, successCount, failureCount, pendingCount }
+    branchProtected: integer("branch_protected", { mode: "boolean" }).notNull().default(false),
+    branchProtectionDetails: text("branch_protection_details"), // JSON: BranchProtection object
+    recentCommits: text("recent_commits"), // JSON array of CommitInfo
+    cachedAt: integer("cached_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date(Date.now() + 15 * 60 * 1000)), // 15 minutes default TTL
+  },
+  (table) => [
+    index("github_repo_stats_repo_idx").on(table.repositoryId),
+    index("github_repo_stats_expires_idx").on(table.expiresAt),
+  ]
+);
+
+// Pull requests cache - stores open PRs for quick display
+export const githubPullRequests = sqliteTable(
+  "github_pull_request",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    prNumber: integer("pr_number").notNull(),
+    title: text("title").notNull(),
+    state: text("state").$type<PRState>().notNull(),
+    branch: text("branch").notNull(),
+    baseBranch: text("base_branch").notNull(),
+    author: text("author").notNull(),
+    authorAvatarUrl: text("author_avatar_url"),
+    url: text("url").notNull(),
+    isDraft: integer("is_draft", { mode: "boolean" }).notNull().default(false),
+    additions: integer("additions").notNull().default(0),
+    deletions: integer("deletions").notNull().default(0),
+    reviewDecision: text("review_decision").$type<"APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED">(),
+    ciStatus: text("ci_status").$type<CIStatusState>(),
+    isNew: integer("is_new", { mode: "boolean" }).notNull().default(false), // New since last user view
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    cachedAt: integer("cached_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("github_pr_repo_idx").on(table.repositoryId),
+    index("github_pr_repo_number_idx").on(table.repositoryId, table.prNumber),
+    index("github_pr_state_idx").on(table.repositoryId, table.state),
+  ]
+);
+
+// Branch protection rules cache
+export const githubBranchProtection = sqliteTable(
+  "github_branch_protection",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    branch: text("branch").notNull(),
+    isProtected: integer("is_protected", { mode: "boolean" }).notNull().default(false),
+    requiresReview: integer("requires_review", { mode: "boolean" }).notNull().default(false),
+    requiredReviewers: integer("required_reviewers").notNull().default(0),
+    requiresStatusChecks: integer("requires_status_checks", { mode: "boolean" }).notNull().default(false),
+    requiredChecks: text("required_checks"), // JSON array of check names
+    allowsForcePushes: integer("allows_force_pushes", { mode: "boolean" }).notNull().default(false),
+    allowsDeletions: integer("allows_deletions", { mode: "boolean" }).notNull().default(false),
+    cachedAt: integer("cached_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_branch_protection_repo_branch_idx").on(table.repositoryId, table.branch),
+  ]
+);
+
+// Folder to repository mapping - links folders to their source repos
+export const folderRepositories = sqliteTable(
+  "folder_repository",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    folderId: text("folder_id")
+      .notNull()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("folder_repo_folder_user_idx").on(table.folderId, table.userId),
+    index("folder_repo_user_idx").on(table.userId),
+  ]
+);
+
+// GitHub stats display preferences per user/folder
+export const githubStatsPreferences = sqliteTable(
+  "github_stats_preferences",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, { onDelete: "cascade" }), // null = global user preference
+    showPRCount: integer("show_pr_count", { mode: "boolean" }).notNull().default(true),
+    showIssueCount: integer("show_issue_count", { mode: "boolean" }).notNull().default(true),
+    showCIStatus: integer("show_ci_status", { mode: "boolean" }).notNull().default(true),
+    showRecentCommits: integer("show_recent_commits", { mode: "boolean" }).notNull().default(true),
+    showBranchProtection: integer("show_branch_protection", { mode: "boolean" }).notNull().default(true),
+    refreshIntervalMinutes: integer("refresh_interval_minutes").notNull().default(15),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // User can have one global preference (folderId null) and one per folder
+    uniqueIndex("github_stats_prefs_user_folder_idx").on(table.userId, table.folderId),
+    index("github_stats_prefs_user_idx").on(table.userId),
+  ]
+);
+
+// Change notifications tracking - tracks unseen changes per repo per user
+export const githubChangeNotifications = sqliteTable(
+  "github_change_notification",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    newPRCount: integer("new_pr_count").notNull().default(0),
+    newIssueCount: integer("new_issue_count").notNull().default(0),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("github_notifications_user_repo_idx").on(table.userId, table.repositoryId),
+    index("github_notifications_user_idx").on(table.userId),
   ]
 );
