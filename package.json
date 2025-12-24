@@ -1,6 +1,6 @@
 {
   "name": "remote-dev",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "concurrently --kill-others --kill-signal SIGTERM -n next,term -c blue,green \"bun run dev:next\" \"bun run dev:terminal\"",
