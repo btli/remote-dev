@@ -921,8 +921,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderReorder={handleReorderFolders}
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
-            isGitHubConnected={isGitHubConnected}
-            onCreatePRWorktree={handleCreatePRWorktree}
           />
       </div>
 
