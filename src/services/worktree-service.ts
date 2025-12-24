@@ -66,6 +66,31 @@ export async function isGitRepo(path: string): Promise<boolean> {
 }
 
 /**
+ * Fetch all refs from origin remote to ensure up-to-date remote tracking branches.
+ * This prevents creating worktrees from stale origin/* references.
+ *
+ * @param repoPath - Path to the git repository
+ * @returns true if fetch succeeded, false if it failed (but operation can continue)
+ */
+async function fetchRemoteRefs(repoPath: string): Promise<boolean> {
+  const fetchResult = await execFileNoThrow("git", [
+    "-C",
+    repoPath,
+    "fetch",
+    "origin",
+  ]);
+
+  if (fetchResult.exitCode !== 0) {
+    console.warn(
+      `Warning: Could not fetch from origin: ${fetchResult.stderr}`
+    );
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Get the root directory of a git repository
  */
 export async function getRepoRoot(path: string): Promise<string | null> {
@@ -183,6 +208,9 @@ export async function createWorktree(
       repoPath
     );
   }
+
+  // Fetch remote refs to ensure we have the latest
+  await fetchRemoteRefs(repoPath);
 
   // Generate worktree path if not provided
   const targetPath =
@@ -357,20 +385,8 @@ export async function createBranchWithWorktree(
     );
   }
 
-  // Always fetch all refs from origin to ensure remote tracking branches are up to date
-  // This prevents creating worktrees from stale origin/master references
-  const fetchResult = await execFileNoThrow("git", [
-    "-C",
-    repoPath,
-    "fetch",
-    "origin",
-  ]);
-  if (fetchResult.exitCode !== 0) {
-    console.warn(
-      `Warning: Could not fetch from origin: ${fetchResult.stderr}`
-    );
-    // Continue anyway - we'll use whatever refs are available locally
-  }
+  // Fetch remote refs to ensure we have the latest
+  await fetchRemoteRefs(repoPath);
 
   // Create worktree with new branch based on the base branch
   // Build args to specify the start point for the new branch
