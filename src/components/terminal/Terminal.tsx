@@ -245,12 +245,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // so we manually send CSI 13;2u (Enter=13, Shift modifier=2)
         // This allows apps like Claude Code to distinguish Shift+Enter from Enter
         if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
           ws.send(JSON.stringify({ type: "input", data: "\x1b[13;2u" }));
           return false;
         }
 
         // Ctrl+Enter - Send CSI 13;5u (Enter=13, Ctrl modifier=5)
         if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
           ws.send(JSON.stringify({ type: "input", data: "\x1b[13;5u" }));
           return false;
         }
