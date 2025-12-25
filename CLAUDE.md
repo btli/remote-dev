@@ -83,6 +83,39 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 - Auth utilities in `src/lib/auth-utils.ts` handle CF Access JWT validation
 - API auth wrapper in `src/lib/api.ts` provides `withApiAuth` for dual session/API key auth
 
+### MCP Server (Model Context Protocol)
+
+Optional MCP server for AI agent integration. Enables Claude Desktop, Cursor, and other MCP clients to interact with Remote Dev.
+
+**Architecture:**
+- Runs on stdio transport alongside the terminal server
+- Uses local trust model (no additional authentication)
+- Provides 24 tools, 6 resources, and 5 workflow prompts
+
+**Components:**
+| Component | Count | Description |
+|-----------|-------|-------------|
+| Tools | 24 | Session management, git/worktree operations, folder/preferences |
+| Resources | 6 | Read-only access to sessions and folders |
+| Prompts | 5 | Workflow templates for common tasks |
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/mcp/index.ts` | MCP server initialization and request handlers |
+| `src/mcp/registry.ts` | Tool/resource/prompt registration with Zod→JSON Schema |
+| `src/mcp/tools/*.ts` | Tool implementations (session, git, folder) |
+| `src/mcp/resources/*.ts` | Resource providers (session, folder data) |
+| `src/mcp/prompts/*.ts` | Workflow prompt templates |
+| `src/mcp/utils/auth.ts` | User context for MCP requests |
+| `src/mcp/utils/error-handler.ts` | Error formatting with recovery hints |
+
+**Environment Variables:**
+```bash
+MCP_ENABLED=true      # Enable MCP server on terminal server startup
+MCP_USER_ID=<uuid>    # Override user ID for MCP requests (optional)
+```
+
 ### Database Layer
 
 - **Drizzle ORM** with **libsql** (SQLite-compatible, works in both Bun and Node.js)
@@ -159,6 +192,8 @@ Located in `src/services/`:
 | `UserSettingsModal.tsx` | User-level preferences |
 | `SecretsConfigModal.tsx` | Configure secrets providers per folder |
 | `SecretsStatusButton.tsx` | Header indicator for secrets connection status |
+| `DirectoryBrowser.tsx` | Modal for visual filesystem directory navigation |
+| `PathInput.tsx` | Text input with browse button for directory selection |
 
 ### State Management
 
@@ -194,6 +229,8 @@ React Contexts in `src/contexts/`:
 | `src/contexts/SplitContext.tsx` | Split pane state management |
 | `src/services/split-service.ts` | Split pane operations |
 | `src/components/split/SplitPaneLayout.tsx` | Split layout component |
+| `src/mcp/index.ts` | MCP server initialization |
+| `src/mcp/registry.ts` | MCP tool/resource registration |
 
 ## API Routes
 
@@ -260,6 +297,9 @@ React Contexts in `src/contexts/`:
 ### Git
 - `GET /api/git/validate` - Validate git repository path
 
+### Directories
+- `GET /api/directories` - Browse filesystem directories (secure, restricted to allowed paths)
+
 ### Images
 - `POST /api/images` - Upload and save image
 
@@ -316,6 +356,12 @@ NEXTAUTH_URL=http://localhost:3000
 For database seeding:
 ```bash
 AUTHORIZED_USERS=user@example.com,another@example.com
+```
+
+For MCP server (optional):
+```bash
+MCP_ENABLED=true      # Enable MCP server on terminal server startup
+MCP_USER_ID=<uuid>    # Override default user ID for MCP requests
 ```
 
 ## Documentation

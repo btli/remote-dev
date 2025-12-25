@@ -1,0 +1,158 @@
+{
+  // Application metadata
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "dev.remote.app",
+  "productName": "Remote Dev",
+  "copyright": "Copyright © 2025",
+
+  // Directories
+  "directories": {
+    "output": "release",
+    "buildResources": "electron/resources"
+  },
+
+  // Files to include in the app
+  "files": [
+    // Compiled Electron code
+    "dist-electron/**/*",
+
+    // Next.js standalone build (production only)
+    ".next/standalone/**/*",
+    ".next/static/**/*",
+
+    // Terminal server (compiled)
+    "dist-terminal/**/*",
+
+    // Static assets
+    "public/**/*",
+
+    // Database migrations
+    "drizzle/**/*",
+
+    // Exclude development files
+    "!**/*.map",
+    "!**/node_modules/.cache",
+    "!**/.git"
+  ],
+
+  // Extra resources (copied to resources folder)
+  "extraResources": [
+    {
+      "from": "electron/resources",
+      "to": "electron/resources",
+      "filter": ["**/*"]
+    }
+  ],
+
+  // Rebuild native modules after packaging
+  "npmRebuild": true,
+
+  // macOS configuration
+  "mac": {
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64", "arm64"]
+      }
+    ],
+    "icon": "electron/resources/icon.icns",
+    "category": "public.app-category.developer-tools",
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "electron/resources/entitlements.mac.plist",
+    "entitlementsInherit": "electron/resources/entitlements.mac.plist",
+    "darkModeSupport": true
+  },
+
+  // DMG configuration
+  "dmg": {
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
+    }
+  },
+
+  // Linux configuration
+  "linux": {
+    "target": [
+      {
+        "target": "deb",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "AppImage",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "rpm",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "electron/resources/icon.png",
+    "category": "Development",
+    "maintainer": "Remote Dev Team",
+    "synopsis": "Web-based terminal interface with persistent sessions",
+    "description": "Remote Dev is a web-based terminal interface with persistent tmux sessions, GitHub integration, and cross-platform support."
+  },
+
+  // Debian package configuration
+  "deb": {
+    "depends": [
+      "tmux",
+      "git"
+    ],
+    "recommends": [
+      "cloudflared"
+    ]
+  },
+
+  // Windows configuration
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "msi",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "electron/resources/icon.ico"
+  },
+
+  // NSIS installer configuration
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Remote Dev"
+  },
+
+  // Auto-update configuration
+  "publish": {
+    "provider": "github",
+    "owner": "btli",
+    "repo": "remote-dev",
+    "releaseType": "release"
+  }
+}
