@@ -100,7 +100,7 @@ export async function trashWorktreeSession(
   let repoName = "unknown";
   let repoLocalPath = "";
 
-  // Strategy 1: Check folder preferences for localRepoPath (user's preferred location)
+  // Strategy 1: Check folder preferences for localRepoPath or defaultWorkingDirectory
   if (session.folderId) {
     const prefs = await db.query.folderPreferences.findFirst({
       where: and(
@@ -111,6 +111,13 @@ export async function trashWorktreeSession(
     if (prefs?.localRepoPath) {
       repoLocalPath = prefs.localRepoPath;
       repoName = basename(prefs.localRepoPath);
+    } else if (prefs?.defaultWorkingDirectory) {
+      // Check if defaultWorkingDirectory is a git repo
+      const gitRoot = await getRepoRoot(prefs.defaultWorkingDirectory);
+      if (gitRoot) {
+        repoLocalPath = prefs.defaultWorkingDirectory;
+        repoName = basename(prefs.defaultWorkingDirectory);
+      }
     }
   }
 
