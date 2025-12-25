@@ -99,8 +99,10 @@ export async function createSession(
     let repoPath: string | null = null;
     let repoId: string | null = null;
 
-    // Priority: localRepoPath (user's preferred location) > githubRepoId.localPath (cached clone)
-    // This ensures worktrees are created relative to where the user actually works
+    // Priority for finding git repo:
+    // 1. localRepoPath (explicit repo path for worktrees)
+    // 2. defaultWorkingDirectory (if it's a git repo - common case)
+    // 3. githubRepoId.localPath (cached clone in ~/.remote-dev/repos)
     if (folderPrefs?.localRepoPath) {
       // User's explicit local repository path takes priority
       repoPath = folderPrefs.localRepoPath;
@@ -108,8 +110,18 @@ export async function createSession(
       if (folderPrefs.githubRepoId) {
         repoId = folderPrefs.githubRepoId;
       }
-    } else if (folderPrefs?.githubRepoId) {
-      // Fallback to GitHub repo's cached location
+    } else if (folderPrefs?.defaultWorkingDirectory) {
+      // Check if defaultWorkingDirectory is a git repo
+      if (await WorktreeService.isGitRepo(folderPrefs.defaultWorkingDirectory)) {
+        repoPath = folderPrefs.defaultWorkingDirectory;
+        if (folderPrefs.githubRepoId) {
+          repoId = folderPrefs.githubRepoId;
+        }
+      }
+    }
+
+    // Fallback to GitHub repo's cached location if no local path found
+    if (!repoPath && folderPrefs?.githubRepoId) {
       const repo = await GitHubService.getRepository(folderPrefs.githubRepoId, userId);
       if (!repo?.localPath) {
         throw new SessionServiceError(
@@ -124,7 +136,7 @@ export async function createSession(
 
     if (!repoPath) {
       throw new SessionServiceError(
-        "No repository linked to this folder. Configure in folder preferences.",
+        "No git repository found. Set a project folder that contains a git repo, or link a GitHub repo in folder preferences.",
         "NO_REPO_LINKED",
         sessionId
       );
