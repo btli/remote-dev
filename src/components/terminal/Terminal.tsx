@@ -917,10 +917,17 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [sendImageToTerminal]);
 
-  // Focus terminal on click/mousedown/touch to ensure it maintains focus
+  // Focus terminal on left-click/touch to ensure it maintains focus
   // This fixes the issue where selecting text would quickly lose focus, preventing copy
   // Also ensures mobile keyboard appears when tapping the terminal
-  const handleContainerInteraction = useCallback(() => {
+  // Note: Only trigger on left-click (button 0) to avoid interfering with
+  // right-click context menus (e.g., tmux popup menu)
+  const handleContainerInteraction = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    // For mouse events, only focus on left-click (button 0)
+    // Right-click (button 2) should not trigger focus to allow tmux menu to work
+    if ("button" in e && e.button !== 0) {
+      return;
+    }
     xtermRef.current?.focus();
   }, []);
 
