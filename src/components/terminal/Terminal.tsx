@@ -246,6 +246,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         return true; // Let xterm handle other key combinations
       });
 
+      // Prevent browser's context menu so tmux's context menu can be used
+      terminalRef.current.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+      });
+
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
       imageAddonRef.current = imageAddon;
