@@ -35,6 +35,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useSplitContext } from "@/contexts/SplitContext";
+import { useScheduleContext } from "@/contexts/ScheduleContext";
 
 export interface SessionFolder {
   id: string;
@@ -207,6 +208,9 @@ export function Sidebar({
     removeFromSplit,
     getSplitForSession,
   } = useSplitContext();
+
+  // Schedule context for showing schedule indicators
+  const { getSchedulesForSession } = useScheduleContext();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
@@ -930,6 +934,25 @@ export function Sidebar({
                       {session.worktreeBranch}
                     </span>
                   )}
+                  {/* Schedule count indicator */}
+                  {(() => {
+                    const schedules = getSchedulesForSession(session.id);
+                    const activeCount = schedules.filter(s => s.enabled).length;
+                    if (activeCount === 0) return null;
+                    return (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="flex items-center gap-0.5 text-[10px] text-amber-400/80">
+                            <Clock className="w-2.5 h-2.5" />
+                            {activeCount}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="text-xs">
+                          {activeCount} scheduled command{activeCount !== 1 ? 's' : ''}
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })()}
                 </>
               )}
             </div>
