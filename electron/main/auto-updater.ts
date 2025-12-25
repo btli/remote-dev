@@ -121,10 +121,12 @@ export function setMainWindow(window: BrowserWindow | null): void {
   mainWindow = window;
 }
 
-export default {
+const AutoUpdater = {
   init: initAutoUpdater,
   checkForUpdates,
   quitAndInstall,
   isUpdateDownloaded,
   setMainWindow,
 };
+
+export default AutoUpdater;

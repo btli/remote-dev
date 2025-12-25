@@ -19,7 +19,7 @@ export async function GET() {
     const shell = process.env.SHELL || (os === "win32" ? "cmd.exe" : "/bin/sh");
 
     let isWSL = false;
-    let wslDistros: Array<{
+    const wslDistros: Array<{
       name: string;
       version: number;
       isDefault: boolean;

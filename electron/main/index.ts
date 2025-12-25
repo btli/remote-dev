@@ -9,6 +9,7 @@ import { app, ipcMain, shell, Menu, dialog } from "electron";
 import { platform, arch, homedir } from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import electronSquirrelStartup from "electron-squirrel-startup";
 import Config from "./config";
 import ProcessManager, { ServerStatus } from "./process-manager";
 import { createTray, destroyTray, showMainWindow, getMainWindow } from "./tray";
@@ -18,7 +19,7 @@ import { CloudflaredService, CloudflaredInfo, TunnelInfo } from "./cloudflared";
 const execFileAsync = promisify(execFile);
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (require("electron-squirrel-startup")) {
+if (electronSquirrelStartup) {
   app.quit();
 }
 
@@ -138,7 +139,7 @@ function setupIpcHandlers(): void {
     const shell = process.env.SHELL || (os === "win32" ? "cmd.exe" : "/bin/sh");
 
     let isWSL = false;
-    let wslDistros: Array<{
+    const wslDistros: Array<{
       name: string;
       version: number;
       isDefault: boolean;

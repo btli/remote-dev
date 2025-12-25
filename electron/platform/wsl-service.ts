@@ -62,7 +62,7 @@ export async function getWslInfo(): Promise<WslInfo> {
 
     wslInfoCache = { info, timestamp: Date.now() };
     return info;
-  } catch (error) {
+  } catch {
     // WSL not installed or not in PATH
     const info: WslInfo = {
       installed: false,

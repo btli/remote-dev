@@ -182,7 +182,7 @@ export class WindowsAdapter implements PlatformAdapter {
         timeout: 300000,
       });
       return { success: true };
-    } catch (error) {
+    } catch {
       return {
         success: false,
         error: `Installation failed. Try running manually in WSL: ${await this.getWslInstallCommand(distro, name)}`,
