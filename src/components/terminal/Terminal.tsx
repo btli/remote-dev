@@ -235,6 +235,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           }
         }
 
+        // Shift+Enter - Send ESC + CR for newline in Claude Code and similar apps
+        // This is the standard escape sequence expected by Claude Code CLI
+        // See: https://kane.mx/posts/2025/vscode-remote-ssh-claude-code-keybindings/
+        if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter") {
+          ws.send(JSON.stringify({ type: "input", data: "\x1b\r" })); // ESC + CR
+          return false;
+        }
+
         return true; // Let xterm handle other key combinations
       });
 
