@@ -190,11 +190,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Custom keyboard handler for macOS shortcuts and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
       terminal.attachCustomKeyEventHandler((event) => {
-        // Block both keydown and keypress for Shift+Enter/Ctrl+Enter to prevent double input
-        if (event.key === "Enter" && (event.shiftKey || event.ctrlKey) && !event.altKey && !event.metaKey) {
-          if (event.type === "keypress") return false; // Block keypress to prevent duplicate
-        }
-
         if (event.type !== "keydown") return true;
 
         // Cmd+Enter: Let this bubble up to app-level handler (creates new terminal)
@@ -240,34 +235,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           }
         }
 
-        // Shift+Enter - Send Kitty keyboard protocol sequence
-        // xterm.js doesn't yet support extended keyboard protocols (PR #5424 pending)
-        // so we manually send CSI 13;2u (Enter=13, Shift modifier=2)
-        // This allows apps like Claude Code to distinguish Shift+Enter from Enter
-        if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter") {
-          event.preventDefault();
-          event.stopPropagation();
-          ws.send(JSON.stringify({ type: "input", data: "\x1b[13;2u" }));
-          return false;
-        }
-
-        // Ctrl+Enter - Send CSI 13;5u (Enter=13, Ctrl modifier=5)
-        if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key === "Enter") {
-          event.preventDefault();
-          event.stopPropagation();
-          ws.send(JSON.stringify({ type: "input", data: "\x1b[13;5u" }));
-          return false;
-        }
-
         return true; // Let xterm handle other key combinations
       });
-
-      // Prevent browser's default context menu on right-click
-      // xterm.js has its own context menu (copy/paste), so we only need to block the browser's
-      const handleContextMenu = (e: MouseEvent) => {
-        e.preventDefault();
-      };
-      terminalRef.current.addEventListener("contextmenu", handleContextMenu);
 
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
