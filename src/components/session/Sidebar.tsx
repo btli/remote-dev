@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
-  GitPullRequest, CircleDot, Clock, CalendarClock,
+  GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useSplitContext } from "@/contexts/SplitContext";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
+import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
+import { useSecretsContext } from "@/contexts/SecretsContext";
 
 export interface SessionFolder {
   id: string;
@@ -161,6 +163,11 @@ export function Sidebar({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const resizeStartXRef = useRef<number>(0);
   const resizeStartWidthRef = useRef<number>(0);
+
+  // Secrets modal state
+  const [secretsModalOpen, setSecretsModalOpen] = useState(false);
+  const [secretsModalFolderId, setSecretsModalFolderId] = useState<string | null>(null);
+  const { folderConfigs } = useSecretsContext();
 
   // Touch drag state for mobile
   const touchDragRef = useRef<{
@@ -1234,6 +1241,7 @@ export function Sidebar({
   };
 
   return (
+    <>
     <TooltipProvider delayDuration={200}>
     <div
       className={cn(
@@ -1687,6 +1695,18 @@ export function Sidebar({
                               </ContextMenuItem>
                               <ContextMenuItem
                                 onClick={() => {
+                                  setSecretsModalFolderId(node.id);
+                                  setSecretsModalOpen(true);
+                                }}
+                              >
+                                <KeyRound className="w-3.5 h-3.5 mr-2" />
+                                Secrets
+                                {folderConfigs.has(node.id) && folderConfigs.get(node.id)?.enabled && (
+                                  <span className="ml-auto text-[10px] text-green-400">Active</span>
+                                )}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => {
                                   setEditingId(node.id);
                                   setEditingType("folder");
                                   setEditValue(node.name);
@@ -1895,5 +1915,16 @@ export function Sidebar({
       )}
     </div>
     </TooltipProvider>
+
+      {/* Secrets configuration modal */}
+      <SecretsConfigModal
+        open={secretsModalOpen}
+        onClose={() => {
+          setSecretsModalOpen(false);
+          setSecretsModalFolderId(null);
+        }}
+        initialFolderId={secretsModalFolderId}
+      />
+    </>
   );
 }
