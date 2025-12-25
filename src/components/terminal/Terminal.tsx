@@ -190,6 +190,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Custom keyboard handler for macOS shortcuts and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
       terminal.attachCustomKeyEventHandler((event) => {
+        // Shift+Enter - Must handle BOTH keydown and keypress to prevent double input
+        // On keydown: send ESC+CR. On keypress: block to prevent xterm sending \r
+        // See: https://kane.mx/posts/2025/vscode-remote-ssh-claude-code-keybindings/
+        if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter") {
+          if (event.type === "keydown") {
+            const ws = wsRef.current;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "input", data: "\x1b\r" })); // ESC + CR
+            }
+          }
+          // Block both keydown and keypress to prevent xterm from also sending \r
+          return false;
+        }
+
         if (event.type !== "keydown") return true;
 
         // Cmd+Enter: Let this bubble up to app-level handler (creates new terminal)
@@ -233,14 +247,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               ws.send(JSON.stringify({ type: "input", data: "\x1bf" })); // ESC+f
               return false;
           }
-        }
-
-        // Shift+Enter - Send ESC + CR for newline in Claude Code and similar apps
-        // This is the standard escape sequence expected by Claude Code CLI
-        // See: https://kane.mx/posts/2025/vscode-remote-ssh-claude-code-keybindings/
-        if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter") {
-          ws.send(JSON.stringify({ type: "input", data: "\x1b\r" })); // ESC + CR
-          return false;
         }
 
         return true; // Let xterm handle other key combinations
