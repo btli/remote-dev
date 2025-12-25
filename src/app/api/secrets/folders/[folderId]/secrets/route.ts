@@ -25,7 +25,8 @@ export const GET = withAuth(async (_request, { userId, params }) => {
       return NextResponse.json({});
     }
 
-    return NextResponse.json(secrets);
+    // Return only the secrets key-value pairs, not the full FetchSecretsResult
+    return NextResponse.json(secrets.secrets);
   } catch (error) {
     if (error instanceof SecretsServiceError) {
       if (error.code === "NO_CONFIG") {
