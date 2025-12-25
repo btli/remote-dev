@@ -31,7 +31,7 @@ async function startServer() {
   if (MCP_ENABLED) {
     try {
       await initializeMCPServer();
-      console.log("[Server] MCP server started on stdio");
+      console.error("[Server] MCP server started on stdio");
     } catch (error) {
       console.error("[Server] Failed to start MCP server:", error);
       // Don't fail server startup if MCP fails
@@ -46,7 +46,7 @@ async function startServer() {
     if (MCP_ENABLED) {
       try {
         await shutdownMCPServer();
-        console.log("[Server] MCP server stopped");
+        console.error("[Server] MCP server stopped");
       } catch (error) {
         console.error("[Server] Error stopping MCP server:", error);
       }
