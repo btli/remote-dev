@@ -57,3 +57,13 @@ export class ScheduleServiceError extends ServiceError {
     super(message, code, scheduleId);
   }
 }
+
+export class SecretsServiceError extends ServiceError {
+  constructor(
+    message: string,
+    code: string,
+    public readonly provider?: string
+  ) {
+    super(message, code, provider);
+  }
+}
