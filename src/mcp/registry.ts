@@ -4,7 +4,7 @@
  * Provides type-safe builder functions for creating MCP components.
  * Handles Zod schema conversion to JSON Schema for MCP protocol.
  */
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import type {
   ToolDefinition,
   RegisteredTool,
@@ -20,13 +20,12 @@ import { formatError } from "./utils/error-handler";
 /**
  * Convert a Zod schema to JSON Schema format.
  *
- * Zod v4 has native JSON Schema support via toJsonSchema().
+ * Zod v4 has native JSON Schema support via z.toJSONSchema().
  * We use this instead of the external zod-to-json-schema package.
  */
 function zodToJsonSchema(schema: ZodType): Record<string, unknown> {
-  // Zod v4 provides native JSON Schema conversion
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const jsonSchema = (schema as any).toJsonSchema() as Record<string, unknown>;
+  // Zod v4 provides native JSON Schema conversion via static function
+  const jsonSchema = z.toJSONSchema(schema) as Record<string, unknown>;
 
   // Remove $schema property if present (not needed for MCP)
   delete jsonSchema.$schema;
