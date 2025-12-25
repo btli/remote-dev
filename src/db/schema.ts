@@ -773,3 +773,34 @@ export const commandExecutions = sqliteTable(
     index("command_execution_command_idx").on(table.commandId),
   ]
 );
+
+/**
+ * Setup configuration for first-run wizard.
+ * Stores app-wide configuration set during initial setup.
+ */
+export const setupConfig = sqliteTable("setup_config", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  // Directory and ports
+  workingDirectory: text("working_directory").notNull(),
+  nextPort: integer("next_port").notNull().default(3000),
+  terminalPort: integer("terminal_port").notNull().default(3001),
+  // WSL configuration (Windows only)
+  wslDistribution: text("wsl_distribution"),
+  // Startup options
+  autoStart: integer("auto_start", { mode: "boolean" }).notNull().default(true),
+  checkForUpdates: integer("check_for_updates", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  // Setup status
+  isComplete: integer("is_complete", { mode: "boolean" }).notNull().default(false),
+  completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  // Timestamps
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
