@@ -19,6 +19,11 @@ import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSplitContext } from "@/contexts/SplitContext";
 import { useTrashContext } from "@/contexts/TrashContext";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
+import { useSecretsContext } from "@/contexts/SecretsContext";
+import {
+  getEnvironmentWithSecretsSync,
+  prefetchSecretsForFolder,
+} from "@/hooks/useEnvironmentWithSecrets";
 import type { FolderRepoStats } from "./Sidebar";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -252,6 +257,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     getEnvironmentForFolder,
   } = usePreferencesContext();
 
+  // Secrets state from context
+  const { fetchSecretsForFolder, configuredFolderIds } = useSecretsContext();
+
   // GitHub stats for repo badges on folders
   const { getRepositoryById } = useGitHubStats();
 
@@ -280,6 +288,35 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [activeSessionId, isSplitMode]);
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
+
+  // Pre-fetch secrets for active session folders that have secrets configured
+  useEffect(() => {
+    const foldersWithSecrets = new Set<string>();
+
+    // Find unique folderIds from active sessions that have secrets configured
+    for (const session of activeSessions) {
+      if (session.folderId && configuredFolderIds.includes(session.folderId)) {
+        foldersWithSecrets.add(session.folderId);
+      }
+    }
+
+    // Pre-fetch secrets for each folder
+    for (const folderId of foldersWithSecrets) {
+      prefetchSecretsForFolder(folderId, fetchSecretsForFolder);
+    }
+  }, [activeSessions, configuredFolderIds, fetchSecretsForFolder]);
+
+  /**
+   * Get environment variables for a folder, merged with secrets.
+   * Uses cached secrets from the pre-fetch effect.
+   */
+  const getEnvironmentWithSecrets = useCallback(
+    (folderId: string | null): Record<string, string> | null => {
+      const folderEnv = getEnvironmentForFolder(folderId);
+      return getEnvironmentWithSecretsSync(folderId, folderEnv);
+    },
+    [getEnvironmentForFolder]
+  );
   const autoFollowEnabled = userSettings?.autoFollowActiveSession ?? true;
 
   // Helper to get folder name by ID
@@ -1195,7 +1232,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     onResize={handleSplitResize}
                     onSessionExit={handlePaneSessionExit}
                     resolvePreferences={resolvePreferencesForFolder}
-                    getEnvironmentForFolder={getEnvironmentForFolder}
+                    getEnvironmentForFolder={getEnvironmentWithSecrets}
                     sessionFolders={sessionFolders}
                     wsUrl={wsUrl}
                   />
@@ -1229,7 +1266,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           notificationsEnabled={true}
                           isRecording={isRecording}
                           isActive={session.id === activeSessionId}
-                          environmentVars={getEnvironmentForFolder(folderId)}
+                          environmentVars={getEnvironmentWithSecrets(folderId)}
                           onOutput={isRecording ? recordOutput : undefined}
                           onDimensionsChange={isRecording ? updateDimensions : undefined}
                           onSessionRestart={() => handleSessionRestart(session)}

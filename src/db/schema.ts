@@ -228,6 +228,39 @@ export const portRegistry = sqliteTable(
   ]
 );
 
+// Folder-level secrets provider configuration
+export const folderSecretsConfig = sqliteTable(
+  "folder_secrets_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    folderId: text("folder_id")
+      .notNull()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(), // "phase" | "vault" | "aws-secrets-manager" | "1password"
+    // Provider-specific config as JSON:
+    // Phase: { "app": "my-app", "env": "development", "serviceToken": "pss_..." }
+    // Vault: { "url": "https://vault.example.com", "path": "secret/data/myapp", "token": "..." }
+    providerConfig: text("provider_config").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastFetchedAt: integer("last_fetched_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("folder_secrets_config_folder_user_idx").on(table.folderId, table.userId),
+    index("folder_secrets_config_user_idx").on(table.userId),
+  ]
+);
+
 // Split groups for terminal split panes
 export const splitGroups = sqliteTable(
   "split_group",
