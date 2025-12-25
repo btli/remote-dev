@@ -187,9 +187,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       terminal.open(terminalRef.current);
 
-      // Custom keyboard handler for macOS shortcuts
+      // Custom keyboard handler for macOS shortcuts and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
       terminal.attachCustomKeyEventHandler((event) => {
+        // Block both keydown and keypress for Shift+Enter/Ctrl+Enter to prevent double input
+        if (event.key === "Enter" && (event.shiftKey || event.ctrlKey) && !event.altKey && !event.metaKey) {
+          if (event.type === "keypress") return false; // Block keypress to prevent duplicate
+        }
+
         if (event.type !== "keydown") return true;
 
         // Cmd+Enter: Let this bubble up to app-level handler (creates new terminal)
