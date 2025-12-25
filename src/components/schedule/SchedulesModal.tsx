@@ -44,11 +44,15 @@ import { ExecutionHistoryModal } from "./ExecutionHistoryModal";
 interface SchedulesModalProps {
   open: boolean;
   onClose: () => void;
+  /** Optional session ID to filter schedules for a specific session */
+  sessionId?: string;
+  /** Optional session name for display in header */
+  sessionName?: string;
 }
 
-export function SchedulesModal({ open, onClose }: SchedulesModalProps) {
+export function SchedulesModal({ open, onClose, sessionId, sessionName }: SchedulesModalProps) {
   const {
-    schedules,
+    schedules: allSchedules,
     loading,
     error,
     refreshSchedules,
@@ -56,6 +60,11 @@ export function SchedulesModal({ open, onClose }: SchedulesModalProps) {
     deleteSchedule,
     executeNow,
   } = useScheduleContext();
+
+  // Filter schedules by session if sessionId is provided
+  const schedules = sessionId
+    ? allSchedules.filter((s) => s.sessionId === sessionId)
+    : allSchedules;
 
   const [selectedSchedule, setSelectedSchedule] = useState<SessionScheduleWithSession | null>(
     null
@@ -198,7 +207,7 @@ export function SchedulesModal({ open, onClose }: SchedulesModalProps) {
               <div className="flex items-center gap-2">
                 <Clock className="w-5 h-5 text-violet-400" />
                 <DialogTitle className="text-xl font-semibold text-white">
-                  Scheduled Commands
+                  {sessionId ? "Session Schedules" : "Scheduled Commands"}
                 </DialogTitle>
               </div>
               <Button
@@ -212,7 +221,9 @@ export function SchedulesModal({ open, onClose }: SchedulesModalProps) {
               </Button>
             </div>
             <DialogDescription className="text-slate-400">
-              Manage scheduled commands across all sessions
+              {sessionId && sessionName
+                ? `Scheduled commands for "${sessionName}"`
+                : "Manage scheduled commands across all sessions"}
             </DialogDescription>
           </DialogHeader>
 

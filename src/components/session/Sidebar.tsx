@@ -99,6 +99,7 @@ interface SidebarProps {
   trashCount: number;
   onTrashOpen: () => void;
   onSessionSchedule?: (sessionId: string) => void;
+  onSessionSchedulesView?: (sessionId: string, sessionName: string) => void;
   onSchedulesOpen?: () => void;
 }
 
@@ -138,6 +139,7 @@ export function Sidebar({
   trashCount,
   onTrashOpen,
   onSessionSchedule,
+  onSessionSchedulesView,
   onSchedulesOpen,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -938,7 +940,7 @@ export function Sidebar({
               )}
             </div>
 
-            {/* Schedule count indicator - right side */}
+            {/* Schedule count indicator - right side, clickable */}
             {(() => {
               const schedules = getSchedulesForSession(session.id);
               const activeCount = schedules.filter(s => s.enabled).length;
@@ -946,13 +948,19 @@ export function Sidebar({
               return (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="flex items-center gap-0.5 text-[9px] text-amber-400 shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSessionSchedulesView?.(session.id, session.name);
+                      }}
+                      className="flex items-center gap-0.5 text-[9px] text-amber-400 shrink-0 hover:text-amber-300 transition-colors"
+                    >
                       <Clock className="w-2.5 h-2.5" />
                       {activeCount}
-                    </span>
+                    </button>
                   </TooltipTrigger>
                   <TooltipContent side="right" className="text-xs">
-                    {activeCount} scheduled command{activeCount !== 1 ? 's' : ''}
+                    {activeCount} scheduled command{activeCount !== 1 ? 's' : ''} - click to view
                   </TooltipContent>
                 </Tooltip>
               );
