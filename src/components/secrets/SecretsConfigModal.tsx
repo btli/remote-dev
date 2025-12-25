@@ -53,9 +53,11 @@ import { cn } from "@/lib/utils";
 interface SecretsConfigModalProps {
   open: boolean;
   onClose: () => void;
+  /** Pre-select a folder when opening from folder context menu */
+  initialFolderId?: string | null;
 }
 
-export function SecretsConfigModal({ open, onClose }: SecretsConfigModalProps) {
+export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsConfigModalProps) {
   const { activeProject } = usePreferencesContext();
   const { folders } = useFolderContext();
   const {
@@ -67,8 +69,8 @@ export function SecretsConfigModal({ open, onClose }: SecretsConfigModalProps) {
     loading,
   } = useSecretsContext();
 
-  // Editing state
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  // Editing state - use initialFolderId if provided
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(initialFolderId ?? null);
   const [provider, setProvider] = useState<SecretsProviderType>("phase");
   const [config, setConfig] = useState<Record<string, string>>({});
   const [enabled, setEnabled] = useState(true);
@@ -93,21 +95,24 @@ export function SecretsConfigModal({ open, onClose }: SecretsConfigModalProps) {
   // Reset form when modal opens
   useEffect(() => {
     if (open) {
-      // If active folder has a config, show configure tab
-      if (activeProject.folderId) {
-        const existingConfig = getConfigForFolder(activeProject.folderId);
+      // Use initialFolderId if provided (from context menu), otherwise use activeProject.folderId
+      const targetFolderId = initialFolderId ?? activeProject.folderId;
+
+      if (targetFolderId) {
+        const existingConfig = getConfigForFolder(targetFolderId);
         if (existingConfig) {
-          setSelectedFolderId(activeProject.folderId);
+          setSelectedFolderId(targetFolderId);
           setProvider(existingConfig.provider);
           setConfig(existingConfig.providerConfig);
           setEnabled(existingConfig.enabled);
           setActiveTab("configure");
         } else {
-          setSelectedFolderId(activeProject.folderId);
+          setSelectedFolderId(targetFolderId);
           setProvider("phase");
           setConfig({ app: "", env: "development", serviceToken: "" });
           setEnabled(true);
-          setActiveTab(configuredFolders.length > 0 ? "overview" : "configure");
+          // Go directly to configure when opening from context menu
+          setActiveTab(initialFolderId ? "configure" : (configuredFolders.length > 0 ? "overview" : "configure"));
         }
       } else {
         setActiveTab("overview");
@@ -115,7 +120,7 @@ export function SecretsConfigModal({ open, onClose }: SecretsConfigModalProps) {
       setTestResult(null);
       setError(null);
     }
-  }, [open, activeProject.folderId, getConfigForFolder, configuredFolders.length]);
+  }, [open, initialFolderId, activeProject.folderId, getConfigForFolder, configuredFolders.length]);
 
   // Load config when folder selection changes
   useEffect(() => {
