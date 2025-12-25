@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
+import { clearSecretsCache } from "@/hooks/useEnvironmentWithSecrets";
 import type { UpdateFolderPreferencesInput, Preferences } from "@/types/preferences";
 import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types/environment";
 import { getSourceLabel } from "@/lib/preferences";
@@ -96,6 +97,7 @@ export function FolderPreferencesModal({
     deleteFolderPreferences,
     folders,
     resolvePreferencesForFolder,
+    refreshPreferences,
   } = usePreferencesContext();
 
   // Get parent folder to compute inherited preferences
@@ -218,6 +220,13 @@ export function FolderPreferencesModal({
     try {
       const validation = await updateFolderPreferences(folderId, localSettings);
 
+      // Clear secrets cache for this folder since env vars may have changed
+      // This ensures new sessions fetch fresh secrets with updated environment
+      clearSecretsCache(folderId);
+
+      // Refresh preferences to ensure all consumers get the latest state
+      await refreshPreferences();
+
       // Update port conflicts from validation result
       if (validation?.hasConflicts) {
         setPortConflicts(validation.conflicts);
@@ -239,6 +248,11 @@ export function FolderPreferencesModal({
     setSaveError(null);
     try {
       await deleteFolderPreferences(folderId);
+
+      // Clear secrets cache and refresh to ensure state is in sync
+      clearSecretsCache(folderId);
+      await refreshPreferences();
+
       onClose();
     } catch (error) {
       console.error("Failed to reset folder preferences:", error);
