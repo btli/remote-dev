@@ -21,6 +21,7 @@ import type {
   SecretsValidationResult,
   UpdateFolderSecretsConfigInput,
 } from "@/types/secrets";
+import { clearSecretsCache } from "@/hooks/useEnvironmentWithSecrets";
 
 interface SecretsContextValue {
   // State
@@ -126,6 +127,9 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
         return next;
       });
 
+      // Clear cached secrets so new sessions fetch fresh values
+      clearSecretsCache(folderId);
+
       return updated;
     },
     []
@@ -147,6 +151,9 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
       next.delete(folderId);
       return next;
     });
+
+    // Clear cached secrets since config is now deleted
+    clearSecretsCache(folderId);
   }, []);
 
   const toggleEnabled = useCallback(
@@ -175,6 +182,9 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
         next.set(folderId, updated);
         return next;
       });
+
+      // Clear cached secrets since enabled state changed
+      clearSecretsCache(folderId);
     },
     [folderConfigs]
   );
