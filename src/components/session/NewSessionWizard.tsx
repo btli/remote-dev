@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock } from "lucide-react";
+import { PathInput } from "@/components/common";
 import { useTemplateContext } from "@/contexts/TemplateContext";
 import { expandNamePattern, type SessionTemplate } from "@/types/template";
 import {
@@ -482,12 +483,13 @@ export function NewSessionWizard({
                   <Label htmlFor="project-path" className="text-sm text-slate-300">
                     Working Directory
                   </Label>
-                  <Input
+                  <PathInput
                     id="project-path"
                     value={projectPath}
-                    onChange={(e) => setProjectPath(e.target.value)}
+                    onChange={setProjectPath}
                     placeholder="/path/to/project"
-                    className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                    browserTitle="Select Working Directory"
+                    browserDescription="Choose a directory to start your terminal session in"
                   />
                   <p className="text-xs text-slate-500">
                     Leave empty to use your home directory
@@ -701,12 +703,13 @@ export function NewSessionWizard({
                 <Label htmlFor="feature-path" className="text-sm text-slate-300">
                   Project Path
                 </Label>
-                <Input
+                <PathInput
                   id="feature-path"
                   value={featureProjectPath}
-                  onChange={(e) => setFeatureProjectPath(e.target.value)}
+                  onChange={setFeatureProjectPath}
                   placeholder="/path/to/project"
-                  className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                  browserTitle="Select Project"
+                  browserDescription="Choose a project directory for your feature session"
                 />
               </div>
 

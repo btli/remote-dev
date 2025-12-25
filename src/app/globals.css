@@ -605,3 +605,28 @@
   filter: invert(0.7);
 }
 
+/* ============================================================================
+   Sidebar Tree View Lines - Vertical lines only
+   ============================================================================ */
+
+:root {
+  --tree-line-color: oklch(1 0 0 / 12%);
+}
+
+/* Tree item container */
+.tree-item {
+  position: relative;
+}
+
+/* Vertical line - full height */
+.tree-item::before {
+  content: '';
+  position: absolute;
+  left: var(--tree-connector-left);
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--tree-line-color);
+  pointer-events: none;
+}
+
