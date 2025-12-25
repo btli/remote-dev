@@ -6,7 +6,7 @@ import { validateProviderConfig } from "@/services/secrets-service";
  * POST /api/secrets/validate
  * Validates provider configuration and credentials
  */
-export const POST = withAuth(async (request, { userId: _userId }) => {
+export const POST = withAuth(async (request) => {
   const body = await request.json();
   const { provider, config } = body;
 

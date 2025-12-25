@@ -129,7 +129,7 @@ export class LinuxAdapter implements PlatformAdapter {
         timeout: 300000,
       });
       return { success: true };
-    } catch (error) {
+    } catch {
       return {
         success: false,
         error: `Installation requires sudo. Run: ${this.getInstallCommand(name)}`,
