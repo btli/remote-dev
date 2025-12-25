@@ -140,6 +140,7 @@ MCP_USER_ID=<uuid>    # Override user ID for MCP requests (optional)
 | `trash_item` | Polymorphic trash items with 30-day retention |
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
+| `folder_secrets_config` | Per-folder secrets provider configuration |
 
 ### Service Layer
 
@@ -160,6 +161,7 @@ Located in `src/services/`:
 | `TrashService` | Polymorphic trash management, cleanup scheduling |
 | `WorktreeTrashService` | Worktree-specific trash operations, restore logic |
 | `PortRegistryService` | Port allocation tracking and conflict detection |
+| `SecretsService` | Secrets provider abstraction, credential management |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -188,6 +190,8 @@ Located in `src/services/`:
 | `SaveRecordingModal.tsx` | Save current recording |
 | `FolderPreferencesModal.tsx` | Per-folder preference overrides |
 | `UserSettingsModal.tsx` | User-level preferences |
+| `SecretsConfigModal.tsx` | Configure secrets providers per folder |
+| `SecretsStatusButton.tsx` | Header indicator for secrets connection status |
 | `DirectoryBrowser.tsx` | Modal for visual filesystem directory navigation |
 | `PathInput.tsx` | Text input with browse button for directory selection |
 
@@ -204,6 +208,7 @@ React Contexts in `src/contexts/`:
 | `RecordingContext` | Recording state management |
 | `SplitContext` | Split pane groups and active pane tracking |
 | `TrashContext` | Trash items state and operations |
+| `SecretsContext` | Secrets provider configurations and state |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -316,6 +321,15 @@ React Contexts in `src/contexts/`:
 - `GET /api/trash/:id/restore` - Check restore availability
 - `POST /api/trash/:id/restore` - Restore from trash
 - `POST /api/cron/trash-cleanup` - Scheduled cleanup endpoint (30-day retention)
+
+### Secrets
+- `GET /api/secrets/configs` - List all folder secrets configurations
+- `GET /api/secrets/folders/:folderId` - Get folder secrets config
+- `PUT /api/secrets/folders/:folderId` - Create/update secrets config
+- `PATCH /api/secrets/folders/:folderId` - Toggle secrets enabled
+- `DELETE /api/secrets/folders/:folderId` - Delete secrets config
+- `GET /api/secrets/folders/:folderId/secrets` - Fetch secret values from provider
+- `POST /api/secrets/validate` - Validate provider credentials
 
 ## Adding Authorized Users
 
