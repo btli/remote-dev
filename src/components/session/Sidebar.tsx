@@ -958,22 +958,27 @@ export function Sidebar({
               );
             })()}
 
-            {/* Close button */}
-            {!isEditing && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSessionCloseRequest(session);
-                }}
-                className={cn(
-                  "p-0.5 rounded opacity-0 group-hover:opacity-100",
-                  "hover:bg-white/10 transition-all duration-150",
-                  "text-slate-500 hover:text-red-400"
-                )}
-              >
-                <X className="w-3 h-3" />
-              </button>
-            )}
+            {/* Close button - hidden if session has scheduled commands */}
+            {!isEditing && (() => {
+              const schedules = getSchedulesForSession(session.id);
+              const hasActiveSchedules = schedules.some(s => s.enabled);
+              if (hasActiveSchedules) return null;
+              return (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSessionCloseRequest(session);
+                  }}
+                  className={cn(
+                    "p-0.5 rounded opacity-0 group-hover:opacity-100",
+                    "hover:bg-white/10 transition-all duration-150",
+                    "text-slate-500 hover:text-red-400"
+                  )}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              );
+            })()}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
