@@ -214,6 +214,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isCreateScheduleOpen, setIsCreateScheduleOpen] = useState(false);
   const [scheduleTargetSession, setScheduleTargetSession] = useState<typeof activeSessions[0] | null>(null);
   const [isSchedulesOpen, setIsSchedulesOpen] = useState(false);
+  const [schedulesFilterSession, setSchedulesFilterSession] = useState<{ id: string; name: string } | null>(null);
 
   // Get trash count for a specific folder
   const getFolderTrashCount = useCallback(
@@ -1044,7 +1045,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
             onSessionSchedule={handleScheduleSession}
-            onSchedulesOpen={() => setIsSchedulesOpen(true)}
+            onSessionSchedulesView={(sessionId, sessionName) => {
+              setSchedulesFilterSession({ id: sessionId, name: sessionName });
+              setIsSchedulesOpen(true);
+            }}
+            onSchedulesOpen={() => {
+              setSchedulesFilterSession(null);
+              setIsSchedulesOpen(true);
+            }}
           />
       </div>
 
@@ -1329,7 +1337,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       {/* Schedules Management Modal */}
       <SchedulesModal
         open={isSchedulesOpen}
-        onClose={() => setIsSchedulesOpen(false)}
+        onClose={() => {
+          setIsSchedulesOpen(false);
+          setSchedulesFilterSession(null);
+        }}
+        sessionId={schedulesFilterSession?.id}
+        sessionName={schedulesFilterSession?.name}
       />
     </div>
   );
