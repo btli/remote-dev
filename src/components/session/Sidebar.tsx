@@ -880,7 +880,7 @@ export function Sidebar({
                   onSessionClick(session.id);
                 }
               }}
-              style={{ marginLeft: depth > 0 ? `${(depth + 1) * 12}px` : undefined }}
+              style={{ marginLeft: depth > 0 ? `${depth * 12}px` : undefined }}
               className={cn(
                 "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
                 "transition-all duration-200",
@@ -1089,7 +1089,7 @@ export function Sidebar({
   };
 
   /**
-   * Renders sessions with split group handling.
+   * Renders sessions with split group handling and optional tree line support.
    * Consolidates duplicate logic from folder and root session rendering.
    */
   const renderSessionsWithSplits = (
@@ -1098,17 +1098,48 @@ export function Sidebar({
       folderId: string | null;
       depth: number;
       indentStyle?: React.CSSProperties;
+      // Tree line options - when provided, wraps items in tree-item divs
+      treeLineLeft?: number;
+      trashCount?: number; // To determine if session is last (trash comes after)
     }
   ): React.ReactNode[] => {
-    const { folderId, depth, indentStyle } = options;
+    const { folderId, depth, indentStyle, treeLineLeft, trashCount = 0 } = options;
     const renderedSessionIds = new Set<string>();
     const elements: React.ReactNode[] = [];
+
+    // Build list of elements to render (for determining last item)
+    const itemsToRender: { type: 'session' | 'split'; session?: TerminalSession; splitGroup?: unknown }[] = [];
+    sessionsToRender.forEach((session) => {
+      if (renderedSessionIds.has(session.id)) return;
+      const splitGroup = getSplitForSession(session.id);
+      if (splitGroup) {
+        const splitSessions = splitGroup.sessions
+          .sort((a, b) => a.splitOrder - b.splitOrder)
+          .map((ss) => sessions.find((s) => s.id === ss.sessionId))
+          .filter((s): s is TerminalSession => {
+            if (!s) return false;
+            return folderId !== null ? s.folderId === folderId : !s.folderId;
+          });
+        splitSessions.forEach((s) => renderedSessionIds.add(s.id));
+        if (splitSessions.length > 0) {
+          itemsToRender.push({ type: 'split', splitGroup });
+        }
+      } else {
+        renderedSessionIds.add(session.id);
+        itemsToRender.push({ type: 'session', session });
+      }
+    });
+
+    // Reset for actual rendering
+    renderedSessionIds.clear();
 
     sessionsToRender.forEach((session) => {
       // Skip if already rendered as part of a split group
       if (renderedSessionIds.has(session.id)) return;
 
       const splitGroup = getSplitForSession(session.id);
+      const currentIndex = elements.length;
+      const isLastItem = trashCount === 0 && currentIndex === itemsToRender.length - 1;
 
       if (splitGroup) {
         // Render the entire split group
@@ -1124,7 +1155,7 @@ export function Sidebar({
         splitSessions.forEach((s) => renderedSessionIds.add(s.id));
 
         if (splitSessions.length > 0) {
-          elements.push(
+          const splitElement = (
             <div
               key={`split-${splitGroup.id}`}
               style={indentStyle}
@@ -1154,11 +1185,48 @@ export function Sidebar({
               ))}
             </div>
           );
+
+          // Wrap in tree-item if tree lines enabled
+          if (treeLineLeft !== undefined) {
+            elements.push(
+              <div
+                key={`tree-split-${splitGroup.id}`}
+                className="tree-item"
+                data-tree-last={isLastItem ? "true" : undefined}
+                style={{
+                  '--tree-connector-left': `${treeLineLeft}px`,
+                  '--tree-connector-width': '8px',
+                } as React.CSSProperties}
+              >
+                {splitElement}
+              </div>
+            );
+          } else {
+            elements.push(splitElement);
+          }
         }
       } else {
         // Render as a regular session
         renderedSessionIds.add(session.id);
-        elements.push(renderSession(session, depth, folderId));
+
+        // Wrap in tree-item if tree lines enabled
+        if (treeLineLeft !== undefined) {
+          elements.push(
+            <div
+              key={`tree-${session.id}`}
+              className="tree-item"
+              data-tree-last={isLastItem ? "true" : undefined}
+              style={{
+                '--tree-connector-left': `${treeLineLeft}px`,
+                '--tree-connector-width': '8px',
+              } as React.CSSProperties}
+            >
+              {renderSession(session, depth, folderId)}
+            </div>
+          );
+        } else {
+          elements.push(renderSession(session, depth, folderId));
+        }
       }
     });
 
@@ -1680,60 +1748,94 @@ export function Sidebar({
 
                       {/* Child folders and sessions when not collapsed */}
                       {!node.collapsed && (
-                        <>
-                          {node.children.map((child) => renderFolderNode(child))}
-                          {/* Sessions with split group handling */}
+                        <div
+                          className="tree-children"
+                          style={{
+                            '--tree-line-left': `${node.depth * 12 + 8 + 7}px`,
+                          } as React.CSSProperties}
+                        >
+                          {/* Render child folders with tree-item wrappers */}
+                          {node.children.map((child, idx) => {
+                            const isLastChild = folderSessions.length === 0 &&
+                              getFolderTrashCount(node.id) === 0 &&
+                              idx === node.children.length - 1;
+                            return (
+                              <div
+                                key={child.id}
+                                className="tree-item"
+                                data-tree-last={isLastChild ? "true" : undefined}
+                                style={{
+                                  '--tree-connector-left': `${node.depth * 12 + 8 + 7}px`,
+                                  '--tree-connector-width': '8px',
+                                } as React.CSSProperties}
+                              >
+                                {renderFolderNode(child)}
+                              </div>
+                            );
+                          })}
+                          {/* Sessions with split group handling and tree lines */}
                           {renderSessionsWithSplits(folderSessions, {
                             folderId: node.id,
                             depth: node.depth + 1,
                             indentStyle: { marginLeft: `${(node.depth + 1) * 12}px` },
+                            treeLineLeft: node.depth * 12 + 8 + 7,
+                            trashCount: getFolderTrashCount(node.id),
                           })}
-                          {/* Trash indicator for folder */}
+                          {/* Trash indicator for folder - always last when present */}
                           {getFolderTrashCount(node.id) > 0 && (
-                            <ContextMenu>
-                              <ContextMenuTrigger asChild>
-                                <div
-                                  role="button"
-                                  tabIndex={0}
-                                  aria-label="Trash"
-                                  style={{ marginLeft: `${(node.depth + 1) * 12}px` }}
-                                  onClick={onTrashOpen}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === " ") {
-                                      e.preventDefault();
-                                      onTrashOpen();
-                                    }
-                                  }}
-                                  className={cn(
-                                    "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-                                    "text-slate-500 hover:text-slate-400 hover:bg-white/5",
-                                    "transition-colors duration-150"
-                                  )}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span className="text-xs">.trash</span>
-                                  <span className="ml-auto text-[10px] text-slate-600">
-                                    {getFolderTrashCount(node.id)}
-                                  </span>
-                                </div>
-                              </ContextMenuTrigger>
-                              <ContextMenuContent className="w-48">
-                                <ContextMenuItem onClick={onTrashOpen}>
-                                  <FolderOpen className="w-3.5 h-3.5 mr-2" />
-                                  View Trash
-                                </ContextMenuItem>
-                                <ContextMenuSeparator />
-                                <ContextMenuItem
-                                  onClick={() => onEmptyTrash(node.id)}
-                                  className="text-red-400 focus:text-red-400"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5 mr-2" />
-                                  Empty Permanently
-                                </ContextMenuItem>
-                              </ContextMenuContent>
-                            </ContextMenu>
+                            <div
+                              className="tree-item"
+                              data-tree-last="true"
+                              style={{
+                                '--tree-connector-left': `${node.depth * 12 + 8 + 7}px`,
+                                '--tree-connector-width': '8px',
+                              } as React.CSSProperties}
+                            >
+                              <ContextMenu>
+                                <ContextMenuTrigger asChild>
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label="Trash"
+                                    style={{ marginLeft: `${(node.depth + 1) * 12}px` }}
+                                    onClick={onTrashOpen}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        onTrashOpen();
+                                      }
+                                    }}
+                                    className={cn(
+                                      "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
+                                      "text-slate-500 hover:text-slate-400 hover:bg-white/5",
+                                      "transition-colors duration-150"
+                                    )}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span className="text-xs">.trash</span>
+                                    <span className="ml-auto text-[10px] text-slate-600">
+                                      {getFolderTrashCount(node.id)}
+                                    </span>
+                                  </div>
+                                </ContextMenuTrigger>
+                                <ContextMenuContent className="w-48">
+                                  <ContextMenuItem onClick={onTrashOpen}>
+                                    <FolderOpen className="w-3.5 h-3.5 mr-2" />
+                                    View Trash
+                                  </ContextMenuItem>
+                                  <ContextMenuSeparator />
+                                  <ContextMenuItem
+                                    onClick={() => onEmptyTrash(node.id)}
+                                    className="text-red-400 focus:text-red-400"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                    Empty Permanently
+                                  </ContextMenuItem>
+                                </ContextMenuContent>
+                              </ContextMenu>
+                            </div>
                           )}
-                        </>
+                        </div>
                       )}
                     </div>
                   );
