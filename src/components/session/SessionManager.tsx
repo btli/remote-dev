@@ -446,7 +446,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   ]);
 
   const handleCloseSession = useCallback(
-    async (sessionId: string, _options?: { deleteWorktree?: boolean }) => {
+    async (sessionId: string, options?: { deleteWorktree?: boolean }) => {
+      void options; // Both options go to trash for recovery
       try {
         // Check if this session has a worktree - if so, trash it instead of closing
         // Both "keep worktree" and "delete worktree" options go to trash for recovery
@@ -715,29 +716,27 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         await closeSession(session.id);
 
         // Create a new session with the same configuration
-        const newSession = await createSession({
+        // Include folderId so the session is created with folder preferences
+        // (resolves defaultWorkingDirectory from folder settings)
+        await createSession({
           name: session.name,
+          folderId: session.folderId ?? undefined,
           projectPath: session.projectPath ?? undefined,
           githubRepoId: session.githubRepoId ?? undefined,
           worktreeBranch: session.worktreeBranch ?? undefined,
         });
-
-        // Move to the same folder if applicable
-        const folderId = session.folderId || null;
-        if (folderId && newSession) {
-          await moveSessionToFolder(newSession.id, folderId);
-        }
       } catch (error) {
         logSessionError("restart session", error);
       }
     },
-    [closeSession, createSession, moveSessionToFolder, logSessionError]
+    [closeSession, createSession, logSessionError]
   );
 
   // Handle deleting a session (with optional worktree deletion)
   // Both options ("keep worktree" and "delete worktree") go to trash for recovery
   const handleSessionDelete = useCallback(
-    async (session: typeof activeSessions[0], _deleteWorktree?: boolean) => {
+    async (session: typeof activeSessions[0], deleteWorktree?: boolean) => {
+      void deleteWorktree; // Both options go to trash for recovery
       // For worktree sessions, always use trash for recovery
       // The trash system moves the worktree to .trash directory
       if (session.worktreeBranch && session.projectPath) {
