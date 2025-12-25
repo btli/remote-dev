@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import { resolve } from "path";
-import { readdirSync, statSync, existsSync } from "fs";
+import { resolve, sep } from "path";
+import { readdir, stat, access, realpath } from "fs/promises";
+import { constants } from "fs";
 
 interface DirectoryEntry {
   name: string;
@@ -11,38 +12,69 @@ interface DirectoryEntry {
 
 /**
  * Validate and resolve a path for directory browsing
- * Security: Only allow paths within HOME, /tmp, or common root directories
+ *
+ * SECURITY:
+ * - Uses realpath() to resolve symlinks before validation (prevents /var -> /private/var bypass)
+ * - Requires exact prefix match with path separator (prevents /Users-evil bypass)
+ * - Only allows paths within HOME, /tmp, or common user directories
  */
-function validateBrowsePath(path: string): string | null {
-  if (!path) return null;
+async function validateBrowsePath(inputPath: string): Promise<string | null> {
+  if (!inputPath) return null;
 
-  const resolved = resolve(path);
-  const home = process.env.HOME || "/tmp";
+  try {
+    // First resolve the path normally
+    const resolved = resolve(inputPath);
 
-  // Allow paths within home, /tmp, or common development roots
-  const allowedPrefixes = [
-    home,
-    "/tmp",
-    "/Users",  // macOS
-    "/home",   // Linux
-    "/var",    // For some dev setups
-  ];
+    // Then resolve symlinks to get the real path
+    // This prevents bypasses like /var -> /private/var on macOS
+    let realPath: string;
+    try {
+      realPath = await realpath(resolved);
+    } catch {
+      // If realpath fails (path doesn't exist), use resolved path
+      // The existence check later will handle non-existent paths
+      realPath = resolved;
+    }
 
-  if (!allowedPrefixes.some(prefix => resolved.startsWith(prefix))) {
+    const home = process.env.HOME || "/tmp";
+
+    // Allow paths within home, /tmp, or common development roots
+    // Note: On macOS, /var is a symlink to /private/var, so we include /private/var
+    const allowedPrefixes = [
+      home,
+      "/tmp",
+      "/private/tmp",  // macOS realpath for /tmp
+      "/Users",
+      "/home",
+      "/private/var",  // macOS realpath for /var
+    ];
+
+    // SECURITY: Check that path equals prefix OR starts with prefix + separator
+    // This prevents bypasses like /Users-evil or /home-hack
+    const isAllowed = allowedPrefixes.some(prefix =>
+      realPath === prefix || realPath.startsWith(prefix + sep)
+    );
+
+    if (!isAllowed) {
+      return null;
+    }
+
+    return realPath;
+  } catch {
     return null;
   }
-
-  return resolved;
 }
 
 /**
  * GET /api/directories - List contents of a directory
+ *
  * Query params:
  *   - path: The filesystem path to browse (defaults to HOME)
  *   - showHidden: Whether to show hidden files (default: false)
  *   - dirsOnly: Whether to show only directories (default: true)
+ *
  * Returns:
- *   - path: Current path
+ *   - path: Current path (realpath resolved)
  *   - parent: Parent path (null if at root of allowed area)
  *   - entries: Array of directory entries
  */
@@ -52,22 +84,25 @@ export const GET = withAuth(async (request) => {
   const showHidden = searchParams.get("showHidden") === "true";
   const dirsOnly = searchParams.get("dirsOnly") !== "false";
 
-  const path = validateBrowsePath(rawPath);
-  if (!path) {
+  const validatedPath = await validateBrowsePath(rawPath);
+  if (!validatedPath) {
     return errorResponse("Invalid path - must be within allowed directories", 400);
   }
 
-  if (!existsSync(path)) {
-    return errorResponse("Path does not exist", 404);
+  // Check if path exists and is accessible
+  try {
+    await access(validatedPath, constants.R_OK);
+  } catch {
+    return errorResponse("Path does not exist or is not accessible", 404);
   }
 
   try {
-    const stat = statSync(path);
-    if (!stat.isDirectory()) {
+    const pathStat = await stat(validatedPath);
+    if (!pathStat.isDirectory()) {
       return errorResponse("Path is not a directory", 400);
     }
 
-    const rawEntries = readdirSync(path);
+    const rawEntries = await readdir(validatedPath);
     const entries: DirectoryEntry[] = [];
 
     for (const name of rawEntries) {
@@ -81,9 +116,9 @@ export const GET = withAuth(async (request) => {
         continue;
       }
 
-      const fullPath = resolve(path, name);
+      const fullPath = resolve(validatedPath, name);
       try {
-        const entryStat = statSync(fullPath);
+        const entryStat = await stat(fullPath);
         const isDirectory = entryStat.isDirectory();
 
         // Skip files if dirsOnly
@@ -111,12 +146,12 @@ export const GET = withAuth(async (request) => {
     });
 
     // Calculate parent path
-    const parent = resolve(path, "..");
-    const validParent = validateBrowsePath(parent);
+    const parent = resolve(validatedPath, "..");
+    const validParent = await validateBrowsePath(parent);
 
     return NextResponse.json({
-      path,
-      parent: validParent !== path ? validParent : null,
+      path: validatedPath,
+      parent: validParent !== validatedPath ? validParent : null,
       entries,
     });
   } catch (error) {
