@@ -155,6 +155,8 @@ Located in `src/services/`:
 | `SaveRecordingModal.tsx` | Save current recording |
 | `FolderPreferencesModal.tsx` | Per-folder preference overrides |
 | `UserSettingsModal.tsx` | User-level preferences |
+| `DirectoryBrowser.tsx` | Modal for visual filesystem directory navigation |
+| `PathInput.tsx` | Text input with browse button for directory selection |
 
 ### State Management
 
@@ -254,6 +256,9 @@ React Contexts in `src/contexts/`:
 
 ### Git
 - `GET /api/git/validate` - Validate git repository path
+
+### Directories
+- `GET /api/directories` - Browse filesystem directories (secure, restricted to allowed paths)
 
 ### Images
 - `POST /api/images` - Upload and save image
