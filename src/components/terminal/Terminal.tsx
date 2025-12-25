@@ -262,6 +262,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         return true; // Let xterm handle other key combinations
       });
 
+      // Prevent browser's default context menu on right-click
+      // xterm.js has its own context menu (copy/paste), so we only need to block the browser's
+      const handleContextMenu = (e: MouseEvent) => {
+        e.preventDefault();
+      };
+      terminalRef.current.addEventListener("contextmenu", handleContextMenu);
+
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
       imageAddonRef.current = imageAddon;
