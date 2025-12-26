@@ -138,7 +138,7 @@ export function FolderBrowserModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-[500px] h-[500px] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-[500px] h-[500px] bg-slate-900 border-white/10 flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-white text-sm">
             <Folder className="w-4 h-4 text-violet-400" />
