@@ -124,6 +124,7 @@ export function FolderPreferencesModal({
   const [cloningRepoId, setCloningRepoId] = useState<string | null>(null);
   const [repoOwnerFilter, setRepoOwnerFilter] = useState<string | null>(null);
   const [repoSortBy, setRepoSortBy] = useState<"updated" | "name" | "cloned">("updated");
+  const [repoSearchQuery, setRepoSearchQuery] = useState("");
 
   // Environment variables state
   const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
@@ -205,6 +206,8 @@ export function FolderPreferencesModal({
     if (open) {
       setLocalSettings({});
       setActiveTab(initialTab);
+      setRepoSearchQuery("");
+      setRepoOwnerFilter(null);
       fetchRepos();
       fetchResolvedEnvironment();
 
@@ -391,8 +394,15 @@ export function FolderPreferencesModal({
 
   // Filter and sort repos (selected repo always first)
   const selectedRepoId = getValue("githubRepoId");
+  const searchLower = repoSearchQuery.toLowerCase();
   const filteredAndSortedRepos = repos
-    .filter((repo) => !repoOwnerFilter || repo.owner === repoOwnerFilter)
+    .filter((repo) => {
+      // Owner filter
+      if (repoOwnerFilter && repo.owner !== repoOwnerFilter) return false;
+      // Text search filter
+      if (searchLower && !repo.name.toLowerCase().includes(searchLower)) return false;
+      return true;
+    })
     .sort((a, b) => {
       // Selected repo always first
       if (a.id === selectedRepoId) return -1;
@@ -743,6 +753,13 @@ export function FolderPreferencesModal({
                       </p>
                     ) : (
                       <div className="space-y-2">
+                        {/* Search input */}
+                        <Input
+                          value={repoSearchQuery}
+                          onChange={(e) => setRepoSearchQuery(e.target.value)}
+                          placeholder="Search repositories..."
+                          className="h-7 text-xs bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+                        />
                         {/* Filter and sort controls */}
                         <div className="flex items-center gap-2">
                           {/* Owner filter tabs */}
