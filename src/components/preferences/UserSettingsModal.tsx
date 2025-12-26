@@ -126,7 +126,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[550px] bg-slate-900 border-white/10">
+      <DialogContent className="sm:max-w-[550px] bg-slate-900/95 backdrop-blur-xl border-white/10">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-white">
             <Settings className="w-5 h-5 text-violet-400" />

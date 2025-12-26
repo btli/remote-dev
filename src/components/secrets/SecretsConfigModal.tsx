@@ -205,7 +205,7 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[85vh] bg-slate-900 border-white/10 flex flex-col">
+      <DialogContent className="sm:max-w-[600px] max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-white">
             <KeyRound className="w-5 h-5 text-violet-400" />
