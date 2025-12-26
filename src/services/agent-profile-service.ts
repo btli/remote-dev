@@ -18,7 +18,7 @@ import {
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, access } from "fs/promises";
-import { join } from "path";
+import { join, resolve as pathResolve, isAbsolute } from "path";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import type {
@@ -35,6 +35,63 @@ import type {
 
 // Profile base directory
 const PROFILES_BASE_DIR = join(homedir(), ".remote-dev", "profiles");
+
+/**
+ * Sanitize a git config value to prevent injection attacks.
+ * Git config values can contain newlines and special characters that
+ * could inject additional config sections.
+ */
+function sanitizeGitConfigValue(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\") // Escape backslashes first
+    .replace(/\n/g, "\\n") // Escape newlines
+    .replace(/\r/g, "\\r") // Escape carriage returns
+    .replace(/\t/g, "\\t") // Escape tabs
+    .replace(/"/g, '\\"'); // Escape quotes
+}
+
+/**
+ * Validate an SSH key path to prevent command injection.
+ * Returns the validated path or throws an error.
+ */
+function validateSshKeyPath(keyPath: string): string {
+  // Must be absolute path
+  if (!isAbsolute(keyPath)) {
+    throw new Error("SSH key path must be an absolute path");
+  }
+
+  // Check for shell metacharacters that could enable injection
+  const shellMetachars = /[;&|`$()[\]{}\\'"<>!#~*?\n\r]/;
+  if (shellMetachars.test(keyPath)) {
+    throw new Error("SSH key path contains invalid characters");
+  }
+
+  // Resolve to canonical path (prevents ../ traversal)
+  const resolved = pathResolve(keyPath);
+
+  // Must be within user's home directory or /tmp for safety
+  const home = homedir();
+  if (!resolved.startsWith(home) && !resolved.startsWith("/tmp/")) {
+    throw new Error("SSH key path must be within home directory or /tmp");
+  }
+
+  return resolved;
+}
+
+/**
+ * Safely parse JSON with fallback to empty object
+ */
+function safeJsonParse<T extends Record<string, unknown> = Record<string, string>>(
+  json: string,
+  fallback: T = {} as T
+): T {
+  try {
+    return JSON.parse(json) as T;
+  } catch {
+    console.error("Failed to parse JSON:", json.substring(0, 100));
+    return fallback;
+  }
+}
 
 /**
  * Get all profiles for a user
@@ -108,29 +165,35 @@ export async function createProfile(
   const profileId = crypto.randomUUID();
   const configDir = join(PROFILES_BASE_DIR, profileId);
 
-  // If setting as default, unset existing default
-  if (input.isDefault) {
-    await db
-      .update(agentProfiles)
-      .set({ isDefault: false, updatedAt: new Date() })
-      .where(and(eq(agentProfiles.userId, userId), eq(agentProfiles.isDefault, true)));
-  }
+  // Use transaction to atomically unset existing default and create new profile
+  // This prevents race conditions where multiple profiles could become default
+  const profile = await db.transaction(async (tx) => {
+    // If setting as default, unset existing default
+    if (input.isDefault) {
+      await tx
+        .update(agentProfiles)
+        .set({ isDefault: false, updatedAt: new Date() })
+        .where(and(eq(agentProfiles.userId, userId), eq(agentProfiles.isDefault, true)));
+    }
 
-  // Create profile record
-  const [profile] = await db
-    .insert(agentProfiles)
-    .values({
-      id: profileId,
-      userId,
-      name: input.name,
-      description: input.description ?? null,
-      provider: input.provider,
-      configDir,
-      isDefault: input.isDefault ?? false,
-    })
-    .returning();
+    // Create profile record
+    const [newProfile] = await tx
+      .insert(agentProfiles)
+      .values({
+        id: profileId,
+        userId,
+        name: input.name,
+        description: input.description ?? null,
+        provider: input.provider,
+        configDir,
+        isDefault: input.isDefault ?? false,
+      })
+      .returning();
 
-  // Initialize profile directory structure
+    return newProfile;
+  });
+
+  // Initialize profile directory structure (outside transaction - filesystem operation)
   await initializeProfileDirectory(profileId, input.provider);
 
   return mapDbToProfile(profile);
@@ -144,32 +207,38 @@ export async function updateProfile(
   userId: string,
   input: UpdateAgentProfileInput
 ): Promise<AgentProfile | null> {
-  // If setting as default, unset existing default
-  if (input.isDefault) {
-    await db
-      .update(agentProfiles)
-      .set({ isDefault: false, updatedAt: new Date() })
-      .where(
-        and(
-          eq(agentProfiles.userId, userId),
-          eq(agentProfiles.isDefault, true)
-        )
-      );
-  }
+  // Use transaction to atomically unset existing default and update profile
+  // This prevents race conditions where multiple profiles could become default
+  const updated = await db.transaction(async (tx) => {
+    // If setting as default, unset existing default
+    if (input.isDefault) {
+      await tx
+        .update(agentProfiles)
+        .set({ isDefault: false, updatedAt: new Date() })
+        .where(
+          and(
+            eq(agentProfiles.userId, userId),
+            eq(agentProfiles.isDefault, true)
+          )
+        );
+    }
 
-  const [updated] = await db
-    .update(agentProfiles)
-    .set({
-      ...(input.name !== undefined && { name: input.name }),
-      ...(input.description !== undefined && { description: input.description }),
-      ...(input.provider !== undefined && { provider: input.provider }),
-      ...(input.isDefault !== undefined && { isDefault: input.isDefault }),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(eq(agentProfiles.id, profileId), eq(agentProfiles.userId, userId))
-    )
-    .returning();
+    const [result] = await tx
+      .update(agentProfiles)
+      .set({
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.description !== undefined && { description: input.description }),
+        ...(input.provider !== undefined && { provider: input.provider }),
+        ...(input.isDefault !== undefined && { isDefault: input.isDefault }),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(eq(agentProfiles.id, profileId), eq(agentProfiles.userId, userId))
+      )
+      .returning();
+
+    return result;
+  });
 
   return updated ? mapDbToProfile(updated) : null;
 }
@@ -364,10 +433,16 @@ export async function getProfileEnvironment(
   // Git configuration
   env.GIT_CONFIG = join(configDir, ".gitconfig");
 
-  // SSH key if configured
+  // SSH key if configured (with validation to prevent command injection)
   const gitIdentity = await getProfileGitIdentity(profileId);
   if (gitIdentity?.sshKeyPath) {
-    env.GIT_SSH_COMMAND = `ssh -i ${gitIdentity.sshKeyPath} -o IdentitiesOnly=yes`;
+    try {
+      const validatedPath = validateSshKeyPath(gitIdentity.sshKeyPath);
+      env.GIT_SSH_COMMAND = `ssh -i "${validatedPath}" -o IdentitiesOnly=yes`;
+    } catch (error) {
+      console.error(`Invalid SSH key path for profile ${profileId}:`, error);
+      // Don't set GIT_SSH_COMMAND if path is invalid
+    }
   }
 
   // Fetch and inject secrets from profile secrets config
@@ -442,11 +517,18 @@ export async function setProfileGitIdentity(
   });
 
   if (profile) {
+    // Sanitize all values to prevent git config injection attacks
+    const safeName = sanitizeGitConfigValue(identity.userName);
+    const safeEmail = sanitizeGitConfigValue(identity.userEmail);
+    const safeGpgKey = identity.gpgKeyId
+      ? sanitizeGitConfigValue(identity.gpgKeyId)
+      : null;
+
     const gitConfig = `[user]
-\tname = ${identity.userName}
-\temail = ${identity.userEmail}
-${identity.gpgKeyId ? `\tsigningkey = ${identity.gpgKeyId}` : ""}
-${identity.gpgKeyId ? "[commit]\n\tgpgsign = true" : ""}
+\tname = ${safeName}
+\temail = ${safeEmail}
+${safeGpgKey ? `\tsigningkey = ${safeGpgKey}` : ""}
+${safeGpgKey ? "[commit]\n\tgpgsign = true" : ""}
 `;
     await writeFile(join(profile.configDir, ".gitconfig"), gitConfig);
   }
@@ -658,7 +740,18 @@ export async function fetchProfileSecrets(
     return null;
   }
 
-  const providerConfig = JSON.parse(config.providerConfig);
+  // Safely parse provider config with error handling
+  let providerConfig: Record<string, string>;
+  try {
+    providerConfig = JSON.parse(config.providerConfig) as Record<string, string>;
+  } catch (error) {
+    console.error(
+      `Failed to parse provider config for profile ${profileId}:`,
+      error
+    );
+    return null;
+  }
+
   const provider = createSecretsProvider({
     provider: config.provider as ProfileSecretsProviderType,
     config: providerConfig,
@@ -696,7 +789,7 @@ function mapDbToSecretsConfig(
     profileId: dbRecord.profileId,
     userId: dbRecord.userId,
     provider: dbRecord.provider as ProfileSecretsProviderType,
-    providerConfig: JSON.parse(dbRecord.providerConfig),
+    providerConfig: safeJsonParse(dbRecord.providerConfig),
     enabled: dbRecord.enabled ?? true,
     lastFetchedAt: dbRecord.lastFetchedAt ? new Date(dbRecord.lastFetchedAt) : null,
     createdAt: new Date(dbRecord.createdAt),
