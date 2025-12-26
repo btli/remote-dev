@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -30,25 +31,6 @@ export function DateTimePicker({
 }: DateTimePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
 
-  // Local time input state for controlled editing
-  const [timeInput, setTimeInput] = React.useState("");
-
-  // Update time input when date changes externally
-  React.useEffect(() => {
-    if (date) {
-      const hours = date.getHours();
-      const minutes = date.getMinutes();
-      const seconds = date.getSeconds();
-      const ampm = hours >= 12 ? "PM" : "AM";
-      const displayHours = hours % 12 || 12;
-      setTimeInput(
-        `${displayHours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")} ${ampm}`
-      );
-    } else {
-      setTimeInput("");
-    }
-  }, [date]);
-
   const handleDateSelect = (selectedDate: Date | undefined) => {
     if (!selectedDate) {
       onDateChange(undefined);
@@ -66,80 +48,6 @@ export function DateTimePicker({
     newDate.setSeconds(currentSecond);
     newDate.setMilliseconds(0);
 
-    onDateChange(newDate);
-  };
-
-  // Parse time input and update date
-  const parseAndUpdateTime = (input: string) => {
-    // Try to parse various formats: HH:MM:SS AM/PM, HH:MM AM/PM, HH:MM:SS, HH:MM
-    const timeRegex = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i;
-    const match = input.trim().match(timeRegex);
-
-    if (!match) return;
-
-    let hours = parseInt(match[1], 10);
-    const minutes = parseInt(match[2], 10);
-    const seconds = match[3] ? parseInt(match[3], 10) : 0;
-    const ampm = match[4]?.toUpperCase();
-
-    // Validate ranges
-    if (minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return;
-
-    // Handle AM/PM conversion
-    if (ampm) {
-      if (hours < 1 || hours > 12) return;
-      if (ampm === "PM" && hours !== 12) hours += 12;
-      if (ampm === "AM" && hours === 12) hours = 0;
-    } else {
-      if (hours < 0 || hours > 23) return;
-    }
-
-    const baseDate = date || new Date();
-    const newDate = new Date(baseDate);
-    newDate.setHours(hours);
-    newDate.setMinutes(minutes);
-    newDate.setSeconds(seconds);
-    newDate.setMilliseconds(0);
-
-    onDateChange(newDate);
-  };
-
-  const handleTimeInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setTimeInput(e.target.value);
-  };
-
-  const handleTimeInputBlur = () => {
-    parseAndUpdateTime(timeInput);
-  };
-
-  const handleTimeInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      parseAndUpdateTime(timeInput);
-    }
-  };
-
-  // Quick time adjustment
-  const adjustTime = (field: "hour" | "minute" | "second", delta: number) => {
-    const baseDate = date || new Date();
-    const newDate = new Date(baseDate);
-
-    if (field === "hour") {
-      newDate.setHours(newDate.getHours() + delta);
-    } else if (field === "minute") {
-      newDate.setMinutes(newDate.getMinutes() + delta);
-    } else {
-      newDate.setSeconds(newDate.getSeconds() + delta);
-    }
-
-    onDateChange(newDate);
-  };
-
-  // Toggle AM/PM
-  const toggleAmPm = () => {
-    if (!date) return;
-    const newDate = new Date(date);
-    const hours = newDate.getHours();
-    newDate.setHours(hours >= 12 ? hours - 12 : hours + 12);
     onDateChange(newDate);
   };
 
@@ -210,142 +118,180 @@ export function DateTimePicker({
           </div>
 
           {/* Time Picker - Right side */}
-          <div className="p-2 flex flex-col min-w-[140px]">
-            <div className="space-y-2">
-              <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-1">
-                <Clock className="h-3 w-3 text-violet-400" />
-                <span>Time</span>
+          <div className="p-2 flex flex-col">
+            <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-2">
+              <Clock className="h-3 w-3 text-violet-400" />
+              <span>Time</span>
+            </div>
+
+            {/* Scrollable time columns */}
+            <div className="flex gap-1">
+              {/* Hours */}
+              <div className="flex flex-col items-center">
+                <span className="text-[8px] text-slate-500 mb-1">HR</span>
+                <ScrollArea className="h-[120px] w-8 rounded border border-white/10 bg-slate-800/30">
+                  <div className="p-0.5">
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((hour) => {
+                      const displayHour = hour;
+                      const actualHour = isAM ? (hour === 12 ? 0 : hour) : (hour === 12 ? 12 : hour + 12);
+                      const isSelected = date && (date.getHours() % 12 || 12) === displayHour;
+                      return (
+                        <button
+                          key={hour}
+                          onClick={() => {
+                            const baseDate = date || new Date();
+                            const newDate = new Date(baseDate);
+                            newDate.setHours(actualHour);
+                            onDateChange(newDate);
+                          }}
+                          className={cn(
+                            "w-full h-6 text-[10px] rounded transition-colors",
+                            isSelected
+                              ? "bg-violet-600 text-white"
+                              : "text-slate-300 hover:bg-violet-500/20"
+                          )}
+                        >
+                          {displayHour.toString().padStart(2, "0")}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               </div>
 
-              {/* Analog Clock */}
-              <div className="flex justify-center">
-                <AnalogClock
-                  hours={date?.getHours() ?? 0}
-                  minutes={date?.getMinutes() ?? 0}
-                  seconds={date?.getSeconds() ?? 0}
-                  size={100}
-                  onTimeChange={(newHours, newMinutes) => {
-                    const baseDate = date || new Date();
-                    const newDate = new Date(baseDate);
-                    newDate.setHours(newHours);
-                    newDate.setMinutes(newMinutes);
-                    onDateChange(newDate);
-                  }}
-                />
+              {/* Minutes */}
+              <div className="flex flex-col items-center">
+                <span className="text-[8px] text-slate-500 mb-1">MIN</span>
+                <ScrollArea className="h-[120px] w-8 rounded border border-white/10 bg-slate-800/30">
+                  <div className="p-0.5">
+                    {Array.from({ length: 60 }, (_, i) => i).map((minute) => {
+                      const isSelected = date && date.getMinutes() === minute;
+                      return (
+                        <button
+                          key={minute}
+                          onClick={() => {
+                            const baseDate = date || new Date();
+                            const newDate = new Date(baseDate);
+                            newDate.setMinutes(minute);
+                            onDateChange(newDate);
+                          }}
+                          className={cn(
+                            "w-full h-6 text-[10px] rounded transition-colors",
+                            isSelected
+                              ? "bg-violet-600 text-white"
+                              : "text-slate-300 hover:bg-violet-500/20"
+                          )}
+                        >
+                          {minute.toString().padStart(2, "0")}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               </div>
 
-              {/* Time Input */}
-              <Input
-                value={timeInput}
-                onChange={handleTimeInputChange}
-                onBlur={handleTimeInputBlur}
-                onKeyDown={handleTimeInputKeyDown}
-                placeholder="12:00:00 PM"
-                className="h-7 text-xs font-mono bg-slate-800/50 border-white/10 text-center"
-              />
-
-              {/* Time adjustment buttons */}
-              <div className="grid grid-cols-3 gap-1">
-                {/* Hours */}
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => adjustTime("hour", 1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▲
-                  </button>
-                  <span className="text-[10px] text-violet-400">hr</span>
-                  <button
-                    onClick={() => adjustTime("hour", -1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▼
-                  </button>
-                </div>
-
-                {/* Minutes */}
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => adjustTime("minute", 1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▲
-                  </button>
-                  <span className="text-[10px] text-white">min</span>
-                  <button
-                    onClick={() => adjustTime("minute", -1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▼
-                  </button>
-                </div>
-
-                {/* Seconds */}
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => adjustTime("second", 1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▲
-                  </button>
-                  <span className="text-[10px] text-red-400">sec</span>
-                  <button
-                    onClick={() => adjustTime("second", -1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▼
-                  </button>
-                </div>
+              {/* Seconds */}
+              <div className="flex flex-col items-center">
+                <span className="text-[8px] text-slate-500 mb-1">SEC</span>
+                <ScrollArea className="h-[120px] w-8 rounded border border-white/10 bg-slate-800/30">
+                  <div className="p-0.5">
+                    {Array.from({ length: 60 }, (_, i) => i).map((second) => {
+                      const isSelected = date && date.getSeconds() === second;
+                      return (
+                        <button
+                          key={second}
+                          onClick={() => {
+                            const baseDate = date || new Date();
+                            const newDate = new Date(baseDate);
+                            newDate.setSeconds(second);
+                            onDateChange(newDate);
+                          }}
+                          className={cn(
+                            "w-full h-6 text-[10px] rounded transition-colors",
+                            isSelected
+                              ? "bg-violet-600 text-white"
+                              : "text-slate-300 hover:bg-violet-500/20"
+                          )}
+                        >
+                          {second.toString().padStart(2, "0")}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
               </div>
 
-              {/* AM/PM Toggle */}
-              <div className="flex gap-1">
-                <button
-                  onClick={toggleAmPm}
-                  className={cn(
-                    "flex-1 h-6 text-[10px] rounded transition-colors",
-                    isAM
-                      ? "bg-violet-600 text-white"
-                      : "bg-slate-800/50 text-slate-400 hover:text-white hover:bg-white/10"
-                  )}
-                >
-                  AM
-                </button>
-                <button
-                  onClick={toggleAmPm}
-                  className={cn(
-                    "flex-1 h-6 text-[10px] rounded transition-colors",
-                    !isAM
-                      ? "bg-violet-600 text-white"
-                      : "bg-slate-800/50 text-slate-400 hover:text-white hover:bg-white/10"
-                  )}
-                >
-                  PM
-                </button>
-              </div>
-
-              {/* Quick presets */}
-              <div className="flex flex-wrap gap-1 pt-2 border-t border-white/10">
-                {[
-                  { label: "Now", offset: 0 },
-                  { label: "+5m", offset: 5 },
-                  { label: "+1h", offset: 60 },
-                ].map(({ label, offset }) => (
-                  <Button
-                    key={label}
-                    variant="ghost"
-                    size="sm"
-                    className="flex-1 h-5 px-1 text-[9px] text-slate-400 hover:text-white hover:bg-violet-500/20"
+              {/* AM/PM */}
+              <div className="flex flex-col items-center">
+                <span className="text-[8px] text-slate-500 mb-1">&nbsp;</span>
+                <div className="flex flex-col gap-1">
+                  <button
                     onClick={() => {
-                      const newDate = new Date();
-                      newDate.setMinutes(newDate.getMinutes() + offset);
+                      if (!date) return;
+                      const newDate = new Date(date);
+                      const hours = newDate.getHours();
+                      if (hours >= 12) newDate.setHours(hours - 12);
                       onDateChange(newDate);
                     }}
+                    className={cn(
+                      "w-8 h-8 text-[10px] rounded transition-colors",
+                      isAM
+                        ? "bg-violet-600 text-white"
+                        : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                    )}
                   >
-                    {label}
-                  </Button>
-                ))}
+                    AM
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!date) return;
+                      const newDate = new Date(date);
+                      const hours = newDate.getHours();
+                      if (hours < 12) newDate.setHours(hours + 12);
+                      onDateChange(newDate);
+                    }}
+                    className={cn(
+                      "w-8 h-8 text-[10px] rounded transition-colors",
+                      !isAM
+                        ? "bg-violet-600 text-white"
+                        : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                    )}
+                  >
+                    PM
+                  </button>
+                </div>
               </div>
+            </div>
+
+            {/* Quick presets */}
+            <div className="flex gap-1 pt-2 mt-2 border-t border-white/10">
+              {[
+                { label: "Now", offset: 0 },
+                { label: "+5m", offset: 5 },
+                { label: "+1h", offset: 60 },
+              ].map(({ label, offset }) => (
+                <Button
+                  key={label}
+                  variant="ghost"
+                  size="sm"
+                  className="flex-1 h-5 px-1 text-[9px] text-slate-400 hover:text-white hover:bg-violet-500/20"
+                  onClick={() => {
+                    // Preserve selected date, just update time
+                    const now = new Date();
+                    now.setMinutes(now.getMinutes() + offset);
+                    const baseDate = date ? new Date(date) : now;
+                    if (date) {
+                      // Keep the selected date, use new time
+                      baseDate.setHours(now.getHours());
+                      baseDate.setMinutes(now.getMinutes());
+                      baseDate.setSeconds(now.getSeconds());
+                    }
+                    onDateChange(baseDate);
+                  }}
+                >
+                  {label}
+                </Button>
+              ))}
             </div>
           </div>
         </div>
