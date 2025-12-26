@@ -279,8 +279,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         throw new Error(errorData.error || "Failed to fetch git identity");
       }
 
-      const data = await response.json();
-      return data.identity || null;
+      // API returns GitIdentity directly, not wrapped in { identity: ... }
+      return await response.json();
     },
     []
   );
@@ -311,8 +311,8 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
         throw new Error(errorData.error || "Failed to fetch secrets config");
       }
 
-      const data = await response.json();
-      return data.config || null;
+      // API returns ProfileSecretsConfig directly, not wrapped in { config: ... }
+      return await response.json();
     },
     []
   );
