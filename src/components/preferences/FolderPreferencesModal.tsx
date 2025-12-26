@@ -34,6 +34,8 @@ interface GitHubRepo {
   name: string;
   fullName: string;
   localPath: string | null;
+  owner: string;
+  updatedAt: string;
 }
 
 interface FolderPreferencesModalProps {
@@ -120,6 +122,8 @@ export function FolderPreferencesModal({
   const [repoMode, setRepoMode] = useState<"github" | "local" | "none">("none");
   const [activeTab, setActiveTab] = useState(initialTab);
   const [cloningRepoId, setCloningRepoId] = useState<string | null>(null);
+  const [repoOwnerFilter, setRepoOwnerFilter] = useState<string | null>(null);
+  const [repoSortBy, setRepoSortBy] = useState<"updated" | "name" | "cloned">("updated");
 
   // Environment variables state
   const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
@@ -381,6 +385,28 @@ export function FolderPreferencesModal({
   const hasAppearanceOverrides = isOverridden("theme") || isOverridden("fontSize") || isOverridden("fontFamily");
   const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
   const hasEnvOverrides = isOverridden("environmentVars");
+
+  // Get unique owners from repos for filtering
+  const repoOwners = Array.from(new Set(repos.map((r) => r.owner))).sort();
+
+  // Filter and sort repos
+  const filteredAndSortedRepos = repos
+    .filter((repo) => !repoOwnerFilter || repo.owner === repoOwnerFilter)
+    .sort((a, b) => {
+      switch (repoSortBy) {
+        case "name":
+          return a.name.localeCompare(b.name);
+        case "cloned":
+          // Cloned first, then by name
+          if (a.localPath && !b.localPath) return -1;
+          if (!a.localPath && b.localPath) return 1;
+          return a.name.localeCompare(b.name);
+        case "updated":
+        default:
+          // Most recently updated first
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      }
+    });
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -711,59 +737,119 @@ export function FolderPreferencesModal({
                         No repositories found. Connect GitHub to see your repos.
                       </p>
                     ) : (
-                      <div className="max-h-[200px] overflow-y-auto rounded-md border border-white/10 bg-slate-800/50">
-                        {repos.map((repo) => {
-                          const isSelected = getValue("githubRepoId") === repo.id;
-                          const isCloning = cloningRepoId === repo.id;
-                          const isCloned = !!repo.localPath;
-
-                          return (
+                      <div className="space-y-2">
+                        {/* Filter and sort controls */}
+                        <div className="flex items-center gap-2">
+                          {/* Owner filter tabs */}
+                          <div className="flex-1 flex gap-1 overflow-x-auto">
                             <button
-                              key={repo.id}
                               type="button"
-                              onClick={() => handleRepoSelect(repo)}
-                              disabled={isCloning || cloningRepoId !== null}
+                              onClick={() => setRepoOwnerFilter(null)}
                               className={cn(
-                                "w-full flex items-start gap-2 px-3 py-2 text-left transition-colors",
-                                "hover:bg-white/5 focus:bg-white/5 focus:outline-none",
-                                "border-b border-white/5 last:border-b-0",
-                                isSelected && "bg-violet-500/20",
-                                (isCloning || (cloningRepoId !== null && !isCloning)) && "opacity-50 cursor-not-allowed"
+                                "px-2 py-1 text-xs rounded-md whitespace-nowrap transition-colors",
+                                !repoOwnerFilter
+                                  ? "bg-violet-500/20 text-violet-300"
+                                  : "text-slate-400 hover:text-white hover:bg-white/5"
                               )}
                             >
-                              {/* Status icon */}
-                              <div className="mt-0.5 shrink-0">
-                                {isCloning ? (
-                                  <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
-                                ) : isSelected ? (
-                                  <Check className="w-4 h-4 text-violet-400" />
-                                ) : isCloned ? (
-                                  <FolderGit2 className="w-4 h-4 text-emerald-400" />
-                                ) : (
-                                  <Download className="w-4 h-4 text-amber-400" />
-                                )}
-                              </div>
-                              {/* Repo info */}
-                              <div className="flex-1 min-w-0">
-                                <span className={cn(
-                                  "block text-sm font-medium truncate",
-                                  isSelected ? "text-white" : isCloned ? "text-slate-200" : "text-slate-300"
-                                )}>
-                                  {repo.fullName}
-                                </span>
-                                {isCloning ? (
-                                  <span className="text-xs text-violet-400">Cloning...</span>
-                                ) : isCloned ? (
-                                  <span className="text-xs text-slate-500 truncate block">
-                                    {repo.localPath}
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-amber-400">Click to clone</span>
-                                )}
-                              </div>
+                              All ({repos.length})
                             </button>
-                          );
-                        })}
+                            {repoOwners.map((owner) => {
+                              const count = repos.filter((r) => r.owner === owner).length;
+                              return (
+                                <button
+                                  key={owner}
+                                  type="button"
+                                  onClick={() => setRepoOwnerFilter(owner)}
+                                  className={cn(
+                                    "px-2 py-1 text-xs rounded-md whitespace-nowrap transition-colors",
+                                    repoOwnerFilter === owner
+                                      ? "bg-violet-500/20 text-violet-300"
+                                      : "text-slate-400 hover:text-white hover:bg-white/5"
+                                  )}
+                                >
+                                  {owner} ({count})
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {/* Sort dropdown */}
+                          <Select
+                            value={repoSortBy}
+                            onValueChange={(v) => setRepoSortBy(v as typeof repoSortBy)}
+                          >
+                            <SelectTrigger className="w-[100px] h-7 text-xs bg-slate-800 border-white/10">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-slate-800 border-white/10">
+                              <SelectItem value="updated" className="text-xs">Recent</SelectItem>
+                              <SelectItem value="name" className="text-xs">Name</SelectItem>
+                              <SelectItem value="cloned" className="text-xs">Cloned</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Repo list */}
+                        <div className="max-h-[180px] overflow-y-auto rounded-md border border-white/10 bg-slate-800/50">
+                          {filteredAndSortedRepos.length === 0 ? (
+                            <div className="px-3 py-4 text-center text-sm text-slate-500">
+                              No repos match filter
+                            </div>
+                          ) : (
+                            filteredAndSortedRepos.map((repo) => {
+                              const isSelected = getValue("githubRepoId") === repo.id;
+                              const isCloning = cloningRepoId === repo.id;
+                              const isCloned = !!repo.localPath;
+
+                              return (
+                                <button
+                                  key={repo.id}
+                                  type="button"
+                                  onClick={() => handleRepoSelect(repo)}
+                                  disabled={isCloning || cloningRepoId !== null}
+                                  className={cn(
+                                    "w-full flex items-start gap-2 px-3 py-2 text-left transition-colors",
+                                    "hover:bg-white/5 focus:bg-white/5 focus:outline-none",
+                                    "border-b border-white/5 last:border-b-0",
+                                    isSelected && "bg-violet-500/20",
+                                    (isCloning || (cloningRepoId !== null && !isCloning)) && "opacity-50 cursor-not-allowed"
+                                  )}
+                                >
+                                  {/* Status icon */}
+                                  <div className="mt-0.5 shrink-0">
+                                    {isCloning ? (
+                                      <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
+                                    ) : isSelected ? (
+                                      <Check className="w-4 h-4 text-violet-400" />
+                                    ) : isCloned ? (
+                                      <FolderGit2 className="w-4 h-4 text-emerald-400" />
+                                    ) : (
+                                      <Download className="w-4 h-4 text-amber-400" />
+                                    )}
+                                  </div>
+                                  {/* Repo info */}
+                                  <div className="flex-1 min-w-0">
+                                    <span className={cn(
+                                      "block text-sm font-medium truncate",
+                                      isSelected ? "text-white" : isCloned ? "text-slate-200" : "text-slate-300"
+                                    )}>
+                                      {repo.name}
+                                    </span>
+                                    {isCloning ? (
+                                      <span className="text-xs text-violet-400">Cloning...</span>
+                                    ) : isCloned ? (
+                                      <span className="text-xs text-slate-500 truncate block">
+                                        {repo.localPath}
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-amber-400">Click to clone</span>
+                                    )}
+                                  </div>
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
