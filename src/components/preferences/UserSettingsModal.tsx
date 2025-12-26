@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Settings, Terminal, Palette, Folder, Pin, PinOff } from "lucide-react";
 import {
   Dialog,
@@ -22,6 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { UnsavedChangesDialog } from "@/components/common/UnsavedChangesDialog";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useFolderContext } from "@/contexts/FolderContext";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
@@ -84,6 +86,25 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
   const [localSettings, setLocalSettings] = useState<UpdateUserSettingsInput>({});
   const [saving, setSaving] = useState(false);
 
+  // Check if there are unsaved changes
+  const hasChanges = Object.keys(localSettings).length > 0;
+
+  // Handle close with unsaved changes warning
+  const handleActualClose = useCallback(() => {
+    setLocalSettings({});
+    onClose();
+  }, [onClose]);
+
+  const {
+    showDialog: showUnsavedDialog,
+    handleOpenChange,
+    handleDiscard,
+    handleCancelClose,
+  } = useUnsavedChanges({
+    hasChanges,
+    onClose: handleActualClose,
+  });
+
   // Reset local settings when modal opens
   useEffect(() => {
     if (open && userSettings) {
@@ -125,7 +146,8 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[550px] bg-slate-900/95 backdrop-blur-xl border-white/10">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-white">
@@ -369,7 +391,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
         <div className="flex justify-end gap-2 pt-4 border-t border-white/5">
           <Button
             variant="ghost"
-            onClick={onClose}
+            onClick={() => handleOpenChange(false)}
             className="text-slate-400 hover:text-white"
           >
             Cancel
@@ -384,5 +406,12 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
         </div>
       </DialogContent>
     </Dialog>
+
+    <UnsavedChangesDialog
+      open={showUnsavedDialog}
+      onDiscard={handleDiscard}
+      onCancel={handleCancelClose}
+    />
+    </>
   );
 }
