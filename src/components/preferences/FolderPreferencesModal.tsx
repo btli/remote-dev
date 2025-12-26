@@ -28,6 +28,7 @@ import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types
 import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
 import { EnvVarEditor } from "./EnvVarEditor";
+import { FolderBrowserModal } from "@/components/filesystem/FolderBrowserModal";
 
 // Helper to get electron API for directory selection (only in Electron)
 function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
@@ -136,6 +137,8 @@ export function FolderPreferencesModal({
   const [repoOwnerFilter, setRepoOwnerFilter] = useState<string | null>(null);
   const [repoSortBy, setRepoSortBy] = useState<"updated" | "name" | "cloned">("updated");
   const [repoSearchQuery, setRepoSearchQuery] = useState("");
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [folderBrowserTarget, setFolderBrowserTarget] = useState<"working" | "repo" | null>(null);
 
   // Environment variables state
   const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
@@ -496,25 +499,28 @@ export function FolderPreferencesModal({
                       isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
                     )}
                   />
-                  {getElectronSelectDirectory() && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={async () => {
-                        const selectDirectory = getElectronSelectDirectory();
-                        if (selectDirectory) {
-                          const path = await selectDirectory();
-                          if (path) {
-                            setValue("defaultWorkingDirectory", path);
-                          }
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={async () => {
+                      const selectDirectory = getElectronSelectDirectory();
+                      if (selectDirectory) {
+                        // Use native Electron picker if available
+                        const path = await selectDirectory();
+                        if (path) {
+                          setValue("defaultWorkingDirectory", path);
                         }
-                      }}
-                      className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
-                    >
-                      <FolderOpen className="w-4 h-4" />
-                    </Button>
-                  )}
+                      } else {
+                        // Use web-based folder browser
+                        setFolderBrowserTarget("working");
+                        setShowFolderBrowser(true);
+                      }
+                    }}
+                    className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                  </Button>
                 </div>
               </div>
 
@@ -921,25 +927,28 @@ export function FolderPreferencesModal({
                         isOverridden("localRepoPath") && "border-violet-500/50"
                       )}
                     />
-                    {getElectronSelectDirectory() && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={async () => {
-                          const selectDirectory = getElectronSelectDirectory();
-                          if (selectDirectory) {
-                            const path = await selectDirectory();
-                            if (path) {
-                              setValue("localRepoPath", path);
-                            }
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={async () => {
+                        const selectDirectory = getElectronSelectDirectory();
+                        if (selectDirectory) {
+                          // Use native Electron picker if available
+                          const path = await selectDirectory();
+                          if (path) {
+                            setValue("localRepoPath", path);
                           }
-                        }}
-                        className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
-                      >
-                        <FolderOpen className="w-4 h-4" />
-                      </Button>
-                    )}
+                        } else {
+                          // Use web-based folder browser
+                          setFolderBrowserTarget("repo");
+                          setShowFolderBrowser(true);
+                        }
+                      }}
+                      className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                    </Button>
                   </div>
                 )}
               </div>
@@ -1027,6 +1036,32 @@ export function FolderPreferencesModal({
           </div>
         </div>
       </DialogContent>
+
+      {/* Folder Browser Modal */}
+      <FolderBrowserModal
+        open={showFolderBrowser}
+        onClose={() => setShowFolderBrowser(false)}
+        onSelect={(path) => {
+          if (folderBrowserTarget === "working") {
+            setValue("defaultWorkingDirectory", path);
+          } else if (folderBrowserTarget === "repo") {
+            setValue("localRepoPath", path);
+          }
+          setShowFolderBrowser(false);
+        }}
+        initialPath={
+          folderBrowserTarget === "working"
+            ? getValue("defaultWorkingDirectory") || undefined
+            : folderBrowserTarget === "repo"
+              ? getValue("localRepoPath") || undefined
+              : undefined
+        }
+        title={
+          folderBrowserTarget === "working"
+            ? "Select Working Directory"
+            : "Select Repository Path"
+        }
+      />
     </Dialog>
   );
 }
