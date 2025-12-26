@@ -1,45 +1,38 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as AgentProfileService from "@/services/agent-profile-service";
-
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
+import type { GitIdentity } from "@/types/agent";
 
 /**
  * GET /api/profiles/:id/git-identity - Get Git identity for a profile
  */
-export const GET = withAuth(async (_request, { userId }, { params }: RouteParams) => {
-  const { id } = await params;
-
+export const GET = withAuth(async (_request, { userId, params }) => {
   // Verify profile ownership
-  const profile = await AgentProfileService.getProfile(id, userId);
+  const profile = await AgentProfileService.getProfile(params!.id, userId);
   if (!profile) {
     return errorResponse("Profile not found", 404);
   }
 
-  const gitIdentity = await AgentProfileService.getProfileGitIdentity(id);
+  const gitIdentity = await AgentProfileService.getProfileGitIdentity(params!.id);
   return NextResponse.json(gitIdentity ?? null);
 });
 
 /**
  * PUT /api/profiles/:id/git-identity - Set Git identity for a profile
  */
-export const PUT = withAuth(async (request, { userId }, { params }: RouteParams) => {
-  const { id } = await params;
-
+export const PUT = withAuth(async (request, { userId, params }) => {
   // Verify profile ownership
-  const profile = await AgentProfileService.getProfile(id, userId);
+  const profile = await AgentProfileService.getProfile(params!.id, userId);
   if (!profile) {
     return errorResponse("Profile not found", 404);
   }
 
-  const body = await parseJsonBody(request);
-  if (!body) {
-    return errorResponse("Invalid JSON body", 400);
+  const result = await parseJsonBody<GitIdentity>(request);
+  if ("error" in result) {
+    return result.error;
   }
 
-  const { userName, userEmail, sshKeyPath, gpgKeyId, githubUsername } = body;
+  const { userName, userEmail, sshKeyPath, gpgKeyId, githubUsername } = result.data;
 
   // Validate required fields
   if (!userName || typeof userName !== "string") {
@@ -49,7 +42,7 @@ export const PUT = withAuth(async (request, { userId }, { params }: RouteParams)
     return errorResponse("userEmail is required", 400);
   }
 
-  await AgentProfileService.setProfileGitIdentity(id, {
+  await AgentProfileService.setProfileGitIdentity(params!.id, {
     userName,
     userEmail,
     sshKeyPath: sshKeyPath ?? undefined,
@@ -57,6 +50,6 @@ export const PUT = withAuth(async (request, { userId }, { params }: RouteParams)
     githubUsername: githubUsername ?? undefined,
   });
 
-  const gitIdentity = await AgentProfileService.getProfileGitIdentity(id);
+  const gitIdentity = await AgentProfileService.getProfileGitIdentity(params!.id);
   return NextResponse.json(gitIdentity);
 });

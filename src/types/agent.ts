@@ -165,6 +165,35 @@ export interface ProfileCredentials {
 }
 
 /**
+ * Secrets provider type (matches SecretsProviderType from secrets module).
+ */
+export type ProfileSecretsProviderType = "phase" | "vault" | "aws-secrets-manager" | "1password";
+
+/**
+ * Profile-level secrets configuration.
+ */
+export interface ProfileSecretsConfig {
+  id: string;
+  profileId: string;
+  userId: string;
+  provider: ProfileSecretsProviderType;
+  providerConfig: Record<string, string>;
+  enabled: boolean;
+  lastFetchedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input for creating/updating profile secrets config.
+ */
+export interface UpdateProfileSecretsConfigInput {
+  provider: ProfileSecretsProviderType;
+  config: Record<string, string>;
+  enabled?: boolean;
+}
+
+/**
  * Environment overlay for profile isolation.
  */
 export interface ProfileEnvironment {

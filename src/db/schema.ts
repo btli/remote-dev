@@ -5,6 +5,7 @@ import type { SplitDirection } from "@/types/split";
 import type { CIStatusState, PRState } from "@/types/github-stats";
 import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
+import type { AgentProviderType } from "@/types/session";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -401,6 +402,8 @@ export const terminalSessions = sqliteTable(
     profileId: text("profile_id").references(() => agentProfiles.id, {
       onDelete: "set null",
     }),
+    // Agent-aware session: which AI agent is associated
+    agentProvider: text("agent_provider").$type<AgentProviderType>(),
     // Split group membership (independent from folder)
     splitGroupId: text("split_group_id").references(() => splitGroups.id, {
       onDelete: "set null",
@@ -1002,6 +1005,165 @@ export const profileGitIdentities = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [index("profile_git_identity_profile_idx").on(table.profileId)]
+);
+
+/**
+ * Profile-level secrets provider configuration for API keys.
+ * Stores credentials like ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
+ * that are injected into sessions using this profile.
+ */
+export const profileSecretsConfig = sqliteTable(
+  "profile_secrets_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    profileId: text("profile_id")
+      .notNull()
+      .unique()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(), // "phase" | "vault" | "aws-secrets-manager" | "1password"
+    // Provider-specific config as JSON:
+    // Phase: { "app": "my-app", "env": "development", "serviceToken": "pss_..." }
+    providerConfig: text("provider_config").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastFetchedAt: integer("last_fetched_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("profile_secrets_config_profile_idx").on(table.profileId),
+    index("profile_secrets_config_user_idx").on(table.userId),
+  ]
+);
+
+/**
+ * Discovered MCP tools from connected servers.
+ * Cached to avoid repeated discovery calls.
+ */
+export const mcpDiscoveredTools = sqliteTable(
+  "mcp_discovered_tool",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    inputSchema: text("input_schema"), // JSON Schema
+    discoveredAt: integer("discovered_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mcp_discovered_tool_server_idx").on(table.serverId),
+    uniqueIndex("mcp_discovered_tool_unique_idx").on(table.serverId, table.name),
+  ]
+);
+
+/**
+ * Discovered MCP resources from connected servers.
+ * Cached to avoid repeated discovery calls.
+ */
+export const mcpDiscoveredResources = sqliteTable(
+  "mcp_discovered_resource",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    uri: text("uri").notNull(),
+    name: text("name"),
+    description: text("description"),
+    mimeType: text("mime_type"),
+    discoveredAt: integer("discovered_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mcp_discovered_resource_server_idx").on(table.serverId),
+    uniqueIndex("mcp_discovered_resource_unique_idx").on(table.serverId, table.uri),
+  ]
+);
+
+/**
+ * Agent activity events for analytics and dashboard.
+ * Tracks session starts, commands, errors, and other events.
+ */
+export const agentActivityEvents = sqliteTable(
+  "agent_activity_event",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    agentProvider: text("agent_provider").$type<AgentProviderType>(),
+    eventType: text("event_type").notNull(), // "session_start" | "session_end" | "command" | "error" | "tool_call"
+    eventData: text("event_data"), // JSON with event-specific data
+    duration: integer("duration"), // Duration in milliseconds (for timed events)
+    success: integer("success", { mode: "boolean" }),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_activity_user_idx").on(table.userId),
+    index("agent_activity_session_idx").on(table.sessionId),
+    index("agent_activity_provider_idx").on(table.userId, table.agentProvider),
+    index("agent_activity_event_type_idx").on(table.userId, table.eventType),
+    index("agent_activity_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
+/**
+ * Daily aggregated stats for faster dashboard queries.
+ * Updated periodically from activity events.
+ */
+export const agentDailyStats = sqliteTable(
+  "agent_daily_stats",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: text("date").notNull(), // YYYY-MM-DD format
+    agentProvider: text("agent_provider").$type<AgentProviderType>(),
+    sessionCount: integer("session_count").notNull().default(0),
+    commandCount: integer("command_count").notNull().default(0),
+    errorCount: integer("error_count").notNull().default(0),
+    totalDuration: integer("total_duration").notNull().default(0), // Total session duration in ms
+    toolCallCount: integer("tool_call_count").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("agent_daily_stats_unique_idx").on(
+      table.userId,
+      table.date,
+      table.agentProvider
+    ),
+    index("agent_daily_stats_user_date_idx").on(table.userId, table.date),
+  ]
 );
 
 /**

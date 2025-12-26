@@ -10,10 +10,13 @@ import type {
   UpdateSessionInput,
   SessionStatus,
   SessionWithMetadata,
+  AgentProviderType,
 } from "@/types/session";
+import { AGENT_PROVIDERS } from "@/types/session";
 import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
 import * as GitHubService from "./github-service";
+import * as AgentProfileService from "./agent-profile-service";
 import { getResolvedPreferences, getFolderPreferences } from "./preferences-service";
 import { SessionServiceError } from "@/lib/errors";
 
@@ -187,14 +190,38 @@ export async function createSession(
   }
 
   // Determine startup command (explicit override takes precedence)
-  const startupCommand = input.startupCommand || preferences.startupCommand || undefined;
+  let startupCommand = input.startupCommand || preferences.startupCommand || undefined;
 
-  // Create the tmux session
+  // Handle agent-aware session: auto-launch the agent CLI
+  if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
+    const agentCommand = buildAgentCommand(input.agentProvider, input.agentFlags);
+    if (agentCommand) {
+      // If there's already a startup command, chain them
+      startupCommand = startupCommand
+        ? `${startupCommand} && ${agentCommand}`
+        : agentCommand;
+    }
+  }
+
+  // Fetch profile environment overlay if profile is specified
+  let profileEnv: Record<string, string> | undefined;
+  if (input.profileId) {
+    const env = await AgentProfileService.getProfileEnvironment(input.profileId, userId);
+    if (env) {
+      // Filter out undefined values to get a clean Record<string, string>
+      profileEnv = Object.fromEntries(
+        Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+      );
+    }
+  }
+
+  // Create the tmux session with profile environment
   try {
     await TmuxService.createSession(
       tmuxSessionName,
       workingPath ?? undefined,
-      startupCommand
+      startupCommand,
+      profileEnv
     );
   } catch (error) {
     if (error instanceof TmuxService.TmuxServiceError) {
@@ -221,6 +248,8 @@ export async function createSession(
         githubRepoId: input.githubRepoId ?? null,
         worktreeBranch: branchName ?? null,
         folderId: input.folderId ?? null,
+        profileId: input.profileId ?? null,
+        agentProvider: input.agentProvider ?? null,
         status: "active",
         tabOrder: nextTabOrder,
         lastActivityAt: now,
@@ -519,6 +548,8 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     githubRepoId: dbSession.githubRepoId,
     worktreeBranch: dbSession.worktreeBranch,
     folderId: dbSession.folderId,
+    profileId: dbSession.profileId,
+    agentProvider: dbSession.agentProvider as AgentProviderType | null,
     splitGroupId: dbSession.splitGroupId,
     splitOrder: dbSession.splitOrder,
     splitSize: dbSession.splitSize ?? 0.5,
@@ -528,4 +559,19 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     createdAt: new Date(dbSession.createdAt),
     updatedAt: new Date(dbSession.updatedAt),
   };
+}
+
+/**
+ * Build the agent CLI command for auto-launch
+ */
+function buildAgentCommand(provider: AgentProviderType, flags?: string[]): string | null {
+  const config = AGENT_PROVIDERS.find((p) => p.id === provider);
+  if (!config || !config.command) {
+    return null;
+  }
+
+  const allFlags = [...config.defaultFlags, ...(flags ?? [])];
+  const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
+
+  return `${config.command}${flagsStr}`;
 }
