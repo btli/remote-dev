@@ -924,12 +924,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     [sendImageToTerminal]
   );
 
-  // Handle paste events for images
+  // Handle paste events for images and text
   // Note: We use a native event listener in the capture phase because xterm.js
   // creates its own internal textarea that captures paste events. React's onPaste
   // on the container div never fires because the event goes to xterm's element.
+  // This handles both Cmd+V and right-click paste for images and text.
   useEffect(() => {
     const container = terminalRef.current;
+    const terminal = xtermRef.current;
     if (!container) return;
 
     const handlePaste = async (e: ClipboardEvent) => {
@@ -938,15 +940,34 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       const items = Array.from(e.clipboardData.items);
       const imageItems = items.filter((item) => item.type.startsWith("image/"));
 
-      if (imageItems.length === 0) return;
+      // Handle image paste - upload image and send file path to terminal
+      // This allows Claude Code and similar tools to receive image paths
+      if (imageItems.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
 
-      e.preventDefault();
-      e.stopPropagation();
+        for (const item of imageItems) {
+          const file = item.getAsFile();
+          if (file) {
+            await sendImageToTerminal(file);
+          }
+        }
+        return;
+      }
 
-      for (const item of imageItems) {
-        const file = item.getAsFile();
-        if (file) {
-          await sendImageToTerminal(file);
+      // Handle text paste - use terminal.paste() for reliable cross-platform support
+      // xterm.js leaves clipboard handling to embedders, so we handle it explicitly
+      // See: https://github.com/xtermjs/xterm.js/issues/2478
+      const textItems = items.filter((item) => item.type === "text/plain");
+      if (textItems.length > 0 && terminal) {
+        const textItem = textItems[0];
+        const text = await new Promise<string>((resolve) => {
+          textItem.getAsString(resolve);
+        });
+        if (text) {
+          e.preventDefault();
+          e.stopPropagation();
+          terminal.paste(text);
         }
       }
     };
