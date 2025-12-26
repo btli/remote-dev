@@ -48,8 +48,11 @@ export const GET = withAuth(async (_request, { userId, params }) => {
 /**
  * POST /api/github/repositories/:id - Clone repository to local cache
  * Accepts either database UUID or GitHub numeric ID
+ *
+ * Optional body:
+ * - targetPath: Custom directory to clone into (default: ~/.remote-dev/repos/{owner}/{repo})
  */
-export const POST = withAuth(async (_request, { userId, params }) => {
+export const POST = withAuth(async (request, { userId, params }) => {
   const accessToken = await GitHubService.getAccessToken(userId);
   if (!accessToken) {
     return errorResponse("GitHub not connected", 400);
@@ -61,10 +64,22 @@ export const POST = withAuth(async (_request, { userId, params }) => {
     return errorResponse("Repository not found", 404);
   }
 
+  // Parse optional body for custom target path
+  let targetPath: string | undefined;
+  try {
+    const body = await request.json();
+    if (body.targetPath && typeof body.targetPath === "string") {
+      targetPath = body.targetPath;
+    }
+  } catch {
+    // No body or invalid JSON - use default path
+  }
+
   // Clone the repository
   const result = await GitHubService.cloneRepository(
     accessToken,
-    repository.fullName
+    repository.fullName,
+    targetPath
   );
 
   if (!result.success) {
