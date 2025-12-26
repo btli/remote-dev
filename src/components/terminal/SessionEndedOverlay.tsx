@@ -151,7 +151,7 @@ export function SessionEndedOverlay({
 
       {/* Worktree deletion confirmation dialog */}
       <Dialog open={showWorktreeConfirm} onOpenChange={setShowWorktreeConfirm}>
-        <DialogContent className="bg-slate-900 border-white/10">
+        <DialogContent className="bg-slate-900/95 backdrop-blur-xl border-white/10">
           <DialogHeader>
             <DialogTitle className="text-white">Delete Worktree Session</DialogTitle>
             <DialogDescription className="text-slate-400">

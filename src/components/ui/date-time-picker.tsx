@@ -110,13 +110,13 @@ export function DateTimePicker({
         <Button
           variant="outline"
           className={cn(
-            "w-full justify-start text-left font-normal",
+            "w-full justify-start text-left font-normal h-8 text-xs",
             "bg-slate-800/50 border-white/10 hover:bg-slate-800 hover:border-white/20",
             !date && "text-slate-500",
             className
           )}
         >
-          <CalendarIcon className="mr-2 h-4 w-4 text-violet-400" />
+          <CalendarIcon className="mr-2 h-3.5 w-3.5 text-violet-400" />
           {date ? (
             format(date, "PPP 'at' h:mm a")
           ) : (
@@ -125,7 +125,7 @@ export function DateTimePicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
-        <div className="p-3 space-y-3">
+        <div className="p-2.5 space-y-2.5">
           {/* Calendar */}
           <Calendar
             mode="single"
@@ -136,25 +136,25 @@ export function DateTimePicker({
             className="rounded-md"
             classNames={{
               months: "flex flex-col",
-              month: "space-y-3",
-              caption: "flex justify-center pt-1 relative items-center",
-              caption_label: "text-sm font-medium text-white",
+              month: "space-y-2",
+              caption: "flex justify-center pt-0.5 relative items-center",
+              caption_label: "text-xs font-medium text-white",
               nav: "space-x-1 flex items-center",
               nav_button: cn(
-                "h-7 w-7 bg-transparent p-0 text-slate-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+                "h-6 w-6 bg-transparent p-0 text-slate-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
               ),
-              nav_button_previous: "absolute left-1",
-              nav_button_next: "absolute right-1",
-              table: "w-full border-collapse space-y-1",
+              nav_button_previous: "absolute left-0.5",
+              nav_button_next: "absolute right-0.5",
+              table: "w-full border-collapse space-y-0.5",
               head_row: "flex",
-              head_cell: "text-slate-500 rounded-md w-8 font-normal text-[0.8rem]",
-              row: "flex w-full mt-1",
+              head_cell: "text-slate-500 rounded-md w-7 font-normal text-[10px]",
+              row: "flex w-full mt-0.5",
               cell: cn(
-                "relative p-0 text-center text-sm focus-within:relative focus-within:z-20",
+                "relative p-0 text-center text-xs focus-within:relative focus-within:z-20",
                 "first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md"
               ),
               day: cn(
-                "h-8 w-8 p-0 font-normal rounded-md transition-colors",
+                "h-7 w-7 p-0 font-normal text-xs rounded-md transition-colors",
                 "text-slate-300 hover:bg-violet-500/20 hover:text-white",
                 "focus:bg-violet-500/20 focus:text-white focus:outline-none"
               ),
@@ -170,16 +170,16 @@ export function DateTimePicker({
           <div className="border-t border-white/10" />
 
           {/* Time Picker */}
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-violet-400" />
-            <span className="text-sm text-slate-400">Time:</span>
+          <div className="flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5 text-violet-400" />
+            <span className="text-xs text-slate-400">Time:</span>
 
             {/* Hour Select */}
             <Select
               value={date?.getHours()?.toString()}
               onValueChange={(value) => handleTimeChange("hour", value)}
             >
-              <SelectTrigger className="w-24 h-8 bg-slate-800/50 border-white/10 text-sm">
+              <SelectTrigger className="w-20 h-7 bg-slate-800/50 border-white/10 text-xs">
                 <SelectValue placeholder="Hour" />
               </SelectTrigger>
               <SelectContent className="max-h-48 bg-slate-900/95 backdrop-blur-xl border-white/10">
@@ -187,7 +187,7 @@ export function DateTimePicker({
                   <SelectItem
                     key={hour}
                     value={hour.toString()}
-                    className="text-sm hover:bg-violet-500/20 focus:bg-violet-500/20"
+                    className="text-xs hover:bg-violet-500/20 focus:bg-violet-500/20"
                   >
                     {formatHour(hour)}
                   </SelectItem>
@@ -195,14 +195,14 @@ export function DateTimePicker({
               </SelectContent>
             </Select>
 
-            <span className="text-slate-500">:</span>
+            <span className="text-slate-500 text-xs">:</span>
 
             {/* Minute Select */}
             <Select
               value={date ? (Math.round(date.getMinutes() / 5) * 5).toString() : undefined}
               onValueChange={(value) => handleTimeChange("minute", value)}
             >
-              <SelectTrigger className="w-16 h-8 bg-slate-800/50 border-white/10 text-sm">
+              <SelectTrigger className="w-14 h-7 bg-slate-800/50 border-white/10 text-xs">
                 <SelectValue placeholder="Min" />
               </SelectTrigger>
               <SelectContent className="bg-slate-900/95 backdrop-blur-xl border-white/10">
@@ -210,7 +210,7 @@ export function DateTimePicker({
                   <SelectItem
                     key={minute}
                     value={minute.toString()}
-                    className="text-sm hover:bg-violet-500/20 focus:bg-violet-500/20"
+                    className="text-xs hover:bg-violet-500/20 focus:bg-violet-500/20"
                   >
                     {formatMinute(minute)}
                   </SelectItem>
@@ -232,7 +232,7 @@ export function DateTimePicker({
                 key={label}
                 variant="ghost"
                 size="sm"
-                className="h-7 px-2 text-xs text-slate-400 hover:text-white hover:bg-violet-500/20"
+                className="h-6 px-2 text-[10px] text-slate-400 hover:text-white hover:bg-violet-500/20"
                 onClick={() => {
                   const newDate = new Date();
                   newDate.setMinutes(newDate.getMinutes() + offset);
