@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint } from "lucide-react";
 import { PathInput } from "@/components/common";
+import { ProfileSelector } from "@/components/profiles/ProfileSelector";
+import { useProfileContext } from "@/contexts/ProfileContext";
 import { useTemplateContext } from "@/contexts/TemplateContext";
 import { expandNamePattern, type SessionTemplate } from "@/types/template";
 import {
@@ -34,6 +36,7 @@ interface NewSessionWizardProps {
     featureDescription?: string;
     createWorktree?: boolean;
     baseBranch?: string;
+    profileId?: string;
   }) => Promise<void>;
   isGitHubConnected: boolean;
 }
@@ -73,6 +76,10 @@ export function NewSessionWizard({
   // Template state
   const { templates, recordUsage } = useTemplateContext();
   const [templateCounter, setTemplateCounter] = useState(1);
+
+  // Profile state
+  const { profiles } = useProfileContext();
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
   // Feature session state
   const [featureDescription, setFeatureDescription] = useState("");
@@ -143,6 +150,7 @@ export function NewSessionWizard({
     setCreateWorktree(false);
     setNewBranchName(undefined);
     setCloningStatus(null);
+    setSelectedProfileId(null);
     // Feature session reset
     setFeatureDescription("");
     setGeneratedBranchName("");
@@ -226,6 +234,7 @@ export function NewSessionWizard({
       await onCreate({
         name: sessionName || "Terminal",
         projectPath: projectPath || undefined,
+        profileId: selectedProfileId || undefined,
       });
       handleClose();
     } catch (err) {
@@ -328,6 +337,7 @@ export function NewSessionWizard({
         createWorktree: featureCreateWorktree,
         baseBranch: featureBaseBranch,
         worktreeBranch: featureCreateWorktree ? generatedBranchName : undefined,
+        profileId: selectedProfileId || undefined,
       });
       handleClose();
     } catch (err) {
@@ -477,6 +487,25 @@ export function NewSessionWizard({
                   className="bg-slate-800/50 border-white/10 focus:border-violet-500"
                 />
               </div>
+
+              {/* Profile Selection */}
+              {profiles.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-slate-300 flex items-center gap-2">
+                    <Fingerprint className="w-4 h-4 text-violet-400" />
+                    Profile
+                  </Label>
+                  <ProfileSelector
+                    value={selectedProfileId}
+                    onChange={setSelectedProfileId}
+                    placeholder="Select a profile (optional)"
+                    showProviderBadge={true}
+                  />
+                  <p className="text-xs text-slate-500">
+                    Apply git identity, secrets, and MCP servers from a profile
+                  </p>
+                </div>
+              )}
 
               {sessionType === "folder" && (
                 <div className="space-y-2">
@@ -712,6 +741,22 @@ export function NewSessionWizard({
                   browserDescription="Choose a project directory for your feature session"
                 />
               </div>
+
+              {/* Profile Selection */}
+              {profiles.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-slate-300 flex items-center gap-2">
+                    <Fingerprint className="w-4 h-4 text-violet-400" />
+                    Profile
+                  </Label>
+                  <ProfileSelector
+                    value={selectedProfileId}
+                    onChange={setSelectedProfileId}
+                    placeholder="Select a profile (optional)"
+                    showProviderBadge={true}
+                  />
+                </div>
+              )}
 
               {/* Create Worktree Toggle */}
               <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/30 border border-white/10">

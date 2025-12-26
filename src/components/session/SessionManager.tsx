@@ -11,6 +11,7 @@ import { RecordingsModal } from "@/components/session/RecordingsModal";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
 import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
+import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
@@ -221,6 +222,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [scheduleTargetSession, setScheduleTargetSession] = useState<typeof activeSessions[0] | null>(null);
   const [isSchedulesOpen, setIsSchedulesOpen] = useState(false);
   const [schedulesFilterSession, setSchedulesFilterSession] = useState<{ id: string; name: string } | null>(null);
+
+  // Profiles modal state
+  const [isProfilesModalOpen, setIsProfilesModalOpen] = useState(false);
 
   // Get trash count for a specific folder
   const getFolderTrashCount = useCallback(
@@ -1090,6 +1094,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               setSchedulesFilterSession(null);
               setIsSchedulesOpen(true);
             }}
+            onProfilesOpen={() => setIsProfilesModalOpen(true)}
           />
       </div>
 
@@ -1381,6 +1386,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         }}
         sessionId={schedulesFilterSession?.id}
         sessionName={schedulesFilterSession?.name}
+      />
+
+      {/* Profiles Modal */}
+      <ProfilesModal
+        open={isProfilesModalOpen}
+        onClose={() => setIsProfilesModalOpen(false)}
       />
     </div>
   );
