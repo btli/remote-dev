@@ -13,198 +13,173 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-// Analog Clock Component
-interface AnalogClockProps {
-  hours: number;
-  minutes: number;
-  seconds: number;
-  onTimeChange?: (hours: number, minutes: number) => void;
-  size?: number;
+// Clock face component with clickable numbers
+type ClockView = "hours" | "minutes" | "seconds";
+
+interface ClockFaceProps {
+  hours: number; // 0-23
+  minutes: number; // 0-59
+  seconds: number; // 0-59
+  view: ClockView;
+  onChange: (value: number) => void;
+  onViewChange: (view: ClockView) => void;
 }
 
-function AnalogClock({ hours, minutes, seconds, onTimeChange, size = 100 }: AnalogClockProps) {
-  const svgRef = React.useRef<SVGSVGElement>(null);
-  const [isDragging, setIsDragging] = React.useState<"hour" | "minute" | null>(null);
-
+function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: ClockFaceProps) {
+  const size = 140;
   const center = size / 2;
-  const radius = size / 2 - 4;
+  const outerRadius = size / 2 - 14;
 
-  // Convert time to angles (12 o'clock = -90 degrees, clockwise)
-  const secondAngle = (seconds / 60) * 360 - 90;
-  const minuteAngle = ((minutes + seconds / 60) / 60) * 360 - 90;
-  const hourAngle = (((hours % 12) + minutes / 60) / 12) * 360 - 90;
-
-  // Calculate hand endpoints
-  const getHandCoords = (angle: number, length: number) => {
-    const radians = (angle * Math.PI) / 180;
+  // Calculate hand endpoints for all three hands
+  const getHandEnd = (value: number, max: number, length: number) => {
+    const angle = ((value / max) * 360 - 90) * (Math.PI / 180);
     return {
-      x: center + Math.cos(radians) * length,
-      y: center + Math.sin(radians) * length,
+      x: center + Math.cos(angle) * length,
+      y: center + Math.sin(angle) * length,
     };
   };
 
-  const hourHand = getHandCoords(hourAngle, radius * 0.5);
-  const minuteHand = getHandCoords(minuteAngle, radius * 0.7);
-  const secondHand = getHandCoords(secondAngle, radius * 0.8);
+  const hourHandEnd = getHandEnd(hours % 12 + minutes / 60, 12, outerRadius * 0.5);
+  const minuteHandEnd = getHandEnd(minutes + seconds / 60, 60, outerRadius * 0.7);
+  const secondHandEnd = getHandEnd(seconds, 60, outerRadius * 0.85);
 
-  // Handle mouse/touch interaction for setting time
-  const getAngleFromEvent = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!svgRef.current) return null;
-    const rect = svgRef.current.getBoundingClientRect();
-    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
-    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
-    const x = clientX - rect.left - center;
-    const y = clientY - rect.top - center;
+  // Generate numbers based on view
+  const getNumbers = () => {
+    if (view === "hours") {
+      return [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    }
+    // Minutes and seconds: 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55
+    return [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+  };
+
+  const numbers = getNumbers();
+
+  // Calculate position for a number on the clock face
+  const getPosition = (index: number, radius: number) => {
+    const angle = (index * 30 - 90) * (Math.PI / 180);
+    return {
+      x: center + Math.cos(angle) * radius,
+      y: center + Math.sin(angle) * radius,
+    };
+  };
+
+  // Get current value for the active view
+  const getCurrentValue = () => {
+    if (view === "hours") return hours % 12 || 12;
+    if (view === "minutes") return minutes;
+    return seconds;
+  };
+
+  // Handle click on clock face
+  const handleClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left - center;
+    const y = e.clientY - rect.top - center;
+
     let angle = Math.atan2(y, x) * (180 / Math.PI) + 90;
     if (angle < 0) angle += 360;
-    return angle;
-  };
 
-  const handleMouseDown = (e: React.MouseEvent, hand: "hour" | "minute") => {
-    e.preventDefault();
-    setIsDragging(hand);
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !onTimeChange) return;
-    const angle = getAngleFromEvent(e);
-    if (angle === null) return;
-
-    if (isDragging === "minute") {
-      const newMinutes = Math.round((angle / 360) * 60) % 60;
-      onTimeChange(hours, newMinutes);
-    } else if (isDragging === "hour") {
-      let newHours = Math.round((angle / 360) * 12);
-      if (newHours === 0) newHours = 12;
-      // Preserve AM/PM
-      if (hours >= 12) {
-        newHours = newHours === 12 ? 12 : newHours + 12;
-      } else {
-        newHours = newHours === 12 ? 0 : newHours;
-      }
-      onTimeChange(newHours, minutes);
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(null);
-  };
-
-  const handleClick = (e: React.MouseEvent) => {
-    if (!onTimeChange) return;
-    const angle = getAngleFromEvent(e);
-    if (angle === null) return;
-
-    // Determine if clicking closer to hour or minute hand position
-    const clickRadius = Math.sqrt(
-      Math.pow(e.nativeEvent.offsetX - center, 2) +
-      Math.pow(e.nativeEvent.offsetY - center, 2)
-    );
-
-    if (clickRadius < radius * 0.6) {
-      // Inner area - set hours
-      let newHours = Math.round((angle / 360) * 12);
-      if (newHours === 0) newHours = 12;
-      if (hours >= 12) {
-        newHours = newHours === 12 ? 12 : newHours + 12;
-      } else {
-        newHours = newHours === 12 ? 0 : newHours;
-      }
-      onTimeChange(newHours, minutes);
+    if (view === "hours") {
+      let hour = Math.round(angle / 30) % 12;
+      if (hour === 0) hour = 12;
+      onChange(hour);
+      setTimeout(() => onViewChange("minutes"), 200);
     } else {
-      // Outer area - set minutes
-      const newMinutes = Math.round((angle / 360) * 60) % 60;
-      onTimeChange(hours, newMinutes);
+      const value = Math.round(angle / 6) % 60;
+      onChange(value);
+      if (view === "minutes") {
+        setTimeout(() => onViewChange("seconds"), 200);
+      } else {
+        // Seconds -> cycle back to hours
+        setTimeout(() => onViewChange("hours"), 200);
+      }
     }
   };
 
-  // Hour markers
-  const hourMarkers = Array.from({ length: 12 }, (_, i) => {
-    const angle = (i / 12) * 360 - 90;
-    const markerRadius = radius - 6;
-    const coords = getHandCoords(angle, markerRadius);
-    const isMainHour = i % 3 === 0;
-    return (
-      <circle
-        key={i}
-        cx={coords.x}
-        cy={coords.y}
-        r={isMainHour ? 2 : 1}
-        className={isMainHour ? "fill-slate-400" : "fill-slate-600"}
-      />
-    );
-  });
+  // Check if a number is selected
+  const isSelected = (num: number) => {
+    const current = getCurrentValue();
+    if (view === "hours") {
+      return current === num;
+    }
+    return current === num;
+  };
 
   return (
     <svg
-      ref={svgRef}
       width={size}
       height={size}
-      className={cn(
-        "cursor-pointer",
-        isDragging && "cursor-grabbing"
-      )}
+      className="cursor-pointer"
       onClick={handleClick}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
     >
-      {/* Clock face */}
+      {/* Clock face background */}
       <circle
         cx={center}
         cy={center}
-        r={radius}
-        className="fill-slate-800/50 stroke-white/10"
-        strokeWidth={1}
+        r={outerRadius + 10}
+        className="fill-slate-800/50"
       />
 
-      {/* Hour markers */}
-      {hourMarkers}
-
-      {/* Hour hand */}
+      {/* Hour hand (thick, violet) */}
       <line
         x1={center}
         y1={center}
-        x2={hourHand.x}
-        y2={hourHand.y}
-        className="stroke-violet-400"
+        x2={hourHandEnd.x}
+        y2={hourHandEnd.y}
+        className={cn("stroke-violet-500", view === "hours" ? "opacity-100" : "opacity-40")}
         strokeWidth={3}
         strokeLinecap="round"
-        style={{ cursor: onTimeChange ? "grab" : "default" }}
-        onMouseDown={(e) => onTimeChange && handleMouseDown(e, "hour")}
       />
 
-      {/* Minute hand */}
+      {/* Minute hand (medium, white) */}
       <line
         x1={center}
         y1={center}
-        x2={minuteHand.x}
-        y2={minuteHand.y}
-        className="stroke-white"
+        x2={minuteHandEnd.x}
+        y2={minuteHandEnd.y}
+        className={cn("stroke-white", view === "minutes" ? "opacity-100" : "opacity-40")}
         strokeWidth={2}
         strokeLinecap="round"
-        style={{ cursor: onTimeChange ? "grab" : "default" }}
-        onMouseDown={(e) => onTimeChange && handleMouseDown(e, "minute")}
       />
 
-      {/* Second hand */}
+      {/* Second hand (thin, red) */}
       <line
         x1={center}
         y1={center}
-        x2={secondHand.x}
-        y2={secondHand.y}
-        className="stroke-red-400"
+        x2={secondHandEnd.x}
+        y2={secondHandEnd.y}
+        className={cn("stroke-red-400", view === "seconds" ? "opacity-100" : "opacity-40")}
         strokeWidth={1}
         strokeLinecap="round"
       />
 
       {/* Center dot */}
-      <circle
-        cx={center}
-        cy={center}
-        r={3}
-        className="fill-violet-500"
-      />
+      <circle cx={center} cy={center} r={4} className="fill-violet-500" />
+
+      {/* Numbers around the clock */}
+      {numbers.map((num, i) => {
+        const pos = getPosition(i, outerRadius - 4);
+        const selected = isSelected(num);
+        return (
+          <g key={num}>
+            {selected && (
+              <circle cx={pos.x} cy={pos.y} r={12} className="fill-violet-600" />
+            )}
+            <text
+              x={pos.x}
+              y={pos.y}
+              textAnchor="middle"
+              dominantBaseline="central"
+              className={cn(
+                "text-[10px] font-medium pointer-events-none",
+                selected ? "fill-white" : "fill-slate-300"
+              )}
+            >
+              {view === "hours" ? num : num.toString().padStart(2, "0")}
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -225,11 +200,10 @@ export function DateTimePicker({
   placeholder = "Pick date and time",
 }: DateTimePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
-
-  // Local time input state for controlled editing
+  const [clockView, setClockView] = React.useState<ClockView>("hours");
   const [timeInput, setTimeInput] = React.useState("");
 
-  // Update time input when date changes externally
+  // Sync time input with date
   React.useEffect(() => {
     if (date) {
       const hours = date.getHours();
@@ -238,12 +212,19 @@ export function DateTimePicker({
       const ampm = hours >= 12 ? "PM" : "AM";
       const displayHours = hours % 12 || 12;
       setTimeInput(
-        `${displayHours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")} ${ampm}`
+        `${displayHours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")} ${ampm}`
       );
     } else {
       setTimeInput("");
     }
   }, [date]);
+
+  // Reset clock view when opening
+  React.useEffect(() => {
+    if (isOpen) {
+      setClockView("hours");
+    }
+  }, [isOpen]);
 
   const handleDateSelect = (selectedDate: Date | undefined) => {
     if (!selectedDate) {
@@ -265,12 +246,10 @@ export function DateTimePicker({
     onDateChange(newDate);
   };
 
-  // Parse time input and update date
-  const parseAndUpdateTime = (input: string) => {
-    // Try to parse various formats: HH:MM:SS AM/PM, HH:MM AM/PM, HH:MM:SS, HH:MM
+  // Parse and apply time input
+  const parseTimeInput = (input: string) => {
     const timeRegex = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i;
     const match = input.trim().match(timeRegex);
-
     if (!match) return;
 
     let hours = parseInt(match[1], 10);
@@ -278,10 +257,8 @@ export function DateTimePicker({
     const seconds = match[3] ? parseInt(match[3], 10) : 0;
     const ampm = match[4]?.toUpperCase();
 
-    // Validate ranges
     if (minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return;
 
-    // Handle AM/PM conversion
     if (ampm) {
       if (hours < 1 || hours > 12) return;
       if (ampm === "PM" && hours !== 12) hours += 12;
@@ -296,51 +273,35 @@ export function DateTimePicker({
     newDate.setMinutes(minutes);
     newDate.setSeconds(seconds);
     newDate.setMilliseconds(0);
-
-    onDateChange(newDate);
-  };
-
-  const handleTimeInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setTimeInput(e.target.value);
-  };
-
-  const handleTimeInputBlur = () => {
-    parseAndUpdateTime(timeInput);
-  };
-
-  const handleTimeInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      parseAndUpdateTime(timeInput);
-    }
-  };
-
-  // Quick time adjustment
-  const adjustTime = (field: "hour" | "minute" | "second", delta: number) => {
-    const baseDate = date || new Date();
-    const newDate = new Date(baseDate);
-
-    if (field === "hour") {
-      newDate.setHours(newDate.getHours() + delta);
-    } else if (field === "minute") {
-      newDate.setMinutes(newDate.getMinutes() + delta);
-    } else {
-      newDate.setSeconds(newDate.getSeconds() + delta);
-    }
-
-    onDateChange(newDate);
-  };
-
-  // Toggle AM/PM
-  const toggleAmPm = () => {
-    if (!date) return;
-    const newDate = new Date(date);
-    const hours = newDate.getHours();
-    newDate.setHours(hours >= 12 ? hours - 12 : hours + 12);
     onDateChange(newDate);
   };
 
   const currentHours = date?.getHours() ?? 0;
+  const currentMinutes = date?.getMinutes() ?? 0;
+  const currentSeconds = date?.getSeconds() ?? 0;
   const isAM = currentHours < 12;
+
+  // Handle clock value change
+  const handleClockChange = (value: number) => {
+    const baseDate = date || new Date();
+    const newDate = new Date(baseDate);
+
+    if (clockView === "hours") {
+      // Preserve AM/PM when changing hour
+      if (isAM) {
+        newDate.setHours(value === 12 ? 0 : value);
+      } else {
+        newDate.setHours(value === 12 ? 12 : value + 12);
+      }
+    } else if (clockView === "minutes") {
+      newDate.setMinutes(value);
+    } else {
+      newDate.setSeconds(value);
+    }
+
+    newDate.setMilliseconds(0);
+    onDateChange(newDate);
+  };
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -365,183 +326,94 @@ export function DateTimePicker({
       <PopoverContent className="w-auto p-0" align="start">
         <div className="flex">
           {/* Calendar - Left side */}
-          <div className="p-2 border-r border-white/10">
+          <div className="border-r border-white/10">
             <Calendar
               mode="single"
               selected={date}
               onSelect={handleDateSelect}
               disabled={(d) => minDate ? d < new Date(minDate.setHours(0, 0, 0, 0)) : false}
               initialFocus
-              className="rounded-md"
-              classNames={{
-                months: "flex flex-col",
-                month: "space-y-0.5",
-                caption: "flex justify-center pt-0.5 relative items-center h-6",
-                caption_label: "text-[10px] font-medium text-white",
-                nav: "space-x-1 flex items-center",
-                nav_button: cn(
-                  "h-4 w-4 bg-transparent p-0 text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                ),
-                nav_button_previous: "absolute left-0",
-                nav_button_next: "absolute right-0",
-                table: "w-full border-collapse",
-                head_row: "flex gap-0.5",
-                head_cell: "text-slate-500 w-5 font-normal text-[8px] text-center",
-                row: "flex w-full gap-0.5",
-                cell: cn(
-                  "relative p-0 text-center text-[9px] focus-within:relative focus-within:z-20"
-                ),
-                day: cn(
-                  "h-5 w-5 p-0 font-normal text-[9px] rounded transition-colors",
-                  "text-slate-300 hover:bg-violet-500/20 hover:text-white",
-                  "focus:bg-violet-500/20 focus:text-white focus:outline-none"
-                ),
-                day_selected: "bg-violet-600 text-white hover:bg-violet-700 hover:text-white focus:bg-violet-700",
-                day_today: "bg-slate-700 text-white",
-                day_outside: "text-slate-600 opacity-50",
-                day_disabled: "text-slate-600 opacity-50 cursor-not-allowed",
-                day_hidden: "invisible",
-              }}
             />
           </div>
 
           {/* Time Picker - Right side */}
-          <div className="p-2 flex flex-col min-w-[140px]">
-            <div className="space-y-2">
-              <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-1">
-                <Clock className="h-3 w-3 text-violet-400" />
-                <span>Time</span>
-              </div>
+          <div className="p-2 flex flex-col">
+            {/* Time input */}
+            <Input
+              value={timeInput}
+              onChange={(e) => setTimeInput(e.target.value)}
+              onBlur={() => parseTimeInput(timeInput)}
+              onKeyDown={(e) => e.key === "Enter" && parseTimeInput(timeInput)}
+              placeholder="12:00:00 PM"
+              className="h-7 text-xs font-mono bg-slate-800/50 border-white/10 text-center mb-2"
+            />
 
-              {/* Analog Clock */}
-              <div className="flex justify-center">
-                <AnalogClock
-                  hours={date?.getHours() ?? 0}
-                  minutes={date?.getMinutes() ?? 0}
-                  seconds={date?.getSeconds() ?? 0}
-                  size={100}
-                  onTimeChange={(newHours, newMinutes) => {
-                    const baseDate = date || new Date();
-                    const newDate = new Date(baseDate);
-                    newDate.setHours(newHours);
-                    newDate.setMinutes(newMinutes);
-                    onDateChange(newDate);
-                  }}
-                />
-              </div>
+            {/* View tabs */}
+            <div className="flex gap-1 mb-2">
+              {(["hours", "minutes", "seconds"] as const).map((view) => (
+                <button
+                  key={view}
+                  onClick={() => setClockView(view)}
+                  className={cn(
+                    "flex-1 h-6 text-[9px] rounded transition-colors",
+                    clockView === view
+                      ? "bg-violet-600 text-white"
+                      : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                  )}
+                >
+                  {view === "hours" ? "HR" : view === "minutes" ? "MIN" : "SEC"}
+                </button>
+              ))}
+            </div>
 
-              {/* Time Input */}
-              <Input
-                value={timeInput}
-                onChange={handleTimeInputChange}
-                onBlur={handleTimeInputBlur}
-                onKeyDown={handleTimeInputKeyDown}
-                placeholder="12:00:00 PM"
-                className="h-7 text-xs font-mono bg-slate-800/50 border-white/10 text-center"
+            {/* Clock face */}
+            <div className="flex justify-center">
+              <ClockFace
+                hours={currentHours}
+                minutes={currentMinutes}
+                seconds={currentSeconds}
+                view={clockView}
+                onChange={handleClockChange}
+                onViewChange={setClockView}
               />
+            </div>
 
-              {/* Time adjustment buttons */}
-              <div className="grid grid-cols-3 gap-1">
-                {/* Hours */}
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => adjustTime("hour", 1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▲
-                  </button>
-                  <span className="text-[10px] text-violet-400">hr</span>
-                  <button
-                    onClick={() => adjustTime("hour", -1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▼
-                  </button>
-                </div>
-
-                {/* Minutes */}
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => adjustTime("minute", 1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▲
-                  </button>
-                  <span className="text-[10px] text-white">min</span>
-                  <button
-                    onClick={() => adjustTime("minute", -1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▼
-                  </button>
-                </div>
-
-                {/* Seconds */}
-                <div className="flex flex-col items-center gap-0.5">
-                  <button
-                    onClick={() => adjustTime("second", 1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▲
-                  </button>
-                  <span className="text-[10px] text-red-400">sec</span>
-                  <button
-                    onClick={() => adjustTime("second", -1)}
-                    className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                  >
-                    ▼
-                  </button>
-                </div>
-              </div>
-
-              {/* AM/PM Toggle */}
-              <div className="flex gap-1">
-                <button
-                  onClick={toggleAmPm}
-                  className={cn(
-                    "flex-1 h-6 text-[10px] rounded transition-colors",
-                    isAM
-                      ? "bg-violet-600 text-white"
-                      : "bg-slate-800/50 text-slate-400 hover:text-white hover:bg-white/10"
-                  )}
-                >
-                  AM
-                </button>
-                <button
-                  onClick={toggleAmPm}
-                  className={cn(
-                    "flex-1 h-6 text-[10px] rounded transition-colors",
-                    !isAM
-                      ? "bg-violet-600 text-white"
-                      : "bg-slate-800/50 text-slate-400 hover:text-white hover:bg-white/10"
-                  )}
-                >
-                  PM
-                </button>
-              </div>
-
-              {/* Quick presets */}
-              <div className="flex flex-wrap gap-1 pt-2 border-t border-white/10">
-                {[
-                  { label: "Now", offset: 0 },
-                  { label: "+5m", offset: 5 },
-                  { label: "+1h", offset: 60 },
-                ].map(({ label, offset }) => (
-                  <Button
-                    key={label}
-                    variant="ghost"
-                    size="sm"
-                    className="flex-1 h-5 px-1 text-[9px] text-slate-400 hover:text-white hover:bg-violet-500/20"
-                    onClick={() => {
-                      const newDate = new Date();
-                      newDate.setMinutes(newDate.getMinutes() + offset);
-                      onDateChange(newDate);
-                    }}
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </div>
+            {/* AM/PM toggle */}
+            <div className="flex gap-1 mt-2">
+              <button
+                onClick={() => {
+                  if (!date) return;
+                  const newDate = new Date(date);
+                  const hours = newDate.getHours();
+                  if (hours >= 12) newDate.setHours(hours - 12);
+                  onDateChange(newDate);
+                }}
+                className={cn(
+                  "flex-1 h-6 text-[10px] rounded transition-colors",
+                  isAM
+                    ? "bg-violet-600 text-white"
+                    : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                )}
+              >
+                AM
+              </button>
+              <button
+                onClick={() => {
+                  if (!date) return;
+                  const newDate = new Date(date);
+                  const hours = newDate.getHours();
+                  if (hours < 12) newDate.setHours(hours + 12);
+                  onDateChange(newDate);
+                }}
+                className={cn(
+                  "flex-1 h-6 text-[10px] rounded transition-colors",
+                  !isAM
+                    ? "bg-violet-600 text-white"
+                    : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                )}
+              >
+                PM
+              </button>
             </div>
           </div>
         </div>
