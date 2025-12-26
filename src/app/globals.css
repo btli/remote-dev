@@ -606,6 +606,69 @@
 }
 
 /* ============================================================================
+   Modal Typography - Consistent font sizes across all modals
+   ============================================================================ */
+
+/* Modal title - compact but readable */
+.modal-title {
+  @apply text-sm font-semibold text-white;
+}
+
+/* Modal description text */
+.modal-description {
+  @apply text-xs text-slate-400;
+}
+
+/* Section headers within modals */
+.modal-section-header {
+  @apply text-xs font-medium text-white;
+}
+
+/* Form labels */
+.modal-label {
+  @apply text-xs text-slate-300;
+}
+
+/* Secondary/muted labels */
+.modal-label-muted {
+  @apply text-xs text-slate-400;
+}
+
+/* Helper text below inputs */
+.modal-helper {
+  @apply text-[10px] text-slate-500;
+}
+
+/* Error messages */
+.modal-error {
+  @apply text-xs text-red-400;
+}
+
+/* Status badges */
+.modal-badge {
+  @apply text-[10px] px-1.5 py-0.5 rounded;
+}
+
+/* Input fields in modals */
+.modal-input {
+  @apply h-8 text-xs bg-slate-800 border-white/10 text-white placeholder:text-slate-500;
+}
+
+/* Select triggers in modals */
+.modal-select {
+  @apply h-8 text-xs bg-slate-800 border-white/10;
+}
+
+/* Button sizes in modals */
+.modal-btn {
+  @apply h-8 text-xs px-3;
+}
+
+.modal-btn-sm {
+  @apply h-7 text-[11px] px-2.5;
+}
+
+/* ============================================================================
    Sidebar Tree View Lines - Vertical lines only
    ============================================================================ */
 
