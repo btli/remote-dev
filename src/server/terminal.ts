@@ -135,7 +135,8 @@ function createTmuxSession(
   }
   execFileSync("tmux", args, { stdio: "pipe" });
 
-  // Enable mouse mode for scrolling and selection
+  // Enable mouse mode for scrolling in alternate screen apps (vim, less, claude code, etc.)
+  // Use Shift+click to bypass and select text with xterm.js
   execFileSync("tmux", ["set-option", "-t", sessionName, "mouse", "on"], { stdio: "pipe" });
 
   // Increase scrollback buffer (default is 2000)

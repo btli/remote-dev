@@ -107,7 +107,8 @@ export async function createSession(
   try {
     await execFile("tmux", args, execOptions);
 
-    // Enable mouse mode for scrollback support
+    // Enable mouse mode for scrolling in alternate screen apps (vim, less, claude code, etc.)
+    // Use Shift+click to bypass and select text with xterm.js
     await execFile("tmux", [
       "set-option",
       "-t",
