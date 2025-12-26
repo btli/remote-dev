@@ -389,10 +389,15 @@ export function FolderPreferencesModal({
   // Get unique owners from repos for filtering
   const repoOwners = Array.from(new Set(repos.map((r) => r.owner))).sort();
 
-  // Filter and sort repos
+  // Filter and sort repos (selected repo always first)
+  const selectedRepoId = getValue("githubRepoId");
   const filteredAndSortedRepos = repos
     .filter((repo) => !repoOwnerFilter || repo.owner === repoOwnerFilter)
     .sort((a, b) => {
+      // Selected repo always first
+      if (a.id === selectedRepoId) return -1;
+      if (b.id === selectedRepoId) return 1;
+
       switch (repoSortBy) {
         case "name":
           return a.name.localeCompare(b.name);
