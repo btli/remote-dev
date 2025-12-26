@@ -173,6 +173,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         theme: getTerminalTheme(themeRef.current),
         allowProposedApi: true,
         scrollback: 10000,
+        // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
+        // Shift+click also works by default to bypass mouse mode
+        macOptionClickForcesSelection: true,
+        // Right-click selects word under cursor (macOS-style behavior)
+        rightClickSelectsWord: true,
       });
 
       fitAddon = new FitAddon();
