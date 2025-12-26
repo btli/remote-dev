@@ -25,8 +25,8 @@
   <!-- Prompt symbol > -->
   <path d="M100 200 L180 260 L100 320" stroke="url(#promptGlow)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 
-  <!-- Cursor/input line -->
-  <rect x="220" y="240" width="180" height="40" rx="4" fill="#7aa2f7" opacity="0.8"/>
+  <!-- Underscore _ (positioned at baseline) -->
+  <rect x="220" y="330" width="140" height="20" rx="4" fill="#7aa2f7" opacity="0.9"/>
 
   <!-- Output lines -->
   <rect x="100" y="360" width="280" height="16" rx="4" fill="#565f89"/>
