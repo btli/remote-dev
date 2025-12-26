@@ -808,7 +808,7 @@ export function FolderPreferencesModal({
                                   onClick={() => handleRepoSelect(repo)}
                                   disabled={isCloning || cloningRepoId !== null}
                                   className={cn(
-                                    "w-full flex items-start gap-2 px-3 py-2 text-left transition-colors",
+                                    "w-full flex items-start gap-2 px-2.5 py-1.5 text-left transition-colors",
                                     "hover:bg-white/5 focus:bg-white/5 focus:outline-none",
                                     "border-b border-white/5 last:border-b-0",
                                     isSelected && "bg-violet-500/20",
@@ -818,31 +818,31 @@ export function FolderPreferencesModal({
                                   {/* Status icon */}
                                   <div className="mt-0.5 shrink-0">
                                     {isCloning ? (
-                                      <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
+                                      <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin" />
                                     ) : isSelected ? (
-                                      <Check className="w-4 h-4 text-violet-400" />
+                                      <Check className="w-3.5 h-3.5 text-violet-400" />
                                     ) : isCloned ? (
-                                      <FolderGit2 className="w-4 h-4 text-emerald-400" />
+                                      <FolderGit2 className="w-3.5 h-3.5 text-emerald-400" />
                                     ) : (
-                                      <Download className="w-4 h-4 text-amber-400" />
+                                      <Download className="w-3.5 h-3.5 text-amber-400" />
                                     )}
                                   </div>
                                   {/* Repo info */}
                                   <div className="flex-1 min-w-0">
                                     <span className={cn(
-                                      "block text-sm font-medium truncate",
+                                      "block text-xs font-medium truncate",
                                       isSelected ? "text-white" : isCloned ? "text-slate-200" : "text-slate-300"
                                     )}>
                                       {repo.name}
                                     </span>
                                     {isCloning ? (
-                                      <span className="text-xs text-violet-400">Cloning...</span>
+                                      <span className="text-[10px] text-violet-400">Cloning...</span>
                                     ) : isCloned ? (
-                                      <span className="text-xs text-slate-500 truncate block">
+                                      <span className="text-[10px] text-slate-500 truncate block">
                                         {repo.localPath}
                                       </span>
                                     ) : (
-                                      <span className="text-xs text-amber-400">Click to clone</span>
+                                      <span className="text-[10px] text-amber-400">Click to clone</span>
                                     )}
                                   </div>
                                 </button>
