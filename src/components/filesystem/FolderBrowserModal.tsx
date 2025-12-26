@@ -137,8 +137,8 @@ export function FolderBrowserModal({
     : entries;
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[500px] max-h-[70vh] bg-slate-900 border-white/10 flex flex-col">
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+      <DialogContent className="sm:max-w-[500px] h-[500px] bg-slate-900 border-white/10 flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-white text-sm">
             <Folder className="w-4 h-4 text-violet-400" />
@@ -147,7 +147,7 @@ export function FolderBrowserModal({
         </DialogHeader>
 
         {/* Breadcrumb navigation */}
-        <div className="flex items-center gap-1 text-xs overflow-x-auto pb-2 border-b border-white/5">
+        <div className="flex items-center gap-1 text-xs overflow-x-auto pb-2 border-b border-white/5 flex-shrink-0">
           <button
             type="button"
             onClick={navigateHome}
@@ -182,7 +182,7 @@ export function FolderBrowserModal({
         </div>
 
         {/* Search filter */}
-        <div className="relative">
+        <div className="relative flex-shrink-0">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
           <Input
             value={filter}
@@ -192,15 +192,17 @@ export function FolderBrowserModal({
           />
         </div>
 
-        {/* Folder list */}
-        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
-          {loading ? (
-            <div className="flex items-center justify-center py-8 text-slate-400">
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              <span className="text-xs">Loading...</span>
+        {/* Folder list - fixed height container */}
+        <div className="flex-1 min-h-0 relative">
+          {/* Loading overlay */}
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 z-10">
+              <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
             </div>
-          ) : error ? (
-            <div className="flex flex-col items-center justify-center py-8 text-red-400">
+          )}
+
+          {error ? (
+            <div className="flex flex-col items-center justify-center h-full text-red-400">
               <AlertCircle className="w-5 h-5 mb-2" />
               <span className="text-xs">{error}</span>
               <Button
@@ -214,72 +216,74 @@ export function FolderBrowserModal({
               </Button>
             </div>
           ) : (
-            <div className="py-2 space-y-0.5">
-              {/* Parent directory option */}
-              {parentPath && !filter && (
-                <button
-                  type="button"
-                  onClick={navigateUp}
-                  className="w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-sm hover:bg-white/5 text-slate-400"
-                >
-                  <Folder className="w-4 h-4" />
-                  <span className="text-xs">..</span>
-                </button>
-              )}
+            <ScrollArea className="h-full">
+              <div className="py-2 space-y-0.5 px-1">
+                {/* Parent directory option */}
+                {parentPath && !filter && (
+                  <button
+                    type="button"
+                    onClick={navigateUp}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-sm hover:bg-white/5 text-slate-400"
+                  >
+                    <Folder className="w-4 h-4" />
+                    <span className="text-xs">..</span>
+                  </button>
+                )}
 
-              {/* Directory entries */}
-              {filteredEntries.map((entry) => (
-                <button
-                  key={entry.path}
-                  type="button"
-                  onClick={() => handleFolderClick(entry.path)}
-                  onDoubleClick={() => handleFolderDoubleClick(entry.path)}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-sm transition-colors",
-                    "hover:bg-white/5",
-                    selectedPath === entry.path && "bg-violet-500/20"
-                  )}
-                >
-                  <Folder
+                {/* Directory entries */}
+                {filteredEntries.map((entry) => (
+                  <button
+                    key={entry.path}
+                    type="button"
+                    onClick={() => handleFolderClick(entry.path)}
+                    onDoubleClick={() => handleFolderDoubleClick(entry.path)}
                     className={cn(
-                      "w-4 h-4 shrink-0",
-                      selectedPath === entry.path
-                        ? "text-violet-400 fill-violet-400/30"
-                        : "text-slate-400"
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      "text-xs truncate",
-                      selectedPath === entry.path
-                        ? "text-white font-medium"
-                        : "text-slate-300"
+                      "w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-sm transition-colors",
+                      "hover:bg-white/5",
+                      selectedPath === entry.path && "bg-violet-500/20"
                     )}
                   >
-                    {entry.name}
-                  </span>
-                </button>
-              ))}
+                    <Folder
+                      className={cn(
+                        "w-4 h-4 shrink-0",
+                        selectedPath === entry.path
+                          ? "text-violet-400 fill-violet-400/30"
+                          : "text-slate-400"
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "text-xs truncate",
+                        selectedPath === entry.path
+                          ? "text-white font-medium"
+                          : "text-slate-300"
+                      )}
+                    >
+                      {entry.name}
+                    </span>
+                  </button>
+                ))}
 
-              {/* Empty state */}
-              {filteredEntries.length === 0 && !loading && (
-                <div className="text-center py-4 text-xs text-slate-500">
-                  {filter ? "No folders match filter" : "No folders"}
-                </div>
-              )}
-            </div>
+                {/* Empty state */}
+                {filteredEntries.length === 0 && !loading && (
+                  <div className="text-center py-4 text-xs text-slate-500">
+                    {filter ? "No folders match filter" : "No folders"}
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
           )}
-        </ScrollArea>
+        </div>
 
         {/* Selected path display */}
-        <div className="pt-2 border-t border-white/5">
+        <div className="pt-2 border-t border-white/5 flex-shrink-0">
           <div className="text-[10px] text-slate-500 mb-1">Selected:</div>
           <div className="text-xs text-slate-300 truncate bg-slate-800/50 px-2 py-1.5 rounded">
             {selectedPath || currentPath || "None"}
           </div>
         </div>
 
-        <DialogFooter className="flex-shrink-0 gap-2 sm:gap-2">
+        <DialogFooter className="flex-shrink-0 gap-2 sm:gap-2 pt-2">
           <Button
             type="button"
             variant="ghost"
