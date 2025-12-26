@@ -146,7 +146,7 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-sm text-slate-400 pb-2 border-b border-white/5">
+      <div className="flex items-center gap-2 text-xs text-slate-400 pb-2 border-b border-white/5">
         <GitBranch className="w-4 h-4" />
         <span>Configure Git identity for this profile</span>
       </div>

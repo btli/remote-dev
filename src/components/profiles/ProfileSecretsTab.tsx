@@ -206,7 +206,7 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between pb-2 border-b border-white/5">
-        <div className="flex items-center gap-2 text-sm text-slate-400">
+        <div className="flex items-center gap-2 text-xs text-slate-400">
           <KeyRound className="w-4 h-4" />
           <span>Configure secrets provider for this profile</span>
         </div>

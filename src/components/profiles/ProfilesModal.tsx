@@ -224,7 +224,7 @@ export function ProfilesModal({
                 <TabsContent value="overview" className="h-full m-0">
                   <div className="flex flex-col h-full">
                     <div className="flex items-center justify-between mb-3">
-                      <p className="text-sm text-slate-400">
+                      <p className="text-xs text-slate-400">
                         {profiles.length} profile{profiles.length !== 1 ? "s" : ""}
                       </p>
                       <Button
@@ -241,8 +241,8 @@ export function ProfilesModal({
                       {profiles.length === 0 ? (
                         <div className="text-center py-8 text-slate-400">
                           <Fingerprint className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                          <p>No profiles yet</p>
-                          <p className="text-sm mt-1">
+                          <p className="text-xs">No profiles yet</p>
+                          <p className="text-xs mt-1">
                             Create a profile to isolate agent configurations
                           </p>
                         </div>
