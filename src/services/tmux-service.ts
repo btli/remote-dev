@@ -77,7 +77,8 @@ export async function createSession(
   sessionName: string,
   cwd?: string,
   startupCommand?: string,
-  env?: Record<string, string>
+  env?: Record<string, string>,
+  shellEnv?: Record<string, string>
 ): Promise<void> {
   // Check if session already exists
   if (await sessionExists(sessionName)) {
@@ -114,6 +115,19 @@ export async function createSession(
       "mouse",
       "on",
     ]);
+
+    // Inject shell environment variables BEFORE startup command
+    // These are exported in the shell session so they're available to all commands
+    if (shellEnv && Object.keys(shellEnv).length > 0) {
+      const exports = Object.entries(shellEnv)
+        .map(([key, value]) => {
+          // SECURITY: Escape single quotes to prevent shell injection
+          const escapedValue = value.replace(/'/g, "'\\''");
+          return `export ${key}='${escapedValue}'`;
+        })
+        .join("; ");
+      await sendKeys(sessionName, exports);
+    }
 
     // Execute startup command if provided
     if (startupCommand && startupCommand.trim()) {

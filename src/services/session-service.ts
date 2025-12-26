@@ -17,7 +17,7 @@ import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
 import * as GitHubService from "./github-service";
 import * as AgentProfileService from "./agent-profile-service";
-import { getResolvedPreferences, getFolderPreferences } from "./preferences-service";
+import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession } from "./preferences-service";
 import { SessionServiceError } from "@/lib/errors";
 
 // Re-export for backwards compatibility with API routes
@@ -215,13 +215,17 @@ export async function createSession(
     }
   }
 
-  // Create the tmux session with profile environment
+  // Fetch folder environment variables to inject into the shell
+  const folderEnv = await getEnvironmentForSession(userId, input.folderId);
+
+  // Create the tmux session with profile environment and folder shell environment
   try {
     await TmuxService.createSession(
       tmuxSessionName,
       workingPath ?? undefined,
       startupCommand,
-      profileEnv
+      profileEnv,
+      folderEnv ?? undefined
     );
   } catch (error) {
     if (error instanceof TmuxService.TmuxServiceError) {
