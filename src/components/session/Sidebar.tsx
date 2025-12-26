@@ -223,7 +223,8 @@ export function Sidebar({
   } = useSplitContext();
 
   // Schedule context for showing schedule indicators
-  const { getSchedulesForSession } = useScheduleContext();
+  const { schedules, getSchedulesForSession } = useScheduleContext();
+  const activeScheduleCount = schedules.filter(s => s.enabled).length;
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
@@ -1901,6 +1902,11 @@ export function Sidebar({
             >
               <CalendarClock className="w-3.5 h-3.5" />
               <span>Schedules</span>
+              {activeScheduleCount > 0 && (
+                <span className="ml-auto text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                  {activeScheduleCount}
+                </span>
+              )}
             </button>
           )}
           {/* Profiles button */}
