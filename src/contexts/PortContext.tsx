@@ -74,10 +74,9 @@ export function PortProvider({ children }: PortProviderProps) {
         throw new Error("Failed to fetch port allocations");
       }
 
-      const data = await response.json();
-      const allocs = (data.allocations || []).map(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (a: any) => ({
+      const data: { allocations?: Array<Omit<PortAllocationWithFolder, 'createdAt'> & { createdAt: string }> } = await response.json();
+      const allocs: PortAllocationWithFolder[] = (data.allocations || []).map(
+        (a) => ({
           ...a,
           createdAt: new Date(a.createdAt),
         })
