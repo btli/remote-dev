@@ -12,6 +12,7 @@ import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
 import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { ProfilesModal } from "@/components/profiles/ProfilesModal";
+import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
@@ -225,6 +226,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Profiles modal state
   const [isProfilesModalOpen, setIsProfilesModalOpen] = useState(false);
+
+  // Port manager modal state
+  const [isPortsModalOpen, setIsPortsModalOpen] = useState(false);
 
   // Get trash count for a specific folder
   const getFolderTrashCount = useCallback(
@@ -939,6 +943,25 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Listen for open-folder-preferences event from Port Manager
+  useEffect(() => {
+    const handleOpenFolderPrefs = (e: CustomEvent<{ folderId: string }>) => {
+      const { folderId } = e.detail;
+      const folder = folders.find((f) => f.id === folderId);
+      if (folder) {
+        setFolderSettingsModal({
+          folderId,
+          folderName: folder.name,
+          initialTab: "environment",
+        });
+        setIsPortsModalOpen(false); // Close port manager
+      }
+    };
+
+    window.addEventListener("open-folder-preferences", handleOpenFolderPrefs as EventListener);
+    return () => window.removeEventListener("open-folder-preferences", handleOpenFolderPrefs as EventListener);
+  }, [folders]);
+
   /** Close a session in a split pane */
   const handlePaneSessionExit = useCallback(async (sessionId: string) => {
     try {
@@ -1095,6 +1118,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               setIsSchedulesOpen(true);
             }}
             onProfilesOpen={() => setIsProfilesModalOpen(true)}
+            onPortsOpen={() => setIsPortsModalOpen(true)}
           />
       </div>
 
@@ -1392,6 +1416,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <ProfilesModal
         open={isProfilesModalOpen}
         onClose={() => setIsProfilesModalOpen(false)}
+      />
+
+      {/* Port Manager Modal */}
+      <PortManagerModal
+        open={isPortsModalOpen}
+        onClose={() => setIsPortsModalOpen(false)}
       />
     </div>
   );

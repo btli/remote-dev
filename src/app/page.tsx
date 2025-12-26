@@ -14,6 +14,7 @@ import { ScheduleProvider } from "@/contexts/ScheduleContext";
 import { SecretsProvider } from "@/contexts/SecretsContext";
 import { ProfileProvider } from "@/contexts/ProfileContext";
 import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
+import { PortProvider } from "@/contexts/PortContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubStatusIcon } from "@/components/header/GitHubStatusIcon";
 import { SecretsStatusButton } from "@/components/header/SecretsStatusButton";
@@ -81,7 +82,8 @@ export default async function Home() {
                   <SessionProvider initialSessions={initialSessions}>
                     <SplitProvider>
                       <TrashProvider>
-                        <ScheduleProvider>
+                        <PortProvider>
+                          <ScheduleProvider>
                           <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
                           {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
                           <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
@@ -131,9 +133,10 @@ export default async function Home() {
                           {/* Main content */}
                           <SessionManager isGitHubConnected={isGitHubConnected} />
                         </div>
-                      </ScheduleProvider>
-                    </TrashProvider>
-                  </SplitProvider>
+                          </ScheduleProvider>
+                        </PortProvider>
+                      </TrashProvider>
+                    </SplitProvider>
                 </SessionProvider>
               </GitHubStatsProvider>
             </RecordingProvider>
