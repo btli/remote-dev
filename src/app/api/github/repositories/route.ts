@@ -17,14 +17,19 @@ export const GET = withAuth(async (request, { userId }) => {
     // If cached=true, return only locally cached repos from database
     if (cached) {
       const cachedRepos = await GitHubService.getCachedRepositories(userId);
-      const repos = cachedRepos.map((repo) => ({
-        id: repo.id,
-        name: repo.name,
-        fullName: repo.fullName,
-        localPath: repo.localPath,
-        defaultBranch: repo.defaultBranch,
-        isPrivate: repo.isPrivate,
-      }));
+      const repos = cachedRepos.map((repo) => {
+        const [owner] = repo.fullName.split("/");
+        return {
+          id: repo.id,
+          name: repo.name,
+          fullName: repo.fullName,
+          localPath: repo.localPath,
+          defaultBranch: repo.defaultBranch,
+          isPrivate: repo.isPrivate,
+          updatedAt: repo.updatedAt.toISOString(),
+          owner: owner,
+        };
+      });
 
       return NextResponse.json({
         repositories: repos,
@@ -80,10 +85,7 @@ export const GET = withAuth(async (request, { userId }) => {
       stargazersCount: repo.stargazers_count,
       forksCount: 0, // GitHub API doesn't always return this in user repos endpoint
       updatedAt: repo.updated_at,
-      owner: {
-        login: repo.owner.login,
-        avatarUrl: repo.owner.avatar_url,
-      },
+      owner: repo.owner.login,
     }));
 
     return NextResponse.json({
