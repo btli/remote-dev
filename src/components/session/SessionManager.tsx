@@ -153,6 +153,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [folderSettingsModal, setFolderSettingsModal] = useState<{
     folderId: string;
     folderName: string;
+    initialTab?: "general" | "appearance" | "repository" | "environment";
   } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
@@ -629,8 +630,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handleFolderSettings = useCallback(
-    (folderId: string, folderName: string) => {
-      setFolderSettingsModal({ folderId, folderName });
+    (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => {
+      setFolderSettingsModal({ folderId, folderName, initialTab });
     },
     []
   );
@@ -1299,6 +1300,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           onClose={() => setFolderSettingsModal(null)}
           folderId={folderSettingsModal?.folderId ?? ""}
           folderName={folderSettingsModal?.folderName ?? ""}
+          initialTab={folderSettingsModal?.initialTab}
         />
       </Activity>
 
