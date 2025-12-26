@@ -17,59 +17,57 @@ import {
 type ClockView = "hours" | "minutes" | "seconds";
 
 interface ClockFaceProps {
-  value: number;
+  hours: number; // 0-23
+  minutes: number; // 0-59
+  seconds: number; // 0-59
   view: ClockView;
   onChange: (value: number) => void;
   onViewChange: (view: ClockView) => void;
-  is24Hour?: boolean;
 }
 
-function ClockFace({ value, view, onChange, onViewChange, is24Hour = false }: ClockFaceProps) {
+function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: ClockFaceFullProps) {
   const size = 140;
   const center = size / 2;
-  const outerRadius = size / 2 - 12;
-  const innerRadius = outerRadius - 24; // For 24-hour inner ring
+  const outerRadius = size / 2 - 14;
+
+  // Calculate hand endpoints for all three hands
+  const getHandEnd = (value: number, max: number, length: number) => {
+    const angle = ((value / max) * 360 - 90) * (Math.PI / 180);
+    return {
+      x: center + Math.cos(angle) * length,
+      y: center + Math.sin(angle) * length,
+    };
+  };
+
+  const hourHandEnd = getHandEnd(hours % 12 + minutes / 60, 12, outerRadius * 0.5);
+  const minuteHandEnd = getHandEnd(minutes + seconds / 60, 60, outerRadius * 0.7);
+  const secondHandEnd = getHandEnd(seconds, 60, outerRadius * 0.85);
 
   // Generate numbers based on view
   const getNumbers = () => {
     if (view === "hours") {
-      if (is24Hour) {
-        // Outer ring: 1-12, Inner ring: 13-24 (with 0 at 12 position)
-        return {
-          outer: [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-          inner: [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
-        };
-      }
-      return { outer: [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], inner: null };
+      return [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
     }
     // Minutes and seconds: 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55
-    return { outer: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55], inner: null };
+    return [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
   };
 
   const numbers = getNumbers();
 
   // Calculate position for a number on the clock face
   const getPosition = (index: number, radius: number) => {
-    const angle = (index * 30 - 90) * (Math.PI / 180); // 30 degrees per number, start at 12 o'clock
+    const angle = (index * 30 - 90) * (Math.PI / 180);
     return {
       x: center + Math.cos(angle) * radius,
       y: center + Math.sin(angle) * radius,
     };
   };
 
-  // Calculate hand angle
-  const getHandAngle = () => {
-    if (view === "hours") {
-      return ((value % 12) / 12) * 360 - 90;
-    }
-    return (value / 60) * 360 - 90;
-  };
-
-  const handAngle = getHandAngle();
-  const handLength = view === "hours" && is24Hour && value >= 12 && value !== 12 ? innerRadius - 8 : outerRadius - 20;
-  const handEnd = {
-    x: center + Math.cos(handAngle * (Math.PI / 180)) * handLength,
-    y: center + Math.sin(handAngle * (Math.PI / 180)) * handLength,
+  // Get current value for the active view
+  const getCurrentValue = () => {
+    if (view === "hours") return hours % 12 || 12;
+    if (view === "minutes") return minutes;
+    return seconds;
   };
 
   // Handle click on clock face
@@ -81,38 +79,30 @@ function ClockFace({ value, view, onChange, onViewChange, is24Hour = false }: Cl
     let angle = Math.atan2(y, x) * (180 / Math.PI) + 90;
     if (angle < 0) angle += 360;
 
-    const clickRadius = Math.sqrt(x * x + y * y);
-
     if (view === "hours") {
       let hour = Math.round(angle / 30) % 12;
       if (hour === 0) hour = 12;
-
-      // For 24-hour mode, check if clicking inner ring
-      if (is24Hour && clickRadius < (outerRadius + innerRadius) / 2) {
-        hour = hour === 12 ? 0 : hour + 12;
-      }
-
       onChange(hour);
-      // Auto-advance to minutes after selecting hour
-      setTimeout(() => onViewChange("minutes"), 150);
+      setTimeout(() => onViewChange("minutes"), 200);
     } else {
-      // Snap to nearest 5 for display, but allow any value
-      const minuteOrSecond = Math.round(angle / 6) % 60;
-      onChange(minuteOrSecond);
-
-      // Auto-advance from minutes to seconds
+      const value = Math.round(angle / 6) % 60;
+      onChange(value);
       if (view === "minutes") {
-        setTimeout(() => onViewChange("seconds"), 150);
+        setTimeout(() => onViewChange("seconds"), 200);
+      } else {
+        // Seconds -> cycle back to hours
+        setTimeout(() => onViewChange("hours"), 200);
       }
     }
   };
 
   // Check if a number is selected
   const isSelected = (num: number) => {
+    const current = getCurrentValue();
     if (view === "hours") {
-      return value === num || (is24Hour && value === num);
+      return current === num;
     }
-    return value === num;
+    return current === num;
   };
 
   return (
@@ -126,30 +116,54 @@ function ClockFace({ value, view, onChange, onViewChange, is24Hour = false }: Cl
       <circle
         cx={center}
         cy={center}
-        r={outerRadius + 8}
+        r={outerRadius + 10}
         className="fill-slate-800/50"
       />
 
-      {/* Clock hand */}
+      {/* Hour hand (thick, violet) */}
       <line
         x1={center}
         y1={center}
-        x2={handEnd.x}
-        y2={handEnd.y}
-        className="stroke-violet-500"
-        strokeWidth={2}
+        x2={hourHandEnd.x}
+        y2={hourHandEnd.y}
+        className={cn("stroke-violet-500", view === "hours" ? "opacity-100" : "opacity-40")}
+        strokeWidth={3}
+        strokeLinecap="round"
       />
-      <circle cx={handEnd.x} cy={handEnd.y} r={4} className="fill-violet-500" />
-      <circle cx={center} cy={center} r={3} className="fill-violet-500" />
 
-      {/* Outer ring numbers */}
-      {numbers.outer.map((num, i) => {
-        const pos = getPosition(i, outerRadius);
+      {/* Minute hand (medium, white) */}
+      <line
+        x1={center}
+        y1={center}
+        x2={minuteHandEnd.x}
+        y2={minuteHandEnd.y}
+        className={cn("stroke-white", view === "minutes" ? "opacity-100" : "opacity-40")}
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+
+      {/* Second hand (thin, red) */}
+      <line
+        x1={center}
+        y1={center}
+        x2={secondHandEnd.x}
+        y2={secondHandEnd.y}
+        className={cn("stroke-red-400", view === "seconds" ? "opacity-100" : "opacity-40")}
+        strokeWidth={1}
+        strokeLinecap="round"
+      />
+
+      {/* Center dot */}
+      <circle cx={center} cy={center} r={4} className="fill-violet-500" />
+
+      {/* Numbers around the clock */}
+      {numbers.map((num, i) => {
+        const pos = getPosition(i, outerRadius - 4);
         const selected = isSelected(num);
         return (
-          <g key={`outer-${num}`}>
+          <g key={num}>
             {selected && (
-              <circle cx={pos.x} cy={pos.y} r={14} className="fill-violet-600" />
+              <circle cx={pos.x} cy={pos.y} r={12} className="fill-violet-600" />
             )}
             <text
               x={pos.x}
@@ -162,31 +176,6 @@ function ClockFace({ value, view, onChange, onViewChange, is24Hour = false }: Cl
               )}
             >
               {view === "hours" ? num : num.toString().padStart(2, "0")}
-            </text>
-          </g>
-        );
-      })}
-
-      {/* Inner ring for 24-hour mode */}
-      {numbers.inner?.map((num, i) => {
-        const pos = getPosition(i, innerRadius);
-        const selected = isSelected(num);
-        return (
-          <g key={`inner-${num}`}>
-            {selected && (
-              <circle cx={pos.x} cy={pos.y} r={12} className="fill-violet-600" />
-            )}
-            <text
-              x={pos.x}
-              y={pos.y}
-              textAnchor="middle"
-              dominantBaseline="central"
-              className={cn(
-                "text-[9px] font-medium pointer-events-none",
-                selected ? "fill-white" : "fill-slate-400"
-              )}
-            >
-              {num.toString().padStart(2, "0")}
             </text>
           </g>
         );
@@ -292,13 +281,6 @@ export function DateTimePicker({
   const currentSeconds = date?.getSeconds() ?? 0;
   const isAM = currentHours < 12;
 
-  // Get current value for clock based on view
-  const getClockValue = () => {
-    if (clockView === "hours") return currentHours;
-    if (clockView === "minutes") return currentMinutes;
-    return currentSeconds;
-  };
-
   // Handle clock value change
   const handleClockChange = (value: number) => {
     const baseDate = date || new Date();
@@ -344,43 +326,13 @@ export function DateTimePicker({
       <PopoverContent className="w-auto p-0" align="start">
         <div className="flex">
           {/* Calendar - Left side */}
-          <div className="p-2 border-r border-white/10">
+          <div className="border-r border-white/10">
             <Calendar
               mode="single"
               selected={date}
               onSelect={handleDateSelect}
               disabled={(d) => minDate ? d < new Date(minDate.setHours(0, 0, 0, 0)) : false}
               initialFocus
-              className="rounded-md"
-              classNames={{
-                months: "flex flex-col",
-                month: "space-y-0.5",
-                caption: "flex justify-center pt-0.5 relative items-center h-6",
-                caption_label: "text-[10px] font-medium text-white",
-                nav: "space-x-1 flex items-center",
-                nav_button: cn(
-                  "h-4 w-4 bg-transparent p-0 text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                ),
-                nav_button_previous: "absolute left-0",
-                nav_button_next: "absolute right-0",
-                table: "w-full border-collapse",
-                head_row: "flex gap-0.5",
-                head_cell: "text-slate-500 w-5 font-normal text-[8px] text-center",
-                row: "flex w-full gap-0.5",
-                cell: cn(
-                  "relative p-0 text-center text-[9px] focus-within:relative focus-within:z-20"
-                ),
-                day: cn(
-                  "h-5 w-5 p-0 font-normal text-[9px] rounded transition-colors",
-                  "text-slate-300 hover:bg-violet-500/20 hover:text-white",
-                  "focus:bg-violet-500/20 focus:text-white focus:outline-none"
-                ),
-                day_selected: "bg-violet-600 text-white hover:bg-violet-700 hover:text-white focus:bg-violet-700",
-                day_today: "bg-slate-700 text-white",
-                day_outside: "text-slate-600 opacity-50",
-                day_disabled: "text-slate-600 opacity-50 cursor-not-allowed",
-                day_hidden: "invisible",
-              }}
             />
           </div>
 
@@ -417,7 +369,9 @@ export function DateTimePicker({
             {/* Clock face */}
             <div className="flex justify-center">
               <ClockFace
-                value={getClockValue()}
+                hours={currentHours}
+                minutes={currentMinutes}
+                seconds={currentSeconds}
                 view={clockView}
                 onChange={handleClockChange}
                 onViewChange={setClockView}
