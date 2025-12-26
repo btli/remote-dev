@@ -187,8 +187,31 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       terminal.open(terminalRef.current);
 
-      // Custom keyboard handler for macOS shortcuts and special key sequences
+      // Configure the xterm textarea to disable mobile predictive text/autocomplete
+      // This helps prevent the duplication issue where mobile keyboards replace
+      // the entire input field content when accepting autocomplete suggestions
+      // See: https://github.com/xtermjs/xterm.js/issues/2403
+      // See: https://github.com/xtermjs/xterm.js/issues/3600
+      if (terminal.textarea) {
+        const textarea = terminal.textarea;
+        // Disable autocomplete and autofill
+        textarea.setAttribute("autocomplete", "off");
+        // Signal this is a terminal/command entry (helps mobile keyboards behave better)
+        textarea.setAttribute("enterkeyhint", "send");
+        // Disable Grammarly and other browser extensions that intercept input
+        textarea.setAttribute("data-gramm", "false");
+        textarea.setAttribute("data-gramm_editor", "false");
+        textarea.setAttribute("data-enable-grammarly", "false");
+        // Disable form autofill features
+        textarea.setAttribute("data-form-type", "other");
+        textarea.setAttribute("data-lpignore", "true"); // LastPass ignore
+        // Additional mobile hints
+        textarea.setAttribute("x-webkit-speech", "false");
+      }
+
+      // Custom keyboard handler for macOS shortcuts, clipboard, and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
+      // and leaves clipboard handling to embedders
       terminal.attachCustomKeyEventHandler((event) => {
         // Shift+Enter - Must handle BOTH keydown and keypress to prevent double input
         // On keydown: send ESC+CR. On keypress: block to prevent xterm sending \r
@@ -209,6 +232,25 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // Cmd+Enter: Let this bubble up to app-level handler (creates new terminal)
         if (event.metaKey && event.key === "Enter") {
           return false;
+        }
+
+        // Cmd+C (Mac) / Ctrl+C (other): Copy selected text to clipboard
+        // If text is selected, copy to clipboard and prevent SIGINT from being sent
+        // If no selection, allow Ctrl+C through to send SIGINT to the process
+        // See: https://github.com/xtermjs/xterm.js/issues/2478
+        const isCopyShortcut = event.key === "c" && (event.metaKey || event.ctrlKey);
+        if (isCopyShortcut && terminal.hasSelection()) {
+          const selectedText = terminal.getSelection();
+          navigator.clipboard.writeText(selectedText).then(() => {
+            // Keep selection visible for a moment so user sees what was copied
+            // Then clear it after a short delay
+            setTimeout(() => {
+              terminal.clearSelection();
+            }, 150);
+          }).catch((err) => {
+            console.error("Failed to copy to clipboard:", err);
+          });
+          return false; // Prevent Ctrl+C from sending SIGINT
         }
 
         const ws = wsRef.current;
@@ -882,12 +924,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     [sendImageToTerminal]
   );
 
-  // Handle paste events for images
+  // Handle paste events for images and text
   // Note: We use a native event listener in the capture phase because xterm.js
   // creates its own internal textarea that captures paste events. React's onPaste
   // on the container div never fires because the event goes to xterm's element.
+  // This handles both Cmd+V and right-click paste for images and text.
   useEffect(() => {
     const container = terminalRef.current;
+    const terminal = xtermRef.current;
     if (!container) return;
 
     const handlePaste = async (e: ClipboardEvent) => {
@@ -896,15 +940,34 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       const items = Array.from(e.clipboardData.items);
       const imageItems = items.filter((item) => item.type.startsWith("image/"));
 
-      if (imageItems.length === 0) return;
+      // Handle image paste - upload image and send file path to terminal
+      // This allows Claude Code and similar tools to receive image paths
+      if (imageItems.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
 
-      e.preventDefault();
-      e.stopPropagation();
+        for (const item of imageItems) {
+          const file = item.getAsFile();
+          if (file) {
+            await sendImageToTerminal(file);
+          }
+        }
+        return;
+      }
 
-      for (const item of imageItems) {
-        const file = item.getAsFile();
-        if (file) {
-          await sendImageToTerminal(file);
+      // Handle text paste - use terminal.paste() for reliable cross-platform support
+      // xterm.js leaves clipboard handling to embedders, so we handle it explicitly
+      // See: https://github.com/xtermjs/xterm.js/issues/2478
+      const textItems = items.filter((item) => item.type === "text/plain");
+      if (textItems.length > 0 && terminal) {
+        const textItem = textItems[0];
+        const text = await new Promise<string>((resolve) => {
+          textItem.getAsString(resolve);
+        });
+        if (text) {
+          e.preventDefault();
+          e.stopPropagation();
+          terminal.paste(text);
         }
       }
     };
