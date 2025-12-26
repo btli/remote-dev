@@ -23,12 +23,14 @@ import {
 } from "@/components/ui/select";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { clearSecretsCache } from "@/hooks/useEnvironmentWithSecrets";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import type { UpdateFolderPreferencesInput, Preferences } from "@/types/preferences";
 import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types/environment";
 import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
 import { EnvVarEditor } from "./EnvVarEditor";
 import { FolderBrowserModal } from "@/components/filesystem/FolderBrowserModal";
+import { UnsavedChangesDialog } from "@/components/common/UnsavedChangesDialog";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { useProfileContext } from "@/contexts/ProfileContext";
 
@@ -162,6 +164,26 @@ export function FolderPreferencesModal({
     : null;
 
   const folderPrefs = getFolderPreferences(folderId);
+
+  // Check if there are unsaved changes
+  const hasChanges = Object.keys(localSettings).length > 0;
+
+  // Handle close with unsaved changes warning
+  const handleActualClose = useCallback(() => {
+    setLocalSettings({});
+    setPortConflicts([]);
+    onClose();
+  }, [onClose]);
+
+  const {
+    showDialog: showUnsavedDialog,
+    handleOpenChange,
+    handleDiscard,
+    handleCancelClose,
+  } = useUnsavedChanges({
+    hasChanges,
+    onClose: handleActualClose,
+  });
 
   // Fetch resolved environment variables for this folder
   const fetchResolvedEnvironment = useCallback(async () => {
@@ -477,7 +499,8 @@ export function FolderPreferencesModal({
     });
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[500px] max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-white">
@@ -1122,7 +1145,7 @@ export function FolderPreferencesModal({
             <div className="flex gap-2 ml-auto">
             <Button
               variant="ghost"
-              onClick={onClose}
+              onClick={() => handleOpenChange(false)}
               className="text-slate-400 hover:text-white"
             >
               Cancel
@@ -1165,5 +1188,12 @@ export function FolderPreferencesModal({
         }
       />
     </Dialog>
+
+    <UnsavedChangesDialog
+      open={showUnsavedDialog}
+      onDiscard={handleDiscard}
+      onCancel={handleCancelClose}
+    />
+    </>
   );
 }

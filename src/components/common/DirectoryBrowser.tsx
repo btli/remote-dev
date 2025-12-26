@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import {
   Folder,
   FolderOpen,
+  File,
   ChevronRight,
   ChevronUp,
   Loader2,
@@ -35,6 +36,10 @@ interface DirectoryBrowserProps {
   initialPath?: string;
   title?: string;
   description?: string;
+  /** Mode: 'directory' for folder selection, 'file' for file selection */
+  mode?: "directory" | "file";
+  /** Show hidden files/folders */
+  showHidden?: boolean;
 }
 
 export function DirectoryBrowser({
@@ -42,8 +47,10 @@ export function DirectoryBrowser({
   onClose,
   onSelect,
   initialPath,
-  title = "Browse Directory",
-  description = "Navigate and select a directory",
+  title,
+  description,
+  mode = "directory",
+  showHidden = false,
 }: DirectoryBrowserProps) {
   const [currentPath, setCurrentPath] = useState(initialPath || "");
   const [parentPath, setParentPath] = useState<string | null>(null);
@@ -51,15 +58,30 @@ export function DirectoryBrowser({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [manualPath, setManualPath] = useState("");
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
+  const isFileMode = mode === "file";
+  const defaultTitle = isFileMode ? "Browse Files" : "Browse Directory";
+  const defaultDescription = isFileMode
+    ? "Navigate and select a file"
+    : "Navigate and select a directory";
 
   const fetchDirectory = useCallback(async (path?: string) => {
     setLoading(true);
     setError(null);
+    setSelectedFile(null);
 
     try {
       const url = new URL("/api/directories", window.location.origin);
       if (path) {
         url.searchParams.set("path", path);
+      }
+      // In file mode, show files too (dirsOnly=false)
+      if (isFileMode) {
+        url.searchParams.set("dirsOnly", "false");
+      }
+      if (showHidden) {
+        url.searchParams.set("showHidden", "true");
       }
 
       const response = await fetch(url.toString());
@@ -78,7 +100,7 @@ export function DirectoryBrowser({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isFileMode, showHidden]);
 
   // Load initial directory when modal opens
   useEffect(() => {
@@ -108,19 +130,29 @@ export function DirectoryBrowser({
   };
 
   const handleSelect = () => {
-    onSelect(currentPath);
-    onClose();
+    // In file mode, use selected file; in directory mode, use current directory
+    const pathToSelect = isFileMode ? selectedFile : currentPath;
+    if (pathToSelect) {
+      onSelect(pathToSelect);
+      onClose();
+    }
   };
 
   const handleEntryClick = (entry: DirectoryEntry) => {
     if (entry.isDirectory) {
       handleNavigate(entry.path);
+    } else if (isFileMode) {
+      // In file mode, clicking a file selects it
+      setSelectedFile(entry.path);
     }
   };
 
   const handleEntryDoubleClick = (entry: DirectoryEntry) => {
     if (entry.isDirectory) {
-      // Double-click selects and closes
+      // Double-click on directory navigates into it
+      handleNavigate(entry.path);
+    } else if (isFileMode) {
+      // Double-click on file selects and closes
       onSelect(entry.path);
       onClose();
     }
@@ -149,10 +181,10 @@ export function DirectoryBrowser({
         <DialogHeader>
           <DialogTitle className="text-xl font-semibold text-white flex items-center gap-2">
             <FolderOpen className="w-5 h-5 text-violet-400" />
-            {title}
+            {title || defaultTitle}
           </DialogTitle>
           <DialogDescription className="text-slate-400">
-            {description}
+            {description || defaultDescription}
           </DialogDescription>
         </DialogHeader>
 
@@ -253,31 +285,53 @@ export function DirectoryBrowser({
             </div>
           ) : (
             <div className="divide-y divide-white/5">
-              {entries.map((entry) => (
-                <button
-                  key={entry.path}
-                  onClick={() => handleEntryClick(entry)}
-                  onDoubleClick={() => handleEntryDoubleClick(entry)}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 text-left transition-colors",
-                    "hover:bg-slate-700/50",
-                    entry.isDirectory && "cursor-pointer"
-                  )}
-                >
-                  <Folder className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span className="text-white truncate flex-1">{entry.name}</span>
-                  {entry.isDirectory && (
-                    <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                  )}
-                </button>
-              ))}
+              {entries.map((entry) => {
+                const isSelected = isFileMode && !entry.isDirectory && selectedFile === entry.path;
+                return (
+                  <button
+                    key={entry.path}
+                    onClick={() => handleEntryClick(entry)}
+                    onDoubleClick={() => handleEntryDoubleClick(entry)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 text-left transition-colors",
+                      "hover:bg-slate-700/50 cursor-pointer",
+                      isSelected && "bg-violet-500/20 border-l-2 border-violet-500"
+                    )}
+                  >
+                    {entry.isDirectory ? (
+                      <Folder className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    ) : (
+                      <File className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    )}
+                    <span className={cn(
+                      "truncate flex-1",
+                      isSelected ? "text-violet-300" : "text-white"
+                    )}>{entry.name}</span>
+                    {entry.isDirectory && (
+                      <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
 
         {/* Current selection */}
         <div className="text-sm text-slate-400">
-          Selected: <span className="text-white font-mono">{currentPath || "None"}</span>
+          {isFileMode ? (
+            <>
+              <span>Directory: </span>
+              <span className="text-white font-mono">{currentPath || "None"}</span>
+              <br />
+              <span>Selected file: </span>
+              <span className="text-violet-400 font-mono">{selectedFile ? selectedFile.split("/").pop() : "None"}</span>
+            </>
+          ) : (
+            <>
+              Selected: <span className="text-white font-mono">{currentPath || "None"}</span>
+            </>
+          )}
         </div>
 
         <DialogFooter className="gap-2">
@@ -290,10 +344,10 @@ export function DirectoryBrowser({
           </Button>
           <Button
             onClick={handleSelect}
-            disabled={!currentPath}
+            disabled={isFileMode ? !selectedFile : !currentPath}
             className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
           >
-            Select Directory
+            {isFileMode ? "Select File" : "Select Directory"}
           </Button>
         </DialogFooter>
       </DialogContent>
