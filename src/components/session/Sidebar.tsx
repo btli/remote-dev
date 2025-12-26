@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
-  GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint,
+  GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -39,6 +39,7 @@ import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { useProfileContext } from "@/contexts/ProfileContext";
+import { usePortContext } from "@/contexts/PortContext";
 
 export interface SessionFolder {
   id: string;
@@ -105,6 +106,7 @@ interface SidebarProps {
   onSessionSchedulesView?: (sessionId: string, sessionName: string) => void;
   onSchedulesOpen?: () => void;
   onProfilesOpen?: () => void;
+  onPortsOpen?: () => void;
 }
 
 export function Sidebar({
@@ -146,6 +148,7 @@ export function Sidebar({
   onSessionSchedulesView,
   onSchedulesOpen,
   onProfilesOpen,
+  onPortsOpen,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -172,6 +175,7 @@ export function Sidebar({
   const [secretsModalFolderId, setSecretsModalFolderId] = useState<string | null>(null);
   const { folderConfigs } = useSecretsContext();
   const { profileCount } = useProfileContext();
+  const { allocations, activePorts } = usePortContext();
 
   // Touch drag state for mobile
   const touchDragRef = useRef<{
@@ -1924,6 +1928,30 @@ export function Sidebar({
               {profileCount > 0 && (
                 <span className="ml-auto text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
                   {profileCount}
+                </span>
+              )}
+            </button>
+          )}
+          {/* Ports button */}
+          {onPortsOpen && (
+            <button
+              onClick={onPortsOpen}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
+                "text-xs text-slate-400 hover:text-slate-300",
+                "hover:bg-slate-800/50 transition-colors"
+              )}
+            >
+              <Network className="w-3.5 h-3.5" />
+              <span>Ports</span>
+              {allocations.length > 0 && (
+                <span className={cn(
+                  "ml-auto text-[10px] px-1.5 py-0.5 rounded",
+                  activePorts.size > 0
+                    ? "text-emerald-400 bg-emerald-500/10"
+                    : "text-slate-500 bg-slate-800"
+                )}>
+                  {activePorts.size > 0 ? `${activePorts.size}/${allocations.length}` : allocations.length}
                 </span>
               )}
             </button>
