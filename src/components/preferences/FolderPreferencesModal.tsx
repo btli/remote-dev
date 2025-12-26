@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -119,6 +119,7 @@ export function FolderPreferencesModal({
   const [repoError, setRepoError] = useState<string | null>(null);
   const [repoMode, setRepoMode] = useState<"github" | "local" | "none">("none");
   const [activeTab, setActiveTab] = useState(initialTab);
+  const [cloningRepoId, setCloningRepoId] = useState<string | null>(null);
 
   // Environment variables state
   const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
@@ -325,6 +326,54 @@ export function FolderPreferencesModal({
     const current = getCurrentEnvVars() || {};
     const updated = { ...current, [varName]: String(port) };
     handleEnvVarsChange(updated);
+  };
+
+  // Handle selecting a repo (clone if needed)
+  const handleRepoSelect = async (repo: GitHubRepo) => {
+    // If already cloned, just select it
+    if (repo.localPath) {
+      setValue("githubRepoId", repo.id);
+      return;
+    }
+
+    // Clone the repo
+    setCloningRepoId(repo.id);
+    setRepoError(null);
+
+    try {
+      // Determine target path: use folder's defaultWorkingDirectory if set
+      const workingDir = getValue("defaultWorkingDirectory") || folderPrefs?.defaultWorkingDirectory;
+      const [, repoName] = repo.fullName.split("/");
+      const targetPath = workingDir ? `${workingDir}/${repoName}` : undefined;
+
+      const response = await fetch(`/api/github/repositories/${repo.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetPath }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Clone failed");
+      }
+
+      const data = await response.json();
+
+      // Update the repo in our local state
+      setRepos((prev) =>
+        prev.map((r) =>
+          r.id === repo.id ? { ...r, localPath: data.localPath } : r
+        )
+      );
+
+      // Select the newly cloned repo
+      setValue("githubRepoId", repo.id);
+    } catch (error) {
+      console.error("Failed to clone repository:", error);
+      setRepoError(error instanceof Error ? error.message : "Clone failed");
+    } finally {
+      setCloningRepoId(null);
+    }
   };
 
   // Check if any settings in a tab are overridden
@@ -643,49 +692,79 @@ export function FolderPreferencesModal({
                         Loading repositories...
                       </div>
                     ) : repoError ? (
-                      <p className="text-sm text-red-400 py-2">
-                        {repoError}
-                      </p>
+                      <div className="space-y-2">
+                        <p className="text-sm text-red-400 py-2">
+                          {repoError}
+                        </p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setRepoError(null)}
+                          className="text-xs text-slate-400"
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
                     ) : repos.length === 0 ? (
                       <p className="text-sm text-slate-500 py-2">
-                        No cloned repositories found. Clone a repository first.
+                        No repositories found. Connect GitHub to see your repos.
                       </p>
                     ) : (
-                      <Select
-                        value={getValue("githubRepoId") || ""}
-                        onValueChange={(value) => setValue("githubRepoId", value || null)}
-                      >
-                        <SelectTrigger
-                          className={cn(
-                            "bg-slate-800 border-white/10 text-white",
-                            isOverridden("githubRepoId") && "border-violet-500/50"
-                          )}
-                        >
-                          <SelectValue placeholder="Select a repository..." />
-                        </SelectTrigger>
-                        <SelectContent className="bg-slate-800 border-white/10 max-h-60">
-                          {repos.map((repo) => (
-                            <SelectItem
+                      <div className="max-h-[200px] overflow-y-auto rounded-md border border-white/10 bg-slate-800/50">
+                        {repos.map((repo) => {
+                          const isSelected = getValue("githubRepoId") === repo.id;
+                          const isCloning = cloningRepoId === repo.id;
+                          const isCloned = !!repo.localPath;
+
+                          return (
+                            <button
                               key={repo.id}
-                              value={repo.id}
-                              className="text-white focus:bg-violet-500/20"
-                              disabled={!repo.localPath}
+                              type="button"
+                              onClick={() => handleRepoSelect(repo)}
+                              disabled={isCloning || cloningRepoId !== null}
+                              className={cn(
+                                "w-full flex items-start gap-2 px-3 py-2 text-left transition-colors",
+                                "hover:bg-white/5 focus:bg-white/5 focus:outline-none",
+                                "border-b border-white/5 last:border-b-0",
+                                isSelected && "bg-violet-500/20",
+                                (isCloning || (cloningRepoId !== null && !isCloning)) && "opacity-50 cursor-not-allowed"
+                              )}
                             >
-                              <div className="flex flex-col">
-                                <span>{repo.fullName}</span>
-                                {repo.localPath && (
-                                  <span className="text-xs text-slate-500 truncate max-w-[300px]">
-                                    {repo.localPath}
-                                  </span>
-                                )}
-                                {!repo.localPath && (
-                                  <span className="text-xs text-amber-500">Not cloned</span>
+                              {/* Status icon */}
+                              <div className="mt-0.5 shrink-0">
+                                {isCloning ? (
+                                  <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
+                                ) : isSelected ? (
+                                  <Check className="w-4 h-4 text-violet-400" />
+                                ) : isCloned ? (
+                                  <FolderGit2 className="w-4 h-4 text-emerald-400" />
+                                ) : (
+                                  <Download className="w-4 h-4 text-amber-400" />
                                 )}
                               </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                              {/* Repo info */}
+                              <div className="flex-1 min-w-0">
+                                <span className={cn(
+                                  "block text-sm font-medium truncate",
+                                  isSelected ? "text-white" : isCloned ? "text-slate-200" : "text-slate-300"
+                                )}>
+                                  {repo.fullName}
+                                </span>
+                                {isCloning ? (
+                                  <span className="text-xs text-violet-400">Cloning...</span>
+                                ) : isCloned ? (
+                                  <span className="text-xs text-slate-500 truncate block">
+                                    {repo.localPath}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-amber-400">Click to clone</span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
                 )}
