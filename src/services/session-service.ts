@@ -249,7 +249,7 @@ export async function createSession(
         worktreeBranch: branchName ?? null,
         folderId: input.folderId ?? null,
         profileId: input.profileId ?? null,
-        agentProvider: input.agentProvider ?? null,
+        agentProvider: input.agentProvider ?? "claude",
         status: "active",
         tabOrder: nextTabOrder,
         lastActivityAt: now,
