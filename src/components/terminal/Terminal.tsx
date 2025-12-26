@@ -187,8 +187,31 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       terminal.open(terminalRef.current);
 
-      // Custom keyboard handler for macOS shortcuts and special key sequences
+      // Configure the xterm textarea to disable mobile predictive text/autocomplete
+      // This helps prevent the duplication issue where mobile keyboards replace
+      // the entire input field content when accepting autocomplete suggestions
+      // See: https://github.com/xtermjs/xterm.js/issues/2403
+      // See: https://github.com/xtermjs/xterm.js/issues/3600
+      if (terminal.textarea) {
+        const textarea = terminal.textarea;
+        // Disable autocomplete and autofill
+        textarea.setAttribute("autocomplete", "off");
+        // Signal this is a terminal/command entry (helps mobile keyboards behave better)
+        textarea.setAttribute("enterkeyhint", "send");
+        // Disable Grammarly and other browser extensions that intercept input
+        textarea.setAttribute("data-gramm", "false");
+        textarea.setAttribute("data-gramm_editor", "false");
+        textarea.setAttribute("data-enable-grammarly", "false");
+        // Disable form autofill features
+        textarea.setAttribute("data-form-type", "other");
+        textarea.setAttribute("data-lpignore", "true"); // LastPass ignore
+        // Additional mobile hints
+        textarea.setAttribute("x-webkit-speech", "false");
+      }
+
+      // Custom keyboard handler for macOS shortcuts, clipboard, and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
+      // and leaves clipboard handling to embedders
       terminal.attachCustomKeyEventHandler((event) => {
         // Shift+Enter - Must handle BOTH keydown and keypress to prevent double input
         // On keydown: send ESC+CR. On keypress: block to prevent xterm sending \r
@@ -209,6 +232,25 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // Cmd+Enter: Let this bubble up to app-level handler (creates new terminal)
         if (event.metaKey && event.key === "Enter") {
           return false;
+        }
+
+        // Cmd+C (Mac) / Ctrl+C (other): Copy selected text to clipboard
+        // If text is selected, copy to clipboard and prevent SIGINT from being sent
+        // If no selection, allow Ctrl+C through to send SIGINT to the process
+        // See: https://github.com/xtermjs/xterm.js/issues/2478
+        const isCopyShortcut = event.key === "c" && (event.metaKey || event.ctrlKey);
+        if (isCopyShortcut && terminal.hasSelection()) {
+          const selectedText = terminal.getSelection();
+          navigator.clipboard.writeText(selectedText).then(() => {
+            // Keep selection visible for a moment so user sees what was copied
+            // Then clear it after a short delay
+            setTimeout(() => {
+              terminal.clearSelection();
+            }, 150);
+          }).catch((err) => {
+            console.error("Failed to copy to clipboard:", err);
+          });
+          return false; // Prevent Ctrl+C from sending SIGINT
         }
 
         const ws = wsRef.current;
