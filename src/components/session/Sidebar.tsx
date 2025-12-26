@@ -90,7 +90,7 @@ interface SidebarProps {
   onFolderDelete: (folderId: string) => void;
   onFolderToggle: (folderId: string) => void;
   onFolderClick: (folderId: string) => void;
-  onFolderSettings: (folderId: string, folderName: string) => void;
+  onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onFolderNewSession: (folderId: string) => void;
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
@@ -1703,6 +1703,15 @@ export function Sidebar({
                                 Secrets
                                 {folderConfigs.has(node.id) && folderConfigs.get(node.id)?.enabled && (
                                   <span className="ml-auto text-[10px] text-green-400">Active</span>
+                                )}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => onFolderSettings(node.id, node.name, "repository")}
+                              >
+                                <GitBranch className="w-3.5 h-3.5 mr-2" />
+                                Repository
+                                {folderHasRepo(node.id) && (
+                                  <span className="ml-auto text-[10px] text-emerald-400">Linked</span>
                                 )}
                               </ContextMenuItem>
                               <ContextMenuItem

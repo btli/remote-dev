@@ -41,6 +41,8 @@ interface FolderPreferencesModalProps {
   onClose: () => void;
   folderId: string;
   folderName: string;
+  /** Initial tab to show when opening the modal */
+  initialTab?: "general" | "appearance" | "repository" | "environment";
 }
 
 const SHELL_OPTIONS = [
@@ -90,6 +92,7 @@ export function FolderPreferencesModal({
   onClose,
   folderId,
   folderName,
+  initialTab = "general",
 }: FolderPreferencesModalProps) {
   const {
     getFolderPreferences,
@@ -115,6 +118,7 @@ export function FolderPreferencesModal({
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [repoError, setRepoError] = useState<string | null>(null);
   const [repoMode, setRepoMode] = useState<"github" | "local" | "none">("none");
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   // Environment variables state
   const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
@@ -195,6 +199,7 @@ export function FolderPreferencesModal({
   useEffect(() => {
     if (open) {
       setLocalSettings({});
+      setActiveTab(initialTab);
       fetchRepos();
       fetchResolvedEnvironment();
 
@@ -207,7 +212,7 @@ export function FolderPreferencesModal({
         setRepoMode("none");
       }
     }
-  }, [open, folderPrefs?.githubRepoId, folderPrefs?.localRepoPath, fetchRepos, fetchResolvedEnvironment]);
+  }, [open, initialTab, folderPrefs?.githubRepoId, folderPrefs?.localRepoPath, fetchRepos, fetchResolvedEnvironment]);
 
   const handleSave = async () => {
     if (Object.keys(localSettings).length === 0) {
@@ -343,7 +348,7 @@ export function FolderPreferencesModal({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="general" className="flex-1 min-h-0 flex flex-col">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex-1 min-h-0 flex flex-col">
           <TabsList className="w-full bg-slate-800/50 flex-shrink-0">
             <TabsTrigger value="general" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
               <Settings className="w-3.5 h-3.5" />
