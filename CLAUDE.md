@@ -209,6 +209,7 @@ React Contexts in `src/contexts/`:
 | `SplitContext` | Split pane groups and active pane tracking |
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
+| `PortContext` | Port allocations, framework detection, monitoring |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
