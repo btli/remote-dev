@@ -4,6 +4,8 @@ import type { SessionStatus } from "@/types/session";
 import type { SplitDirection } from "@/types/split";
 import type { CIStatusState, PRState } from "@/types/github-stats";
 import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
+import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
+import type { AgentProviderType } from "@/types/session";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -396,6 +398,12 @@ export const terminalSessions = sqliteTable(
     folderId: text("folder_id").references(() => sessionFolders.id, {
       onDelete: "set null",
     }),
+    // Agent profile for environment isolation
+    profileId: text("profile_id").references(() => agentProfiles.id, {
+      onDelete: "set null",
+    }),
+    // Agent-aware session: which AI agent is associated
+    agentProvider: text("agent_provider").$type<AgentProviderType>().default("claude"),
     // Split group membership (independent from folder)
     splitGroupId: text("split_group_id").references(() => splitGroups.id, {
       onDelete: "set null",
@@ -837,3 +845,357 @@ export const setupConfig = sqliteTable("setup_config", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+// =============================================================================
+// Agent Management Tables
+// =============================================================================
+
+/**
+ * Agent profiles for managing isolated AI agent configurations.
+ * Each profile has its own config directory with isolated credentials and settings.
+ */
+export const agentProfiles = sqliteTable(
+  "agent_profile",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    provider: text("provider").$type<AgentProvider>().notNull().default("all"),
+    configDir: text("config_dir").notNull(), // ~/.remote-dev/profiles/{id}/
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_profile_user_idx").on(table.userId),
+    index("agent_profile_default_idx").on(table.userId, table.isDefault),
+  ]
+);
+
+/**
+ * Agent configuration files (CLAUDE.md, AGENTS.md, GEMINI.md) stored per folder.
+ * Supports inheritance: global (null folderId) -> folder-specific.
+ */
+export const agentConfigs = sqliteTable(
+  "agent_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "cascade",
+    }),
+    provider: text("provider").$type<AgentProvider>().notNull(),
+    configType: text("config_type").$type<AgentConfigType>().notNull(),
+    content: text("content").notNull().default(""),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_config_user_idx").on(table.userId),
+    index("agent_config_folder_idx").on(table.folderId),
+    // Unique constraint: one config per provider/type per folder per user
+    uniqueIndex("agent_config_unique_idx").on(
+      table.userId,
+      table.folderId,
+      table.provider,
+      table.configType
+    ),
+  ]
+);
+
+/**
+ * MCP server configurations for AI agent tool access.
+ * Supports global (null folderId) and folder-specific servers.
+ */
+export const mcpServers = sqliteTable(
+  "mcp_server",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "cascade",
+    }),
+    name: text("name").notNull(),
+    transport: text("transport").$type<MCPTransport>().notNull().default("stdio"),
+    command: text("command").notNull(),
+    args: text("args").notNull().default("[]"), // JSON array
+    env: text("env").notNull().default("{}"), // JSON object
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    autoStart: integer("auto_start", { mode: "boolean" }).notNull().default(false),
+    lastHealthCheck: integer("last_health_check", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mcp_server_user_idx").on(table.userId),
+    index("mcp_server_folder_idx").on(table.folderId),
+    index("mcp_server_enabled_idx").on(table.userId, table.enabled),
+  ]
+);
+
+/**
+ * Links folders to specific agent profiles.
+ * When a session is created in a folder, it uses the linked profile's environment.
+ */
+export const folderProfileLinks = sqliteTable(
+  "folder_profile_link",
+  {
+    folderId: text("folder_id")
+      .primaryKey()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("folder_profile_link_profile_idx").on(table.profileId)]
+);
+
+/**
+ * Git identity configurations per agent profile.
+ * Stores user.name, user.email, SSH key paths, etc.
+ */
+export const profileGitIdentities = sqliteTable(
+  "profile_git_identity",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    profileId: text("profile_id")
+      .notNull()
+      .unique()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userName: text("user_name").notNull(),
+    userEmail: text("user_email").notNull(),
+    sshKeyPath: text("ssh_key_path"), // Path to private key
+    gpgKeyId: text("gpg_key_id"), // For commit signing
+    githubUsername: text("github_username"), // For OAuth token lookup
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [index("profile_git_identity_profile_idx").on(table.profileId)]
+);
+
+/**
+ * Profile-level secrets provider configuration for API keys.
+ * Stores credentials like ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
+ * that are injected into sessions using this profile.
+ */
+export const profileSecretsConfig = sqliteTable(
+  "profile_secrets_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    profileId: text("profile_id")
+      .notNull()
+      .unique()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(), // "phase" | "vault" | "aws-secrets-manager" | "1password"
+    // Provider-specific config as JSON:
+    // Phase: { "app": "my-app", "env": "development", "serviceToken": "pss_..." }
+    providerConfig: text("provider_config").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastFetchedAt: integer("last_fetched_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("profile_secrets_config_profile_idx").on(table.profileId),
+    index("profile_secrets_config_user_idx").on(table.userId),
+  ]
+);
+
+/**
+ * Discovered MCP tools from connected servers.
+ * Cached to avoid repeated discovery calls.
+ */
+export const mcpDiscoveredTools = sqliteTable(
+  "mcp_discovered_tool",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    inputSchema: text("input_schema"), // JSON Schema
+    discoveredAt: integer("discovered_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mcp_discovered_tool_server_idx").on(table.serverId),
+    uniqueIndex("mcp_discovered_tool_unique_idx").on(table.serverId, table.name),
+  ]
+);
+
+/**
+ * Discovered MCP resources from connected servers.
+ * Cached to avoid repeated discovery calls.
+ */
+export const mcpDiscoveredResources = sqliteTable(
+  "mcp_discovered_resource",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    uri: text("uri").notNull(),
+    name: text("name"),
+    description: text("description"),
+    mimeType: text("mime_type"),
+    discoveredAt: integer("discovered_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("mcp_discovered_resource_server_idx").on(table.serverId),
+    uniqueIndex("mcp_discovered_resource_unique_idx").on(table.serverId, table.uri),
+  ]
+);
+
+/**
+ * Agent activity events for analytics and dashboard.
+ * Tracks session starts, commands, errors, and other events.
+ */
+export const agentActivityEvents = sqliteTable(
+  "agent_activity_event",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    agentProvider: text("agent_provider").$type<AgentProviderType>(),
+    eventType: text("event_type").notNull(), // "session_start" | "session_end" | "command" | "error" | "tool_call"
+    eventData: text("event_data"), // JSON with event-specific data
+    duration: integer("duration"), // Duration in milliseconds (for timed events)
+    success: integer("success", { mode: "boolean" }),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_activity_user_idx").on(table.userId),
+    index("agent_activity_session_idx").on(table.sessionId),
+    index("agent_activity_provider_idx").on(table.userId, table.agentProvider),
+    index("agent_activity_event_type_idx").on(table.userId, table.eventType),
+    index("agent_activity_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
+/**
+ * Daily aggregated stats for faster dashboard queries.
+ * Updated periodically from activity events.
+ */
+export const agentDailyStats = sqliteTable(
+  "agent_daily_stats",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: text("date").notNull(), // YYYY-MM-DD format
+    agentProvider: text("agent_provider").$type<AgentProviderType>(),
+    sessionCount: integer("session_count").notNull().default(0),
+    commandCount: integer("command_count").notNull().default(0),
+    errorCount: integer("error_count").notNull().default(0),
+    totalDuration: integer("total_duration").notNull().default(0), // Total session duration in ms
+    toolCallCount: integer("tool_call_count").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("agent_daily_stats_unique_idx").on(
+      table.userId,
+      table.date,
+      table.agentProvider
+    ),
+    index("agent_daily_stats_user_date_idx").on(table.userId, table.date),
+  ]
+);
+
+/**
+ * Session memory for cross-session context persistence.
+ * Stores notes, artifacts, and summaries that persist between sessions.
+ */
+export const sessionMemory = sqliteTable(
+  "session_memory",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    type: text("type").$type<"note" | "artifact" | "summary">().notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    tags: text("tags").notNull().default("[]"), // JSON array
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("session_memory_user_idx").on(table.userId),
+    index("session_memory_folder_idx").on(table.folderId),
+    index("session_memory_type_idx").on(table.userId, table.type),
+  ]
+);
