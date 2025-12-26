@@ -47,7 +47,7 @@ export function DeleteWorktreeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[425px] bg-slate-900 border-white/10">
+      <DialogContent className="sm:max-w-[425px] bg-slate-900/95 backdrop-blur-xl border-white/10">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-white">
             <AlertTriangle className="w-5 h-5 text-amber-500" />
