@@ -71,11 +71,13 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
  * @param sessionName - Unique session name (e.g., "rdv-abc123")
  * @param cwd - Working directory for the session
  * @param startupCommand - Optional command to run after session creation
+ * @param env - Optional environment variables to set for the session
  */
 export async function createSession(
   sessionName: string,
   cwd?: string,
-  startupCommand?: string
+  startupCommand?: string,
+  env?: Record<string, string>
 ): Promise<void> {
   // Check if session already exists
   if (await sessionExists(sessionName)) {
@@ -97,8 +99,12 @@ export async function createSession(
     args.push("-c", cwd);
   }
 
+  // Build execution options with environment overlay
+  // Cast to NodeJS.ProcessEnv since execFile merges with process.env
+  const execOptions = env ? { env: env as NodeJS.ProcessEnv } : undefined;
+
   try {
-    await execFile("tmux", args);
+    await execFile("tmux", args, execOptions);
 
     // Enable mouse mode for scrollback support
     await execFile("tmux", [

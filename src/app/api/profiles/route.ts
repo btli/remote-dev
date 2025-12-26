@@ -21,12 +21,18 @@ export const GET = withAuth(async (_request, { userId }) => {
  * POST /api/profiles - Create a new agent profile
  */
 export const POST = withAuth(async (request, { userId }) => {
-  const body = await parseJsonBody(request);
-  if (!body) {
-    return errorResponse("Invalid JSON body", 400);
+  const result = await parseJsonBody<{
+    name: string;
+    description?: string;
+    provider: AgentProvider;
+    isDefault?: boolean;
+  }>(request);
+
+  if ("error" in result) {
+    return result.error;
   }
 
-  const { name, description, provider, isDefault } = body;
+  const { name, description, provider, isDefault } = result.data;
 
   // Validate required fields
   if (!name || typeof name !== "string") {

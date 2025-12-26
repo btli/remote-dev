@@ -13,12 +13,14 @@ import {
   agentProfiles,
   folderProfileLinks,
   profileGitIdentities,
+  profileSecretsConfig,
   terminalSessions,
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, access } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
+import { createSecretsProvider, isProviderSupported } from "./secrets";
 import type {
   AgentProfile,
   CreateAgentProfileInput,
@@ -26,6 +28,9 @@ import type {
   ProfileEnvironment,
   GitIdentity,
   AgentProvider,
+  ProfileSecretsConfig,
+  ProfileSecretsProviderType,
+  UpdateProfileSecretsConfigInput,
 } from "@/types/agent";
 
 // Profile base directory
@@ -365,6 +370,18 @@ export async function getProfileEnvironment(
     env.GIT_SSH_COMMAND = `ssh -i ${gitIdentity.sshKeyPath} -o IdentitiesOnly=yes`;
   }
 
+  // Fetch and inject secrets from profile secrets config
+  try {
+    const secrets = await fetchProfileSecrets(profileId);
+    if (secrets) {
+      // Merge secrets into environment
+      Object.assign(env, secrets);
+    }
+  } catch (error) {
+    // Log but don't fail if secrets fetch fails
+    console.error(`Failed to fetch secrets for profile ${profileId}:`, error);
+  }
+
   return env;
 }
 
@@ -469,6 +486,221 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
     isDefault: record.isDefault,
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.updatedAt),
+  };
+}
+
+// ============================================================================
+// Profile Secrets Management
+// ============================================================================
+
+/**
+ * Get profile secrets configuration
+ */
+export async function getProfileSecretsConfig(
+  profileId: string,
+  userId: string
+): Promise<ProfileSecretsConfig | null> {
+  const config = await db.query.profileSecretsConfig.findFirst({
+    where: and(
+      eq(profileSecretsConfig.profileId, profileId),
+      eq(profileSecretsConfig.userId, userId)
+    ),
+  });
+
+  return config ? mapDbToSecretsConfig(config) : null;
+}
+
+/**
+ * Create or update profile secrets configuration
+ */
+export async function updateProfileSecretsConfig(
+  profileId: string,
+  userId: string,
+  input: UpdateProfileSecretsConfigInput
+): Promise<ProfileSecretsConfig> {
+  // Validate provider is supported
+  if (!isProviderSupported(input.provider)) {
+    throw new AgentProfileServiceError(
+      `Provider '${input.provider}' is not yet supported`,
+      "PROVIDER_NOT_SUPPORTED"
+    );
+  }
+
+  // Validate provider config
+  try {
+    const provider = createSecretsProvider({
+      provider: input.provider,
+      config: input.config,
+    });
+    const validation = await provider.validate();
+    if (!validation.valid) {
+      throw new AgentProfileServiceError(
+        validation.error || "Invalid provider configuration",
+        "INVALID_CONFIG"
+      );
+    }
+  } catch (error) {
+    if (error instanceof AgentProfileServiceError) throw error;
+    throw new AgentProfileServiceError(
+      `Failed to validate provider config: ${(error as Error).message}`,
+      "VALIDATION_FAILED"
+    );
+  }
+
+  const configJson = JSON.stringify(input.config);
+  const now = new Date();
+
+  // Check for existing config
+  const existing = await getProfileSecretsConfig(profileId, userId);
+
+  if (existing) {
+    // Update existing
+    const [updated] = await db
+      .update(profileSecretsConfig)
+      .set({
+        provider: input.provider,
+        providerConfig: configJson,
+        enabled: input.enabled ?? true,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(profileSecretsConfig.profileId, profileId),
+          eq(profileSecretsConfig.userId, userId)
+        )
+      )
+      .returning();
+
+    return mapDbToSecretsConfig(updated);
+  }
+
+  // Create new
+  const [created] = await db
+    .insert(profileSecretsConfig)
+    .values({
+      profileId,
+      userId,
+      provider: input.provider,
+      providerConfig: configJson,
+      enabled: input.enabled ?? true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  return mapDbToSecretsConfig(created);
+}
+
+/**
+ * Delete profile secrets configuration
+ */
+export async function deleteProfileSecretsConfig(
+  profileId: string,
+  userId: string
+): Promise<boolean> {
+  const result = await db
+    .delete(profileSecretsConfig)
+    .where(
+      and(
+        eq(profileSecretsConfig.profileId, profileId),
+        eq(profileSecretsConfig.userId, userId)
+      )
+    );
+
+  return (result.rowsAffected ?? 0) > 0;
+}
+
+/**
+ * Toggle enabled state for profile secrets
+ */
+export async function toggleProfileSecretsEnabled(
+  profileId: string,
+  userId: string,
+  enabled: boolean
+): Promise<ProfileSecretsConfig | null> {
+  const existing = await getProfileSecretsConfig(profileId, userId);
+  if (!existing) {
+    return null;
+  }
+
+  const [updated] = await db
+    .update(profileSecretsConfig)
+    .set({
+      enabled,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(profileSecretsConfig.profileId, profileId),
+        eq(profileSecretsConfig.userId, userId)
+      )
+    )
+    .returning();
+
+  return mapDbToSecretsConfig(updated);
+}
+
+/**
+ * Fetch secrets for a profile from the configured provider
+ * Returns null if no secrets config or disabled
+ */
+export async function fetchProfileSecrets(
+  profileId: string
+): Promise<Record<string, string> | null> {
+  const config = await db.query.profileSecretsConfig.findFirst({
+    where: and(
+      eq(profileSecretsConfig.profileId, profileId),
+      eq(profileSecretsConfig.enabled, true)
+    ),
+  });
+
+  if (!config) {
+    return null;
+  }
+
+  const providerConfig = JSON.parse(config.providerConfig);
+  const provider = createSecretsProvider({
+    provider: config.provider as ProfileSecretsProviderType,
+    config: providerConfig,
+  });
+
+  const secretsList = await provider.fetchSecrets();
+  const fetchedAt = new Date();
+
+  // Update last fetched timestamp
+  await db
+    .update(profileSecretsConfig)
+    .set({ lastFetchedAt: fetchedAt })
+    .where(eq(profileSecretsConfig.id, config.id));
+
+  // Convert to environment variables object
+  const secrets = secretsList.reduce(
+    (acc, { key, value }) => {
+      acc[key] = value;
+      return acc;
+    },
+    {} as Record<string, string>
+  );
+
+  return secrets;
+}
+
+/**
+ * Map database record to ProfileSecretsConfig type
+ */
+function mapDbToSecretsConfig(
+  dbRecord: typeof profileSecretsConfig.$inferSelect
+): ProfileSecretsConfig {
+  return {
+    id: dbRecord.id,
+    profileId: dbRecord.profileId,
+    userId: dbRecord.userId,
+    provider: dbRecord.provider as ProfileSecretsProviderType,
+    providerConfig: JSON.parse(dbRecord.providerConfig),
+    enabled: dbRecord.enabled ?? true,
+    lastFetchedAt: dbRecord.lastFetchedAt ? new Date(dbRecord.lastFetchedAt) : null,
+    createdAt: new Date(dbRecord.createdAt),
+    updatedAt: new Date(dbRecord.updatedAt),
   };
 }
 
