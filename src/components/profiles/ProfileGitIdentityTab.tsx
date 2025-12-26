@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Loader2, Save, RotateCcw, GitBranch, Mail, Key, User, Github } from "lucide-react";
+import { PathInput } from "@/components/common/PathInput";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import type { GitIdentity } from "@/types/agent";
 
@@ -187,12 +188,16 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
           <Key className="w-3.5 h-3.5" />
           SSH Key Path
         </Label>
-        <Input
+        <PathInput
           id="git-ssh"
           value={sshKeyPath}
-          onChange={(e) => setSshKeyPath(e.target.value)}
+          onChange={setSshKeyPath}
           placeholder="~/.ssh/id_ed25519"
-          className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+          mode="file"
+          showHidden={true}
+          browserTitle="Select SSH Private Key"
+          browserDescription="Navigate to your .ssh directory and select a private key file"
+          inputClassName="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
         />
         <p className="text-xs text-slate-500">
           Path to SSH private key for Git operations
