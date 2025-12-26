@@ -25,7 +25,7 @@ interface ClockFaceProps {
   onViewChange: (view: ClockView) => void;
 }
 
-function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: ClockFaceFullProps) {
+function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: ClockFaceProps) {
   const size = 140;
   const center = size / 2;
   const outerRadius = size / 2 - 14;
