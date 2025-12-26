@@ -403,7 +403,7 @@ export const terminalSessions = sqliteTable(
       onDelete: "set null",
     }),
     // Agent-aware session: which AI agent is associated
-    agentProvider: text("agent_provider").$type<AgentProviderType>(),
+    agentProvider: text("agent_provider").$type<AgentProviderType>().default("claude"),
     // Split group membership (independent from folder)
     splitGroupId: text("split_group_id").references(() => splitGroups.id, {
       onDelete: "set null",
