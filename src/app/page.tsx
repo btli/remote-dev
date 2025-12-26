@@ -57,6 +57,8 @@ export default async function Home() {
     githubRepoId: s.githubRepoId,
     worktreeBranch: s.worktreeBranch,
     folderId: s.folderId,
+    profileId: s.profileId,
+    agentProvider: s.agentProvider as "claude" | "codex" | "gemini" | "opencode" | "none" | null,
     splitGroupId: s.splitGroupId,
     splitOrder: s.splitOrder,
     splitSize: s.splitSize ?? 0.5,
