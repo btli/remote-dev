@@ -4,14 +4,67 @@
  * This module runs in the terminal server process and periodically
  * checks if dev servers are responding. It updates health records
  * and marks servers as crashed after consecutive failures.
+ *
+ * Uses DevServerProcessManager for direct PID access, eliminating
+ * the need for complex process tree traversal.
  */
 import { db } from "@/db";
 import { terminalSessions, devServerHealth } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { HEALTH_CHECK_CONFIG } from "@/types/dev-server";
 import type { DevServerStatus } from "@/types/dev-server";
+import { getDevServerProcessManager } from "@/services/dev-server-process-manager";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Process resource usage metrics
+ */
+interface ProcessMetrics {
+  cpuPercent: number | null;
+  memoryMb: number | null;
+}
 
 let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Get CPU and memory usage for a process by PID
+ * Uses direct PID from DevServerProcessManager - no process tree traversal needed
+ */
+async function getProcessMetrics(sessionId: string): Promise<ProcessMetrics> {
+  try {
+    const processManager = getDevServerProcessManager();
+    const pid = processManager.getPid(sessionId);
+
+    if (!pid) {
+      return { cpuPercent: null, memoryMb: null };
+    }
+
+    // Single ps call with direct PID - no pgrep recursion needed!
+    const { stdout } = await execFileAsync("ps", [
+      "-p",
+      String(pid),
+      "-o",
+      "pcpu=,rss=",
+    ]);
+
+    // Parse the output: "  5.2  12345"
+    const parts = stdout.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      const cpuPercent = parseFloat(parts[0]) || 0;
+      // RSS is in KB, convert to MB
+      const memoryMb = (parseInt(parts[1], 10) || 0) / 1024;
+      return { cpuPercent, memoryMb };
+    }
+
+    return { cpuPercent: null, memoryMb: null };
+  } catch {
+    // Process may have exited
+    return { cpuPercent: null, memoryMb: null };
+  }
+}
 
 /**
  * Perform a health check on a single dev server
@@ -54,7 +107,8 @@ async function checkServerHealth(
 async function updateHealth(
   sessionId: string,
   isHealthy: boolean,
-  error?: string
+  error?: string,
+  metrics?: ProcessMetrics
 ): Promise<void> {
   const now = new Date();
 
@@ -69,7 +123,7 @@ async function updateHealth(
   const newFailures = isHealthy ? 0 : health.consecutiveFailures + 1;
   const isCrashed = newFailures >= HEALTH_CHECK_CONFIG.failureThreshold;
 
-  // Update health record
+  // Update health record with metrics
   await db
     .update(devServerHealth)
     .set({
@@ -78,6 +132,8 @@ async function updateHealth(
       consecutiveFailures: newFailures,
       crashedAt: isCrashed && !health.crashedAt ? now : health.crashedAt,
       crashReason: isCrashed ? error : null,
+      cpuPercent: metrics?.cpuPercent ?? null,
+      memoryMb: metrics?.memoryMb ?? null,
       updatedAt: now,
     })
     .where(eq(devServerHealth.sessionId, sessionId));
@@ -97,6 +153,10 @@ async function updateHealth(
   } else if (isHealthy && session.devServerStatus === "starting") {
     newStatus = "running";
     console.log(`[HealthChecker] Dev server ${sessionId} is now running`);
+
+    // Also notify the process manager
+    const processManager = getDevServerProcessManager();
+    processManager.markRunning(sessionId);
   }
 
   if (newStatus) {
@@ -180,7 +240,10 @@ async function runHealthChecks(): Promise<void> {
         session.devServerPort
       );
 
-      await updateHealth(session.id, isHealthy, error);
+      // Collect process metrics (CPU, memory) using direct PID
+      const metrics = await getProcessMetrics(session.id);
+
+      await updateHealth(session.id, isHealthy, error, metrics);
     }
   } catch (error) {
     console.error("[HealthChecker] Error during health check cycle:", error);

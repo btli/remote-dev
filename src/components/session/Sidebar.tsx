@@ -7,7 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
-  Play, Square, RotateCw, Globe,
+  Play, Square, RotateCw, Globe, Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -109,6 +109,7 @@ interface SidebarProps {
   onSchedulesOpen?: () => void;
   onProfilesOpen?: () => void;
   onPortsOpen?: () => void;
+  onProcessesOpen?: () => void;
 }
 
 export function Sidebar({
@@ -151,6 +152,7 @@ export function Sidebar({
   onSchedulesOpen,
   onProfilesOpen,
   onPortsOpen,
+  onProcessesOpen,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -2018,6 +2020,30 @@ export function Sidebar({
                     : "text-slate-500 bg-slate-800"
                 )}>
                   {activePorts.size > 0 ? `${activePorts.size}/${allocations.length}` : allocations.length}
+                </span>
+              )}
+            </button>
+          )}
+          {/* Processes button */}
+          {onProcessesOpen && (
+            <button
+              onClick={onProcessesOpen}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
+                "text-xs text-slate-400 hover:text-slate-300",
+                "hover:bg-slate-800/50 transition-colors"
+              )}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              <span>Processes</span>
+              {devServers.size > 0 && (
+                <span className={cn(
+                  "ml-auto text-[10px] px-1.5 py-0.5 rounded",
+                  Array.from(devServers.values()).some(s => s.status === "running")
+                    ? "text-emerald-400 bg-emerald-500/10"
+                    : "text-slate-500 bg-slate-800"
+                )}>
+                  {devServers.size}
                 </span>
               )}
             </button>

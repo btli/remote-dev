@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuthCatchAll, errorResponse } from "@/lib/api";
 import * as ProxyService from "@/services/proxy-service";
 
 /**
@@ -15,10 +15,11 @@ import * as ProxyService from "@/services/proxy-service";
  */
 async function proxyHandler(
   request: Request,
-  { userId, params }: { userId: string; params?: Record<string, string> }
+  { userId, params }: { userId: string; params?: Record<string, string | string[]> }
 ): Promise<NextResponse> {
-  // Handle both string and array for path (catch-all routes return array)
-  const slug = params?.slug || "";
+  // Handle both string and array for slug and path (catch-all routes return array)
+  const slugParam = params?.slug;
+  const slug = Array.isArray(slugParam) ? slugParam[0] : (slugParam || "");
   const pathParam = params?.path;
   const pathStr = Array.isArray(pathParam) ? pathParam.join("/") : (pathParam || "");
 
@@ -89,10 +90,10 @@ async function proxyHandler(
 }
 
 // Export handlers for all HTTP methods
-export const GET = withAuth(proxyHandler);
-export const POST = withAuth(proxyHandler);
-export const PUT = withAuth(proxyHandler);
-export const DELETE = withAuth(proxyHandler);
-export const PATCH = withAuth(proxyHandler);
-export const OPTIONS = withAuth(proxyHandler);
-export const HEAD = withAuth(proxyHandler);
+export const GET = withAuthCatchAll(proxyHandler);
+export const POST = withAuthCatchAll(proxyHandler);
+export const PUT = withAuthCatchAll(proxyHandler);
+export const DELETE = withAuthCatchAll(proxyHandler);
+export const PATCH = withAuthCatchAll(proxyHandler);
+export const OPTIONS = withAuthCatchAll(proxyHandler);
+export const HEAD = withAuthCatchAll(proxyHandler);

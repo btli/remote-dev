@@ -12,12 +12,20 @@ import * as ApiKeyService from "@/services/api-key-service";
 /**
  * Route context type for dynamic routes
  *
- * In Next.js 15, route params are wrapped in a Promise to support
+ * In Next.js 15+, route params are wrapped in a Promise to support
  * streaming and async rendering. The withAuth wrapper awaits this
  * automatically before passing params to the handler.
  */
 export interface RouteContext {
   params?: Promise<Record<string, string>>;
+}
+
+/**
+ * Route context type for catch-all routes (e.g., [...path])
+ * Params can be either string (regular segments) or string[] (catch-all segments).
+ */
+export interface CatchAllRouteContext {
+  params?: Promise<Record<string, string | string[]>>;
 }
 
 /**
@@ -45,6 +53,43 @@ export function withAuth(
   ) => Promise<NextResponse>
 ): (request: Request, context?: RouteContext) => Promise<NextResponse> {
   return async (request: Request, context?: RouteContext) => {
+    try {
+      const session = await getAuthSession();
+
+      if (!session?.user?.id) {
+        return NextResponse.json(
+          { error: "Unauthorized" },
+          { status: 401 }
+        );
+      }
+
+      // Await params if provided (for dynamic routes)
+      const params = context?.params ? await context.params : undefined;
+
+      return await handler(request, { userId: session.user.id, params });
+    } catch (error) {
+      console.error("Unhandled error in API route:", error);
+      return NextResponse.json(
+        { error: "Internal server error" },
+        { status: 500 }
+      );
+    }
+  };
+}
+
+/**
+ * Wrap an API route handler with authentication for catch-all routes
+ *
+ * Similar to withAuth but handles catch-all route params that can be string or string[].
+ * Use this for routes with [...path] or similar catch-all segments.
+ */
+export function withAuthCatchAll(
+  handler: (
+    request: Request,
+    context: { userId: string; params?: Record<string, string | string[]> }
+  ) => Promise<NextResponse>
+): (request: Request, context?: CatchAllRouteContext) => Promise<NextResponse> {
+  return async (request: Request, context?: CatchAllRouteContext) => {
     try {
       const session = await getAuthSession();
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, Activity, useEffectEvent } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, useEffectEvent } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
@@ -13,6 +13,7 @@ import { TrashModal } from "@/components/trash/TrashModal";
 import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
+import { ProcessesModal } from "@/components/processes";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
@@ -27,11 +28,12 @@ import {
   prefetchSecretsForFolder,
 } from "@/hooks/useEnvironmentWithSecrets";
 import type { FolderRepoStats } from "./Sidebar";
-import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
+import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
+import { LogViewer } from "@/components/dev-server";
 
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
 
@@ -229,6 +231,21 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Port manager modal state
   const [isPortsModalOpen, setIsPortsModalOpen] = useState(false);
+
+  // Processes modal state
+  const [isProcessesModalOpen, setIsProcessesModalOpen] = useState(false);
+
+  // Session view mode state (for terminal/preview toggle)
+  const [sessionViewModes, setSessionViewModes] = useState<Map<string, "terminal" | "preview">>(new Map());
+
+  // Memoized view mode toggle to avoid re-creating Map on every render
+  const setViewMode = useCallback((sessionId: string, mode: "terminal" | "preview") => {
+    setSessionViewModes(prev => {
+      const next = new Map(prev);
+      next.set(sessionId, mode);
+      return next;
+    });
+  }, []);
 
   // Get trash count for a specific folder
   const getFolderTrashCount = useCallback(
@@ -1120,6 +1137,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             }}
             onProfilesOpen={() => setIsProfilesModalOpen(true)}
             onPortsOpen={() => setIsPortsModalOpen(true)}
+            onProcessesOpen={() => setIsProcessesModalOpen(true)}
           />
       </div>
 
@@ -1273,35 +1291,97 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     if (!session) return null;
                     const folderId = session.folderId || null;
                     const prefs = resolvePreferencesForFolder(folderId);
+                    const isDevServer = session.sessionType === "dev-server";
+                    const viewMode = sessionViewModes.get(session.id) ?? "terminal";
+
                     return (
-                      <div className="absolute inset-0 z-10">
-                        <TerminalWithKeyboard
-                          key={session.id}
-                          ref={(ref) => {
-                            if (ref) {
-                              terminalRefsMap.current.set(session.id, ref);
-                            } else {
-                              terminalRefsMap.current.delete(session.id);
-                            }
-                          }}
-                          sessionId={session.id}
-                          tmuxSessionName={session.tmuxSessionName}
-                          sessionName={session.name}
-                          projectPath={session.projectPath}
-                          session={session}
-                          wsUrl={wsUrl}
-                          theme={prefs.theme}
-                          fontSize={prefs.fontSize}
-                          fontFamily={prefs.fontFamily}
-                          notificationsEnabled={true}
-                          isRecording={isRecording}
-                          isActive={session.id === activeSessionId}
-                          environmentVars={getEnvironmentWithSecrets(folderId)}
-                          onOutput={isRecording ? recordOutput : undefined}
-                          onDimensionsChange={isRecording ? updateDimensions : undefined}
-                          onSessionRestart={() => handleSessionRestart(session)}
-                          onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
-                        />
+                      <div className="absolute inset-0 z-10 flex flex-col">
+                        {/* Dev Server Tab Toggle */}
+                        {isDevServer && (
+                          <div className="flex items-center gap-1 px-2 py-1 bg-slate-900/50 border-b border-white/5 flex-shrink-0">
+                            <Button
+                              variant={viewMode === "terminal" ? "secondary" : "ghost"}
+                              size="sm"
+                              onClick={() => setViewMode(session.id, "terminal")}
+                              className={cn(
+                                "h-7 px-3 text-xs",
+                                viewMode === "terminal"
+                                  ? "bg-violet-500/20 text-violet-300"
+                                  : "text-slate-400 hover:text-slate-300"
+                              )}
+                            >
+                              <TerminalIcon className="w-3.5 h-3.5 mr-1.5" />
+                              Terminal
+                            </Button>
+                            <Button
+                              variant={viewMode === "preview" ? "secondary" : "ghost"}
+                              size="sm"
+                              onClick={() => setViewMode(session.id, "preview")}
+                              className={cn(
+                                "h-7 px-3 text-xs",
+                                viewMode === "preview"
+                                  ? "bg-violet-500/20 text-violet-300"
+                                  : "text-slate-400 hover:text-slate-300"
+                              )}
+                              disabled={session.devServerStatus !== "running"}
+                            >
+                              <Globe className="w-3.5 h-3.5 mr-1.5" />
+                              Preview
+                              {session.devServerStatus === "running" && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 ml-1.5 animate-pulse" />
+                              )}
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Content Area */}
+                        <div className="flex-1 relative min-h-0">
+                          {!isDevServer ? (
+                            /* Regular terminal session */
+                            <TerminalWithKeyboard
+                              key={session.id}
+                              ref={(ref) => {
+                                if (ref) {
+                                  terminalRefsMap.current.set(session.id, ref);
+                                } else {
+                                  terminalRefsMap.current.delete(session.id);
+                                }
+                              }}
+                              sessionId={session.id}
+                              tmuxSessionName={session.tmuxSessionName}
+                              sessionName={session.name}
+                              projectPath={session.projectPath}
+                              session={session}
+                              wsUrl={wsUrl}
+                              theme={prefs.theme}
+                              fontSize={prefs.fontSize}
+                              fontFamily={prefs.fontFamily}
+                              notificationsEnabled={true}
+                              isRecording={isRecording}
+                              isActive={session.id === activeSessionId}
+                              environmentVars={getEnvironmentWithSecrets(folderId)}
+                              onOutput={isRecording ? recordOutput : undefined}
+                              onDimensionsChange={isRecording ? updateDimensions : undefined}
+                              onSessionRestart={() => handleSessionRestart(session)}
+                              onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
+                            />
+                          ) : viewMode === "terminal" ? (
+                            /* Dev server log viewer */
+                            <LogViewer
+                              sessionId={session.id}
+                              wsUrl={wsUrl}
+                              className="absolute inset-0"
+                            />
+                          ) : (
+                            /* Dev server preview iframe */
+                            <iframe
+                              src={session.devServerUrl ?? ""}
+                              className="absolute inset-0 w-full h-full border-0 bg-white"
+                              title={`Preview: ${session.name}`}
+                              sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+                            />
+                          )}
+                        </div>
                       </div>
                     );
                   })()
@@ -1323,16 +1403,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isGitHubConnected={isGitHubConnected}
       />
 
-      {/* Folder Preferences Modal - Activity preserves form state when closed */}
-      <Activity mode={folderSettingsModal ? "visible" : "hidden"}>
-        <FolderPreferencesModal
-          open={folderSettingsModal !== null}
-          onClose={() => setFolderSettingsModal(null)}
-          folderId={folderSettingsModal?.folderId ?? ""}
-          folderName={folderSettingsModal?.folderName ?? ""}
-          initialTab={folderSettingsModal?.initialTab}
-        />
-      </Activity>
+      {/* Folder Preferences Modal */}
+      <FolderPreferencesModal
+        open={folderSettingsModal !== null}
+        onClose={() => setFolderSettingsModal(null)}
+        folderId={folderSettingsModal?.folderId ?? ""}
+        folderName={folderSettingsModal?.folderName ?? ""}
+        initialTab={folderSettingsModal?.initialTab}
+      />
 
       {/* Command Palette */}
       <CommandPalette
@@ -1423,6 +1501,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <PortManagerModal
         open={isPortsModalOpen}
         onClose={() => setIsPortsModalOpen(false)}
+      />
+
+      {/* Processes Modal */}
+      <ProcessesModal
+        open={isProcessesModalOpen}
+        onClose={() => setIsProcessesModalOpen(false)}
+        onNavigateToSession={(sessionId, showPreview) => {
+          setActiveSession(sessionId);
+          if (showPreview) {
+            setViewMode(sessionId, "preview");
+          }
+        }}
       />
     </div>
   );

@@ -7,6 +7,8 @@ import { execFile, execFileSync } from "child_process";
 import { createHmac, timingSafeEqual } from "crypto";
 import { resolve as pathResolve } from "path";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator";
+import { getDevServerProcessManager } from "../services/dev-server-process-manager";
+import type { LogEntry, LogListener } from "../types/process-manager";
 
 /**
  * Validate a tmux session name to prevent command injection.
@@ -94,7 +96,104 @@ interface TerminalSession {
   resizeTimeout: ReturnType<typeof setTimeout> | null;
 }
 
+/**
+ * Track active dev server WebSocket connections
+ */
+interface DevServerConnection {
+  ws: WebSocket;
+  sessionId: string;
+  logListener: LogListener;
+}
+
 const sessions = new Map<string, TerminalSession>();
+const devServerConnections = new Map<string, DevServerConnection>();
+
+/**
+ * Handle WebSocket connection for a dev server session (log streaming)
+ * Dev servers use direct process spawning, so we stream logs instead of PTY output.
+ */
+function handleDevServerConnection(
+  ws: WebSocket,
+  sessionId: string,
+  _authResult: { sessionId: string; userId: string }
+): boolean {
+  const processManager = getDevServerProcessManager();
+
+  // Check if this session is managed by the process manager
+  if (!processManager.hasProcess(sessionId)) {
+    return false; // Not a dev server session, use regular PTY flow
+  }
+
+  console.log(`[DevServer] WebSocket connection for session ${sessionId}`);
+
+  // Send log history (last 1000 lines)
+  const history = processManager.getRecentLogs(sessionId, 1000);
+  ws.send(JSON.stringify({
+    type: "log-history",
+    entries: history,
+  }));
+
+  // Get and send current process state
+  const state = processManager.getProcessState(sessionId);
+  ws.send(JSON.stringify({
+    type: "dev-server-ready",
+    sessionId,
+    state,
+  }));
+
+  // Create log listener for real-time streaming
+  const logListener: LogListener = (entry: LogEntry) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "log-output",
+        stream: entry.stream,
+        data: entry.data,
+        timestamp: entry.timestamp,
+      }));
+    }
+  };
+
+  // Attach the listener
+  processManager.attachLogListener(sessionId, logListener);
+
+  // Track this connection
+  devServerConnections.set(sessionId, {
+    ws,
+    sessionId,
+    logListener,
+  });
+
+  // Handle incoming messages
+  ws.on("message", (message) => {
+    try {
+      const msg = JSON.parse(message.toString());
+
+      switch (msg.type) {
+        case "stop":
+          processManager.stopProcess(sessionId, msg.signal || "SIGTERM").catch((err) => {
+            console.error(`[DevServer] Error stopping process:`, err);
+          });
+          break;
+
+        case "clear-logs":
+          processManager.clearLogs(sessionId);
+          ws.send(JSON.stringify({ type: "logs-cleared" }));
+          break;
+      }
+    } catch (error) {
+      console.error(`[DevServer] Error parsing message:`, error);
+    }
+  });
+
+  // Handle WebSocket close
+  ws.on("close", () => {
+    console.log(`[DevServer] WebSocket disconnected for session ${sessionId}`);
+    processManager.detachLogListener(sessionId, logListener);
+    devServerConnections.delete(sessionId);
+  });
+
+  return true; // Handled as dev server
+}
 
 /**
  * Check if tmux is installed
@@ -323,6 +422,13 @@ export function createTerminalServer(port: number = 3001) {
 
     // Parse connection parameters
     const sessionId = authResult.sessionId;
+
+    // Check if this is a dev server session (uses log streaming, not PTY)
+    if (handleDevServerConnection(ws, sessionId, authResult)) {
+      return; // Handled by dev server handler
+    }
+
+    // Regular terminal session - continue with PTY/tmux flow
     const tmuxSessionName = (query.tmuxSession as string) || `rdv-${sessionId.substring(0, 8)}`;
     const cols = parseInt(query.cols as string) || 80;
     const rows = parseInt(query.rows as string) || 24;

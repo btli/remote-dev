@@ -2,17 +2,21 @@
  * DevServerService - Manages development server sessions with browser preview
  *
  * This service handles the lifecycle of dev server sessions:
- * - Starting servers with optional pre-build step
- * - Stopping servers gracefully with Ctrl+C
+ * - Starting servers with direct process spawning (no tmux)
+ * - Stopping servers gracefully with SIGTERM
  * - Health monitoring for crash detection
  * - One dev server per folder enforcement
+ *
+ * NOTE: Dev servers use direct process spawning (DevServerProcessManager)
+ * instead of tmux. This allows for direct PID tracking, cleaner log capture,
+ * and simplified CPU/memory monitoring.
  */
 import { db } from "@/db";
 import { terminalSessions, devServerHealth, sessionFolders, folderPreferences } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import * as TmuxService from "./tmux-service";
+import { getDevServerProcessManager } from "./dev-server-process-manager";
 import { getResolvedPreferences, getEnvironmentForSession } from "./preferences-service";
-import { execFile } from "@/lib/exec";
 import type { DevServerStatus, DevServerHealth, DevServerState, StartDevServerResponse, DevServerConfig } from "@/types/dev-server";
 import { getProxyUrl, HEALTH_CHECK_CONFIG } from "@/types/dev-server";
 import type { TerminalSession } from "@/types/session";
@@ -66,6 +70,48 @@ async function getPortFromEnv(
   }
   const port = parseInt(env.PORT, 10);
   return isNaN(port) ? null : port;
+}
+
+/**
+ * Parse a shell command string into command and args
+ * Handles basic quoting and escaping
+ */
+function parseCommand(cmdString: string): { command: string; args: string[] } {
+  // Simple parsing - split on whitespace but respect quotes
+  const parts: string[] = [];
+  let current = "";
+  let inQuote = false;
+  let quoteChar = "";
+
+  for (const char of cmdString) {
+    if (!inQuote && (char === '"' || char === "'")) {
+      inQuote = true;
+      quoteChar = char;
+    } else if (inQuote && char === quoteChar) {
+      inQuote = false;
+      quoteChar = "";
+    } else if (!inQuote && /\s/.test(char)) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current) {
+    parts.push(current);
+  }
+
+  if (parts.length === 0) {
+    throw new DevServerServiceError("Empty command", "INVALID_COMMAND");
+  }
+
+  return {
+    command: parts[0],
+    args: parts.slice(1),
+  };
 }
 
 /**
@@ -159,8 +205,9 @@ export async function startDevServer(
   // Get environment variables for the session
   const folderEnv = await getEnvironmentForSession(userId, folderId);
 
-  // Generate session IDs
+  // Generate session ID (no tmux session name needed for direct spawn)
   const sessionId = crypto.randomUUID();
+  // Keep tmuxSessionName for backward compatibility with existing code paths
   const tmuxSessionName = TmuxService.generateSessionName(sessionId);
 
   // Get the next tab order
@@ -177,30 +224,44 @@ export async function startDevServer(
     : 0;
 
   // Build the startup command
-  // If runBuildBeforeStart is true, chain build && server commands
-  let startupCommand = config.serverStartupCommand;
-  if (config.runBuildBeforeStart && config.buildCommand) {
-    startupCommand = `${config.buildCommand} && ${config.serverStartupCommand}`;
-  }
+  // If runBuildBeforeStart is true, we need to handle this differently
+  // For direct spawn, we'll run the build first, then the server
+  const startupCommand = config.serverStartupCommand;
 
-  // Create the tmux session
+  // Parse the command into executable + args
+  const { command, args } = parseCommand(startupCommand);
+
+  // Start the process using DevServerProcessManager (direct spawn, no tmux)
+  const processManager = getDevServerProcessManager();
   try {
-    await TmuxService.createSession(
-      tmuxSessionName,
-      workingPath ?? undefined,
-      startupCommand,
-      undefined, // No profile env for dev servers
-      folderEnv ?? undefined
-    );
-  } catch (error) {
-    if (error instanceof TmuxService.TmuxServiceError) {
-      throw new DevServerServiceError(
-        `Failed to create tmux session: ${error.message}`,
-        "TMUX_CREATE_FAILED",
-        sessionId
-      );
+    // If build is required, run it first
+    if (config.runBuildBeforeStart && config.buildCommand) {
+      const { exec } = await import("child_process");
+      const { promisify } = await import("util");
+      const execPromise = promisify(exec);
+
+      // Run build command and wait for completion
+      console.log(`[DevServerService] Running build command: ${config.buildCommand}`);
+      await execPromise(config.buildCommand, {
+        cwd: workingPath,
+        env: { ...process.env, ...folderEnv },
+      });
+      console.log(`[DevServerService] Build completed`);
     }
-    throw error;
+
+    await processManager.startProcess({
+      sessionId,
+      command,
+      args,
+      cwd: workingPath ?? process.env.HOME ?? "/tmp",
+      env: folderEnv ?? {},
+    });
+  } catch (error) {
+    throw new DevServerServiceError(
+      `Failed to start dev server process: ${(error as Error).message}`,
+      "PROCESS_START_FAILED",
+      sessionId
+    );
   }
 
   // Generate the proxy URL
@@ -249,10 +310,13 @@ export async function startDevServer(
       status: "starting",
     };
   } catch (error) {
-    // Clean up tmux session if DB insert fails
-    await TmuxService.killSession(tmuxSessionName).catch(() => {
-      console.error(`Failed to clean up orphaned tmux session: ${tmuxSessionName}`);
-    });
+    // Clean up spawned process if DB insert fails
+    try {
+      await processManager.stopProcess(sessionId);
+      processManager.removeProcess(sessionId);
+    } catch {
+      console.error(`Failed to clean up orphaned process for session: ${sessionId}`);
+    }
     throw new DevServerServiceError(
       `Failed to create dev server record: ${(error as Error).message}`,
       "DB_INSERT_FAILED",
@@ -262,7 +326,7 @@ export async function startDevServer(
 }
 
 /**
- * Stop a dev server gracefully with Ctrl+C
+ * Stop a dev server gracefully with SIGTERM
  */
 export async function stopDevServer(
   sessionId: string,
@@ -280,10 +344,16 @@ export async function stopDevServer(
     throw new DevServerServiceError("Dev server session not found", "SESSION_NOT_FOUND", sessionId);
   }
 
-  // Send Ctrl+C to gracefully stop the server
-  if (await TmuxService.sessionExists(session.tmuxSessionName)) {
-    // Send Ctrl+C (C-c in tmux notation)
-    await execFile("tmux", ["send-keys", "-t", session.tmuxSessionName, "C-c"]);
+  // Stop the process using DevServerProcessManager
+  const processManager = getDevServerProcessManager();
+  if (processManager.hasProcess(sessionId)) {
+    try {
+      await processManager.stopProcess(sessionId, "SIGTERM");
+    } catch (error) {
+      console.error(`[DevServerService] Error stopping process:`, error);
+    }
+    // Remove from tracking
+    processManager.removeProcess(sessionId);
   }
 
   // Update status to stopped
@@ -304,15 +374,6 @@ export async function stopDevServer(
       updatedAt: new Date(),
     })
     .where(eq(devServerHealth.sessionId, sessionId));
-
-  // Kill the tmux session after a short delay to allow graceful shutdown
-  setTimeout(async () => {
-    try {
-      await TmuxService.killSession(session.tmuxSessionName);
-    } catch {
-      // Ignore errors - session may already be dead
-    }
-  }, 2000);
 }
 
 /**
@@ -384,6 +445,8 @@ export async function getDevServerHealth(
     crashedAt: health.crashedAt,
     crashReason: health.crashReason,
     consecutiveFailures: health.consecutiveFailures,
+    cpuPercent: health.cpuPercent,
+    memoryMb: health.memoryMb,
     createdAt: health.createdAt,
     updatedAt: health.updatedAt,
   };

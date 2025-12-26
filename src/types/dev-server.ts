@@ -37,6 +37,8 @@ export interface DevServerHealth {
   crashedAt: Date | null;
   crashReason: string | null;
   consecutiveFailures: number;
+  cpuPercent: number | null;
+  memoryMb: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -104,6 +106,17 @@ export interface ProxyContext {
   port: number;
   userId: string;
 }
+
+/**
+ * CSS class names for dev server status badges
+ * Used across ProcessesModal and ProcessesTable for consistent styling
+ */
+export const DEV_SERVER_STATUS_STYLES: Record<DevServerStatus, string> = {
+  running: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  starting: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  crashed: "bg-red-500/10 text-red-400 border-red-500/30",
+  stopped: "bg-slate-500/10 text-slate-400 border-slate-500/30",
+} as const;
 
 /**
  * Health check configuration

@@ -462,6 +462,8 @@ export const devServerHealth = sqliteTable(
     crashedAt: integer("crashed_at", { mode: "timestamp_ms" }),
     crashReason: text("crash_reason"),
     consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    cpuPercent: real("cpu_percent"), // Real-time CPU usage percentage
+    memoryMb: real("memory_mb"), // Memory usage in MB
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
