@@ -12,6 +12,7 @@ import { RecordingProvider } from "@/contexts/RecordingContext";
 import { TrashProvider } from "@/contexts/TrashContext";
 import { ScheduleProvider } from "@/contexts/ScheduleContext";
 import { SecretsProvider } from "@/contexts/SecretsContext";
+import { ProfileProvider } from "@/contexts/ProfileContext";
 import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubStatusIcon } from "@/components/header/GitHubStatusIcon";
@@ -73,14 +74,15 @@ export default async function Home() {
     <PreferencesProvider>
       <FolderProvider>
         <SecretsProvider>
-          <TemplateProvider>
-            <RecordingProvider>
-              <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
-                <SessionProvider initialSessions={initialSessions}>
-                  <SplitProvider>
-                    <TrashProvider>
-                      <ScheduleProvider>
-                        <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+          <ProfileProvider>
+            <TemplateProvider>
+              <RecordingProvider>
+                <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
+                  <SessionProvider initialSessions={initialSessions}>
+                    <SplitProvider>
+                      <TrashProvider>
+                        <ScheduleProvider>
+                          <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
                           {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
                           <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
                             {/* Logo */}
@@ -135,7 +137,8 @@ export default async function Home() {
                 </SessionProvider>
               </GitHubStatsProvider>
             </RecordingProvider>
-          </TemplateProvider>
+            </TemplateProvider>
+          </ProfileProvider>
         </SecretsProvider>
       </FolderProvider>
     </PreferencesProvider>

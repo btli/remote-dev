@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,8 @@ import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
 import { EnvVarEditor } from "./EnvVarEditor";
 import { FolderBrowserModal } from "@/components/filesystem/FolderBrowserModal";
+import { ProfileSelector } from "@/components/profiles/ProfileSelector";
+import { useProfileContext } from "@/contexts/ProfileContext";
 
 // Helper to get electron API for directory selection (only in Electron)
 function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
@@ -56,7 +58,7 @@ interface FolderPreferencesModalProps {
   folderId: string;
   folderName: string;
   /** Initial tab to show when opening the modal */
-  initialTab?: "general" | "appearance" | "repository" | "environment";
+  initialTab?: "general" | "appearance" | "repository" | "environment" | "profile";
 }
 
 const SHELL_OPTIONS = [
@@ -117,6 +119,13 @@ export function FolderPreferencesModal({
     refreshPreferences,
   } = usePreferencesContext();
 
+  const {
+    profiles,
+    folderProfileLinks,
+    linkFolderToProfile,
+    unlinkFolderFromProfile,
+  } = useProfileContext();
+
   // Get parent folder to compute inherited preferences
   const folder = folders.get(folderId);
   const parentFolderId = folder?.parentId ?? null;
@@ -144,6 +153,13 @@ export function FolderPreferencesModal({
   const [inheritedEnvVars, setInheritedEnvVars] = useState<ResolvedEnvVar[]>([]);
   const [portConflicts, setPortConflicts] = useState<PortConflict[]>([]);
   const [loadingEnvVars, setLoadingEnvVars] = useState(false);
+
+  // Profile linking state
+  const [linkingProfile, setLinkingProfile] = useState(false);
+  const linkedProfileId = folderProfileLinks.get(folderId) || null;
+  const linkedProfile = linkedProfileId
+    ? profiles.find((p) => p.id === linkedProfileId) || null
+    : null;
 
   const folderPrefs = getFolderPreferences(folderId);
 
@@ -349,6 +365,28 @@ export function FolderPreferencesModal({
     handleEnvVarsChange(updated);
   };
 
+  // Handle profile linking
+  const handleProfileChange = useCallback(
+    async (profileId: string | null) => {
+      setLinkingProfile(true);
+      try {
+        if (profileId) {
+          await linkFolderToProfile(folderId, profileId);
+        } else {
+          await unlinkFolderFromProfile(folderId);
+        }
+      } catch (error) {
+        console.error("Failed to update profile link:", error);
+        setSaveError(
+          error instanceof Error ? error.message : "Failed to update profile link"
+        );
+      } finally {
+        setLinkingProfile(false);
+      }
+    },
+    [folderId, linkFolderToProfile, unlinkFolderFromProfile]
+  );
+
   // Handle selecting a repo (clone if needed)
   const handleRepoSelect = async (repo: GitHubRepo) => {
     // If already cloned, just select it
@@ -402,6 +440,7 @@ export function FolderPreferencesModal({
   const hasAppearanceOverrides = isOverridden("theme") || isOverridden("fontSize") || isOverridden("fontFamily");
   const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
   const hasEnvOverrides = isOverridden("environmentVars");
+  const hasProfileLink = !!linkedProfileId;
 
   // Get unique owners from repos for filtering
   const repoOwners = Array.from(new Set(repos.map((r) => r.owner))).sort();
@@ -473,6 +512,11 @@ export function FolderPreferencesModal({
               <Terminal className="w-3.5 h-3.5" />
               Env
               {hasEnvOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+            </TabsTrigger>
+            <TabsTrigger value="profile" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+              <Fingerprint className="w-3.5 h-3.5" />
+              Profile
+              {hasProfileLink && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
             </TabsTrigger>
           </TabsList>
 
@@ -973,6 +1017,64 @@ export function FolderPreferencesModal({
                   onChange={handleEnvVarsChange}
                   onUseSuggestedPort={handleUseSuggestedPort}
                 />
+              )}
+            </TabsContent>
+
+            {/* Profile Tab */}
+            <TabsContent value="profile" className="mt-0 space-y-4">
+              <p className="text-sm text-slate-400">
+                Link an agent profile to apply git identity, secrets, and MCP servers
+                to all sessions created in this folder.
+              </p>
+
+              <div className="space-y-3">
+                <Label className="text-slate-300">Agent Profile</Label>
+                <ProfileSelector
+                  value={linkedProfileId}
+                  onChange={handleProfileChange}
+                  placeholder="Select a profile to link..."
+                  disabled={linkingProfile}
+                  showProviderBadge={true}
+                />
+                {linkingProfile && (
+                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Updating...
+                  </div>
+                )}
+              </div>
+
+              {/* Profile Summary */}
+              {linkedProfile && (
+                <div className="p-4 rounded-lg bg-slate-800/50 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Fingerprint className="w-4 h-4 text-violet-400" />
+                      <span className="font-medium text-white">{linkedProfile.name}</span>
+                    </div>
+                    <span className="text-xs text-slate-500 capitalize">
+                      {linkedProfile.provider}
+                    </span>
+                  </div>
+                  {linkedProfile.description && (
+                    <p className="text-sm text-slate-400">{linkedProfile.description}</p>
+                  )}
+                  <p className="text-xs text-slate-500">
+                    Sessions in this folder will use this profile&apos;s git identity,
+                    secrets, and MCP servers.
+                  </p>
+                </div>
+              )}
+
+              {/* Empty state */}
+              {!linkedProfile && profiles.length === 0 && (
+                <div className="p-4 rounded-lg bg-slate-800/30 border border-white/5 text-center">
+                  <Fingerprint className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                  <p className="text-sm text-slate-400">No profiles created yet</p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Create profiles to manage git identity, secrets, and MCP servers.
+                  </p>
+                </div>
               )}
             </TabsContent>
           </div>

@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
-  GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound,
+  GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -38,6 +38,7 @@ import { useSplitContext } from "@/contexts/SplitContext";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
+import { useProfileContext } from "@/contexts/ProfileContext";
 
 export interface SessionFolder {
   id: string;
@@ -103,6 +104,7 @@ interface SidebarProps {
   onSessionSchedule?: (sessionId: string) => void;
   onSessionSchedulesView?: (sessionId: string, sessionName: string) => void;
   onSchedulesOpen?: () => void;
+  onProfilesOpen?: () => void;
 }
 
 export function Sidebar({
@@ -143,6 +145,7 @@ export function Sidebar({
   onSessionSchedule,
   onSessionSchedulesView,
   onSchedulesOpen,
+  onProfilesOpen,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -168,6 +171,7 @@ export function Sidebar({
   const [secretsModalOpen, setSecretsModalOpen] = useState(false);
   const [secretsModalFolderId, setSecretsModalFolderId] = useState<string | null>(null);
   const { folderConfigs } = useSecretsContext();
+  const { profileCount } = useProfileContext();
 
   // Touch drag state for mobile
   const touchDragRef = useRef<{
@@ -1897,6 +1901,25 @@ export function Sidebar({
             >
               <CalendarClock className="w-3.5 h-3.5" />
               <span>Schedules</span>
+            </button>
+          )}
+          {/* Profiles button */}
+          {onProfilesOpen && (
+            <button
+              onClick={onProfilesOpen}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
+                "text-xs text-slate-400 hover:text-slate-300",
+                "hover:bg-slate-800/50 transition-colors"
+              )}
+            >
+              <Fingerprint className="w-3.5 h-3.5" />
+              <span>Profiles</span>
+              {profileCount > 0 && (
+                <span className="ml-auto text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                  {profileCount}
+                </span>
+              )}
             </button>
           )}
           {/* Trash button - only show when there are items */}
