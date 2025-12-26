@@ -180,7 +180,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between pb-2 border-b border-white/5">
-        <div className="flex items-center gap-2 text-sm text-slate-400">
+        <div className="flex items-center gap-2 text-xs text-slate-400">
           <Server className="w-4 h-4" />
           <span>Configure MCP servers for this profile</span>
         </div>
@@ -198,8 +198,8 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
       {servers.length === 0 && !showForm ? (
         <div className="text-center py-8 text-slate-400">
           <Server className="w-12 h-12 mx-auto mb-3 opacity-50" />
-          <p>No MCP servers configured</p>
-          <p className="text-sm mt-1">
+          <p className="text-xs">No MCP servers configured</p>
+          <p className="text-xs mt-1">
             Add an MCP server to extend agent capabilities
           </p>
         </div>
