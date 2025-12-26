@@ -862,7 +862,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       const prefix = activeProject.folderName || "Terminal";
       const name = `${prefix} ${sessionCounter}`;
       setSessionCounter((c) => c + 1);
-      createSession({ name }).catch((error) => {
+      // Pass folderId so environment variables from folder preferences are applied
+      createSession({ name, folderId: activeProject.folderId ?? undefined }).catch((error) => {
         logSessionError("create session", error);
       });
     }
