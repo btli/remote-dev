@@ -6,13 +6,194 @@ import { Calendar as CalendarIcon, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+
+// Clock face component with clickable numbers
+type ClockView = "hours" | "minutes" | "seconds";
+
+interface ClockFaceProps {
+  value: number;
+  view: ClockView;
+  onChange: (value: number) => void;
+  onViewChange: (view: ClockView) => void;
+  is24Hour?: boolean;
+}
+
+function ClockFace({ value, view, onChange, onViewChange, is24Hour = false }: ClockFaceProps) {
+  const size = 140;
+  const center = size / 2;
+  const outerRadius = size / 2 - 12;
+  const innerRadius = outerRadius - 24; // For 24-hour inner ring
+
+  // Generate numbers based on view
+  const getNumbers = () => {
+    if (view === "hours") {
+      if (is24Hour) {
+        // Outer ring: 1-12, Inner ring: 13-24 (with 0 at 12 position)
+        return {
+          outer: [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+          inner: [0, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+        };
+      }
+      return { outer: [12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], inner: null };
+    }
+    // Minutes and seconds: 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55
+    return { outer: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55], inner: null };
+  };
+
+  const numbers = getNumbers();
+
+  // Calculate position for a number on the clock face
+  const getPosition = (index: number, radius: number) => {
+    const angle = (index * 30 - 90) * (Math.PI / 180); // 30 degrees per number, start at 12 o'clock
+    return {
+      x: center + Math.cos(angle) * radius,
+      y: center + Math.sin(angle) * radius,
+    };
+  };
+
+  // Calculate hand angle
+  const getHandAngle = () => {
+    if (view === "hours") {
+      return ((value % 12) / 12) * 360 - 90;
+    }
+    return (value / 60) * 360 - 90;
+  };
+
+  const handAngle = getHandAngle();
+  const handLength = view === "hours" && is24Hour && value >= 12 && value !== 12 ? innerRadius - 8 : outerRadius - 20;
+  const handEnd = {
+    x: center + Math.cos(handAngle * (Math.PI / 180)) * handLength,
+    y: center + Math.sin(handAngle * (Math.PI / 180)) * handLength,
+  };
+
+  // Handle click on clock face
+  const handleClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left - center;
+    const y = e.clientY - rect.top - center;
+
+    let angle = Math.atan2(y, x) * (180 / Math.PI) + 90;
+    if (angle < 0) angle += 360;
+
+    const clickRadius = Math.sqrt(x * x + y * y);
+
+    if (view === "hours") {
+      let hour = Math.round(angle / 30) % 12;
+      if (hour === 0) hour = 12;
+
+      // For 24-hour mode, check if clicking inner ring
+      if (is24Hour && clickRadius < (outerRadius + innerRadius) / 2) {
+        hour = hour === 12 ? 0 : hour + 12;
+      }
+
+      onChange(hour);
+      // Auto-advance to minutes after selecting hour
+      setTimeout(() => onViewChange("minutes"), 150);
+    } else {
+      // Snap to nearest 5 for display, but allow any value
+      const minuteOrSecond = Math.round(angle / 6) % 60;
+      onChange(minuteOrSecond);
+
+      // Auto-advance from minutes to seconds
+      if (view === "minutes") {
+        setTimeout(() => onViewChange("seconds"), 150);
+      }
+    }
+  };
+
+  // Check if a number is selected
+  const isSelected = (num: number) => {
+    if (view === "hours") {
+      return value === num || (is24Hour && value === num);
+    }
+    return value === num;
+  };
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      className="cursor-pointer"
+      onClick={handleClick}
+    >
+      {/* Clock face background */}
+      <circle
+        cx={center}
+        cy={center}
+        r={outerRadius + 8}
+        className="fill-slate-800/50"
+      />
+
+      {/* Clock hand */}
+      <line
+        x1={center}
+        y1={center}
+        x2={handEnd.x}
+        y2={handEnd.y}
+        className="stroke-violet-500"
+        strokeWidth={2}
+      />
+      <circle cx={handEnd.x} cy={handEnd.y} r={4} className="fill-violet-500" />
+      <circle cx={center} cy={center} r={3} className="fill-violet-500" />
+
+      {/* Outer ring numbers */}
+      {numbers.outer.map((num, i) => {
+        const pos = getPosition(i, outerRadius);
+        const selected = isSelected(num);
+        return (
+          <g key={`outer-${num}`}>
+            {selected && (
+              <circle cx={pos.x} cy={pos.y} r={14} className="fill-violet-600" />
+            )}
+            <text
+              x={pos.x}
+              y={pos.y}
+              textAnchor="middle"
+              dominantBaseline="central"
+              className={cn(
+                "text-[10px] font-medium pointer-events-none",
+                selected ? "fill-white" : "fill-slate-300"
+              )}
+            >
+              {view === "hours" ? num : num.toString().padStart(2, "0")}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Inner ring for 24-hour mode */}
+      {numbers.inner?.map((num, i) => {
+        const pos = getPosition(i, innerRadius);
+        const selected = isSelected(num);
+        return (
+          <g key={`inner-${num}`}>
+            {selected && (
+              <circle cx={pos.x} cy={pos.y} r={12} className="fill-violet-600" />
+            )}
+            <text
+              x={pos.x}
+              y={pos.y}
+              textAnchor="middle"
+              dominantBaseline="central"
+              className={cn(
+                "text-[9px] font-medium pointer-events-none",
+                selected ? "fill-white" : "fill-slate-400"
+              )}
+            >
+              {num.toString().padStart(2, "0")}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
 
 interface DateTimePickerProps {
   date: Date | undefined;
@@ -30,6 +211,31 @@ export function DateTimePicker({
   placeholder = "Pick date and time",
 }: DateTimePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const [clockView, setClockView] = React.useState<ClockView>("hours");
+  const [timeInput, setTimeInput] = React.useState("");
+
+  // Sync time input with date
+  React.useEffect(() => {
+    if (date) {
+      const hours = date.getHours();
+      const minutes = date.getMinutes();
+      const seconds = date.getSeconds();
+      const ampm = hours >= 12 ? "PM" : "AM";
+      const displayHours = hours % 12 || 12;
+      setTimeInput(
+        `${displayHours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")} ${ampm}`
+      );
+    } else {
+      setTimeInput("");
+    }
+  }, [date]);
+
+  // Reset clock view when opening
+  React.useEffect(() => {
+    if (isOpen) {
+      setClockView("hours");
+    }
+  }, [isOpen]);
 
   const handleDateSelect = (selectedDate: Date | undefined) => {
     if (!selectedDate) {
@@ -51,8 +257,69 @@ export function DateTimePicker({
     onDateChange(newDate);
   };
 
+  // Parse and apply time input
+  const parseTimeInput = (input: string) => {
+    const timeRegex = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i;
+    const match = input.trim().match(timeRegex);
+    if (!match) return;
+
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const seconds = match[3] ? parseInt(match[3], 10) : 0;
+    const ampm = match[4]?.toUpperCase();
+
+    if (minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return;
+
+    if (ampm) {
+      if (hours < 1 || hours > 12) return;
+      if (ampm === "PM" && hours !== 12) hours += 12;
+      if (ampm === "AM" && hours === 12) hours = 0;
+    } else {
+      if (hours < 0 || hours > 23) return;
+    }
+
+    const baseDate = date || new Date();
+    const newDate = new Date(baseDate);
+    newDate.setHours(hours);
+    newDate.setMinutes(minutes);
+    newDate.setSeconds(seconds);
+    newDate.setMilliseconds(0);
+    onDateChange(newDate);
+  };
+
   const currentHours = date?.getHours() ?? 0;
+  const currentMinutes = date?.getMinutes() ?? 0;
+  const currentSeconds = date?.getSeconds() ?? 0;
   const isAM = currentHours < 12;
+
+  // Get current value for clock based on view
+  const getClockValue = () => {
+    if (clockView === "hours") return currentHours;
+    if (clockView === "minutes") return currentMinutes;
+    return currentSeconds;
+  };
+
+  // Handle clock value change
+  const handleClockChange = (value: number) => {
+    const baseDate = date || new Date();
+    const newDate = new Date(baseDate);
+
+    if (clockView === "hours") {
+      // Preserve AM/PM when changing hour
+      if (isAM) {
+        newDate.setHours(value === 12 ? 0 : value);
+      } else {
+        newDate.setHours(value === 12 ? 12 : value + 12);
+      }
+    } else if (clockView === "minutes") {
+      newDate.setMinutes(value);
+    } else {
+      newDate.setSeconds(value);
+    }
+
+    newDate.setMilliseconds(0);
+    onDateChange(newDate);
+  };
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -119,179 +386,80 @@ export function DateTimePicker({
 
           {/* Time Picker - Right side */}
           <div className="p-2 flex flex-col">
-            <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-2">
-              <Clock className="h-3 w-3 text-violet-400" />
-              <span>Time</span>
-            </div>
+            {/* Time input */}
+            <Input
+              value={timeInput}
+              onChange={(e) => setTimeInput(e.target.value)}
+              onBlur={() => parseTimeInput(timeInput)}
+              onKeyDown={(e) => e.key === "Enter" && parseTimeInput(timeInput)}
+              placeholder="12:00:00 PM"
+              className="h-7 text-xs font-mono bg-slate-800/50 border-white/10 text-center mb-2"
+            />
 
-            {/* Scrollable time columns */}
-            <div className="flex gap-1">
-              {/* Hours */}
-              <div className="flex flex-col items-center">
-                <span className="text-[8px] text-slate-500 mb-1">HR</span>
-                <ScrollArea className="h-[120px] w-8 rounded border border-white/10 bg-slate-800/30">
-                  <div className="p-0.5">
-                    {Array.from({ length: 12 }, (_, i) => i + 1).map((hour) => {
-                      const displayHour = hour;
-                      const actualHour = isAM ? (hour === 12 ? 0 : hour) : (hour === 12 ? 12 : hour + 12);
-                      const isSelected = date && (date.getHours() % 12 || 12) === displayHour;
-                      return (
-                        <button
-                          key={hour}
-                          onClick={() => {
-                            const baseDate = date || new Date();
-                            const newDate = new Date(baseDate);
-                            newDate.setHours(actualHour);
-                            onDateChange(newDate);
-                          }}
-                          className={cn(
-                            "w-full h-6 text-[10px] rounded transition-colors",
-                            isSelected
-                              ? "bg-violet-600 text-white"
-                              : "text-slate-300 hover:bg-violet-500/20"
-                          )}
-                        >
-                          {displayHour.toString().padStart(2, "0")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              </div>
-
-              {/* Minutes */}
-              <div className="flex flex-col items-center">
-                <span className="text-[8px] text-slate-500 mb-1">MIN</span>
-                <ScrollArea className="h-[120px] w-8 rounded border border-white/10 bg-slate-800/30">
-                  <div className="p-0.5">
-                    {Array.from({ length: 60 }, (_, i) => i).map((minute) => {
-                      const isSelected = date && date.getMinutes() === minute;
-                      return (
-                        <button
-                          key={minute}
-                          onClick={() => {
-                            const baseDate = date || new Date();
-                            const newDate = new Date(baseDate);
-                            newDate.setMinutes(minute);
-                            onDateChange(newDate);
-                          }}
-                          className={cn(
-                            "w-full h-6 text-[10px] rounded transition-colors",
-                            isSelected
-                              ? "bg-violet-600 text-white"
-                              : "text-slate-300 hover:bg-violet-500/20"
-                          )}
-                        >
-                          {minute.toString().padStart(2, "0")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              </div>
-
-              {/* Seconds */}
-              <div className="flex flex-col items-center">
-                <span className="text-[8px] text-slate-500 mb-1">SEC</span>
-                <ScrollArea className="h-[120px] w-8 rounded border border-white/10 bg-slate-800/30">
-                  <div className="p-0.5">
-                    {Array.from({ length: 60 }, (_, i) => i).map((second) => {
-                      const isSelected = date && date.getSeconds() === second;
-                      return (
-                        <button
-                          key={second}
-                          onClick={() => {
-                            const baseDate = date || new Date();
-                            const newDate = new Date(baseDate);
-                            newDate.setSeconds(second);
-                            onDateChange(newDate);
-                          }}
-                          className={cn(
-                            "w-full h-6 text-[10px] rounded transition-colors",
-                            isSelected
-                              ? "bg-violet-600 text-white"
-                              : "text-slate-300 hover:bg-violet-500/20"
-                          )}
-                        >
-                          {second.toString().padStart(2, "0")}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              </div>
-
-              {/* AM/PM */}
-              <div className="flex flex-col items-center">
-                <span className="text-[8px] text-slate-500 mb-1">&nbsp;</span>
-                <div className="flex flex-col gap-1">
-                  <button
-                    onClick={() => {
-                      if (!date) return;
-                      const newDate = new Date(date);
-                      const hours = newDate.getHours();
-                      if (hours >= 12) newDate.setHours(hours - 12);
-                      onDateChange(newDate);
-                    }}
-                    className={cn(
-                      "w-8 h-8 text-[10px] rounded transition-colors",
-                      isAM
-                        ? "bg-violet-600 text-white"
-                        : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
-                    )}
-                  >
-                    AM
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!date) return;
-                      const newDate = new Date(date);
-                      const hours = newDate.getHours();
-                      if (hours < 12) newDate.setHours(hours + 12);
-                      onDateChange(newDate);
-                    }}
-                    className={cn(
-                      "w-8 h-8 text-[10px] rounded transition-colors",
-                      !isAM
-                        ? "bg-violet-600 text-white"
-                        : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
-                    )}
-                  >
-                    PM
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick presets */}
-            <div className="flex gap-1 pt-2 mt-2 border-t border-white/10">
-              {[
-                { label: "Now", offset: 0 },
-                { label: "+5m", offset: 5 },
-                { label: "+1h", offset: 60 },
-              ].map(({ label, offset }) => (
-                <Button
-                  key={label}
-                  variant="ghost"
-                  size="sm"
-                  className="flex-1 h-5 px-1 text-[9px] text-slate-400 hover:text-white hover:bg-violet-500/20"
-                  onClick={() => {
-                    // Preserve selected date, just update time
-                    const now = new Date();
-                    now.setMinutes(now.getMinutes() + offset);
-                    const baseDate = date ? new Date(date) : now;
-                    if (date) {
-                      // Keep the selected date, use new time
-                      baseDate.setHours(now.getHours());
-                      baseDate.setMinutes(now.getMinutes());
-                      baseDate.setSeconds(now.getSeconds());
-                    }
-                    onDateChange(baseDate);
-                  }}
+            {/* View tabs */}
+            <div className="flex gap-1 mb-2">
+              {(["hours", "minutes", "seconds"] as const).map((view) => (
+                <button
+                  key={view}
+                  onClick={() => setClockView(view)}
+                  className={cn(
+                    "flex-1 h-6 text-[9px] rounded transition-colors",
+                    clockView === view
+                      ? "bg-violet-600 text-white"
+                      : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                  )}
                 >
-                  {label}
-                </Button>
+                  {view === "hours" ? "HR" : view === "minutes" ? "MIN" : "SEC"}
+                </button>
               ))}
+            </div>
+
+            {/* Clock face */}
+            <div className="flex justify-center">
+              <ClockFace
+                value={getClockValue()}
+                view={clockView}
+                onChange={handleClockChange}
+                onViewChange={setClockView}
+              />
+            </div>
+
+            {/* AM/PM toggle */}
+            <div className="flex gap-1 mt-2">
+              <button
+                onClick={() => {
+                  if (!date) return;
+                  const newDate = new Date(date);
+                  const hours = newDate.getHours();
+                  if (hours >= 12) newDate.setHours(hours - 12);
+                  onDateChange(newDate);
+                }}
+                className={cn(
+                  "flex-1 h-6 text-[10px] rounded transition-colors",
+                  isAM
+                    ? "bg-violet-600 text-white"
+                    : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                )}
+              >
+                AM
+              </button>
+              <button
+                onClick={() => {
+                  if (!date) return;
+                  const newDate = new Date(date);
+                  const hours = newDate.getHours();
+                  if (hours < 12) newDate.setHours(hours + 12);
+                  onDateChange(newDate);
+                }}
+                className={cn(
+                  "flex-1 h-6 text-[10px] rounded transition-colors",
+                  !isAM
+                    ? "bg-violet-600 text-white"
+                    : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                )}
+              >
+                PM
+              </button>
             </div>
           </div>
         </div>
