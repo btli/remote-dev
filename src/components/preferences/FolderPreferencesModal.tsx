@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +28,17 @@ import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types
 import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
 import { EnvVarEditor } from "./EnvVarEditor";
+
+// Helper to get electron API for directory selection (only in Electron)
+function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
+  if (typeof window !== "undefined" && "electron" in window) {
+    const electron = window.electron as unknown as {
+      selectDirectory: () => Promise<string | null>;
+    };
+    return electron.selectDirectory;
+  }
+  return null;
+}
 
 interface GitHubRepo {
   id: string;
@@ -473,17 +484,38 @@ export function FolderPreferencesModal({
                     <span className="text-xs text-violet-400">Overridden</span>
                   )}
                 </div>
-                <Input
-                  value={getValue("defaultWorkingDirectory") || ""}
-                  onChange={(e) =>
-                    setValue("defaultWorkingDirectory", e.target.value || null)
-                  }
-                  placeholder={`${getInheritedSourceLabel("defaultWorkingDirectory")}: ${getInherited("defaultWorkingDirectory")}`}
-                  className={cn(
-                    "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
-                    isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
+                <div className="flex gap-2">
+                  <Input
+                    value={getValue("defaultWorkingDirectory") || ""}
+                    onChange={(e) =>
+                      setValue("defaultWorkingDirectory", e.target.value || null)
+                    }
+                    placeholder={`${getInheritedSourceLabel("defaultWorkingDirectory")}: ${getInherited("defaultWorkingDirectory")}`}
+                    className={cn(
+                      "flex-1 bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                      isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
+                    )}
+                  />
+                  {getElectronSelectDirectory() && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={async () => {
+                        const selectDirectory = getElectronSelectDirectory();
+                        if (selectDirectory) {
+                          const path = await selectDirectory();
+                          if (path) {
+                            setValue("defaultWorkingDirectory", path);
+                          }
+                        }
+                      }}
+                      className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
+                    >
+                      <FolderOpen className="w-4 h-4" />
+                    </Button>
                   )}
-                />
+                </div>
               </div>
 
               {/* Shell */}
@@ -879,16 +911,35 @@ export function FolderPreferencesModal({
 
                 {/* Local path input */}
                 {repoMode === "local" && (
-                  <div className="pt-2">
+                  <div className="pt-2 flex gap-2">
                     <Input
                       value={getValue("localRepoPath") || ""}
                       onChange={(e) => setValue("localRepoPath", e.target.value || null)}
                       placeholder="/path/to/local/git/repository"
                       className={cn(
-                        "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                        "flex-1 bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
                         isOverridden("localRepoPath") && "border-violet-500/50"
                       )}
                     />
+                    {getElectronSelectDirectory() && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={async () => {
+                          const selectDirectory = getElectronSelectDirectory();
+                          if (selectDirectory) {
+                            const path = await selectDirectory();
+                            if (path) {
+                              setValue("localRepoPath", path);
+                            }
+                          }
+                        }}
+                        className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
+                      >
+                        <FolderOpen className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
