@@ -440,6 +440,10 @@ function mapDbFolderPreferences(
     githubRepoId: dbRow.githubRepoId,
     localRepoPath: dbRow.localRepoPath,
     environmentVars: parseEnvironmentVars(dbRow.environmentVars),
+    // Dev server configuration
+    serverStartupCommand: dbRow.serverStartupCommand,
+    buildCommand: dbRow.buildCommand,
+    runBuildBeforeStart: dbRow.runBuildBeforeStart ?? false,
     createdAt: new Date(dbRow.createdAt),
     updatedAt: new Date(dbRow.updatedAt),
   };

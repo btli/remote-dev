@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint, Play } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -60,7 +61,7 @@ interface FolderPreferencesModalProps {
   folderId: string;
   folderName: string;
   /** Initial tab to show when opening the modal */
-  initialTab?: "general" | "appearance" | "repository" | "environment" | "profile";
+  initialTab?: "general" | "appearance" | "repository" | "environment" | "profile" | "server";
 }
 
 const SHELL_OPTIONS = [
@@ -463,6 +464,7 @@ export function FolderPreferencesModal({
   const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
   const hasEnvOverrides = isOverridden("environmentVars");
   const hasProfileLink = !!linkedProfileId;
+  const hasServerOverrides = isOverridden("serverStartupCommand") || isOverridden("buildCommand") || isOverridden("runBuildBeforeStart");
 
   // Get unique owners from repos for filtering
   const repoOwners = Array.from(new Set(repos.map((r) => r.owner))).sort();
@@ -540,6 +542,11 @@ export function FolderPreferencesModal({
               <Fingerprint className="w-3.5 h-3.5" />
               Profile
               {hasProfileLink && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+            </TabsTrigger>
+            <TabsTrigger value="server" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+              <Play className="w-3.5 h-3.5" />
+              Server
+              {hasServerOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
             </TabsTrigger>
           </TabsList>
 
@@ -1099,6 +1106,88 @@ export function FolderPreferencesModal({
                   </p>
                 </div>
               )}
+            </TabsContent>
+
+            {/* Server Tab */}
+            <TabsContent value="server" className="mt-0 space-y-4">
+              <p className="text-sm text-slate-400">
+                Configure a development server for this folder. Start/stop the server
+                from the folder context menu, and preview it in a browser tab.
+              </p>
+
+              {/* Server Startup Command */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Server Startup Command</Label>
+                  {isOverridden("serverStartupCommand") && (
+                    <span className="text-xs text-violet-400">Set</span>
+                  )}
+                </div>
+                <Input
+                  value={getValue("serverStartupCommand") || ""}
+                  onChange={(e) =>
+                    setValue("serverStartupCommand", e.target.value || null)
+                  }
+                  placeholder="e.g., bun run dev"
+                  className={cn(
+                    "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                    isOverridden("serverStartupCommand") && "border-violet-500/50"
+                  )}
+                />
+                <p className="text-xs text-slate-500">
+                  The command to start your development server.
+                </p>
+              </div>
+
+              {/* Build Command */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-slate-300">Build Command</Label>
+                  {isOverridden("buildCommand") && (
+                    <span className="text-xs text-violet-400">Set</span>
+                  )}
+                </div>
+                <Input
+                  value={getValue("buildCommand") || ""}
+                  onChange={(e) =>
+                    setValue("buildCommand", e.target.value || null)
+                  }
+                  placeholder="e.g., bun run build"
+                  className={cn(
+                    "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
+                    isOverridden("buildCommand") && "border-violet-500/50"
+                  )}
+                />
+                <p className="text-xs text-slate-500">
+                  Optional command to build before starting the server.
+                </p>
+              </div>
+
+              {/* Run Build Before Start Toggle */}
+              <div className="flex items-center justify-between p-4 rounded-lg bg-slate-800/50 border border-white/10">
+                <div className="space-y-1">
+                  <Label className="text-slate-300">Run Build Before Start</Label>
+                  <p className="text-xs text-slate-500">
+                    Automatically run the build command before starting the server.
+                  </p>
+                </div>
+                <Switch
+                  checked={getValue("runBuildBeforeStart") ?? false}
+                  onCheckedChange={(checked) =>
+                    setValue("runBuildBeforeStart", checked)
+                  }
+                  disabled={!getValue("buildCommand") && !folderPrefs?.buildCommand}
+                />
+              </div>
+
+              {/* Help text */}
+              <div className="p-3 rounded-lg bg-slate-800/30 border border-white/5">
+                <p className="text-xs text-slate-500">
+                  <strong className="text-slate-400">Tip:</strong> Set the PORT environment variable
+                  in the Environment tab to specify which port your server runs on.
+                  This is required for the browser preview to work.
+                </p>
+              </div>
             </TabsContent>
           </div>
         </Tabs>

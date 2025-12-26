@@ -2,12 +2,17 @@
  * Session types for terminal session management
  */
 
+import type { SessionType, DevServerStatus } from "./dev-server";
+
 export type SessionStatus = "active" | "suspended" | "closed" | "trashed";
 
 /**
  * Agent provider types for agent-aware sessions
  */
 export type AgentProviderType = "claude" | "codex" | "gemini" | "opencode" | "none";
+
+// Re-export for convenience
+export type { SessionType, DevServerStatus };
 
 export interface TerminalSession {
   id: string;
@@ -26,6 +31,12 @@ export interface TerminalSession {
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
+  // Session type: terminal (default) or dev-server
+  sessionType: SessionType;
+  // Dev server fields (only set when sessionType === "dev-server")
+  devServerPort: number | null;
+  devServerStatus: DevServerStatus | null;
+  devServerUrl: string | null;
   status: SessionStatus;
   tabOrder: number;
   lastActivityAt: Date;
@@ -50,6 +61,9 @@ export interface CreateSessionInput {
   featureDescription?: string;  // Original feature description
   createWorktree?: boolean;     // Whether to create worktree
   baseBranch?: string;          // Base branch for new worktree
+  // Dev server session fields
+  sessionType?: SessionType;    // "terminal" (default) or "dev-server"
+  devServerPort?: number;       // Port for dev server (when sessionType === "dev-server")
 }
 
 /**

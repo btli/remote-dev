@@ -1,6 +1,6 @@
 import { sqliteTable, text, integer, real, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
-import type { SessionStatus } from "@/types/session";
+import type { SessionStatus, SessionType, DevServerStatus } from "@/types/session";
 import type { SplitDirection } from "@/types/split";
 import type { CIStatusState, PRState } from "@/types/github-stats";
 import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
@@ -190,6 +190,10 @@ export const folderPreferences = sqliteTable(
     // Environment variables as JSON: { "PORT": "3000", "API_URL": "..." }
     // Use "__DISABLED__" value to explicitly disable an inherited variable
     environmentVars: text("environment_vars"),
+    // Dev server configuration
+    serverStartupCommand: text("server_startup_command"), // e.g., "bun run dev"
+    buildCommand: text("build_command"), // e.g., "bun run build"
+    runBuildBeforeStart: integer("run_build_before_start", { mode: "boolean" }).default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -410,6 +414,12 @@ export const terminalSessions = sqliteTable(
     }),
     splitOrder: integer("split_order").notNull().default(0),
     splitSize: real("split_size").default(0.5),
+    // Session type: terminal (default) or dev-server
+    sessionType: text("session_type").$type<SessionType>().notNull().default("terminal"),
+    // Dev server fields (only set when sessionType === "dev-server")
+    devServerPort: integer("dev_server_port"),
+    devServerStatus: text("dev_server_status").$type<DevServerStatus>(),
+    devServerUrl: text("dev_server_url"),
     status: text("status").$type<SessionStatus>().notNull().default("active"),
     tabOrder: integer("tab_order").notNull().default(0),
     lastActivityAt: integer("last_activity_at", { mode: "timestamp_ms" })
@@ -426,6 +436,42 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_user_status_idx").on(table.userId, table.status),
     index("terminal_session_user_order_idx").on(table.userId, table.tabOrder),
     index("terminal_session_split_group_idx").on(table.splitGroupId),
+    // Dev server lookup: find dev server by folder (enforce one per folder)
+    index("terminal_session_dev_server_folder_idx").on(table.folderId, table.sessionType),
+  ]
+);
+
+// Dev server health tracking for monitoring and crash detection
+export const devServerHealth = sqliteTable(
+  "dev_server_health",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    sessionId: text("session_id")
+      .notNull()
+      .unique()
+      .references(() => terminalSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    isHealthy: integer("is_healthy", { mode: "boolean" }).notNull().default(false),
+    port: integer("port"),
+    url: text("url"), // Full proxy URL (e.g., "/api/proxy/my-folder/")
+    lastHealthCheck: integer("last_health_check", { mode: "timestamp_ms" }),
+    crashedAt: integer("crashed_at", { mode: "timestamp_ms" }),
+    crashReason: text("crash_reason"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("dev_server_health_user_idx").on(table.userId),
+    index("dev_server_health_session_idx").on(table.sessionId),
   ]
 );
 

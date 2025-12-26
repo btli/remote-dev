@@ -7,6 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
+  Play, Square, RotateCw, Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -40,6 +41,7 @@ import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
+import { useDevServers } from "@/contexts/DevServerContext";
 
 export interface SessionFolder {
   id: string;
@@ -176,6 +178,7 @@ export function Sidebar({
   const { folderConfigs } = useSecretsContext();
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
+  const { devServers, startDevServer, stopDevServer, restartDevServer } = useDevServers();
 
   // Touch drag state for mobile
   const touchDragRef = useRef<{
@@ -1714,6 +1717,69 @@ export function Sidebar({
                                   <span className="ml-auto text-[10px] text-green-400">Active</span>
                                 )}
                               </ContextMenuItem>
+                              <ContextMenuSeparator />
+                              {devServers.has(node.id) ? (
+                                <>
+                                  <ContextMenuItem
+                                    onClick={async () => {
+                                      try {
+                                        await stopDevServer(node.id);
+                                      } catch (error) {
+                                        console.error("Failed to stop dev server:", error);
+                                      }
+                                    }}
+                                  >
+                                    <Square className="w-3.5 h-3.5 mr-2 text-red-400" />
+                                    Stop Server
+                                  </ContextMenuItem>
+                                  <ContextMenuItem
+                                    onClick={async () => {
+                                      try {
+                                        await restartDevServer(node.id);
+                                      } catch (error) {
+                                        console.error("Failed to restart dev server:", error);
+                                      }
+                                    }}
+                                  >
+                                    <RotateCw className="w-3.5 h-3.5 mr-2 text-amber-400" />
+                                    Restart Server
+                                  </ContextMenuItem>
+                                  <ContextMenuItem
+                                    onClick={() => {
+                                      const server = devServers.get(node.id);
+                                      if (server?.proxyUrl) {
+                                        window.open(server.proxyUrl, "_blank");
+                                      }
+                                    }}
+                                  >
+                                    <Globe className="w-3.5 h-3.5 mr-2 text-blue-400" />
+                                    Open Preview
+                                    {devServers.get(node.id)?.status === "running" && (
+                                      <span className="ml-auto text-[10px] text-green-400">Running</span>
+                                    )}
+                                    {devServers.get(node.id)?.status === "starting" && (
+                                      <span className="ml-auto text-[10px] text-amber-400">Starting...</span>
+                                    )}
+                                    {devServers.get(node.id)?.status === "crashed" && (
+                                      <span className="ml-auto text-[10px] text-red-400">Crashed</span>
+                                    )}
+                                  </ContextMenuItem>
+                                </>
+                              ) : (
+                                <ContextMenuItem
+                                  onClick={async () => {
+                                    try {
+                                      await startDevServer(node.id);
+                                    } catch (error) {
+                                      console.error("Failed to start dev server:", error);
+                                    }
+                                  }}
+                                >
+                                  <Play className="w-3.5 h-3.5 mr-2 text-green-400" />
+                                  Start Server
+                                </ContextMenuItem>
+                              )}
+                              <ContextMenuSeparator />
                               <ContextMenuItem
                                 onClick={() => onFolderSettings(node.id, node.name, "repository")}
                               >

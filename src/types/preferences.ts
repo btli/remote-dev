@@ -83,6 +83,10 @@ export interface FolderPreferences {
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars: EnvironmentVariables | null;
+  // Dev server configuration
+  serverStartupCommand: string | null;  // e.g., "bun run dev"
+  buildCommand: string | null;          // e.g., "bun run build"
+  runBuildBeforeStart: boolean;         // Whether to run build before starting server
   createdAt: Date;
   updatedAt: Date;
 }
@@ -158,4 +162,8 @@ export interface UpdateFolderPreferencesInput {
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars?: EnvironmentVariables | null;
+  // Dev server configuration
+  serverStartupCommand?: string | null;
+  buildCommand?: string | null;
+  runBuildBeforeStart?: boolean;
 }

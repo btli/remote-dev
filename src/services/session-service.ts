@@ -11,6 +11,8 @@ import type {
   SessionStatus,
   SessionWithMetadata,
   AgentProviderType,
+  SessionType,
+  DevServerStatus,
 } from "@/types/session";
 import { AGENT_PROVIDERS } from "@/types/session";
 import * as TmuxService from "./tmux-service";
@@ -254,6 +256,10 @@ export async function createSession(
         folderId: input.folderId ?? null,
         profileId: input.profileId ?? null,
         agentProvider: input.agentProvider ?? "claude",
+        sessionType: input.sessionType ?? "terminal",
+        devServerPort: input.devServerPort ?? null,
+        devServerStatus: input.sessionType === "dev-server" ? "starting" : null,
+        devServerUrl: null, // Set by DevServerService after creation
         status: "active",
         tabOrder: nextTabOrder,
         lastActivityAt: now,
@@ -557,6 +563,10 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     splitGroupId: dbSession.splitGroupId,
     splitOrder: dbSession.splitOrder,
     splitSize: dbSession.splitSize ?? 0.5,
+    sessionType: dbSession.sessionType as SessionType,
+    devServerPort: dbSession.devServerPort,
+    devServerStatus: dbSession.devServerStatus as DevServerStatus | null,
+    devServerUrl: dbSession.devServerUrl,
     status: dbSession.status as SessionStatus,
     tabOrder: dbSession.tabOrder,
     lastActivityAt: new Date(dbSession.lastActivityAt),

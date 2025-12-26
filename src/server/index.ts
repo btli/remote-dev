@@ -5,6 +5,7 @@ import {
   initializeMCPServer,
   shutdownMCPServer,
 } from "../mcp/index";
+import { startHealthChecker, stopHealthChecker } from "./health-checker";
 
 // Load .env.local to match Next.js environment
 config({ path: ".env.local" });
@@ -38,9 +39,17 @@ async function startServer() {
     }
   }
 
+  // Start the dev server health checker
+  startHealthChecker();
+  console.log("[Server] Dev server health checker started");
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     console.log(`\n[Server] ${signal} received, shutting down gracefully...`);
+
+    // Stop health checker
+    stopHealthChecker();
+    console.log("[Server] Health checker stopped");
 
     // Shutdown MCP server if enabled
     if (MCP_ENABLED) {
