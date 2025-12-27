@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 19**, **xterm.js**, and **NextAuth v5**. It provides:
 - Multiple persistent terminal sessions via tmux
+- Dev server management with browser preview proxy
 - GitHub OAuth integration with repository browsing
 - Git worktree support for branch isolation
 - Session recording and playback
@@ -141,6 +142,7 @@ MCP_USER_ID=<uuid>    # Override user ID for MCP requests (optional)
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
 | `folder_secrets_config` | Per-folder secrets provider configuration |
+| `dev_server_health` | Dev server health metrics (CPU, memory, crash status) |
 
 ### Service Layer
 
@@ -162,6 +164,9 @@ Located in `src/services/`:
 | `WorktreeTrashService` | Worktree-specific trash operations, restore logic |
 | `PortRegistryService` | Port allocation tracking and conflict detection |
 | `SecretsService` | Secrets provider abstraction, credential management |
+| `DevServerService` | Dev server lifecycle (start, stop, restart, health) |
+| `ProxyService` | HTTP proxy for dev server browser preview |
+| `DevServerProcessManager` | In-memory PID tracking for spawned dev servers |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -194,6 +199,8 @@ Located in `src/services/`:
 | `SecretsStatusButton.tsx` | Header indicator for secrets connection status |
 | `DirectoryBrowser.tsx` | Modal for visual filesystem directory navigation |
 | `PathInput.tsx` | Text input with browse button for directory selection |
+| `LogViewer.tsx` | Real-time dev server log streaming with ANSI support |
+| `ProcessesModal.tsx` | View and manage running dev server processes |
 
 ### State Management
 
@@ -210,6 +217,7 @@ React Contexts in `src/contexts/`:
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
 | `PortContext` | Port allocations, framework detection, monitoring |
+| `DevServerContext` | Dev server state, logs, and process management |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -331,6 +339,17 @@ React Contexts in `src/contexts/`:
 - `DELETE /api/secrets/folders/:folderId` - Delete secrets config
 - `GET /api/secrets/folders/:folderId/secrets` - Fetch secret values from provider
 - `POST /api/secrets/validate` - Validate provider credentials
+
+### Dev Servers
+- `GET /api/dev-servers` - List dev servers for folder
+- `POST /api/dev-servers` - Start new dev server
+- `GET /api/dev-servers/:id` - Get dev server status
+- `DELETE /api/dev-servers/:id` - Stop dev server
+- `POST /api/dev-servers/:id/restart` - Restart dev server
+- `GET /api/dev-servers/:id/logs` - Get dev server logs
+
+### Proxy
+- `GET/POST/PUT/DELETE /api/proxy/:slug/*` - Proxy requests to dev server
 
 ## Adding Authorized Users
 

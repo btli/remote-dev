@@ -236,15 +236,18 @@ export async function startDevServer(
   try {
     // If build is required, run it first
     if (config.runBuildBeforeStart && config.buildCommand) {
-      const { exec } = await import("child_process");
+      const { execFile } = await import("child_process");
       const { promisify } = await import("util");
-      const execPromise = promisify(exec);
+      const execFilePromise = promisify(execFile);
+
+      // Parse build command into executable + args (prevents shell injection)
+      const { command: buildCmd, args: buildArgs } = parseCommand(config.buildCommand);
 
       // Run build command and wait for completion
       console.log(`[DevServerService] Running build command: ${config.buildCommand}`);
-      await execPromise(config.buildCommand, {
+      await execFilePromise(buildCmd, buildArgs, {
         cwd: workingPath,
-        env: { ...process.env, ...folderEnv },
+        env: { ...process.env, ...folderEnv } as NodeJS.ProcessEnv,
       });
       console.log(`[DevServerService] Build completed`);
     }

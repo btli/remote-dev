@@ -145,13 +145,20 @@ async function updateHealth(
 
   if (!session) return;
 
-  let newStatus: DevServerStatus | null = null;
+  let newDevServerStatus: DevServerStatus | null = null;
+  let newSessionStatus: "active" | "closed" | null = null;
 
   if (isCrashed && session.devServerStatus !== "crashed") {
-    newStatus = "crashed";
+    newDevServerStatus = "crashed";
+    // Also mark session as closed so startDevServer() won't find it as active
+    newSessionStatus = "closed";
     console.log(`[HealthChecker] Dev server ${sessionId} marked as crashed: ${error}`);
+
+    // Remove from process manager to allow restart
+    const processManager = getDevServerProcessManager();
+    processManager.removeProcess(sessionId);
   } else if (isHealthy && session.devServerStatus === "starting") {
-    newStatus = "running";
+    newDevServerStatus = "running";
     console.log(`[HealthChecker] Dev server ${sessionId} is now running`);
 
     // Also notify the process manager
@@ -159,11 +166,12 @@ async function updateHealth(
     processManager.markRunning(sessionId);
   }
 
-  if (newStatus) {
+  if (newDevServerStatus) {
     await db
       .update(terminalSessions)
       .set({
-        devServerStatus: newStatus,
+        devServerStatus: newDevServerStatus,
+        status: newSessionStatus ?? session.status,
         updatedAt: now,
       })
       .where(eq(terminalSessions.id, sessionId));
