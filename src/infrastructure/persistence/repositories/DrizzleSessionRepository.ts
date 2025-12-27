@@ -7,7 +7,7 @@
 
 import { db } from "@/db";
 import { terminalSessions } from "@/db/schema";
-import { eq, and, asc, desc, inArray, max, isNull } from "drizzle-orm";
+import { eq, and, asc, desc, inArray, max, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Session } from "@/domain/entities/Session";
 import type {
   SessionRepository,
@@ -77,11 +77,9 @@ export class DrizzleSessionRepository implements SessionRepository {
 
       if (hasWorktree !== undefined) {
         if (hasWorktree) {
-          // Has worktree: worktreeBranch is not null
-          conditions.push(
-            // Can't easily do NOT NULL in Drizzle's query builder,
-            // so we'll filter in JS for this edge case
-          );
+          conditions.push(isNotNull(terminalSessions.worktreeBranch));
+        } else {
+          conditions.push(isNull(terminalSessions.worktreeBranch));
         }
       }
     }
@@ -96,26 +94,59 @@ export class DrizzleSessionRepository implements SessionRepository {
       offset: options?.offset,
     });
 
-    let sessions = SessionMapper.toDomainMany(records as SessionDbRecord[]);
-
-    // Post-filter for hasWorktree if specified
-    if (options?.filters?.hasWorktree !== undefined) {
-      sessions = sessions.filter(
-        (s) => s.hasWorktree() === options.filters!.hasWorktree
-      );
-    }
-
-    return sessions;
+    return SessionMapper.toDomainMany(records as SessionDbRecord[]);
   }
 
   /**
    * Count sessions for a user with optional filters.
    */
   async count(userId: string, filters?: SessionFilters): Promise<number> {
-    // For simplicity, we fetch and count. For large datasets,
-    // this should use a proper COUNT query.
-    const sessions = await this.findByUser(userId, { filters });
-    return sessions.length;
+    const conditions = [eq(terminalSessions.userId, userId)];
+
+    if (filters) {
+      const { status, folderId, splitGroupId, hasWorktree } = filters;
+
+      if (status) {
+        const statusValues = Array.isArray(status) ? status : [status];
+        conditions.push(
+          inArray(
+            terminalSessions.status,
+            statusValues.map((s) => s.toString())
+          )
+        );
+      }
+
+      if (folderId !== undefined) {
+        if (folderId === null) {
+          conditions.push(isNull(terminalSessions.folderId));
+        } else {
+          conditions.push(eq(terminalSessions.folderId, folderId));
+        }
+      }
+
+      if (splitGroupId !== undefined) {
+        if (splitGroupId === null) {
+          conditions.push(isNull(terminalSessions.splitGroupId));
+        } else {
+          conditions.push(eq(terminalSessions.splitGroupId, splitGroupId));
+        }
+      }
+
+      if (hasWorktree !== undefined) {
+        if (hasWorktree) {
+          conditions.push(isNotNull(terminalSessions.worktreeBranch));
+        } else {
+          conditions.push(isNull(terminalSessions.worktreeBranch));
+        }
+      }
+    }
+
+    const result = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(terminalSessions)
+      .where(and(...conditions));
+
+    return result[0]?.count ?? 0;
   }
 
   /**
@@ -192,13 +223,30 @@ export class DrizzleSessionRepository implements SessionRepository {
   }
 
   /**
-   * Save multiple sessions in a batch.
+   * Save multiple sessions in a batch (atomic).
    */
   async saveMany(sessions: Session[]): Promise<void> {
     if (sessions.length === 0) return;
 
-    // For simplicity, save one by one. Could be optimized with batch upsert.
-    await Promise.all(sessions.map((s) => this.save(s)));
+    await db.transaction(async (tx) => {
+      for (const session of sessions) {
+        const data = SessionMapper.toPersistence(session);
+
+        const existing = await tx.query.terminalSessions.findFirst({
+          where: eq(terminalSessions.id, session.id),
+          columns: { id: true },
+        });
+
+        if (existing) {
+          await tx
+            .update(terminalSessions)
+            .set({ ...data, updatedAt: new Date() })
+            .where(eq(terminalSessions.id, session.id));
+        } else {
+          await tx.insert(terminalSessions).values(data);
+        }
+      }
+    });
   }
 
   /**

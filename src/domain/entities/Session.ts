@@ -329,10 +329,40 @@ export class Session {
     return this.props.userId === userId;
   }
 
+  /**
+   * Check if this session equals another by comparing all meaningful fields.
+   * Ignores updatedAt for comparison since it changes on every modification.
+   * Useful for testing.
+   */
+  equals(other: Session): boolean {
+    return (
+      this.id === other.id &&
+      this.userId === other.userId &&
+      this.name === other.name &&
+      this.tmuxSessionName.toString() === other.tmuxSessionName.toString() &&
+      this.status.toString() === other.status.toString() &&
+      this.projectPath === other.projectPath &&
+      this.githubRepoId === other.githubRepoId &&
+      this.worktreeBranch === other.worktreeBranch &&
+      this.folderId === other.folderId &&
+      this.profileId === other.profileId &&
+      this.agentProvider === other.agentProvider &&
+      this.splitGroupId === other.splitGroupId &&
+      this.splitOrder === other.splitOrder &&
+      this.splitSize === other.splitSize &&
+      this.tabOrder === other.tabOrder
+    );
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Private Helpers
   // ─────────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Create a new Session with updates applied.
+   * Note: updatedAt is automatically set to now. For testing, compare sessions
+   * using the equals() method which ignores timestamps.
+   */
   private withUpdates(updates: Partial<SessionProps>): Session {
     return new Session({
       ...this.props,

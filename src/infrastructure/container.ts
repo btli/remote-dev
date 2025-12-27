@@ -101,8 +101,7 @@ export const resumeSessionUseCase = new ResumeSessionUseCase(
  */
 export const closeSessionUseCase = new CloseSessionUseCase(
   sessionRepository,
-  tmuxGateway,
-  worktreeGateway
+  tmuxGateway
 );
 
 /**

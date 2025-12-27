@@ -41,6 +41,7 @@ export class TmuxGatewayImpl implements TmuxGateway {
 
   /**
    * Get information about a tmux session.
+   * Returns minimal info as TmuxService doesn't expose detailed session data.
    */
   async getSessionInfo(sessionName: string): Promise<TmuxSessionInfo | null> {
     const exists = await TmuxService.sessionExists(sessionName);
@@ -48,13 +49,11 @@ export class TmuxGatewayImpl implements TmuxGateway {
       return null;
     }
 
-    // TmuxService doesn't expose detailed session info,
-    // so we return minimal info based on existence
+    // TmuxService only exposes existence check, not detailed info.
+    // Return only what we can confirm.
     return {
       name: sessionName,
-      created: new Date(), // Not tracked by TmuxService
-      attached: false, // Would need to query tmux
-      windows: 1, // Default assumption
+      // created, attached, windows are not available from TmuxService
     };
   }
 

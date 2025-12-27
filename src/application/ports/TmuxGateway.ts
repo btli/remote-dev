@@ -7,9 +7,12 @@
 
 export interface TmuxSessionInfo {
   name: string;
-  created: Date;
-  attached: boolean;
-  windows: number;
+  /** Session creation time (may not be available from all implementations) */
+  created?: Date;
+  /** Whether clients are attached (may not be available from all implementations) */
+  attached?: boolean;
+  /** Number of windows (may not be available from all implementations) */
+  windows?: number;
 }
 
 export interface CreateTmuxSessionOptions {
