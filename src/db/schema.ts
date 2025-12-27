@@ -158,6 +158,8 @@ export const sessionFolders = sqliteTable(
   (table) => [
     index("session_folder_user_idx").on(table.userId),
     index("session_folder_parent_idx").on(table.parentId),
+    // Composite index for building folder hierarchies (used in tree views)
+    index("session_folder_user_parent_idx").on(table.userId, table.parentId),
   ]
 );
 
@@ -260,6 +262,8 @@ export const folderSecretsConfig = sqliteTable(
   (table) => [
     uniqueIndex("folder_secrets_config_folder_user_idx").on(table.folderId, table.userId),
     index("folder_secrets_config_user_idx").on(table.userId),
+    // Index for fetching all enabled configs for a user (used in secrets status checks)
+    index("folder_secrets_config_user_enabled_idx").on(table.userId, table.enabled),
   ]
 );
 
@@ -426,6 +430,8 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_user_status_idx").on(table.userId, table.status),
     index("terminal_session_user_order_idx").on(table.userId, table.tabOrder),
     index("terminal_session_split_group_idx").on(table.splitGroupId),
+    // Composite index for filtering sessions by folder (used in folder views)
+    index("terminal_session_user_folder_idx").on(table.userId, table.folderId),
   ]
 );
 

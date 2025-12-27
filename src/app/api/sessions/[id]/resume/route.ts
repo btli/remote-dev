@@ -1,19 +1,29 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import * as SessionService from "@/services/session-service";
+import { resumeSessionUseCase } from "@/infrastructure/container";
+import { SessionPresenter } from "@/interface/presenters/SessionPresenter";
+import { EntityNotFoundError, InvalidStateTransitionError } from "@/domain/errors/DomainError";
+import { ResumeSessionError } from "@/application/use-cases/session/ResumeSessionUseCase";
 
 /**
  * POST /api/sessions/:id/resume - Resume a suspended session
  */
 export const POST = withAuth(async (_request, { userId, params }) => {
   try {
-    await SessionService.resumeSession(params!.id, userId);
-    return NextResponse.json({ success: true });
+    const session = await resumeSessionUseCase.execute({
+      sessionId: params!.id,
+      userId,
+    });
+    return NextResponse.json(SessionPresenter.toResponse(session));
   } catch (error) {
-    if (error instanceof SessionService.SessionServiceError) {
-      let status = 400;
-      if (error.code === "SESSION_NOT_FOUND") status = 404;
-      if (error.code === "TMUX_SESSION_GONE") status = 410; // Gone
+    if (error instanceof EntityNotFoundError) {
+      return errorResponse(error.message, 404, error.code);
+    }
+    if (error instanceof InvalidStateTransitionError) {
+      return errorResponse(error.message, 400, error.code);
+    }
+    if (error instanceof ResumeSessionError) {
+      const status = error.code === "TMUX_SESSION_GONE" ? 410 : 400;
       return errorResponse(error.message, status, error.code);
     }
     throw error;

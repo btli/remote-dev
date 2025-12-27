@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import * as FolderService from "@/services/folder-service";
+import { moveSessionToFolderUseCase } from "@/infrastructure/container";
+import { EntityNotFoundError } from "@/domain/errors/DomainError";
 
 /**
  * PUT /api/sessions/:id/folder - Move a session to a folder (or remove from folder)
@@ -14,15 +15,17 @@ export const PUT = withAuth(async (request, { userId, params }) => {
     return errorResponse("folderId must be a string or null", 400);
   }
 
-  const success = await FolderService.moveSessionToFolder(
-    params!.id,
-    userId,
-    folderId
-  );
-
-  if (!success) {
-    return errorResponse("Session not found", 404);
+  try {
+    await moveSessionToFolderUseCase.execute({
+      sessionId: params!.id,
+      userId,
+      folderId,
+    });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof EntityNotFoundError) {
+      return errorResponse(error.message, 404, error.code);
+    }
+    throw error;
   }
-
-  return NextResponse.json({ success: true });
 });

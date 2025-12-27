@@ -123,20 +123,31 @@ export async function invalidateCache(repositoryId: string): Promise<void> {
 }
 
 /**
- * Invalidate all caches for a user
+ * Invalidate all caches for a user.
+ * Uses a single batch update query instead of N individual updates
+ * to avoid O(n) query performance issues.
  */
 export async function invalidateUserCaches(userId: string): Promise<void> {
+  const { githubRepositories } = await import("@/db/schema");
+
   // Get all user's repository IDs first
   const repos = await db.query.githubRepositories.findMany({
-    where: eq(
-      (await import("@/db/schema")).githubRepositories.userId,
-      userId
-    ),
+    where: eq(githubRepositories.userId, userId),
+    columns: { id: true }, // Only fetch IDs to minimize data transfer
   });
 
-  for (const repo of repos) {
-    await invalidateCache(repo.id);
+  if (repos.length === 0) {
+    return;
   }
+
+  // Batch invalidate all repos in a single query
+  const repoIds = repos.map((r) => r.id);
+  await db
+    .update(githubRepositoryStats)
+    .set({
+      expiresAt: new Date(0), // Set to past date to mark as stale
+    })
+    .where(inArray(githubRepositoryStats.repositoryId, repoIds));
 }
 
 // =============================================================================

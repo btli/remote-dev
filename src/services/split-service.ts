@@ -197,7 +197,9 @@ export async function createSplit(
 }
 
 /**
- * Add a session to an existing split group
+ * Add a session to an existing split group.
+ * Uses a transaction to prevent TOCTOU race conditions when multiple
+ * clients add sessions concurrently.
  */
 export async function addToSplit(
   userId: string,
@@ -205,150 +207,166 @@ export async function addToSplit(
   existingSessionId?: string,
   newSessionName?: string
 ): Promise<SplitGroupWithSessions> {
-  // Verify split group exists
-  const group = await db.query.splitGroups.findFirst({
-    where: and(
-      eq(splitGroups.id, splitGroupId),
-      eq(splitGroups.userId, userId)
-    ),
-  });
+  // If we need to create a new session, do it outside the transaction
+  // since SessionService.createSession has its own database operations
+  let newSessionId: string | undefined;
 
-  if (!group) {
-    throw new SplitServiceError(
-      "Split group not found",
-      "SPLIT_NOT_FOUND",
-      splitGroupId
-    );
-  }
+  if (!existingSessionId) {
+    // First, get the first session info for inheriting folder
+    const firstSession = await db.query.terminalSessions.findFirst({
+      where: eq(terminalSessions.splitGroupId, splitGroupId),
+      orderBy: [asc(terminalSessions.splitOrder)],
+    });
 
-  // Get current sessions in the split
-  const currentSessions = await db.query.terminalSessions.findMany({
-    where: eq(terminalSessions.splitGroupId, splitGroupId),
-    orderBy: [asc(terminalSessions.splitOrder)],
-  });
-
-  const nextOrder = currentSessions.length;
-  const newSize = 1 / (nextOrder + 1);
-
-  // Redistribute sizes for existing sessions
-  for (let i = 0; i < currentSessions.length; i++) {
-    await db
-      .update(terminalSessions)
-      .set({
-        splitSize: newSize,
-        updatedAt: new Date(),
-      })
-      .where(eq(terminalSessions.id, currentSessions[i].id));
-  }
-
-  if (existingSessionId) {
-    // Add existing session to split
-    await db
-      .update(terminalSessions)
-      .set({
-        splitGroupId,
-        splitOrder: nextOrder,
-        splitSize: newSize,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(terminalSessions.id, existingSessionId),
-          eq(terminalSessions.userId, userId)
-        )
-      );
-  } else {
     // Create new session (inherit folder from first session in split)
-    const name = newSessionName || `Terminal ${nextOrder + 1}`;
-    const firstSession = currentSessions[0];
+    const name = newSessionName || "Terminal";
     const newSession = await SessionService.createSession(userId, {
       name,
       projectPath: firstSession?.projectPath ?? undefined,
       folderId: firstSession?.folderId ?? undefined,
     });
-
-    await db
-      .update(terminalSessions)
-      .set({
-        splitGroupId,
-        splitOrder: nextOrder,
-        splitSize: newSize,
-        updatedAt: new Date(),
-      })
-      .where(eq(terminalSessions.id, newSession.id));
+    newSessionId = newSession.id;
   }
+
+  // Now perform the split update atomically
+  await db.transaction(async (tx) => {
+    // Verify split group exists
+    const group = await tx.query.splitGroups.findFirst({
+      where: and(
+        eq(splitGroups.id, splitGroupId),
+        eq(splitGroups.userId, userId)
+      ),
+    });
+
+    if (!group) {
+      throw new SplitServiceError(
+        "Split group not found",
+        "SPLIT_NOT_FOUND",
+        splitGroupId
+      );
+    }
+
+    // Get current sessions in the split (within transaction for consistency)
+    const currentSessions = await tx.query.terminalSessions.findMany({
+      where: eq(terminalSessions.splitGroupId, splitGroupId),
+      orderBy: [asc(terminalSessions.splitOrder)],
+    });
+
+    const nextOrder = currentSessions.length;
+    const newSize = 1 / (nextOrder + 1);
+
+    // Batch update: redistribute sizes for existing sessions
+    await Promise.all(
+      currentSessions.map((session) =>
+        tx
+          .update(terminalSessions)
+          .set({
+            splitSize: newSize,
+            updatedAt: new Date(),
+          })
+          .where(eq(terminalSessions.id, session.id))
+      )
+    );
+
+    // Add the session to the split
+    const sessionIdToAdd = existingSessionId || newSessionId;
+    if (sessionIdToAdd) {
+      await tx
+        .update(terminalSessions)
+        .set({
+          splitGroupId,
+          splitOrder: nextOrder,
+          splitSize: newSize,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(terminalSessions.id, sessionIdToAdd),
+            eq(terminalSessions.userId, userId)
+          )
+        );
+    }
+  });
 
   // Return updated split group
   return getSplitGroup(splitGroupId, userId) as Promise<SplitGroupWithSessions>;
 }
 
 /**
- * Remove a session from a split group (unsplit)
- * If only one session remains, deletes the split group
+ * Remove a session from a split group (unsplit).
+ * Uses a transaction to prevent TOCTOU race conditions when multiple
+ * sessions are removed concurrently.
+ * If only one session remains, deletes the split group.
  */
 export async function removeFromSplit(
   userId: string,
   sessionId: string
 ): Promise<void> {
-  const session = await db.query.terminalSessions.findFirst({
-    where: and(
-      eq(terminalSessions.id, sessionId),
-      eq(terminalSessions.userId, userId)
-    ),
-  });
+  await db.transaction(async (tx) => {
+    const session = await tx.query.terminalSessions.findFirst({
+      where: and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      ),
+    });
 
-  if (!session || !session.splitGroupId) {
-    return; // Session not in a split, nothing to do
-  }
-
-  const splitGroupId = session.splitGroupId;
-
-  // Remove session from split
-  await db
-    .update(terminalSessions)
-    .set({
-      splitGroupId: null,
-      splitOrder: 0,
-      splitSize: 0.5,
-      updatedAt: new Date(),
-    })
-    .where(eq(terminalSessions.id, sessionId));
-
-  // Check remaining sessions in split
-  const remainingSessions = await db.query.terminalSessions.findMany({
-    where: eq(terminalSessions.splitGroupId, splitGroupId),
-    orderBy: [asc(terminalSessions.splitOrder)],
-  });
-
-  if (remainingSessions.length <= 1) {
-    // Only one or zero sessions left, dissolve the split
-    for (const s of remainingSessions) {
-      await db
-        .update(terminalSessions)
-        .set({
-          splitGroupId: null,
-          splitOrder: 0,
-          splitSize: 0.5,
-          updatedAt: new Date(),
-        })
-        .where(eq(terminalSessions.id, s.id));
+    if (!session || !session.splitGroupId) {
+      return; // Session not in a split, nothing to do
     }
 
-    await db.delete(splitGroups).where(eq(splitGroups.id, splitGroupId));
-  } else {
-    // Redistribute sizes
-    const newSize = 1 / remainingSessions.length;
-    for (let i = 0; i < remainingSessions.length; i++) {
-      await db
-        .update(terminalSessions)
-        .set({
-          splitOrder: i,
-          splitSize: newSize,
-          updatedAt: new Date(),
-        })
-        .where(eq(terminalSessions.id, remainingSessions[i].id));
+    const splitGroupId = session.splitGroupId;
+
+    // Remove session from split
+    await tx
+      .update(terminalSessions)
+      .set({
+        splitGroupId: null,
+        splitOrder: 0,
+        splitSize: 0.5,
+        updatedAt: new Date(),
+      })
+      .where(eq(terminalSessions.id, sessionId));
+
+    // Check remaining sessions in split (within same transaction)
+    const remainingSessions = await tx.query.terminalSessions.findMany({
+      where: eq(terminalSessions.splitGroupId, splitGroupId),
+      orderBy: [asc(terminalSessions.splitOrder)],
+    });
+
+    if (remainingSessions.length <= 1) {
+      // Only one or zero sessions left, dissolve the split
+      await Promise.all(
+        remainingSessions.map((s) =>
+          tx
+            .update(terminalSessions)
+            .set({
+              splitGroupId: null,
+              splitOrder: 0,
+              splitSize: 0.5,
+              updatedAt: new Date(),
+            })
+            .where(eq(terminalSessions.id, s.id))
+        )
+      );
+
+      await tx.delete(splitGroups).where(eq(splitGroups.id, splitGroupId));
+    } else {
+      // Redistribute sizes
+      const newSize = 1 / remainingSessions.length;
+      await Promise.all(
+        remainingSessions.map((s, i) =>
+          tx
+            .update(terminalSessions)
+            .set({
+              splitOrder: i,
+              splitSize: newSize,
+              updatedAt: new Date(),
+            })
+            .where(eq(terminalSessions.id, s.id))
+        )
+      );
     }
-  }
+  });
 }
 
 /**

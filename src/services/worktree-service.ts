@@ -394,19 +394,24 @@ export async function createBranchWithWorktree(
     worktreePath ||
     join(dirname(repoPath), `${basename(repoPath)}-${sanitizeBranchName(branchName)}`);
 
-  // Check if path already exists
-  if (existsSync(targetPath)) {
-    throw new WorktreeServiceError(
-      "Worktree path already exists",
-      "PATH_EXISTS",
-      targetPath
-    );
-  }
-
   // Create parent directory if needed
+  // Note: We intentionally avoid TOCTOU by NOT checking existsSync first.
+  // mkdirSync with recursive: true is safe to call even if directory exists.
+  // We let git worktree add fail atomically if the target path exists,
+  // which is the proper way to handle concurrent worktree creation attempts.
   const parentDir = dirname(targetPath);
-  if (!existsSync(parentDir)) {
+  try {
     mkdirSync(parentDir, { recursive: true });
+  } catch (error) {
+    const fsError = error as NodeJS.ErrnoException;
+    // EEXIST is fine - directory already exists (race with another process)
+    if (fsError.code !== "EEXIST") {
+      throw new WorktreeServiceError(
+        "Failed to create parent directory",
+        "MKDIR_FAILED",
+        fsError.message
+      );
+    }
   }
 
   // Create worktree with new branch: git worktree add -b <branch> <path> [<start-point>]
@@ -447,10 +452,31 @@ export async function createBranchWithWorktree(
     };
   } catch (error) {
     const err = error as Error & { stderr?: string };
+    const stderr = err.stderr || err.message;
+
+    // Detect path conflicts from git error messages
+    // Git returns different errors for:
+    // - "fatal: '<path>' already exists" - target path exists as file/dir
+    // - "fatal: '<branch>' is already checked out" - branch in use
+    if (stderr.includes("already exists")) {
+      throw new WorktreeServiceError(
+        "Worktree path already exists",
+        "PATH_EXISTS",
+        targetPath
+      );
+    }
+    if (stderr.includes("already checked out")) {
+      throw new WorktreeServiceError(
+        "Branch is already checked out in another worktree",
+        "BRANCH_IN_USE",
+        branchName
+      );
+    }
+
     throw new WorktreeServiceError(
       "Failed to create branch with worktree",
       "CREATE_FAILED",
-      err.stderr || err.message
+      stderr
     );
   }
 }

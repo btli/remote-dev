@@ -1,17 +1,22 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import * as FolderService from "@/services/folder-service";
+import {
+  listFoldersUseCase,
+  createFolderUseCase,
+} from "@/infrastructure/container";
+import { FolderPresenter } from "@/interface/presenters/FolderPresenter";
+import { EntityNotFoundError } from "@/domain/errors/DomainError";
 
 /**
  * GET /api/folders - Get all folders and session mappings for the current user
  */
 export const GET = withAuth(async (_request, { userId }) => {
-  const [folders, sessionFolders] = await Promise.all([
-    FolderService.getFolders(userId),
-    FolderService.getSessionFolderMappings(userId),
-  ]);
+  const result = await listFoldersUseCase.execute({ userId });
 
-  return NextResponse.json({ folders, sessionFolders });
+  return NextResponse.json({
+    folders: FolderPresenter.toResponseMany(result.folders),
+    sessionFolders: result.sessionFolders,
+  });
 });
 
 /**
@@ -30,6 +35,17 @@ export const POST = withAuth(async (request, { userId }) => {
     return errorResponse("parentId must be a string or null", 400);
   }
 
-  const folder = await FolderService.createFolder(userId, name, parentId);
-  return NextResponse.json(folder, { status: 201 });
+  try {
+    const folder = await createFolderUseCase.execute({
+      userId,
+      name,
+      parentId,
+    });
+    return NextResponse.json(FolderPresenter.toResponse(folder), { status: 201 });
+  } catch (error) {
+    if (error instanceof EntityNotFoundError) {
+      return errorResponse(error.message, 404, error.code);
+    }
+    throw error;
+  }
 });

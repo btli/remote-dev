@@ -3,7 +3,7 @@
  */
 import { db } from "@/db";
 import { sessionFolders, terminalSessions } from "@/db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, max, isNull } from "drizzle-orm";
 
 export interface SessionFolder {
   id: string;
@@ -84,13 +84,18 @@ export async function createFolder(
     }
   }
 
-  // Get the max sort order among siblings (same parent)
-  const existingFolders = await getFolders(userId);
-  const siblings = existingFolders.filter((f) => f.parentId === (parentId ?? null));
-  const maxOrder = siblings.reduce(
-    (max, f) => Math.max(max, f.sortOrder),
-    -1
-  );
+  // Get the max sort order among siblings using SQL aggregation
+  // This avoids fetching ALL folders just to compute a single MAX value
+  const result = await db
+    .select({ maxOrder: max(sessionFolders.sortOrder) })
+    .from(sessionFolders)
+    .where(
+      and(
+        eq(sessionFolders.userId, userId),
+        parentId ? eq(sessionFolders.parentId, parentId) : isNull(sessionFolders.parentId)
+      )
+    );
+  const maxOrder = result[0]?.maxOrder ?? -1;
 
   const [folder] = await db
     .insert(sessionFolders)

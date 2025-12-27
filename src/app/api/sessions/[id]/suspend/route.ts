@@ -1,18 +1,25 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import * as SessionService from "@/services/session-service";
+import { suspendSessionUseCase } from "@/infrastructure/container";
+import { SessionPresenter } from "@/interface/presenters/SessionPresenter";
+import { EntityNotFoundError, InvalidStateTransitionError } from "@/domain/errors/DomainError";
 
 /**
  * POST /api/sessions/:id/suspend - Suspend a session (detach tmux)
  */
 export const POST = withAuth(async (_request, { userId, params }) => {
   try {
-    await SessionService.suspendSession(params!.id, userId);
-    return NextResponse.json({ success: true });
+    const session = await suspendSessionUseCase.execute({
+      sessionId: params!.id,
+      userId,
+    });
+    return NextResponse.json(SessionPresenter.toResponse(session));
   } catch (error) {
-    if (error instanceof SessionService.SessionServiceError) {
-      const status = error.code === "SESSION_NOT_FOUND" ? 404 : 400;
-      return errorResponse(error.message, status, error.code);
+    if (error instanceof EntityNotFoundError) {
+      return errorResponse(error.message, 404, error.code);
+    }
+    if (error instanceof InvalidStateTransitionError) {
+      return errorResponse(error.message, 400, error.code);
     }
     throw error;
   }
