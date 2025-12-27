@@ -1255,7 +1255,7 @@ export function Sidebar({
     <div
       className={cn(
         "h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5",
-        "transition-[width] duration-200 relative shrink-0",
+        "transition-[width] duration-200 relative shrink-0 window-drag",
         isResizing && "select-none"
       )}
       style={{ width: collapsed ? COLLAPSED_SIDEBAR_WIDTH : width }}
@@ -1264,7 +1264,7 @@ export function Sidebar({
         {!collapsed && (
           <div
             className={cn(
-              "absolute top-0 right-0 w-1 h-full cursor-ew-resize z-10",
+              "absolute top-0 right-0 w-1 h-full cursor-ew-resize z-10 window-no-drag",
               "hover:bg-violet-500/50 transition-colors",
               isResizing && "bg-violet-500/50"
             )}
@@ -1273,7 +1273,7 @@ export function Sidebar({
         )}
         {/* Header */}
         <div className={cn(
-          "flex items-center border-b border-white/5",
+          "flex items-center border-b border-white/5 window-no-drag",
           collapsed ? "justify-center px-1 py-2" : "justify-between px-3 py-2"
         )}>
           {collapsed ? (
@@ -1352,7 +1352,7 @@ export function Sidebar({
           {activeSessions.length === 0 && folders.length === 0 && !creatingFolder ? (
             collapsed ? (
               // Collapsed empty state - just show plus button
-              <div className="flex flex-col items-center py-4">
+              <div className="flex flex-col items-center py-4 window-no-drag">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -1368,7 +1368,7 @@ export function Sidebar({
                 </Tooltip>
               </div>
             ) : (
-              <div className="text-center py-8 px-2">
+              <div className="text-center py-8 px-2 window-no-drag">
                 <Terminal className="w-6 h-6 mx-auto text-slate-600 mb-2" />
                 <p className="text-xs text-slate-500 mb-2">No sessions</p>
                 <div className="flex flex-col gap-1 items-center">
@@ -1391,7 +1391,7 @@ export function Sidebar({
               </div>
             )
           ) : (
-            <>
+            <div className="window-no-drag">
               {/* New folder input (at root level, only when not collapsed) */}
               {creatingFolder && !creatingSubfolderId && !collapsed && (
                 <div className="flex items-center gap-1 px-2 py-1">
@@ -1887,13 +1887,13 @@ export function Sidebar({
                 folderId: null,
                 depth: 0,
               })}
-            </>
+            </div>
           )}
       </div>
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (
-        <div className="px-3 py-1.5 border-t border-white/5 space-y-1">
+        <div className="px-3 py-1.5 border-t border-white/5 space-y-1 window-no-drag">
           {/* Schedules button */}
           {onSchedulesOpen && (
             <button
