@@ -693,3 +693,17 @@
   pointer-events: none;
 }
 
+/* ============================================================================
+   Electron Window Dragging - Enable drag regions for frameless-like behavior
+   ============================================================================ */
+
+/* Make an element draggable (moves the window) */
+.window-drag {
+  -webkit-app-region: drag;
+}
+
+/* Exclude interactive elements from dragging */
+.window-no-drag {
+  -webkit-app-region: no-drag;
+}
+

@@ -1255,7 +1255,7 @@ export function Sidebar({
     <div
       className={cn(
         "h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5",
-        "transition-[width] duration-200 relative shrink-0",
+        "transition-[width] duration-200 relative shrink-0 window-drag",
         isResizing && "select-none"
       )}
       style={{ width: collapsed ? COLLAPSED_SIDEBAR_WIDTH : width }}
@@ -1264,7 +1264,7 @@ export function Sidebar({
         {!collapsed && (
           <div
             className={cn(
-              "absolute top-0 right-0 w-1 h-full cursor-ew-resize z-10",
+              "absolute top-0 right-0 w-1 h-full cursor-ew-resize z-10 window-no-drag",
               "hover:bg-violet-500/50 transition-colors",
               isResizing && "bg-violet-500/50"
             )}
@@ -1273,7 +1273,7 @@ export function Sidebar({
         )}
         {/* Header */}
         <div className={cn(
-          "flex items-center border-b border-white/5",
+          "flex items-center border-b border-white/5 window-no-drag",
           collapsed ? "justify-center px-1 py-2" : "justify-between px-3 py-2"
         )}>
           {collapsed ? (
@@ -1344,7 +1344,7 @@ export function Sidebar({
 
       {/* Session List */}
       <div
-          className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5"
+          className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5 window-no-drag"
           onDragOver={(e) => handleDragOver(e, null)}
           onDragLeave={handleDragLeave}
           onDrop={(e) => handleDrop(e, null)}
@@ -1893,7 +1893,7 @@ export function Sidebar({
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (
-        <div className="px-3 py-1.5 border-t border-white/5 space-y-1">
+        <div className="px-3 py-1.5 border-t border-white/5 space-y-1 window-no-drag">
           {/* Schedules button */}
           {onSchedulesOpen && (
             <button
