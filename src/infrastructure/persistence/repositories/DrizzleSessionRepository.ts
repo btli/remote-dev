@@ -190,24 +190,34 @@ export class DrizzleSessionRepository implements SessionRepository {
 
   /**
    * Save a session (insert or update).
+   * SECURITY: Always includes userId check to prevent cross-user data access.
    */
   async save(session: Session): Promise<Session> {
     const data = SessionMapper.toPersistence(session);
 
-    // Check if exists
+    // Check if exists - SECURITY: must check both id AND userId
     const existing = await db.query.terminalSessions.findFirst({
-      where: eq(terminalSessions.id, session.id),
+      where: and(
+        eq(terminalSessions.id, session.id),
+        eq(terminalSessions.userId, session.userId)
+      ),
+      columns: { id: true },
     });
 
     if (existing) {
-      // Update
+      // Update - SECURITY: must check both id AND userId to prevent TOCTOU
       const [updated] = await db
         .update(terminalSessions)
         .set({
           ...data,
           updatedAt: new Date(),
         })
-        .where(eq(terminalSessions.id, session.id))
+        .where(
+          and(
+            eq(terminalSessions.id, session.id),
+            eq(terminalSessions.userId, session.userId)
+          )
+        )
         .returning();
 
       return SessionMapper.toDomain(updated as SessionDbRecord);
@@ -224,6 +234,7 @@ export class DrizzleSessionRepository implements SessionRepository {
 
   /**
    * Save multiple sessions in a batch (atomic).
+   * SECURITY: Always includes userId check to prevent cross-user data access.
    */
   async saveMany(sessions: Session[]): Promise<void> {
     if (sessions.length === 0) return;
@@ -232,16 +243,26 @@ export class DrizzleSessionRepository implements SessionRepository {
       for (const session of sessions) {
         const data = SessionMapper.toPersistence(session);
 
+        // SECURITY: must check both id AND userId
         const existing = await tx.query.terminalSessions.findFirst({
-          where: eq(terminalSessions.id, session.id),
+          where: and(
+            eq(terminalSessions.id, session.id),
+            eq(terminalSessions.userId, session.userId)
+          ),
           columns: { id: true },
         });
 
         if (existing) {
+          // SECURITY: must check both id AND userId to prevent TOCTOU
           await tx
             .update(terminalSessions)
             .set({ ...data, updatedAt: new Date() })
-            .where(eq(terminalSessions.id, session.id));
+            .where(
+              and(
+                eq(terminalSessions.id, session.id),
+                eq(terminalSessions.userId, session.userId)
+              )
+            );
         } else {
           await tx.insert(terminalSessions).values(data);
         }
