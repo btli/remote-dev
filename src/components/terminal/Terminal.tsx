@@ -199,8 +199,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // See: https://github.com/xtermjs/xterm.js/issues/3600
       if (terminal.textarea) {
         const textarea = terminal.textarea;
-        // Disable autocomplete and autofill
+        // Disable autocomplete, autocorrect, and predictive text for mobile/tablet
+        // These attributes are critical for iOS and Android to prevent keyboard
+        // from replacing terminal input with autocomplete suggestions
         textarea.setAttribute("autocomplete", "off");
+        textarea.setAttribute("autocapitalize", "off");
+        textarea.setAttribute("autocorrect", "off");
+        textarea.setAttribute("spellcheck", "false");
         // Signal this is a terminal/command entry (helps mobile keyboards behave better)
         textarea.setAttribute("enterkeyhint", "send");
         // Disable Grammarly and other browser extensions that intercept input
