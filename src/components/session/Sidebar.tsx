@@ -1392,7 +1392,7 @@ export function Sidebar({
 
       {/* Session List */}
       <div
-          className="flex-1 overflow-y-auto py-2 px-1.5 flex flex-col"
+          className="flex-1 overflow-y-auto py-2 px-1.5 flex flex-col window-no-drag"
           onDragOver={(e) => handleDragOver(e, null)}
           onDragLeave={handleDragLeave}
           onDrop={(e) => handleDrop(e, null)}
