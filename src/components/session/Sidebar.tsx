@@ -1937,9 +1937,10 @@ export function Sidebar({
               })}
             </div>
           )}
-          {/* Draggable spacer - fills remaining space for window dragging */}
-          <div className="flex-1 min-h-[40px] window-drag" />
       </div>
+
+      {/* Draggable spacer - between session list and footer for window dragging */}
+      <div className="min-h-[40px] window-drag" />
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (
