@@ -238,7 +238,11 @@ export async function createSession(
     throw error;
   }
 
-  // Insert the database record - clean up tmux session if this fails
+  // Track if we created a worktree so we can clean it up on failure
+  const createdWorktree = input.createWorktree && branchName && workingPath !== input.projectPath;
+  const repoPath = input.projectPath;
+
+  // Insert the database record - clean up tmux session and worktree if this fails
   try {
     const now = new Date();
     const [session] = await db
@@ -264,10 +268,26 @@ export async function createSession(
 
     return mapDbSessionToSession(session);
   } catch (error) {
-    // SECURITY: Clean up orphaned tmux session if DB insert fails
-    await TmuxService.killSession(tmuxSessionName).catch(() => {
-      console.error(`Failed to clean up orphaned tmux session: ${tmuxSessionName}`);
-    });
+    // SECURITY: Clean up orphaned resources if DB insert fails
+    const cleanupPromises: Promise<void>[] = [
+      // Clean up orphaned tmux session
+      TmuxService.killSession(tmuxSessionName).catch(() => {
+        console.error(`Failed to clean up orphaned tmux session: ${tmuxSessionName}`);
+      }),
+    ];
+
+    // Clean up orphaned worktree if we created one
+    if (createdWorktree && repoPath && workingPath) {
+      cleanupPromises.push(
+        WorktreeService.removeWorktree(repoPath, workingPath, true)
+          .then(() => {}) // Discard result to match Promise<void> type
+          .catch(() => {
+            console.error(`Failed to clean up orphaned worktree: ${workingPath}`);
+          })
+      );
+    }
+
+    await Promise.all(cleanupPromises);
     throw error;
   }
 }
@@ -519,26 +539,30 @@ export async function closeSession(
 }
 
 /**
- * Reorder sessions (update tabOrder for all sessions)
+ * Reorder sessions (update tabOrder for all sessions).
+ * Uses a transaction to ensure atomicity - all sessions are reordered
+ * or none are, preventing inconsistent tab order states.
  */
 export async function reorderSessions(
   userId: string,
   sessionIds: string[]
 ): Promise<void> {
-  // Update each session with its new order
-  await Promise.all(
-    sessionIds.map((id, index) =>
-      db
-        .update(terminalSessions)
-        .set({ tabOrder: index, updatedAt: new Date() })
-        .where(
-          and(
-            eq(terminalSessions.id, id),
-            eq(terminalSessions.userId, userId)
+  await db.transaction(async (tx) => {
+    // Update each session with its new order within transaction
+    await Promise.all(
+      sessionIds.map((id, index) =>
+        tx
+          .update(terminalSessions)
+          .set({ tabOrder: index, updatedAt: new Date() })
+          .where(
+            and(
+              eq(terminalSessions.id, id),
+              eq(terminalSessions.userId, userId)
+            )
           )
-        )
-    )
-  );
+      )
+    );
+  });
 }
 
 // Helper to map database result to TypeScript type
