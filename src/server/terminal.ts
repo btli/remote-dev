@@ -344,7 +344,7 @@ export function createTerminalServer(port: number = 3001) {
 
     // Parse connection parameters
     const sessionId = authResult.sessionId;
-    const tmuxSessionName = (query.tmuxSession as string) || `rdv-${sessionId.substring(0, 8)}`;
+    const tmuxSessionName = (query.tmuxSession as string) || `rdv-${sessionId}`;
     const cols = parseInt(query.cols as string) || 80;
     const rows = parseInt(query.rows as string) || 24;
     const rawCwd = query.cwd as string | undefined;
