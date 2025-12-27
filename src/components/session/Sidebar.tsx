@@ -181,10 +181,15 @@ export function Sidebar({
   const touchDragRef = useRef<{
     type: "folder" | "session" | null;
     id: string | null;
+    startX: number;
     startY: number;
     element: HTMLElement | null;
     clone: HTMLElement | null;
-  }>({ type: null, id: null, startY: 0, element: null, clone: null });
+    isDragging: boolean; // True once long-press delay completes
+  }>({ type: null, id: null, startX: 0, startY: 0, element: null, clone: null, isDragging: false });
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const LONG_PRESS_DELAY = 400; // ms before drag initiates
+  const LONG_PRESS_MOVE_THRESHOLD = 10; // px movement to cancel long-press
 
   // Resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -393,15 +398,12 @@ export function Sidebar({
     setDropFolderPosition(null);
   };
 
-  // Touch handlers for mobile drag-and-drop
-  const handleFolderTouchStart = useCallback((e: React.TouchEvent, folderId: string) => {
-    const touch = e.touches[0];
-    const element = e.currentTarget as HTMLElement;
-
+  // Touch handlers for mobile drag-and-drop with long-press delay
+  const initiateTouchDrag = useCallback((element: HTMLElement, clientX: number, clientY: number) => {
     // Create a visual clone for dragging feedback
     const clone = element.cloneNode(true) as HTMLElement;
     clone.style.position = "fixed";
-    clone.style.top = `${touch.clientY - 20}px`;
+    clone.style.top = `${clientY - 20}px`;
     clone.style.left = `${element.getBoundingClientRect().left}px`;
     clone.style.width = `${element.offsetWidth}px`;
     clone.style.opacity = "0.8";
@@ -411,23 +413,63 @@ export function Sidebar({
     clone.style.borderRadius = "6px";
     document.body.appendChild(clone);
 
+    touchDragRef.current.clone = clone;
+    touchDragRef.current.isDragging = true;
+    element.style.opacity = "0.5";
+
+    // Haptic feedback if available
+    if (navigator.vibrate) {
+      navigator.vibrate(50);
+    }
+
+    setDraggingFolderId(touchDragRef.current.id);
+  }, []);
+
+  const handleFolderTouchStart = useCallback((e: React.TouchEvent, folderId: string) => {
+    const touch = e.touches[0];
+    const element = e.currentTarget as HTMLElement;
+
+    // Store initial state for long-press detection
     touchDragRef.current = {
       type: "folder",
       id: folderId,
+      startX: touch.clientX,
       startY: touch.clientY,
       element,
-      clone,
+      clone: null,
+      isDragging: false,
     };
 
-    element.style.opacity = "0.5";
-    setDraggingFolderId(folderId);
-  }, []);
+    // Start long-press timer
+    longPressTimerRef.current = setTimeout(() => {
+      initiateTouchDrag(element, touch.clientX, touch.clientY);
+    }, LONG_PRESS_DELAY);
+  }, [initiateTouchDrag]);
 
   const handleFolderTouchMove = useCallback((e: React.TouchEvent) => {
     const drag = touchDragRef.current;
-    if (!drag.id || !drag.clone) return;
+    if (!drag.id) return;
 
     const touch = e.touches[0];
+
+    // If not yet dragging, check if movement exceeds threshold to cancel long-press
+    if (!drag.isDragging) {
+      const deltaX = Math.abs(touch.clientX - drag.startX);
+      const deltaY = Math.abs(touch.clientY - drag.startY);
+      if (deltaX > LONG_PRESS_MOVE_THRESHOLD || deltaY > LONG_PRESS_MOVE_THRESHOLD) {
+        // User is scrolling, cancel the long-press timer
+        if (longPressTimerRef.current) {
+          clearTimeout(longPressTimerRef.current);
+          longPressTimerRef.current = null;
+        }
+        // Reset touch state
+        touchDragRef.current = { type: null, id: null, startX: 0, startY: 0, element: null, clone: null, isDragging: false };
+      }
+      return;
+    }
+
+    // Dragging is active - move the clone
+    if (!drag.clone) return;
     drag.clone.style.top = `${touch.clientY - 20}px`;
 
     // Find folder element under touch point
@@ -470,6 +512,12 @@ export function Sidebar({
   }, [folders]);
 
   const handleFolderTouchEnd = useCallback(() => {
+    // Cancel long-press timer if still running
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+
     const drag = touchDragRef.current;
 
     // Clean up clone
@@ -480,8 +528,8 @@ export function Sidebar({
       drag.element.style.opacity = "";
     }
 
-    // Perform drop if we have a target
-    if (drag.id) {
+    // Only perform drop if drag was actually initiated (long-press completed)
+    if (drag.id && drag.isDragging) {
       if (dropFolderPosition && dropTargetFolderId) {
         // Reorder mode
         const draggedFolder = folders.find((f) => f.id === drag.id);
@@ -500,7 +548,7 @@ export function Sidebar({
     }
 
     // Reset state
-    touchDragRef.current = { type: null, id: null, startY: 0, element: null, clone: null };
+    touchDragRef.current = { type: null, id: null, startX: 0, startY: 0, element: null, clone: null, isDragging: false };
     setDraggingFolderId(null);
     setDragOverFolderId(null);
     setDropTargetFolderId(null);
