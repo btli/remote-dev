@@ -1392,7 +1392,7 @@ export function Sidebar({
 
       {/* Session List */}
       <div
-          className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5"
+          className="flex-1 overflow-y-auto py-2 px-1.5 flex flex-col"
           onDragOver={(e) => handleDragOver(e, null)}
           onDragLeave={handleDragLeave}
           onDrop={(e) => handleDrop(e, null)}
@@ -1439,7 +1439,7 @@ export function Sidebar({
               </div>
             )
           ) : (
-            <div className="window-no-drag">
+            <div className="window-no-drag space-y-0.5">
               {/* New folder input (at root level, only when not collapsed) */}
               {creatingFolder && !creatingSubfolderId && !collapsed && (
                 <div className="flex items-center gap-1 px-2 py-1">
@@ -1937,6 +1937,8 @@ export function Sidebar({
               })}
             </div>
           )}
+          {/* Draggable spacer - fills remaining space for window dragging */}
+          <div className="flex-1 min-h-[40px] window-drag" />
       </div>
 
       {/* Footer - hide when collapsed */}
