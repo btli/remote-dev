@@ -97,6 +97,26 @@ interface TerminalSession {
 const sessions = new Map<string, TerminalSession>();
 
 /**
+ * Safely cleanup a terminal session, preventing double-cleanup race conditions.
+ * Multiple events (PTY exit, WebSocket close, WebSocket error) can fire simultaneously,
+ * so we use a guard pattern to ensure cleanup only happens once.
+ */
+function cleanupSession(sessionId: string): void {
+  const session = sessions.get(sessionId);
+  if (!session) return; // Already cleaned up by another event
+
+  // Clear any pending resize timeout
+  if (session.resizeTimeout) {
+    clearTimeout(session.resizeTimeout);
+    session.resizeTimeout = null;
+    session.pendingResize = null;
+  }
+
+  // Remove from map (this prevents other events from double-cleaning)
+  sessions.delete(sessionId);
+}
+
+/**
  * Check if tmux is installed
  */
 function checkTmuxInstalled(): boolean {
@@ -324,7 +344,7 @@ export function createTerminalServer(port: number = 3001) {
 
     // Parse connection parameters
     const sessionId = authResult.sessionId;
-    const tmuxSessionName = (query.tmuxSession as string) || `rdv-${sessionId.substring(0, 8)}`;
+    const tmuxSessionName = (query.tmuxSession as string) || `rdv-${sessionId}`;
     const cols = parseInt(query.cols as string) || 80;
     const rows = parseInt(query.rows as string) || 24;
     const rawCwd = query.cwd as string | undefined;
@@ -412,12 +432,7 @@ export function createTerminalServer(port: number = 3001) {
         ws.send(JSON.stringify({ type: "exit", code: exitCode }));
         ws.close();
       }
-      if (session.resizeTimeout) {
-        clearTimeout(session.resizeTimeout);
-        session.resizeTimeout = null;
-        session.pendingResize = null;
-      }
-      sessions.delete(sessionId);
+      cleanupSession(sessionId);
     });
 
     ws.on("message", (message) => {
@@ -500,23 +515,13 @@ export function createTerminalServer(port: number = 3001) {
       // Kill the PTY wrapper but NOT the tmux session
       // This allows reconnection to the same tmux session later
       ptyProcess.kill();
-      if (session.resizeTimeout) {
-        clearTimeout(session.resizeTimeout);
-        session.resizeTimeout = null;
-        session.pendingResize = null;
-      }
-      sessions.delete(sessionId);
+      cleanupSession(sessionId);
     });
 
     ws.on("error", (error) => {
       console.error(`Terminal session ${sessionId} error:`, error);
       ptyProcess.kill();
-      if (session.resizeTimeout) {
-        clearTimeout(session.resizeTimeout);
-        session.resizeTimeout = null;
-        session.pendingResize = null;
-      }
-      sessions.delete(sessionId);
+      cleanupSession(sessionId);
     });
 
     // Send ready signal

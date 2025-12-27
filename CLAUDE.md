@@ -116,6 +116,52 @@ MCP_ENABLED=true      # Enable MCP server on terminal server startup
 MCP_USER_ID=<uuid>    # Override user ID for MCP requests (optional)
 ```
 
+### Clean Architecture (Domain Layer)
+
+The codebase follows Clean Architecture principles with a domain-driven core for session and folder management. This provides better testability, maintainability, and separation of concerns.
+
+**Layer Structure:**
+```
+src/
+  domain/                    # Layer 1: Pure business logic (no dependencies)
+    entities/                # Session, Folder domain entities
+    value-objects/           # SessionStatus, TmuxSessionName
+    errors/                  # Domain-specific errors
+
+  application/               # Layer 2: Use cases (depends only on domain)
+    use-cases/               # CreateSession, SuspendSession, etc.
+    ports/                   # Repository & gateway interfaces
+
+  infrastructure/            # Layer 3: Implementations (implements ports)
+    persistence/
+      repositories/          # DrizzleSessionRepository, etc.
+      mappers/               # DB ↔ Domain type converters
+    external/
+      tmux/                  # TmuxGateway implementation
+      worktree/              # WorktreeGateway implementation
+    container.ts             # Dependency injection wiring
+
+  interface/                 # Layer 4: API adapters
+    presenters/              # Domain → API response transformers
+```
+
+**Key Patterns:**
+- **Immutable Entities**: Domain entities are immutable; state changes return new instances
+- **Value Objects**: Type-safe wrappers for domain concepts (e.g., `SessionStatus`)
+- **Repository Pattern**: Abstract persistence behind interfaces for testability
+- **Use Cases**: Single-responsibility orchestrators for business operations
+- **Dependency Injection**: Infrastructure wired via `container.ts`
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/domain/entities/Session.ts` | Session entity with state machine |
+| `src/domain/entities/Folder.ts` | Folder entity with hierarchy validation |
+| `src/domain/value-objects/SessionStatus.ts` | Type-safe session status |
+| `src/application/use-cases/session/*.ts` | Session use cases |
+| `src/application/ports/*.ts` | Repository and gateway interfaces |
+| `src/infrastructure/container.ts` | DI container with singleton instances |
+
 ### Database Layer
 
 - **Drizzle ORM** with **libsql** (SQLite-compatible, works in both Bun and Node.js)

@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import * as FolderService from "@/services/folder-service";
+import {
+  updateFolderUseCase,
+  moveFolderUseCase,
+  deleteFolderUseCase,
+} from "@/infrastructure/container";
+import { FolderPresenter } from "@/interface/presenters/FolderPresenter";
+import { EntityNotFoundError, BusinessRuleViolationError } from "@/domain/errors/DomainError";
 
 /**
  * PATCH /api/folders/:id - Update a folder (or move to new parent)
@@ -8,61 +14,77 @@ import * as FolderService from "@/services/folder-service";
 export const PATCH = withAuth(async (request, { userId, params }) => {
   const body = await request.json();
   const { name, collapsed, sortOrder, parentId } = body;
-  const id = params!.id;
+  const folderId = params!.id;
 
-  // Handle parent change separately (uses moveFolderToParent for validation)
-  if (parentId !== undefined) {
-    if (parentId !== null && typeof parentId !== "string") {
-      return errorResponse("parentId must be a string or null", 400);
+  try {
+    // Handle parent change separately (uses moveFolderUseCase for validation)
+    if (parentId !== undefined) {
+      if (parentId !== null && typeof parentId !== "string") {
+        return errorResponse("parentId must be a string or null", 400);
+      }
+
+      let folder = await moveFolderUseCase.execute({
+        folderId,
+        userId,
+        newParentId: parentId,
+      });
+
+      // If there are other updates, apply them too
+      if (typeof name === "string" || typeof collapsed === "boolean") {
+        folder = await updateFolderUseCase.execute({
+          folderId,
+          userId,
+          name: typeof name === "string" ? name : undefined,
+          collapsed: typeof collapsed === "boolean" ? collapsed : undefined,
+        });
+      }
+
+      return NextResponse.json(FolderPresenter.toResponse(folder));
     }
 
-    const folder = await FolderService.moveFolderToParent(id, userId, parentId);
+    // Standard updates (name, collapsed, sortOrder)
+    const hasName = typeof name === "string";
+    const hasCollapsed = typeof collapsed === "boolean";
+    const hasSortOrder = typeof sortOrder === "number";
 
-    if (!folder) {
-      return errorResponse("Folder not found", 404);
+    if (!hasName && !hasCollapsed && !hasSortOrder) {
+      return errorResponse("No valid updates provided", 400);
     }
 
-    // If there are other updates, apply them too
-    if (typeof name === "string" || typeof collapsed === "boolean") {
-      const additionalUpdates: Partial<{ name: string; collapsed: boolean }> = {};
-      if (typeof name === "string") additionalUpdates.name = name;
-      if (typeof collapsed === "boolean") additionalUpdates.collapsed = collapsed;
+    const folder = await updateFolderUseCase.execute({
+      folderId,
+      userId,
+      name: hasName ? name : undefined,
+      collapsed: hasCollapsed ? collapsed : undefined,
+      sortOrder: hasSortOrder ? sortOrder : undefined,
+    });
 
-      const updatedFolder = await FolderService.updateFolder(id, userId, additionalUpdates);
-      return NextResponse.json(updatedFolder);
+    return NextResponse.json(FolderPresenter.toResponse(folder));
+  } catch (error) {
+    if (error instanceof EntityNotFoundError) {
+      return errorResponse(error.message, 404, error.code);
     }
-
-    return NextResponse.json(folder);
+    if (error instanceof BusinessRuleViolationError) {
+      return errorResponse(error.message, 400, error.code);
+    }
+    throw error;
   }
-
-  // Standard updates (name, collapsed, sortOrder)
-  const updates: Partial<{ name: string; collapsed: boolean; sortOrder: number }> = {};
-  if (typeof name === "string") updates.name = name;
-  if (typeof collapsed === "boolean") updates.collapsed = collapsed;
-  if (typeof sortOrder === "number") updates.sortOrder = sortOrder;
-
-  if (Object.keys(updates).length === 0) {
-    return errorResponse("No valid updates provided", 400);
-  }
-
-  const folder = await FolderService.updateFolder(id, userId, updates);
-
-  if (!folder) {
-    return errorResponse("Folder not found", 404);
-  }
-
-  return NextResponse.json(folder);
 });
 
 /**
  * DELETE /api/folders/:id - Delete a folder
  */
 export const DELETE = withAuth(async (_request, { userId, params }) => {
-  const deleted = await FolderService.deleteFolder(params!.id, userId);
-
-  if (!deleted) {
-    return errorResponse("Folder not found", 404);
+  try {
+    await deleteFolderUseCase.execute({
+      folderId: params!.id,
+      userId,
+    });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    if (error instanceof EntityNotFoundError) {
+      return errorResponse(error.message, 404, error.code);
+    }
+    throw error;
   }
-
-  return NextResponse.json({ success: true });
 });

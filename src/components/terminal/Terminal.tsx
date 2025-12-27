@@ -353,6 +353,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         wsRef.current = ws;
 
         ws.onopen = () => {
+          // Guard against race condition: if component unmounted during connection,
+          // close the WebSocket immediately and don't call any callbacks with stale references
+          if (isUnmountingRef.current) {
+            ws.close();
+            return;
+          }
+
           updateStatus("connected");
           reconnectAttemptsRef.current = 0;
           onWebSocketReadyRef.current?.(ws);

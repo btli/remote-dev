@@ -268,8 +268,8 @@ export async function cleanupOrphanedSessions(
  * Generate a unique tmux session name
  */
 export function generateSessionName(sessionId: string): string {
-  // Use first 8 characters of UUID for readability
-  return `rdv-${sessionId.substring(0, 8)}`;
+  // Use full UUID for uniqueness and domain validation compatibility
+  return `rdv-${sessionId}`;
 }
 
 /**
