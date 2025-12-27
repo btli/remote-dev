@@ -86,7 +86,7 @@ export default async function Home() {
                           <ScheduleProvider>
                           <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
                           {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
-                          <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm window-drag">
+                          <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
                             {/* Logo */}
                             <div className="flex items-center gap-3">
                               <Image
@@ -100,7 +100,7 @@ export default async function Home() {
                             </div>
 
                             {/* User info and actions */}
-                            <div className="flex items-center gap-4 window-no-drag">
+                            <div className="flex items-center gap-4">
                               {/* Connection status icons */}
                               <div className="flex items-center gap-3 pr-2 border-r border-white/10">
                                 <GitHubStatusIcon isConnected={isGitHubConnected} />
