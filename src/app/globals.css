@@ -573,6 +573,60 @@
 }
 
 /* ============================================================================
+   xterm.js ANSI Color Overrides for Light Mode
+   ============================================================================
+
+   Problem: xterm.js uses the same color for foreground AND background ANSI codes.
+   For example, "red" is used for both \x1b[31m (red text) and \x1b[41m (red bg).
+
+   In light mode:
+   - Foreground colors need to be dark (readable on light terminal bg)
+   - Background colors need to be light/pastel (dark text readable on them)
+   - White text needs to be dark (otherwise invisible on light bg)
+
+   This CSS layer intercepts the DOM renderer's color classes to provide
+   appropriate colors for light themes without modifying the theme palette.
+   ============================================================================ */
+
+/* Light mode: Override ANSI background colors to be light pastels */
+.light .xterm .xterm-bg-1 { background-color: #fce4e4 !important; } /* Red bg - light pink */
+.light .xterm .xterm-bg-2 { background-color: #e4f5e4 !important; } /* Green bg - light mint */
+.light .xterm .xterm-bg-3 { background-color: #fdf5e0 !important; } /* Yellow bg - light cream */
+.light .xterm .xterm-bg-4 { background-color: #e4e8f5 !important; } /* Blue bg - light blue */
+.light .xterm .xterm-bg-5 { background-color: #f3e4f5 !important; } /* Magenta bg - light lavender */
+.light .xterm .xterm-bg-6 { background-color: #e4f3f5 !important; } /* Cyan bg - light aqua */
+.light .xterm .xterm-bg-7 { background-color: #f0f0f0 !important; } /* White bg - light gray */
+
+/* Light mode: Override bright ANSI background colors */
+.light .xterm .xterm-bg-9 { background-color: #fdd !important; }  /* Bright red bg */
+.light .xterm .xterm-bg-10 { background-color: #dfd !important; } /* Bright green bg */
+.light .xterm .xterm-bg-11 { background-color: #ffd !important; } /* Bright yellow bg */
+.light .xterm .xterm-bg-12 { background-color: #ddf !important; } /* Bright blue bg */
+.light .xterm .xterm-bg-13 { background-color: #fdf !important; } /* Bright magenta bg */
+.light .xterm .xterm-bg-14 { background-color: #dff !important; } /* Bright cyan bg */
+.light .xterm .xterm-bg-15 { background-color: #f5f5f5 !important; } /* Bright white bg */
+
+/* Light mode: Override white/bright white foreground to be dark (visible on light bg) */
+.light .xterm .xterm-fg-7 { color: #555 !important; }  /* White text -> dark gray */
+.light .xterm .xterm-fg-15 { color: #333 !important; } /* Bright white text -> darker gray */
+
+/* Dark mode: Override ANSI background colors to be darker/muted (for readability) */
+.dark .xterm .xterm-bg-1 { background-color: #4a2020 !important; } /* Red bg - dark muted red */
+.dark .xterm .xterm-bg-2 { background-color: #1a3a1a !important; } /* Green bg - dark muted green */
+.dark .xterm .xterm-bg-3 { background-color: #3a3520 !important; } /* Yellow bg - dark muted yellow */
+.dark .xterm .xterm-bg-4 { background-color: #1a2040 !important; } /* Blue bg - dark muted blue */
+.dark .xterm .xterm-bg-5 { background-color: #351a40 !important; } /* Magenta bg - dark muted magenta */
+.dark .xterm .xterm-bg-6 { background-color: #1a3035 !important; } /* Cyan bg - dark muted cyan */
+
+/* Dark mode: Bright ANSI background colors (slightly lighter than normal) */
+.dark .xterm .xterm-bg-9 { background-color: #5a2525 !important; }  /* Bright red bg */
+.dark .xterm .xterm-bg-10 { background-color: #254525 !important; } /* Bright green bg */
+.dark .xterm .xterm-bg-11 { background-color: #454025 !important; } /* Bright yellow bg */
+.dark .xterm .xterm-bg-12 { background-color: #252550 !important; } /* Bright blue bg */
+.dark .xterm .xterm-bg-13 { background-color: #452550 !important; } /* Bright magenta bg */
+.dark .xterm .xterm-bg-14 { background-color: #253545 !important; } /* Bright cyan bg */
+
+/* ============================================================================
    Date/Time Input Styling - Dark theme compatible
    ============================================================================ */
 
