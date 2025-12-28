@@ -108,4 +108,10 @@ export interface SessionRepository {
    * Get the next available tab order for a user.
    */
   getNextTabOrder(userId: string): Promise<number>;
+
+  /**
+   * Get all active/suspended tmux session names across all users.
+   * Used for orphan detection to ensure we don't kill another user's sessions.
+   */
+  getAllActiveTmuxSessionNames(): Promise<Set<string>>;
 }
