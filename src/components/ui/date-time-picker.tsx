@@ -117,7 +117,7 @@ function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: Cl
         cx={center}
         cy={center}
         r={outerRadius + 10}
-        className="fill-slate-800/50"
+        className="fill-muted/50"
       />
 
       {/* Hour hand (thick, violet) */}
@@ -126,7 +126,7 @@ function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: Cl
         y1={center}
         x2={hourHandEnd.x}
         y2={hourHandEnd.y}
-        className={cn("stroke-violet-500", view === "hours" ? "opacity-100" : "opacity-40")}
+        className={cn("stroke-primary", view === "hours" ? "opacity-100" : "opacity-40")}
         strokeWidth={3}
         strokeLinecap="round"
       />
@@ -137,7 +137,7 @@ function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: Cl
         y1={center}
         x2={minuteHandEnd.x}
         y2={minuteHandEnd.y}
-        className={cn("stroke-white", view === "minutes" ? "opacity-100" : "opacity-40")}
+        className={cn("stroke-foreground", view === "minutes" ? "opacity-100" : "opacity-40")}
         strokeWidth={2}
         strokeLinecap="round"
       />
@@ -154,7 +154,7 @@ function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: Cl
       />
 
       {/* Center dot */}
-      <circle cx={center} cy={center} r={4} className="fill-violet-500" />
+      <circle cx={center} cy={center} r={4} className="fill-primary" />
 
       {/* Numbers around the clock */}
       {numbers.map((num, i) => {
@@ -163,7 +163,7 @@ function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: Cl
         return (
           <g key={num}>
             {selected && (
-              <circle cx={pos.x} cy={pos.y} r={12} className="fill-violet-600" />
+              <circle cx={pos.x} cy={pos.y} r={12} className="fill-primary" />
             )}
             <text
               x={pos.x}
@@ -172,7 +172,7 @@ function ClockFace({ hours, minutes, seconds, view, onChange, onViewChange }: Cl
               dominantBaseline="central"
               className={cn(
                 "text-[10px] font-medium pointer-events-none",
-                selected ? "fill-white" : "fill-slate-300"
+                selected ? "fill-primary-foreground" : "fill-muted-foreground"
               )}
             >
               {view === "hours" ? num : num.toString().padStart(2, "0")}
@@ -310,12 +310,12 @@ export function DateTimePicker({
           variant="outline"
           className={cn(
             "w-full justify-start text-left font-normal h-8 text-xs",
-            "bg-slate-800/50 border-white/10 hover:bg-slate-800 hover:border-white/20",
-            !date && "text-slate-500",
+            "bg-card/50 border-border hover:bg-card hover:border-border",
+            !date && "text-muted-foreground",
             className
           )}
         >
-          <CalendarIcon className="mr-2 h-3.5 w-3.5 text-violet-400" />
+          <CalendarIcon className="mr-2 h-3.5 w-3.5 text-primary" />
           {date ? (
             format(date, "MMM d, yyyy 'at' h:mm:ss a")
           ) : (
@@ -326,7 +326,7 @@ export function DateTimePicker({
       <PopoverContent className="w-auto p-0" align="start">
         <div className="flex">
           {/* Calendar - Left side */}
-          <div className="border-r border-white/10">
+          <div className="border-r border-border">
             <Calendar
               mode="single"
               selected={date}
@@ -345,7 +345,7 @@ export function DateTimePicker({
               onBlur={() => parseTimeInput(timeInput)}
               onKeyDown={(e) => e.key === "Enter" && parseTimeInput(timeInput)}
               placeholder="12:00:00 PM"
-              className="h-7 text-xs font-mono bg-slate-800/50 border-white/10 text-center mb-2"
+              className="h-7 text-xs font-mono bg-card/50 border-border text-center mb-2"
             />
 
             {/* View tabs */}
@@ -357,8 +357,8 @@ export function DateTimePicker({
                   className={cn(
                     "flex-1 h-6 text-[9px] rounded transition-colors",
                     clockView === view
-                      ? "bg-violet-600 text-white"
-                      : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card/50 text-muted-foreground hover:bg-primary/20"
                   )}
                 >
                   {view === "hours" ? "HR" : view === "minutes" ? "MIN" : "SEC"}
@@ -391,8 +391,8 @@ export function DateTimePicker({
                 className={cn(
                   "flex-1 h-6 text-[10px] rounded transition-colors",
                   isAM
-                    ? "bg-violet-600 text-white"
-                    : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-card/50 text-muted-foreground hover:bg-primary/20"
                 )}
               >
                 AM
@@ -408,8 +408,8 @@ export function DateTimePicker({
                 className={cn(
                   "flex-1 h-6 text-[10px] rounded transition-colors",
                   !isAM
-                    ? "bg-violet-600 text-white"
-                    : "bg-slate-800/50 text-slate-400 hover:bg-violet-500/20"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-card/50 text-muted-foreground hover:bg-primary/20"
                 )}
               >
                 PM
@@ -439,12 +439,12 @@ export function DatePicker({
           variant="outline"
           className={cn(
             "w-full justify-start text-left font-normal h-8 text-xs",
-            "bg-slate-800/50 border-white/10 hover:bg-slate-800 hover:border-white/20",
-            !date && "text-slate-500",
+            "bg-card/50 border-border hover:bg-card hover:border-border",
+            !date && "text-muted-foreground",
             className
           )}
         >
-          <CalendarIcon className="mr-2 h-3.5 w-3.5 text-violet-400" />
+          <CalendarIcon className="mr-2 h-3.5 w-3.5 text-primary" />
           {date ? format(date, "PPP") : <span>{placeholder}</span>}
         </Button>
       </PopoverTrigger>
@@ -459,16 +459,16 @@ export function DatePicker({
             months: "flex flex-col",
             month: "space-y-2",
             caption: "flex justify-center pt-0.5 relative items-center",
-            caption_label: "text-xs font-medium text-white",
+            caption_label: "text-xs font-medium text-foreground",
             nav: "space-x-1 flex items-center",
             nav_button: cn(
-              "h-6 w-6 bg-transparent p-0 text-slate-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+              "h-6 w-6 bg-transparent p-0 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
             ),
             nav_button_previous: "absolute left-0.5",
             nav_button_next: "absolute right-0.5",
             table: "w-full border-collapse space-y-0.5",
             head_row: "flex",
-            head_cell: "text-slate-500 rounded-md w-7 font-normal text-[10px]",
+            head_cell: "text-muted-foreground rounded-md w-7 font-normal text-[10px]",
             row: "flex w-full mt-0.5",
             cell: cn(
               "relative p-0 text-center text-xs focus-within:relative focus-within:z-20",
@@ -476,13 +476,13 @@ export function DatePicker({
             ),
             day: cn(
               "h-7 w-7 p-0 font-normal text-xs rounded-md transition-colors",
-              "text-slate-300 hover:bg-violet-500/20 hover:text-white",
-              "focus:bg-violet-500/20 focus:text-white focus:outline-none"
+              "text-muted-foreground hover:bg-primary/20 hover:text-foreground",
+              "focus:bg-primary/20 focus:text-foreground focus:outline-none"
             ),
-            day_selected: "bg-violet-600 text-white hover:bg-violet-700 hover:text-white focus:bg-violet-700",
-            day_today: "bg-slate-700 text-white",
-            day_outside: "text-slate-600 opacity-50",
-            day_disabled: "text-slate-600 opacity-50 cursor-not-allowed",
+            day_selected: "bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground focus:bg-primary/90",
+            day_today: "bg-accent text-foreground",
+            day_outside: "text-muted-foreground/50 opacity-50",
+            day_disabled: "text-muted-foreground/50 opacity-50 cursor-not-allowed",
             day_hidden: "invisible",
           }}
         />
@@ -571,8 +571,8 @@ export function TimePicker({
 
   return (
     <div className={cn("space-y-2", className)}>
-      <div className="flex items-center gap-1 text-[10px] text-slate-400">
-        <Clock className="h-3 w-3 text-violet-400" />
+      <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+        <Clock className="h-3 w-3 text-primary" />
         <span>Time</span>
       </div>
 
@@ -582,7 +582,7 @@ export function TimePicker({
         onBlur={() => parseAndUpdateTime(timeInput)}
         onKeyDown={(e) => e.key === "Enter" && parseAndUpdateTime(timeInput)}
         placeholder="12:00:00 PM"
-        className="h-7 text-xs font-mono bg-slate-800/50 border-white/10 text-center"
+        className="h-7 text-xs font-mono bg-card/50 border-border text-center"
       />
 
       <div className="grid grid-cols-3 gap-1">
@@ -590,16 +590,16 @@ export function TimePicker({
           <div key={field} className="flex flex-col items-center gap-0.5">
             <button
               onClick={() => adjustTime(field, 1)}
-              className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
+              className="w-full h-5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
             >
               ▲
             </button>
-            <span className="text-[10px] text-slate-500">
+            <span className="text-[10px] text-muted-foreground">
               {field === "hour" ? "hr" : field === "minute" ? "min" : "sec"}
             </span>
             <button
               onClick={() => adjustTime(field, -1)}
-              className="w-full h-5 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 rounded transition-colors"
+              className="w-full h-5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-accent rounded transition-colors"
             >
               ▼
             </button>
@@ -613,8 +613,8 @@ export function TimePicker({
           className={cn(
             "flex-1 h-6 text-[10px] rounded transition-colors",
             isAM
-              ? "bg-violet-600 text-white"
-              : "bg-slate-800/50 text-slate-400 hover:text-white hover:bg-white/10"
+              ? "bg-primary text-primary-foreground"
+              : "bg-card/50 text-muted-foreground hover:text-foreground hover:bg-accent"
           )}
         >
           AM
@@ -624,8 +624,8 @@ export function TimePicker({
           className={cn(
             "flex-1 h-6 text-[10px] rounded transition-colors",
             !isAM
-              ? "bg-violet-600 text-white"
-              : "bg-slate-800/50 text-slate-400 hover:text-white hover:bg-white/10"
+              ? "bg-primary text-primary-foreground"
+              : "bg-card/50 text-muted-foreground hover:text-foreground hover:bg-accent"
           )}
         >
           PM

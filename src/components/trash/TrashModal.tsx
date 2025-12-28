@@ -106,7 +106,7 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="w-5 h-5 text-slate-400" />
+              <Trash2 className="w-5 h-5 text-muted-foreground" />
               Trash
             </DialogTitle>
             <DialogDescription>
@@ -116,11 +116,11 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
 
           <ScrollArea className="max-h-[400px]">
             {loading ? (
-              <div className="flex items-center justify-center py-8 text-slate-500">
+              <div className="flex items-center justify-center py-8 text-muted-foreground">
                 Loading...
               </div>
             ) : isEmpty ? (
-              <div className="flex flex-col items-center justify-center py-8 text-slate-500">
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                 <Trash2 className="w-8 h-8 mb-2 opacity-50" />
                 <p className="text-sm">Trash is empty</p>
               </div>
@@ -139,7 +139,7 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
           </ScrollArea>
 
           {!isEmpty && (
-            <div className="flex justify-end pt-4 border-t border-white/5">
+            <div className="flex justify-end pt-4 border-t border-border">
               <Button variant="ghost" size="sm" onClick={onClose}>
                 Close
               </Button>
@@ -222,27 +222,27 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
   const branchName = getBranchName();
 
   return (
-    <div className="group flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors">
+    <div className="group flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-accent transition-colors">
       {/* Icon */}
       <div className="shrink-0">
-        <GitBranch className="w-4 h-4 text-violet-400" />
+        <GitBranch className="w-4 h-4 text-primary" />
       </div>
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-white truncate">{item.resourceName}</p>
+        <p className="text-sm font-medium text-foreground truncate">{item.resourceName}</p>
 
         {/* Folder/Repo path */}
         {itemPath && (
-          <p className="text-xs text-slate-400 truncate">{itemPath}</p>
+          <p className="text-xs text-muted-foreground truncate">{itemPath}</p>
         )}
 
         {/* Branch and expiry info */}
-        <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
           {branchName && (
             <span className="flex items-center gap-1">
               <GitBranch className="w-3 h-3" />
-              <span className="font-mono text-[10px] bg-slate-700/50 px-1 py-0.5 rounded truncate max-w-[120px]">
+              <span className="font-mono text-[10px] bg-muted/50 px-1 py-0.5 rounded truncate max-w-[120px]">
                 {branchName}
               </span>
             </span>
@@ -264,7 +264,7 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
           variant="ghost"
           size="icon-sm"
           onClick={onRestore}
-          className="h-7 w-7 text-slate-400 hover:text-green-400 hover:bg-green-400/10"
+          className="h-7 w-7 text-muted-foreground hover:text-green-400 hover:bg-green-400/10"
           title="Restore"
         >
           <RotateCcw className="w-3.5 h-3.5" />
@@ -273,7 +273,7 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
           variant="ghost"
           size="icon-sm"
           onClick={onDelete}
-          className="h-7 w-7 text-slate-400 hover:text-red-400 hover:bg-red-400/10"
+          className="h-7 w-7 text-muted-foreground hover:text-red-400 hover:bg-red-400/10"
           title="Delete permanently"
         >
           <Trash2 className="w-3.5 h-3.5" />

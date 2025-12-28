@@ -205,12 +205,12 @@ export function RecordingPlayer({
   }, [speed]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 rounded-xl overflow-hidden border border-white/10">
+    <div className="flex flex-col h-full bg-background rounded-xl overflow-hidden border border-border">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-900/50 border-b border-white/5">
+      <div className="flex items-center justify-between px-4 py-2 bg-popover/50 border-b border-border">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-white">{recording.name}</span>
-          <span className="text-xs text-slate-400">
+          <span className="text-sm font-medium text-foreground">{recording.name}</span>
+          <span className="text-xs text-muted-foreground">
             {formatDuration(recording.duration)}
           </span>
         </div>
@@ -219,7 +219,7 @@ export function RecordingPlayer({
             variant="ghost"
             size="icon"
             onClick={onClose}
-            className="w-7 h-7 text-slate-400 hover:text-white"
+            className="w-7 h-7 text-muted-foreground hover:text-foreground"
           >
             <X className="w-4 h-4" />
           </Button>
@@ -234,14 +234,14 @@ export function RecordingPlayer({
       />
 
       {/* Controls */}
-      <div className="px-4 py-3 bg-slate-900/50 border-t border-white/5">
+      <div className="px-4 py-3 bg-popover/50 border-t border-border">
         <div className="flex items-center gap-3">
           {/* Play/Pause */}
           <Button
             variant="ghost"
             size="icon"
             onClick={handlePlayPause}
-            className="w-8 h-8 text-white hover:bg-white/10"
+            className="w-8 h-8 text-foreground hover:bg-accent"
           >
             {isPlaying ? (
               <Pause className="w-4 h-4" />
@@ -255,13 +255,13 @@ export function RecordingPlayer({
             variant="ghost"
             size="icon"
             onClick={handleRestart}
-            className="w-8 h-8 text-slate-400 hover:text-white hover:bg-white/10"
+            className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-accent"
           >
             <RotateCcw className="w-4 h-4" />
           </Button>
 
           {/* Current time */}
-          <span className="text-xs text-slate-400 font-mono w-16">
+          <span className="text-xs text-muted-foreground font-mono w-16">
             {formatDuration(currentTime)}
           </span>
 
@@ -277,7 +277,7 @@ export function RecordingPlayer({
           </div>
 
           {/* Duration */}
-          <span className="text-xs text-slate-400 font-mono w-16 text-right">
+          <span className="text-xs text-muted-foreground font-mono w-16 text-right">
             {formatDuration(recording.duration)}
           </span>
 
@@ -286,7 +286,7 @@ export function RecordingPlayer({
             variant="ghost"
             size="sm"
             onClick={handleSpeedChange}
-            className="text-xs text-slate-400 hover:text-white hover:bg-white/10 px-2"
+            className="text-xs text-muted-foreground hover:text-foreground hover:bg-accent px-2"
           >
             {speed}x
           </Button>

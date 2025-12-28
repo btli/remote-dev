@@ -75,11 +75,11 @@ export function MobileKeyboard({ onKeyPress, className }: MobileKeyboardProps) {
         onClick={() => handleKeyPress(config)}
         className={cn(
           "px-2.5 py-1.5 rounded-md text-xs font-medium",
-          "bg-slate-800/80 text-slate-300",
-          "active:bg-violet-600 active:text-white",
+          "bg-card/80 text-muted-foreground",
+          "active:bg-primary active:text-primary-foreground",
           "touch-manipulation select-none",
           "transition-colors duration-100",
-          isActive && "bg-violet-600 text-white",
+          isActive && "bg-primary text-primary-foreground",
           config.className
         )}
       >
@@ -91,7 +91,7 @@ export function MobileKeyboard({ onKeyPress, className }: MobileKeyboardProps) {
   return (
     <div
       className={cn(
-        "flex flex-wrap gap-1.5 p-2 bg-slate-900/95 backdrop-blur-sm border-t border-white/10",
+        "flex flex-wrap gap-1.5 p-2 bg-popover/95 backdrop-blur-sm border-t border-border",
         "md:hidden", // Only show on mobile
         className
       )}
@@ -102,7 +102,7 @@ export function MobileKeyboard({ onKeyPress, className }: MobileKeyboardProps) {
       </div>
 
       {/* Separator */}
-      <div className="w-px bg-white/10 mx-1 self-stretch" />
+      <div className="w-px bg-border mx-1 self-stretch" />
 
       {/* Extra common characters */}
       <div className="flex gap-1.5 flex-wrap">

@@ -1667,20 +1667,35 @@ export function Sidebar({
                             {(() => {
                               const repoStats = getFolderRepoStats(node.id);
                               if (!repoStats) return null;
+                              // Only show badges container if there's at least one non-zero value
+                              const hasAnyStats = repoStats.prCount > 0 || repoStats.issueCount > 0 || repoStats.hasChanges;
+                              if (!hasAnyStats) return null;
                               return (
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {repoStats.prCount > 0 && (
+                                  {/* PR count - primary color, placeholder if zero for alignment */}
+                                  {repoStats.prCount > 0 ? (
                                     <span className="flex items-center gap-0.5 text-[9px] text-primary">
                                       <GitPullRequest className="w-2.5 h-2.5" />
                                       {repoStats.prCount}
                                     </span>
-                                  )}
-                                  {repoStats.issueCount > 0 && (
-                                    <span className="flex items-center gap-0.5 text-[9px] text-primary">
+                                  ) : repoStats.issueCount > 0 ? (
+                                    <span className="flex items-center gap-0.5 text-[9px] invisible" aria-hidden="true">
+                                      <GitPullRequest className="w-2.5 h-2.5" />
+                                      0
+                                    </span>
+                                  ) : null}
+                                  {/* Issue count - chart-2 color (cyan/teal) for distinction */}
+                                  {repoStats.issueCount > 0 ? (
+                                    <span className="flex items-center gap-0.5 text-[9px] text-chart-2">
                                       <CircleDot className="w-2.5 h-2.5" />
                                       {repoStats.issueCount}
                                     </span>
-                                  )}
+                                  ) : repoStats.prCount > 0 ? (
+                                    <span className="flex items-center gap-0.5 text-[9px] invisible" aria-hidden="true">
+                                      <CircleDot className="w-2.5 h-2.5" />
+                                      0
+                                    </span>
+                                  ) : null}
                                   {repoStats.hasChanges && (
                                     <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
                                   )}

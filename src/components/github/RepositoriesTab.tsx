@@ -107,12 +107,12 @@ export function RepositoriesTab({
   return (
     <div className={cn("flex flex-col h-full", className)}>
       {/* Header bar */}
-      <div className="flex items-center justify-between px-2 py-1.5 border-b border-white/5">
+      <div className="flex items-center justify-between px-2 py-1.5 border-b border-border">
         <div className="flex items-center gap-1.5">
           {hasChanges && (
             <button
               onClick={handleMarkSeen}
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-violet-500/20 text-violet-300 hover:bg-violet-500/30 transition-colors"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
               title="Mark all as seen"
             >
               <AlertCircle className="w-3 h-3" />
@@ -125,7 +125,7 @@ export function RepositoriesTab({
             onClick={handleRefresh}
             variant="ghost"
             size="icon-sm"
-            className="h-5 w-5 text-slate-400 hover:text-white hover:bg-white/10"
+            className="h-5 w-5 text-muted-foreground hover:text-foreground hover:bg-accent"
             disabled={state.isRefreshing}
             title="Refresh"
           >
@@ -139,14 +139,14 @@ export function RepositoriesTab({
       {/* Repository list */}
       <div className="flex-1 overflow-y-auto py-1 px-1.5 space-y-0.5">
         {state.isLoading && state.repositories.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-slate-500">
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
             <RefreshCw className="w-4 h-4 animate-spin mb-2" />
             <span className="text-[10px]">Loading...</span>
           </div>
         ) : state.repositories.length === 0 ? (
           <div className="text-center py-8 px-2">
-            <FolderGit className="w-5 h-5 mx-auto text-slate-600 mb-2" />
-            <p className="text-[10px] text-slate-500">No repositories</p>
+            <FolderGit className="w-5 h-5 mx-auto text-muted-foreground/60 mb-2" />
+            <p className="text-[10px] text-muted-foreground">No repositories</p>
           </div>
         ) : (
           Object.entries(groupedRepos).map(([owner, repos]) => (
@@ -171,8 +171,8 @@ export function RepositoriesTab({
 
       {/* Footer */}
       {state.lastRefresh && (
-        <div className="px-2 py-1 border-t border-white/5">
-          <span className="flex items-center gap-1 text-[9px] text-slate-600">
+        <div className="px-2 py-1 border-t border-border">
+          <span className="flex items-center gap-1 text-[9px] text-muted-foreground/60">
             <Clock className="w-2.5 h-2.5" />
             Updated {formatRelativeTime(state.lastRefresh.toISOString())}
           </span>
@@ -211,10 +211,10 @@ function OwnerGroup({
     <div className="space-y-0.5">
       {/* Owner header */}
       <div className="flex items-center gap-1.5 px-1 py-0.5">
-        <span className="text-[10px] text-slate-500 font-medium truncate">
+        <span className="text-[10px] text-muted-foreground font-medium truncate">
           {owner}
         </span>
-        <span className="text-[9px] text-slate-600">({repos.length})</span>
+        <span className="text-[9px] text-muted-foreground/60">({repos.length})</span>
       </div>
 
       {/* Repos */}
@@ -288,7 +288,7 @@ function RepoItem({
                   e.stopPropagation();
                   onToggle();
                 }}
-                className="text-slate-500 hover:text-white shrink-0"
+                className="text-muted-foreground hover:text-foreground shrink-0"
               >
                 {isExpanded ? (
                   <ChevronDown className="w-3 h-3" />
@@ -304,30 +304,40 @@ function RepoItem({
             {repo.isPrivate ? (
               <Lock className="w-3 h-3 text-amber-400/70 shrink-0" />
             ) : (
-              <Globe className="w-3 h-3 text-slate-500 shrink-0" />
+              <Globe className="w-3 h-3 text-muted-foreground shrink-0" />
             )}
 
             {/* Repo name */}
-            <span className="text-xs text-slate-300 group-hover:text-white truncate flex-1">
+            <span className="text-xs text-muted-foreground group-hover:text-foreground truncate flex-1">
               {repo.name}
             </span>
 
-            {/* Stats badges */}
+            {/* Stats badges - show placeholders when zero to maintain alignment */}
             <div className="flex items-center gap-1 shrink-0">
-              {repo.stats.openPRCount > 0 && (
-                <span className="flex items-center gap-0.5 text-[9px] text-violet-400">
+              {repo.stats.openPRCount > 0 ? (
+                <span className="flex items-center gap-0.5 text-[9px] text-primary">
                   <GitPullRequest className="w-2.5 h-2.5" />
                   {repo.stats.openPRCount}
                 </span>
-              )}
-              {repo.stats.openIssueCount > 0 && (
-                <span className="flex items-center gap-0.5 text-[9px] text-emerald-400">
+              ) : repo.stats.openIssueCount > 0 ? (
+                <span className="flex items-center gap-0.5 text-[9px] invisible" aria-hidden="true">
+                  <GitPullRequest className="w-2.5 h-2.5" />
+                  0
+                </span>
+              ) : null}
+              {repo.stats.openIssueCount > 0 ? (
+                <span className="flex items-center gap-0.5 text-[9px] text-chart-2">
                   <CircleDot className="w-2.5 h-2.5" />
                   {repo.stats.openIssueCount}
                 </span>
-              )}
+              ) : repo.stats.openPRCount > 0 ? (
+                <span className="flex items-center gap-0.5 text-[9px] invisible" aria-hidden="true">
+                  <CircleDot className="w-2.5 h-2.5" />
+                  0
+                </span>
+              ) : null}
               {repo.hasChanges && (
-                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
               )}
             </div>
           </div>
@@ -365,7 +375,7 @@ function RepoItem({
           {repo.pullRequests.length > 5 && (
             <button
               onClick={() => onOpenGitHub(`${repo.url}/pulls`)}
-              className="text-[10px] text-violet-400 hover:text-violet-300 px-2 py-0.5"
+              className="text-[10px] text-primary hover:text-primary/80 px-2 py-0.5"
             >
               +{repo.pullRequests.length - 5} more
             </button>
@@ -416,15 +426,15 @@ function PRItem({
           )}
         >
           {/* PR indicator */}
-          <GitPullRequest className="w-3 h-3 text-violet-400 shrink-0" />
+          <GitPullRequest className="w-3 h-3 text-primary shrink-0" />
 
           {/* PR info */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-violet-400 font-medium shrink-0">
+              <span className="text-[10px] text-primary font-medium shrink-0">
                 #{pr.number}
               </span>
-              <span className="text-[10px] text-slate-400 truncate">
+              <span className="text-[10px] text-muted-foreground truncate">
                 {pr.title}
               </span>
             </div>
@@ -433,16 +443,16 @@ function PRItem({
           {/* Badges */}
           <div className="flex items-center gap-1 shrink-0">
             {pr.isNew && (
-              <span className="text-[8px] px-1 py-0.5 bg-violet-500/20 text-violet-400 rounded">
+              <span className="text-[8px] px-1 py-0.5 bg-primary/20 text-primary rounded">
                 new
               </span>
             )}
             {pr.isDraft && (
-              <span className="text-[8px] px-1 py-0.5 bg-slate-500/20 text-slate-400 rounded">
+              <span className="text-[8px] px-1 py-0.5 bg-muted text-muted-foreground rounded">
                 draft
               </span>
             )}
-            <span className="text-[9px] text-slate-600">
+            <span className="text-[9px] text-muted-foreground/60">
               {formatRelativeTime(pr.updatedAt)}
             </span>
           </div>
@@ -457,13 +467,13 @@ function PRItem({
               disabled={isCreating}
               className={cn(
                 "p-0.5 rounded opacity-0 group-hover:opacity-100",
-                "hover:bg-white/10 transition-all duration-150",
-                "text-slate-500 hover:text-violet-400"
+                "hover:bg-accent transition-all duration-150",
+                "text-muted-foreground hover:text-primary"
               )}
               title="Create worktree"
             >
               {isCreating ? (
-                <span className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin block" />
+                <span className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin block" />
               ) : (
                 <FolderGit className="w-3 h-3" />
               )}

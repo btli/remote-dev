@@ -35,20 +35,20 @@ export function UnsavedChangesDialog({
 }: UnsavedChangesDialogProps) {
   return (
     <AlertDialog open={open} onOpenChange={(open) => !open && onCancel()}>
-      <AlertDialogContent className="bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <AlertDialogContent className="bg-popover/95 backdrop-blur-xl border-border">
         <AlertDialogHeader>
-          <AlertDialogTitle className="text-white flex items-center gap-2">
+          <AlertDialogTitle className="text-foreground flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-amber-400" />
             {title}
           </AlertDialogTitle>
-          <AlertDialogDescription className="text-slate-400">
+          <AlertDialogDescription className="text-muted-foreground">
             {description}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel
             onClick={onCancel}
-            className="bg-transparent border-white/10 text-slate-300 hover:bg-white/5"
+            className="bg-transparent border-border text-muted-foreground hover:bg-muted/50"
           >
             Go Back
           </AlertDialogCancel>

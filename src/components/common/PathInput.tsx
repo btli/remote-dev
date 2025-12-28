@@ -63,7 +63,7 @@ export function PathInput({
           placeholder={placeholder || defaultPlaceholder}
           disabled={disabled}
           className={cn(
-            "bg-slate-800/50 border-white/10 focus:border-violet-500 flex-1",
+            "bg-card/50 border-border focus:border-primary flex-1",
             inputClassName
           )}
         />
@@ -73,7 +73,7 @@ export function PathInput({
           size="icon"
           onClick={() => setBrowserOpen(true)}
           disabled={disabled}
-          className="px-3 text-slate-400 hover:text-white hover:bg-slate-700/50 border border-white/10"
+          className="px-3 text-muted-foreground hover:text-foreground hover:bg-accent border border-border"
           title={buttonTitle}
         >
           <Icon className="w-4 h-4" />

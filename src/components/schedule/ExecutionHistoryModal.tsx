@@ -118,12 +118,12 @@ export function ExecutionHistoryModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-xl max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <DialogContent className="max-w-xl max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <History className="w-5 h-5 text-violet-400" />
-              <DialogTitle className="text-xl font-semibold text-white">
+              <History className="w-5 h-5 text-primary" />
+              <DialogTitle className="text-xl font-semibold text-foreground">
                 Execution History
               </DialogTitle>
             </div>
@@ -132,12 +132,12 @@ export function ExecutionHistoryModal({
               size="icon-sm"
               onClick={loadHistory}
               disabled={loading}
-              className="h-8 w-8 text-slate-400 hover:text-white"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
             >
               <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
             </Button>
           </div>
-          <DialogDescription className="text-slate-400 truncate">
+          <DialogDescription className="text-muted-foreground truncate">
             {scheduleName}
           </DialogDescription>
         </DialogHeader>
@@ -145,7 +145,7 @@ export function ExecutionHistoryModal({
         <ScrollArea className="max-h-[calc(85vh-140px)]">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
             </div>
           ) : error ? (
             <div className="text-center py-8 text-red-400">
@@ -160,7 +160,7 @@ export function ExecutionHistoryModal({
               </Button>
             </div>
           ) : executions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <History className="w-10 h-10 mb-3 opacity-50" />
               <p className="text-sm">No executions yet</p>
             </div>
@@ -184,7 +184,7 @@ export function ExecutionHistoryModal({
           )}
         </ScrollArea>
 
-        <div className="flex justify-end pt-4 border-t border-white/5">
+        <div className="flex justify-end pt-4 border-t border-border">
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
@@ -218,11 +218,11 @@ function ExecutionRow({
   getStatusBadge,
 }: ExecutionRowProps) {
   return (
-    <div className="rounded-lg bg-slate-800/50 overflow-hidden">
+    <div className="rounded-lg bg-card/50 overflow-hidden">
       {/* Main row */}
       <button
         onClick={onToggle}
-        className="w-full flex items-center gap-3 p-3 hover:bg-slate-800 transition-colors text-left"
+        className="w-full flex items-center gap-3 p-3 hover:bg-accent transition-colors text-left"
       >
         {/* Status icon */}
         {getStatusIcon(execution.status)}
@@ -230,12 +230,12 @@ function ExecutionRow({
         {/* Main info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-white">
+            <span className="text-sm text-foreground">
               {formatDateTime(execution.startedAt)}
             </span>
             {getStatusBadge(execution.status)}
           </div>
-          <div className="flex items-center gap-4 text-xs text-slate-500 mt-0.5">
+          <div className="flex items-center gap-4 text-xs text-muted-foreground mt-0.5">
             <span>Duration: {formatDuration(execution.durationMs)}</span>
             <span>
               Commands: {execution.successCount}/{execution.commandCount}
@@ -245,9 +245,9 @@ function ExecutionRow({
 
         {/* Expand/collapse */}
         {isExpanded ? (
-          <ChevronUp className="w-4 h-4 text-slate-400" />
+          <ChevronUp className="w-4 h-4 text-muted-foreground" />
         ) : (
-          <ChevronDown className="w-4 h-4 text-slate-400" />
+          <ChevronDown className="w-4 h-4 text-muted-foreground" />
         )}
       </button>
 
@@ -266,16 +266,16 @@ function ExecutionRow({
 
           {/* Output */}
           {execution.output && (
-            <div className="p-2 rounded bg-slate-900/50 border border-white/5">
-              <p className="text-xs text-slate-400 font-medium mb-1">Output</p>
-              <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-[200px] overflow-y-auto">
+            <div className="p-2 rounded bg-popover/50 border border-border">
+              <p className="text-xs text-muted-foreground font-medium mb-1">Output</p>
+              <pre className="text-xs text-muted-foreground font-mono whitespace-pre-wrap overflow-x-auto max-h-[200px] overflow-y-auto">
                 {execution.output}
               </pre>
             </div>
           )}
 
           {/* Timing details */}
-          <div className="flex flex-wrap gap-4 text-xs text-slate-500">
+          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
             <span>Started: {formatDateTime(execution.startedAt)}</span>
             <span>Completed: {formatDateTime(execution.completedAt)}</span>
           </div>

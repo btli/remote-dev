@@ -26,7 +26,7 @@ export function GitHubStatusIcon({ isConnected }: GitHubStatusIconProps) {
       onClick={handleClick}
       className={cn(
         "flex items-center transition-colors",
-        "hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500",
+        "hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
         !isConnected && "cursor-pointer"
       )}
       title={isConnected ? "GitHub Connected" : "Connect GitHub"}
@@ -34,7 +34,7 @@ export function GitHubStatusIcon({ isConnected }: GitHubStatusIconProps) {
       <Github
         className={cn(
           "w-4 h-4 transition-colors",
-          isConnected ? "text-green-400" : "text-slate-500 hover:text-slate-300"
+          isConnected ? "text-green-400" : "text-muted-foreground hover:text-foreground"
         )}
       />
     </button>

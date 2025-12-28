@@ -8,7 +8,7 @@ export function GitHubConnectButton() {
     <Button
       variant="ghost"
       size="sm"
-      className="text-slate-400 hover:text-white"
+      className="text-muted-foreground hover:text-foreground"
       onClick={() => {
         window.location.href = "/api/auth/github/link";
       }}

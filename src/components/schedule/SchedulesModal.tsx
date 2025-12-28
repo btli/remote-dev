@@ -201,12 +201,12 @@ export function SchedulesModal({ open, onClose, sessionId, sessionName }: Schedu
   return (
     <>
       <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-        <DialogContent className="max-w-2xl max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10">
+        <DialogContent className="max-w-2xl max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border">
           <DialogHeader>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-violet-400" />
-                <DialogTitle className="text-xl font-semibold text-white">
+                <Clock className="w-5 h-5 text-primary" />
+                <DialogTitle className="text-xl font-semibold text-foreground">
                   {sessionId ? "Session Schedules" : "Scheduled Commands"}
                 </DialogTitle>
               </div>
@@ -215,12 +215,12 @@ export function SchedulesModal({ open, onClose, sessionId, sessionName }: Schedu
                 size="icon-sm"
                 onClick={() => refreshSchedules()}
                 disabled={loading}
-                className="h-8 w-8 text-slate-400 hover:text-white"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
               >
                 <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
               </Button>
             </div>
-            <DialogDescription className="text-slate-400">
+            <DialogDescription className="text-muted-foreground">
               {sessionId && sessionName
                 ? `Scheduled commands for "${sessionName}"`
                 : "Manage scheduled commands across all sessions"}
@@ -230,7 +230,7 @@ export function SchedulesModal({ open, onClose, sessionId, sessionName }: Schedu
           <ScrollArea className="max-h-[calc(85vh-140px)]">
             {loading && schedules.length === 0 ? (
               <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
               </div>
             ) : error ? (
               <div className="text-center py-8 text-red-400">
@@ -245,7 +245,7 @@ export function SchedulesModal({ open, onClose, sessionId, sessionName }: Schedu
                 </Button>
               </div>
             ) : schedules.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-slate-500">
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground/70">
                 <Clock className="w-10 h-10 mb-3 opacity-50" />
                 <p className="text-sm">No scheduled commands</p>
                 <p className="text-xs mt-1">
@@ -275,7 +275,7 @@ export function SchedulesModal({ open, onClose, sessionId, sessionName }: Schedu
             )}
           </ScrollArea>
 
-          <div className="flex justify-end pt-4 border-t border-white/5">
+          <div className="flex justify-end pt-4 border-t border-border">
             <Button variant="ghost" onClick={onClose}>
               Close
             </Button>
@@ -350,7 +350,7 @@ function ScheduleRow({
     <div
       className={cn(
         "group flex items-start gap-3 p-4 rounded-lg",
-        "bg-slate-800/50 hover:bg-slate-800 transition-colors",
+        "bg-card/50 hover:bg-accent transition-colors",
         isDeleting && "opacity-50"
       )}
     >
@@ -369,16 +369,16 @@ function ScheduleRow({
         <div className="flex items-center gap-2">
           {/* Schedule type icon */}
           {isOneTime ? (
-            <Calendar className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+            <Calendar className="w-3.5 h-3.5 text-primary flex-shrink-0" />
           ) : (
-            <Repeat className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+            <Repeat className="w-3.5 h-3.5 text-primary flex-shrink-0" />
           )}
-          <h4 className="text-sm font-medium text-white truncate">{schedule.name}</h4>
+          <h4 className="text-sm font-medium text-foreground truncate">{schedule.name}</h4>
           {getStatusBadge(schedule)}
         </div>
 
         {/* Session info */}
-        <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
+        <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground/70">
           <Terminal className="w-3 h-3" />
           <span className="truncate">{schedule.session?.name || "Unknown session"}</span>
         </div>
@@ -386,25 +386,25 @@ function ScheduleRow({
         {/* Timing info */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs">
           {isOneTime ? (
-            <span className="text-slate-400">
-              <span className="text-slate-500">At:</span>{" "}
-              <span className="text-violet-400">{formatScheduledAt(schedule.scheduledAt)}</span>
+            <span className="text-muted-foreground">
+              <span className="text-muted-foreground/70">At:</span>{" "}
+              <span className="text-primary">{formatScheduledAt(schedule.scheduledAt)}</span>
             </span>
           ) : (
-            <span className="text-slate-400">
-              <span className="text-slate-500">Cron:</span>{" "}
-              <code className="bg-slate-700/50 px-1 py-0.5 rounded font-mono">
+            <span className="text-muted-foreground">
+              <span className="text-muted-foreground/70">Cron:</span>{" "}
+              <code className="bg-muted/50 px-1 py-0.5 rounded font-mono">
                 {schedule.cronExpression}
               </code>
             </span>
           )}
           {!isCompleted && (
-            <span className="text-slate-400">
-              <span className="text-slate-500">Next:</span> {formatNextRun(schedule.nextRunAt)}
+            <span className="text-muted-foreground">
+              <span className="text-muted-foreground/70">Next:</span> {formatNextRun(schedule.nextRunAt)}
             </span>
           )}
-          <span className="text-slate-400">
-            <span className="text-slate-500">Last:</span> {formatLastRun(schedule.lastRunAt)}
+          <span className="text-muted-foreground">
+            <span className="text-muted-foreground/70">Last:</span> {formatLastRun(schedule.lastRunAt)}
           </span>
         </div>
       </div>
@@ -416,7 +416,7 @@ function ScheduleRow({
           size="icon-sm"
           onClick={onExecuteNow}
           disabled={isExecuting || isDeleting}
-          className="h-7 w-7 text-slate-400 hover:text-green-400 hover:bg-green-400/10"
+          className="h-7 w-7 text-muted-foreground hover:text-green-400 hover:bg-green-400/10"
           title="Run now"
         >
           {isExecuting ? (
@@ -432,7 +432,7 @@ function ScheduleRow({
               variant="ghost"
               size="icon-sm"
               disabled={isDeleting}
-              className="h-7 w-7 text-slate-400 hover:text-white"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </Button>

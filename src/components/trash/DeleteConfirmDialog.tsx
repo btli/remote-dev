@@ -46,11 +46,11 @@ export function DeleteConfirmDialog({
 
         <div className="py-4">
           <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 space-y-2">
-            <p className="text-sm text-white">
+            <p className="text-sm text-foreground">
               Are you sure you want to permanently delete{" "}
               <span className="font-medium">&quot;{item.resourceName}&quot;</span>?
             </p>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-muted-foreground">
               The worktree directory and all its contents will be removed from disk.
               This cannot be recovered.
             </p>

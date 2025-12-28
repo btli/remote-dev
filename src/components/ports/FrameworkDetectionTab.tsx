@@ -154,22 +154,22 @@ export function FrameworkDetectionTab({
           value={selectedFolderId || ""}
           onValueChange={(v) => onSelectFolder(v || null)}
         >
-          <SelectTrigger className="flex-1 bg-slate-800 border-white/10 text-white text-xs">
+          <SelectTrigger className="flex-1 bg-card border-border text-foreground text-xs">
             <SelectValue placeholder="Select a folder to detect frameworks" />
           </SelectTrigger>
-          <SelectContent className="bg-slate-800 border-white/10">
+          <SelectContent className="bg-card border-border">
             {folderOptions.map((folder) => (
               <SelectItem
                 key={folder.id}
                 value={folder.id}
-                className="text-white text-xs"
+                className="text-foreground text-xs"
                 disabled={!folder.hasWorkingDir}
               >
                 <span className="flex items-center gap-2">
                   <FolderOpen className="w-3.5 h-3.5" />
                   {folder.name}
                   {!folder.hasWorkingDir && (
-                    <span className="text-slate-500">(no working dir)</span>
+                    <span className="text-muted-foreground">(no working dir)</span>
                   )}
                 </span>
               </SelectItem>
@@ -181,7 +181,7 @@ export function FrameworkDetectionTab({
           size="sm"
           onClick={handleDetect}
           disabled={!selectedFolderId || !selectedFolderWorkingDir || detecting}
-          className="bg-violet-600 hover:bg-violet-700 text-white"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           {detecting ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -211,17 +211,17 @@ export function FrameworkDetectionTab({
 
       {/* Runtime Detection */}
       {currentRuntime && currentRuntime.id !== "unknown" && (
-        <div className="p-3 rounded-lg bg-slate-800/30 border border-white/5">
-          <div className="text-xs text-slate-400 mb-1">Detected Runtime</div>
+        <div className="p-3 rounded-lg bg-card/30 border border-border">
+          <div className="text-xs text-muted-foreground mb-1">Detected Runtime</div>
           <div className="flex items-center gap-2">
             <Badge
               variant="outline"
-              className="bg-violet-500/10 text-violet-400 border-violet-500/30"
+              className="bg-primary/10 text-primary border-primary/30"
             >
               {currentRuntime.name}
             </Badge>
             {currentRuntime.lockfile && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-muted-foreground/50">
                 via {currentRuntime.lockfile}
               </span>
             )}
@@ -231,12 +231,12 @@ export function FrameworkDetectionTab({
 
       {/* Detected Frameworks */}
       {!selectedFolderId ? (
-        <div className="text-center py-12 text-slate-400">
+        <div className="text-center py-12 text-muted-foreground">
           <Cpu className="w-12 h-12 mx-auto mb-3 opacity-50" />
           <p className="text-xs">Select a folder to detect frameworks</p>
         </div>
       ) : !selectedFolderWorkingDir ? (
-        <div className="text-center py-12 text-slate-400">
+        <div className="text-center py-12 text-muted-foreground">
           <FolderOpen className="w-12 h-12 mx-auto mb-3 opacity-50" />
           <p className="text-xs">Configure a working directory first</p>
           <p className="text-xs mt-1">
@@ -244,12 +244,12 @@ export function FrameworkDetectionTab({
           </p>
         </div>
       ) : detecting ? (
-        <div className="text-center py-12 text-slate-400">
-          <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin text-violet-400" />
+        <div className="text-center py-12 text-muted-foreground">
+          <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin text-primary" />
           <p className="text-xs">Detecting frameworks...</p>
         </div>
       ) : currentFrameworks.length === 0 ? (
-        <div className="text-center py-12 text-slate-400">
+        <div className="text-center py-12 text-muted-foreground">
           <Cpu className="w-12 h-12 mx-auto mb-3 opacity-50" />
           <p className="text-xs">No frameworks detected</p>
           <p className="text-xs mt-1">
@@ -258,7 +258,7 @@ export function FrameworkDetectionTab({
         </div>
       ) : (
         <div className="space-y-3">
-          <div className="text-xs text-slate-400">Detected Frameworks</div>
+          <div className="text-xs text-muted-foreground">Detected Frameworks</div>
           {currentFrameworks.map((framework) => (
             <FrameworkCard
               key={framework.id}
@@ -294,15 +294,15 @@ function FrameworkCard({
   const confidenceColors = {
     high: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
     medium: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-    low: "bg-slate-500/10 text-slate-400 border-slate-500/30",
+    low: "bg-muted text-muted-foreground border-border",
   };
 
   return (
-    <div className="p-4 rounded-lg bg-slate-800/30 border border-white/5">
+    <div className="p-4 rounded-lg bg-card/30 border border-border">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <span className="font-medium text-white text-xs">{framework.name}</span>
+          <span className="font-medium text-foreground text-xs">{framework.name}</span>
           <Badge
             variant="outline"
             className={`text-[10px] ${confidenceColors[framework.confidence]}`}
@@ -311,7 +311,7 @@ function FrameworkCard({
           </Badge>
         </div>
         {framework.configPath && (
-          <span className="text-[10px] text-slate-500 font-mono">
+          <span className="text-[10px] text-muted-foreground/50 font-mono">
             {framework.configPath}
           </span>
         )}
@@ -319,7 +319,7 @@ function FrameworkCard({
 
       {/* Suggested Ports */}
       <div className="space-y-2">
-        <div className="text-[10px] text-slate-400 uppercase tracking-wide">
+        <div className="text-[10px] text-muted-foreground uppercase tracking-wide">
           Suggested Ports
         </div>
         {framework.suggestedPorts.map((port) => {
@@ -330,19 +330,19 @@ function FrameworkCard({
           return (
             <div
               key={port.variableName}
-              className="flex items-center justify-between p-2 rounded bg-slate-800/50"
+              className="flex items-center justify-between p-2 rounded bg-muted/50"
             >
               <div className="flex items-center gap-3">
                 <Badge
                   variant="outline"
-                  className="font-mono text-[10px] bg-slate-800/50 text-slate-300 border-slate-700"
+                  className="font-mono text-[10px] bg-muted/50 text-muted-foreground border-border"
                 >
                   {port.variableName}
                 </Badge>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-muted-foreground">
                   {port.defaultPort}
                 </span>
-                <span className="text-[10px] text-slate-500">
+                <span className="text-[10px] text-muted-foreground/50">
                   {port.description}
                 </span>
               </div>
@@ -361,7 +361,7 @@ function FrameworkCard({
                   variant="ghost"
                   onClick={() => onAddPort(port)}
                   disabled={isAdding}
-                  className="h-6 text-xs text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
+                  className="h-6 text-xs text-primary hover:text-primary hover:bg-primary/10"
                 >
                   {isAdding ? (
                     <Loader2 className="w-3 h-3 animate-spin" />

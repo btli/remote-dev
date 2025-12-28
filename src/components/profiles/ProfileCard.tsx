@@ -27,7 +27,7 @@ const PROVIDER_COLORS: Record<AgentProvider, string> = {
   codex: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
   gemini: "bg-blue-500/20 text-blue-300 border-blue-500/30",
   opencode: "bg-orange-500/20 text-orange-300 border-orange-500/30",
-  all: "bg-slate-500/20 text-slate-300 border-slate-500/30",
+  all: "bg-muted/50 text-muted-foreground border-border",
 };
 
 export function ProfileCard({
@@ -46,16 +46,16 @@ export function ProfileCard({
           onClick={onSelect}
           className={cn(
             "w-full text-left p-3 rounded-lg border transition-all",
-            "hover:bg-slate-800/50",
+            "hover:bg-accent",
             isSelected
-              ? "bg-violet-500/10 border-violet-500/30"
-              : "bg-slate-800/30 border-white/5"
+              ? "bg-primary/10 border-primary/30"
+              : "bg-card/30 border-border"
           )}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-medium text-white truncate">
+                <span className="font-medium text-foreground truncate">
                   {profile.name}
                 </span>
                 {profile.isDefault && (
@@ -69,7 +69,7 @@ export function ProfileCard({
                 )}
               </div>
               {profile.description && (
-                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">
                   {profile.description}
                 </p>
               )}
@@ -83,7 +83,7 @@ export function ProfileCard({
           </div>
 
           {/* Stats row */}
-          <div className="flex items-center gap-3 mt-2 text-[10px] text-slate-500">
+          <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground/70">
             <span className="flex items-center gap-1">
               <FolderSymlink className="w-3 h-3" />
               {linkedFolderCount} folder{linkedFolderCount !== 1 ? "s" : ""}
@@ -92,10 +92,10 @@ export function ProfileCard({
         </button>
       </ContextMenuTrigger>
 
-      <ContextMenuContent className="bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <ContextMenuContent className="bg-popover/95 backdrop-blur-xl border-border">
         <ContextMenuItem
           onClick={onEdit}
-          className="text-slate-300 focus:bg-violet-500/20 focus:text-white"
+          className="text-muted-foreground focus:bg-primary/20 focus:text-foreground"
         >
           <Edit2 className="w-3.5 h-3.5 mr-2" />
           Edit Profile
@@ -103,7 +103,7 @@ export function ProfileCard({
         {!profile.isDefault && (
           <ContextMenuItem
             onClick={onSetDefault}
-            className="text-slate-300 focus:bg-violet-500/20 focus:text-white"
+            className="text-muted-foreground focus:bg-primary/20 focus:text-foreground"
           >
             <Star className="w-3.5 h-3.5 mr-2" />
             Set as Default

@@ -178,7 +178,7 @@ export function EnvVarEditor({
             <span className="text-sm font-medium">Port Conflicts Detected</span>
           </div>
           {portConflicts.map((conflict) => (
-            <div key={`${conflict.variableName}-${conflict.port}`} className="text-sm text-slate-300 pl-6">
+            <div key={`${conflict.variableName}-${conflict.port}`} className="text-sm text-muted-foreground pl-6">
               <span className="font-mono">{conflict.variableName}={conflict.port}</span>
               {" conflicts with "}
               <span className="text-amber-300">{conflict.conflictingFolder.name}</span>
@@ -213,9 +213,9 @@ export function EnvVarEditor({
                 key={row.key}
                 className={cn(
                   "flex items-center gap-2 p-2 rounded-md",
-                  row.isDisabled && "opacity-50 bg-slate-800/30",
-                  row.isInherited && "bg-slate-800/50",
-                  !row.isInherited && !row.isDisabled && "bg-slate-800",
+                  row.isDisabled && "opacity-50 bg-muted/30",
+                  row.isInherited && "bg-muted/50",
+                  !row.isInherited && !row.isDisabled && "bg-card",
                   conflict && "ring-1 ring-amber-500/50"
                 )}
               >
@@ -224,17 +224,17 @@ export function EnvVarEditor({
                   <div className="flex items-center gap-2">
                     <span className={cn(
                       "font-mono text-sm",
-                      row.isDisabled ? "text-slate-500 line-through" : "text-violet-300"
+                      row.isDisabled ? "text-muted-foreground line-through" : "text-primary"
                     )}>
                       {row.key}
                     </span>
                     {row.isInherited && (
-                      <span className="text-xs text-slate-500 truncate">
+                      <span className="text-xs text-muted-foreground truncate">
                         from {row.inheritedSource}
                       </span>
                     )}
                     {row.isOverridden && !row.isDisabled && (
-                      <span className="text-xs text-violet-400">overrides</span>
+                      <span className="text-xs text-primary">overrides</span>
                     )}
                     {row.isDisabled && (
                       <span className="text-xs text-red-400">disabled</span>
@@ -245,18 +245,18 @@ export function EnvVarEditor({
                 {/* Value */}
                 <div className="flex-1 min-w-0">
                   {row.isInherited ? (
-                    <span className="font-mono text-sm text-slate-400 truncate block">
+                    <span className="font-mono text-sm text-muted-foreground truncate block">
                       {row.value}
                     </span>
                   ) : row.isDisabled ? (
-                    <span className="font-mono text-sm text-slate-500 italic">
+                    <span className="font-mono text-sm text-muted-foreground italic">
                       was: {row.inheritedValue}
                     </span>
                   ) : (
                     <Input
                       value={row.value}
                       onChange={(e) => handleUpdate(row.key, e.target.value)}
-                      className="h-7 bg-slate-700 border-white/10 text-white font-mono text-sm"
+                      className="h-7 bg-muted border-border text-foreground font-mono text-sm"
                     />
                   )}
                 </div>
@@ -270,7 +270,7 @@ export function EnvVarEditor({
                         variant="ghost"
                         size="sm"
                         onClick={() => handleUpdate(row.key, row.value)}
-                        className="h-7 w-7 p-0 text-slate-400 hover:text-white"
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                         title="Override value"
                       >
                         <Plus className="w-4 h-4" />
@@ -280,7 +280,7 @@ export function EnvVarEditor({
                         variant="ghost"
                         size="sm"
                         onClick={() => handleDisable(row.key)}
-                        className="h-7 w-7 p-0 text-slate-400 hover:text-red-400"
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
                         title="Disable variable"
                       >
                         <Ban className="w-4 h-4" />
@@ -293,7 +293,7 @@ export function EnvVarEditor({
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDelete(row.key)}
-                      className="h-7 w-7 p-0 text-slate-400 hover:text-amber-400"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-amber-400"
                       title="Revert to inherited"
                     >
                       <RotateCcw className="w-4 h-4" />
@@ -305,7 +305,7 @@ export function EnvVarEditor({
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDelete(row.key)}
-                      className="h-7 w-7 p-0 text-slate-400 hover:text-red-400"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
                       title="Delete variable"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -317,7 +317,7 @@ export function EnvVarEditor({
                       variant="ghost"
                       size="sm"
                       onClick={() => handleEnable(row.key)}
-                      className="h-7 w-7 p-0 text-slate-400 hover:text-green-400"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-green-400"
                       title="Re-enable variable"
                     >
                       <RotateCcw className="w-4 h-4" />
@@ -331,14 +331,14 @@ export function EnvVarEditor({
       )}
 
       {/* Add New Variable */}
-      <div className="flex items-start gap-2 pt-2 border-t border-white/5">
+      <div className="flex items-start gap-2 pt-2 border-t border-border/50">
         <div className="flex-1 space-y-1">
           <Input
             value={newKey}
             onChange={(e) => setNewKey(e.target.value.toUpperCase())}
             placeholder="VARIABLE_NAME"
             className={cn(
-              "h-8 bg-slate-800 border-white/10 text-white font-mono text-sm uppercase",
+              "h-8 bg-card border-border text-foreground font-mono text-sm uppercase",
               keyError && "border-red-500/50"
             )}
           />
@@ -352,7 +352,7 @@ export function EnvVarEditor({
             onChange={(e) => setNewValue(e.target.value)}
             placeholder="value"
             className={cn(
-              "h-8 bg-slate-800 border-white/10 text-white font-mono text-sm",
+              "h-8 bg-card border-border text-foreground font-mono text-sm",
               valueError && "border-red-500/50"
             )}
           />
@@ -366,7 +366,7 @@ export function EnvVarEditor({
           size="sm"
           onClick={handleAdd}
           disabled={!newKey || !!keyError}
-          className="h-8 px-3 text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
+          className="h-8 px-3 text-primary hover:text-primary/80 hover:bg-primary/10"
         >
           <Plus className="w-4 h-4 mr-1" />
           Add
@@ -375,7 +375,7 @@ export function EnvVarEditor({
 
       {/* Empty state */}
       {varList.length === 0 && !newKey && (
-        <p className="text-sm text-slate-500 text-center py-4">
+        <p className="text-sm text-muted-foreground text-center py-4">
           No environment variables configured. Add variables to customize the terminal environment.
         </p>
       )}

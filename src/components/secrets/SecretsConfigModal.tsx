@@ -205,13 +205,13 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[600px] max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col">
+      <DialogContent className="sm:max-w-[600px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
         <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2 text-white">
-            <KeyRound className="w-5 h-5 text-violet-400" />
+          <DialogTitle className="flex items-center gap-2 text-foreground">
+            <KeyRound className="w-5 h-5 text-primary" />
             Secrets Management
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Configure secrets providers to inject environment variables into your terminal sessions.
           </DialogDescription>
         </DialogHeader>
@@ -221,12 +221,12 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
           onValueChange={(v) => setActiveTab(v as "overview" | "configure")}
           className="flex-1 min-h-0 flex flex-col"
         >
-          <TabsList className="w-full bg-slate-800/50 flex-shrink-0">
+          <TabsList className="w-full bg-muted/50 flex-shrink-0">
             <TabsTrigger value="overview" className="flex-1 gap-1.5 text-xs">
               <FolderClosed className="w-3.5 h-3.5" />
               Overview
               {configuredFolders.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-violet-500/20 text-violet-300">
+                <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-primary/20 text-primary/80">
                   {configuredFolders.length}
                 </span>
               )}
@@ -242,12 +242,12 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
             <TabsContent value="overview" className="mt-0 space-y-4">
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
                 </div>
               ) : configuredFolders.length === 0 ? (
                 <div className="text-center py-8">
-                  <Shield className="w-12 h-12 mx-auto text-slate-600 mb-3" />
-                  <p className="text-slate-400 mb-4">
+                  <Shield className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
+                  <p className="text-muted-foreground mb-4">
                     No secrets providers configured yet.
                   </p>
                   {availableFolders.length > 0 ? (
@@ -258,13 +258,13 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                         );
                         setActiveTab("configure");
                       }}
-                      className="bg-violet-600 hover:bg-violet-700"
+                      className="bg-primary hover:bg-primary/90"
                     >
                       <Plus className="w-4 h-4 mr-2" />
                       Add Provider
                     </Button>
                   ) : (
-                    <p className="text-sm text-slate-500">
+                    <p className="text-sm text-muted-foreground/70">
                       Create a folder first to configure secrets.
                     </p>
                   )}
@@ -282,24 +282,24 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                         key={folder.id}
                         className={cn(
                           "p-3 rounded-lg border transition-colors cursor-pointer",
-                          "hover:border-violet-500/50 hover:bg-slate-800/50",
+                          "hover:border-primary/50 hover:bg-muted/50",
                           folderConfig.enabled
-                            ? "border-white/10 bg-slate-800/30"
-                            : "border-white/5 bg-slate-800/20 opacity-60"
+                            ? "border-border bg-card/30"
+                            : "border-border/50 bg-card/20 opacity-60"
                         )}
                         onClick={() => handleConfigureFolder(folder.id)}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <FolderClosed className="w-4 h-4 text-violet-400" />
+                            <FolderClosed className="w-4 h-4 text-primary" />
                             <div>
-                              <p className="text-sm font-medium text-white">
+                              <p className="text-sm font-medium text-foreground">
                                 {folder.name}
                               </p>
-                              <p className="text-xs text-slate-400">
+                              <p className="text-xs text-muted-foreground">
                                 {info?.name || folderConfig.provider}
                                 {folderConfig.providerConfig.env && (
-                                  <span className="ml-1 text-slate-500">
+                                  <span className="ml-1 text-muted-foreground/70">
                                     ({folderConfig.providerConfig.env})
                                   </span>
                                 )}
@@ -313,12 +313,12 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                                 Active
                               </span>
                             ) : (
-                              <span className="text-xs text-slate-500">Disabled</span>
+                              <span className="text-xs text-muted-foreground/70">Disabled</span>
                             )}
                           </div>
                         </div>
                         {folderConfig.lastFetchedAt && (
-                          <p className="text-xs text-slate-500 mt-2">
+                          <p className="text-xs text-muted-foreground/70 mt-2">
                             Last fetched:{" "}
                             {new Date(folderConfig.lastFetchedAt).toLocaleString()}
                           </p>
@@ -331,7 +331,7 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                   {availableFolders.length > configuredFolders.length && (
                     <Button
                       variant="ghost"
-                      className="w-full border border-dashed border-white/10 text-slate-400 hover:text-white hover:border-violet-500/50"
+                      className="w-full border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
                       onClick={() => {
                         // Find first unconfigured folder
                         const unconfigured = availableFolders.find(
@@ -355,23 +355,23 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
             <TabsContent value="configure" className="mt-0 space-y-4">
               {/* Folder Selection */}
               <div className="space-y-2">
-                <Label className="text-slate-300">Folder</Label>
+                <Label className="text-muted-foreground">Folder</Label>
                 <Select
                   value={selectedFolderId || ""}
                   onValueChange={setSelectedFolderId}
                 >
-                  <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                  <SelectTrigger className="bg-card border-border text-foreground">
                     <SelectValue placeholder="Select a folder..." />
                   </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-white/10">
+                  <SelectContent className="bg-card border-border">
                     {availableFolders.map((folder) => (
                       <SelectItem
                         key={folder.id}
                         value={folder.id}
-                        className="text-white focus:bg-violet-500/20"
+                        className="text-foreground focus:bg-primary/20"
                       >
                         <div className="flex items-center gap-2">
-                          <FolderClosed className="w-3.5 h-3.5 text-violet-400" />
+                          <FolderClosed className="w-3.5 h-3.5 text-primary" />
                           {folder.name}
                           {folderConfigs.has(folder.id) && (
                             <span className="text-xs text-green-400">(configured)</span>
@@ -387,7 +387,7 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                 <>
                   {/* Provider Selection */}
                   <div className="space-y-2">
-                    <Label className="text-slate-300">Provider</Label>
+                    <Label className="text-muted-foreground">Provider</Label>
                     <Select
                       value={provider}
                       onValueChange={(v) => {
@@ -396,20 +396,20 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                         setTestResult(null);
                       }}
                     >
-                      <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                      <SelectTrigger className="bg-card border-border text-foreground">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="bg-slate-800 border-white/10">
+                      <SelectContent className="bg-card border-border">
                         {SECRETS_PROVIDERS.map((p) => (
                           <SelectItem
                             key={p.type}
                             value={p.type}
-                            className="text-white focus:bg-violet-500/20"
+                            className="text-foreground focus:bg-primary/20"
                             disabled={p.type !== "phase"}
                           >
                             <div className="flex flex-col">
                               <span>{p.name}</span>
-                              <span className="text-xs text-slate-400">
+                              <span className="text-xs text-muted-foreground">
                                 {p.description}
                               </span>
                               {p.type !== "phase" && (
@@ -427,7 +427,7 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                   {/* Provider-specific config fields */}
                   {providerInfo?.configFields.map((field) => (
                     <div key={field.key} className="space-y-2">
-                      <Label className="text-slate-300">
+                      <Label className="text-muted-foreground">
                         {field.label}
                         {field.required && (
                           <span className="text-red-400 ml-1">*</span>
@@ -440,15 +440,15 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                             setConfig((prev) => ({ ...prev, [field.key]: v }))
                           }
                         >
-                          <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                          <SelectTrigger className="bg-card border-border text-foreground">
                             <SelectValue placeholder={`Select ${field.label}...`} />
                           </SelectTrigger>
-                          <SelectContent className="bg-slate-800 border-white/10">
+                          <SelectContent className="bg-card border-border">
                             {field.options?.map((option) => (
                               <SelectItem
                                 key={option.value}
                                 value={option.value}
-                                className="text-white focus:bg-violet-500/20"
+                                className="text-foreground focus:bg-primary/20"
                               >
                                 {option.label}
                               </SelectItem>
@@ -466,11 +466,11 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                             }))
                           }
                           placeholder={field.placeholder}
-                          className="bg-slate-800 border-white/10 text-white"
+                          className="bg-card border-border text-foreground"
                         />
                       )}
                       {field.helpText && (
-                        <p className="text-xs text-slate-500">{field.helpText}</p>
+                        <p className="text-xs text-muted-foreground/70">{field.helpText}</p>
                       )}
                     </div>
                   ))}
@@ -481,7 +481,7 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                       variant="outline"
                       onClick={handleTest}
                       disabled={testing || !config.serviceToken}
-                      className="border-white/10 text-slate-300 hover:text-white"
+                      className="border-border text-muted-foreground hover:text-foreground"
                     >
                       {testing ? (
                         <>
@@ -501,7 +501,7 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                             <span className="text-sm text-green-400">
                               Valid
                               {testResult.secretCount !== undefined && (
-                                <span className="text-slate-400 ml-1">
+                                <span className="text-muted-foreground ml-1">
                                   ({testResult.secretCount} secrets)
                                 </span>
                               )}
@@ -520,10 +520,10 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
                   </div>
 
                   {/* Enable/Disable */}
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-slate-800/50 border border-white/5">
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
                     <div>
-                      <Label className="text-slate-300">Enable secrets injection</Label>
-                      <p className="text-xs text-slate-500">
+                      <Label className="text-muted-foreground">Enable secrets injection</Label>
+                      <p className="text-xs text-muted-foreground/70">
                         When enabled, secrets are fetched on session creation
                       </p>
                     </div>
@@ -546,7 +546,7 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
         </Tabs>
 
         {/* Footer */}
-        <div className="flex justify-between pt-4 border-t border-white/5 flex-shrink-0">
+        <div className="flex justify-between pt-4 border-t border-border flex-shrink-0">
           {activeTab === "configure" && selectedFolderId && folderConfigs.has(selectedFolderId) ? (
             <Button
               variant="ghost"
@@ -562,14 +562,14 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
           )}
 
           <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} className="text-slate-400">
+            <Button variant="ghost" onClick={onClose} className="text-muted-foreground">
               {activeTab === "configure" ? "Cancel" : "Close"}
             </Button>
             {activeTab === "configure" && selectedFolderId && (
               <Button
                 onClick={handleSave}
                 disabled={saving || !config.serviceToken}
-                className="bg-violet-600 hover:bg-violet-700 text-white"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground"
               >
                 {saving ? (
                   <>

@@ -156,20 +156,20 @@ export function ProfilesModal({
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-[700px] max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col">
+        <DialogContent className="sm:max-w-[700px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-white">
-              <Fingerprint className="w-5 h-5 text-violet-400" />
+            <DialogTitle className="flex items-center gap-2 text-foreground">
+              <Fingerprint className="w-5 h-5 text-primary" />
               Agent Profiles
             </DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogDescription className="text-muted-foreground">
               Manage isolated configurations for AI coding agents
             </DialogDescription>
           </DialogHeader>
 
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
             </div>
           ) : (
             <Tabs
@@ -177,10 +177,10 @@ export function ProfilesModal({
               onValueChange={(v) => setActiveTab(v as TabValue)}
               className="flex-1 flex flex-col min-h-0"
             >
-              <TabsList className="w-full bg-slate-800/50 flex-shrink-0">
+              <TabsList className="w-full bg-muted/50 flex-shrink-0">
                 <TabsTrigger
                   value="overview"
-                  className="data-[state=active]:bg-violet-500/20"
+                  className="data-[state=active]:bg-primary/20"
                 >
                   <User className="w-4 h-4 mr-2" />
                   Profiles
@@ -188,7 +188,7 @@ export function ProfilesModal({
                 <TabsTrigger
                   value="general"
                   disabled={!selectedProfileId && !isCreating}
-                  className="data-[state=active]:bg-violet-500/20"
+                  className="data-[state=active]:bg-primary/20"
                 >
                   <Fingerprint className="w-4 h-4 mr-2" />
                   General
@@ -196,7 +196,7 @@ export function ProfilesModal({
                 <TabsTrigger
                   value="git"
                   disabled={!selectedProfileId}
-                  className="data-[state=active]:bg-violet-500/20"
+                  className="data-[state=active]:bg-primary/20"
                 >
                   <GitBranch className="w-4 h-4 mr-2" />
                   Git
@@ -204,7 +204,7 @@ export function ProfilesModal({
                 <TabsTrigger
                   value="secrets"
                   disabled={!selectedProfileId}
-                  className="data-[state=active]:bg-violet-500/20"
+                  className="data-[state=active]:bg-primary/20"
                 >
                   <KeyRound className="w-4 h-4 mr-2" />
                   Secrets
@@ -212,7 +212,7 @@ export function ProfilesModal({
                 <TabsTrigger
                   value="mcp"
                   disabled={!selectedProfileId}
-                  className="data-[state=active]:bg-violet-500/20"
+                  className="data-[state=active]:bg-primary/20"
                 >
                   <Server className="w-4 h-4 mr-2" />
                   MCP
@@ -224,13 +224,13 @@ export function ProfilesModal({
                 <TabsContent value="overview" className="h-full m-0">
                   <div className="flex flex-col h-full">
                     <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-muted-foreground">
                         {profiles.length} profile{profiles.length !== 1 ? "s" : ""}
                       </p>
                       <Button
                         size="sm"
                         onClick={handleCreateNew}
-                        className="bg-violet-600 hover:bg-violet-700 text-white"
+                        className="bg-primary hover:bg-primary/90 text-primary-foreground"
                       >
                         <Plus className="w-4 h-4 mr-1" />
                         New Profile
@@ -239,7 +239,7 @@ export function ProfilesModal({
 
                     <ScrollArea className="flex-1">
                       {profiles.length === 0 ? (
-                        <div className="text-center py-8 text-slate-400">
+                        <div className="text-center py-8 text-muted-foreground">
                           <Fingerprint className="w-12 h-12 mx-auto mb-3 opacity-50" />
                           <p className="text-xs">No profiles yet</p>
                           <p className="text-xs mt-1">
@@ -312,18 +312,18 @@ export function ProfilesModal({
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
-        <AlertDialogContent className="bg-slate-900/95 backdrop-blur-xl border-white/10">
+        <AlertDialogContent className="bg-popover/95 backdrop-blur-xl border-border">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-white">Delete Profile</AlertDialogTitle>
-            <AlertDialogDescription className="text-slate-400">
-              Are you sure you want to delete <span className="text-white font-medium">{deleteConfirm?.name}</span>?
+            <AlertDialogTitle className="text-foreground">Delete Profile</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              Are you sure you want to delete <span className="text-foreground font-medium">{deleteConfirm?.name}</span>?
               This will unlink all folders using this profile.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel
               disabled={deleting}
-              className="bg-transparent border-white/10 text-slate-300 hover:bg-white/5"
+              className="bg-transparent border-border text-muted-foreground hover:bg-accent"
             >
               Cancel
             </AlertDialogCancel>

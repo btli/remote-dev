@@ -98,22 +98,22 @@ export function SessionEndedOverlay({
 
   return (
     <>
-      <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 backdrop-blur-sm z-20">
-        <div className="max-w-md w-full mx-4 p-6 rounded-xl bg-slate-900/90 border border-white/10 shadow-2xl">
+      <div className="absolute inset-0 flex items-center justify-center bg-background/90 backdrop-blur-sm z-20">
+        <div className="max-w-md w-full mx-4 p-6 rounded-xl bg-popover/90 border border-border shadow-2xl">
           <div className="text-center mb-6">
             <div className="mx-auto w-12 h-12 rounded-full bg-yellow-500/20 flex items-center justify-center mb-4">
               <AlertTriangle className="w-6 h-6 text-yellow-500" />
             </div>
-            <h3 className="text-lg font-semibold text-white mb-2">
+            <h3 className="text-lg font-semibold text-foreground mb-2">
               Session Ended
             </h3>
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-muted-foreground">
               {exitCode === 0
                 ? "The shell exited normally."
                 : `The shell exited with code ${exitCode}.`}
             </p>
             {session.projectPath && (
-              <p className="text-xs text-slate-500 mt-2 truncate">
+              <p className="text-xs text-muted-foreground mt-2 truncate">
                 {session.projectPath}
               </p>
             )}
@@ -123,7 +123,7 @@ export function SessionEndedOverlay({
             <Button
               onClick={handleRestart}
               disabled={isRestarting || isDeleting}
-              className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+              className="bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-700 text-primary-foreground"
             >
               {isRestarting ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -151,12 +151,12 @@ export function SessionEndedOverlay({
 
       {/* Worktree deletion confirmation dialog */}
       <Dialog open={showWorktreeConfirm} onOpenChange={setShowWorktreeConfirm}>
-        <DialogContent className="bg-slate-900/95 backdrop-blur-xl border-white/10">
+        <DialogContent className="bg-popover/95 backdrop-blur-xl border-border">
           <DialogHeader>
-            <DialogTitle className="text-white">Delete Worktree Session</DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogTitle className="text-foreground">Delete Worktree Session</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
               This session is associated with a git worktree for branch{" "}
-              <span className="font-mono text-violet-400">{session.worktreeBranch}</span>.
+              <span className="font-mono text-primary">{session.worktreeBranch}</span>.
             </DialogDescription>
           </DialogHeader>
 
@@ -172,7 +172,7 @@ export function SessionEndedOverlay({
             </div>
           )}
 
-          <div className="text-sm text-slate-400">
+          <div className="text-sm text-muted-foreground">
             <p>What would you like to do?</p>
           </div>
 
@@ -180,10 +180,10 @@ export function SessionEndedOverlay({
             <Button
               onClick={() => handleWorktreeDelete(false)}
               variant="outline"
-              className="w-full border-white/10 text-slate-300 hover:bg-white/5"
+              className="w-full border-border text-muted-foreground hover:bg-accent"
             >
               Close session only
-              <span className="text-xs text-slate-500 ml-2">(keep worktree)</span>
+              <span className="text-xs text-muted-foreground ml-2">(keep worktree)</span>
             </Button>
             <Button
               onClick={() => handleWorktreeDelete(true)}
@@ -195,7 +195,7 @@ export function SessionEndedOverlay({
             <Button
               onClick={() => setShowWorktreeConfirm(false)}
               variant="ghost"
-              className="w-full text-slate-400 hover:text-slate-300"
+              className="w-full text-muted-foreground hover:text-foreground"
             >
               Cancel
             </Button>
