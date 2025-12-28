@@ -6,6 +6,7 @@ import type { CIStatusState, PRState } from "@/types/github-stats";
 import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
 import type { AgentProviderType } from "@/types/session";
+import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -1203,5 +1204,84 @@ export const sessionMemory = sqliteTable(
     index("session_memory_user_idx").on(table.userId),
     index("session_memory_folder_idx").on(table.folderId),
     index("session_memory_type_idx").on(table.userId, table.type),
+  ]
+);
+
+// =============================================================================
+// Appearance System Tables
+// =============================================================================
+
+/**
+ * Color scheme definitions for site-wide theming.
+ * Stores both built-in and custom color schemes.
+ */
+export const colorSchemes = sqliteTable(
+  "color_scheme",
+  {
+    id: text("id").$type<ColorSchemeId>().primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    category: text("category").$type<ColorSchemeCategory>().notNull(),
+    // JSON-encoded color definitions: { light: ModePalette, dark: ModePalette }
+    colorDefinitions: text("color_definitions").notNull(),
+    // Optional terminal palette override (JSON)
+    terminalPalette: text("terminal_palette"),
+    isBuiltIn: integer("is_built_in", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("color_scheme_category_idx").on(table.category),
+    index("color_scheme_sort_idx").on(table.sortOrder),
+  ]
+);
+
+/**
+ * User appearance settings for site-wide theming.
+ * Stores mode preference, color scheme selections, and terminal appearance options.
+ */
+export const appearanceSettings = sqliteTable(
+  "appearance_settings",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Mode preference: light, dark, or system (follows OS)
+    appearanceMode: text("appearance_mode")
+      .$type<AppearanceMode>()
+      .notNull()
+      .default("system"),
+    // Color scheme for light mode
+    lightColorScheme: text("light_color_scheme")
+      .$type<ColorSchemeId>()
+      .notNull()
+      .default("ocean"),
+    // Color scheme for dark mode
+    darkColorScheme: text("dark_color_scheme")
+      .$type<ColorSchemeId>()
+      .notNull()
+      .default("midnight"),
+    // Terminal appearance settings
+    terminalOpacity: integer("terminal_opacity").notNull().default(100), // 0-100
+    terminalBlur: integer("terminal_blur").notNull().default(0), // px
+    terminalCursorStyle: text("terminal_cursor_style")
+      .$type<"block" | "underline" | "bar">()
+      .notNull()
+      .default("block"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("appearance_settings_user_idx").on(table.userId),
   ]
 );

@@ -6,9 +6,10 @@ import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
 import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { ConnectionStatus } from "@/types/terminal";
-import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
+import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
+import { AuthErrorOverlay } from "./AuthErrorOverlay";
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/jpeg": ".jpg",
@@ -27,7 +28,6 @@ interface TerminalProps {
   sessionName?: string;
   projectPath?: string | null;
   wsUrl?: string;
-  theme?: string;
   fontSize?: number;
   fontFamily?: string;
   notificationsEnabled?: boolean;
@@ -48,7 +48,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   sessionName = "Terminal",
   projectPath,
   wsUrl = "ws://localhost:3001",
-  theme = "tokyo-night",
   fontSize = 14,
   fontFamily = "'JetBrainsMono Nerd Font Mono', monospace",
   notificationsEnabled = true,
@@ -61,6 +60,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onOutput,
   onDimensionsChange,
 }, ref) {
+  // Get terminal theme from appearance context (derives from site color scheme)
+  const terminalTheme = useTerminalTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
@@ -71,6 +72,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const [isDragging, setIsDragging] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
   const isUnmountingRef = useRef(false);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -97,9 +99,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // 1. If terminal hasn't initialized yet, it will use the latest values
   // 2. If terminal already exists, the update effect applies changes directly
   // This prevents race conditions where preferences load after terminal mounts.
-  const themeRef = useRef(theme);
+  const terminalThemeRef = useRef(terminalTheme);
   const fontSizeRef = useRef(fontSize);
   const fontFamilyRef = useRef(fontFamily);
+
+  // Keep theme ref in sync with hook value
+  useEffect(() => {
+    terminalThemeRef.current = terminalTheme;
+  }, [terminalTheme]);
 
   // FIX: Use ref for environmentVars to prevent re-initialization on every render.
   // Environment variables are only used during initial WebSocket connection.
@@ -114,13 +121,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
-    // Keep theme/font refs in sync for pending terminal initialization
-    themeRef.current = theme;
+    // Keep font refs in sync for pending terminal initialization
     fontSizeRef.current = fontSize;
     fontFamilyRef.current = fontFamily;
     // Keep environmentVars in sync (only used during initial connection)
     environmentVarsRef.current = environmentVars;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, theme, fontSize, fontFamily, environmentVars]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -170,7 +176,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         cursorBlink: true,
         fontSize: fontSizeRef.current,
         fontFamily: fontFamilyRef.current,
-        theme: getTerminalTheme(themeRef.current),
+        theme: terminalThemeRef.current,
         allowProposedApi: true,
         scrollback: 10000,
         // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
@@ -331,6 +337,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         } catch (error) {
           console.error("Failed to get WebSocket token:", error);
           terminal.writeln("\r\n\x1b[31mError: Failed to authenticate\x1b[0m");
+          setAuthError("Your session may have expired. Please refresh the page to re-authenticate.");
           updateStatus("error");
           return;
         }
@@ -413,6 +420,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
+                // Check if this is an authentication error
+                const authErrorMessages = ["Authentication required", "Invalid or expired token", "Unauthorized"];
+                if (authErrorMessages.some(m => msg.message?.includes(m))) {
+                  setAuthError(msg.message);
+                  updateStatus("error");
+                }
                 break;
             }
           } catch {
@@ -664,7 +677,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus]);
 
-  // Update terminal options when preferences change
+  // Update terminal options when preferences or theme change
   useEffect(() => {
     const terminal = xtermRef.current;
     if (!terminal) return;
@@ -672,7 +685,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // Track if this effect has been superseded by a newer one
     let cancelled = false;
 
-    terminal.options.theme = getTerminalTheme(theme);
+    terminal.options.theme = terminalTheme;
     terminal.options.fontSize = fontSize;
     terminal.options.fontFamily = fontFamily;
 
@@ -748,7 +761,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     return () => {
       cancelled = true;
     };
-  }, [theme, fontSize, fontFamily]);
+  }, [terminalTheme, fontSize, fontFamily]);
 
   // Trigger resize when terminal becomes active (e.g., switching tabs or splits)
   useEffect(() => {
@@ -1017,7 +1030,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       className={`h-full w-full rounded-lg overflow-hidden relative ${
         isDragging ? "ring-2 ring-blue-500 ring-opacity-50" : ""
       }`}
-      style={{ backgroundColor: getThemeBackground(theme) }}
+      style={{ backgroundColor: terminalTheme.background }}
       onMouseDown={handleContainerInteraction}
       onTouchStart={handleContainerInteraction}
       onDragOver={handleDragOver}
@@ -1034,8 +1047,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       {/* Search overlay - Activity preserves search state when hidden */}
       <Activity mode={isSearchOpen ? "visible" : "hidden"}>
-        <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-slate-800/95 backdrop-blur-sm border border-white/10 rounded-lg px-2 py-1.5 shadow-lg">
-          <Search className="w-3.5 h-3.5 text-slate-400" />
+        <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-popover/95 backdrop-blur-sm border border-border rounded-lg px-2 py-1.5 shadow-lg">
+          <Search className="w-3.5 h-3.5 text-muted-foreground" />
           <input
             ref={searchInputRef}
             type="text"
@@ -1043,13 +1056,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             onChange={handleSearchChange}
             onKeyDown={handleSearchKeyDown}
             placeholder="Search..."
-            className="w-48 bg-transparent border-none outline-none text-sm text-white placeholder:text-slate-500"
+            className="w-48 bg-transparent border-none outline-none text-sm text-foreground placeholder:text-muted-foreground"
           />
           <div className="flex items-center gap-0.5">
             <button
               onClick={findPrevious}
               disabled={!searchQuery}
-              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
               title="Previous (Shift+Enter)"
             >
               <ChevronUp className="w-3.5 h-3.5" />
@@ -1057,14 +1070,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             <button
               onClick={findNext}
               disabled={!searchQuery}
-              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
               title="Next (Enter)"
             >
               <ChevronDown className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={closeSearch}
-              className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-white"
+              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
               title="Close (Esc)"
             >
               <X className="w-3.5 h-3.5" />
@@ -1080,6 +1093,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           </div>
         </div>
       )}
+
+      {/* Auth error overlay */}
+      {authError && <AuthErrorOverlay message={authError} />}
     </div>
   );
 });

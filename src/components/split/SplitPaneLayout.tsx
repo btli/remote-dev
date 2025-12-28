@@ -27,7 +27,6 @@ interface SplitPaneLayoutProps {
   onResize: (layout: Array<{ sessionId: string; size: number }>) => void;
   onSessionExit: (sessionId: string) => void;
   resolvePreferences: (folderId: string | null) => {
-    theme?: string;
     fontSize?: number;
     fontFamily?: string;
   };
@@ -144,7 +143,6 @@ export function SplitPaneLayout({
               <TerminalWithKeyboard
                 sessionId={pane.session.id}
                 tmuxSessionName={pane.session.tmuxSessionName}
-                theme={prefs.theme}
                 fontSize={prefs.fontSize}
                 fontFamily={prefs.fontFamily}
                 wsUrl={wsUrl}

@@ -880,21 +880,21 @@ export function Sidebar({
                 "transition-all duration-200",
                 inFolder && "ml-2",
                 isActive
-                  ? "bg-gradient-to-r from-violet-500/20 via-purple-500/15 to-blue-500/10 border border-white/10"
-                  : "hover:bg-white/5 border border-transparent",
-                isDragOverSession && "bg-violet-500/20 border-violet-500/30"
+                  ? "bg-primary/20 border border-border"
+                  : "hover:bg-accent/50 border border-transparent",
+                isDragOverSession && "bg-primary/20 border-primary/30"
               )}
             >
               {/* Drop indicator - before */}
               {showDropBefore && (
-                <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-violet-500 rounded-full" />
+                <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
               )}
               <span
                 className={cn(
                   "w-2 h-2 rounded-full",
                   isActive
                     ? "bg-green-400 animate-pulse"
-                    : "bg-slate-600"
+                    : "bg-muted-foreground"
                 )}
               />
               {/* Drop indicator - after */}
@@ -950,9 +950,9 @@ export function Sidebar({
                 "transition-all duration-200",
                 inSplit && "py-1",
                 isActive
-                  ? "bg-gradient-to-r from-violet-500/20 via-purple-500/15 to-blue-500/10 border border-white/10"
-                  : "hover:bg-white/5 border border-transparent",
-                isDragOverSession && "bg-violet-500/20 border-violet-500/30"
+                  ? "bg-primary/20 border border-border"
+                  : "hover:bg-accent/50 border border-transparent",
+                isDragOverSession && "bg-primary/20 border-primary/30"
               )}
             >
             {/* Status indicator */}
@@ -961,7 +961,7 @@ export function Sidebar({
                 "w-1.5 h-1.5 rounded-full shrink-0",
                 isActive
                   ? "bg-green-400 animate-pulse"
-                  : "bg-slate-600"
+                  : "bg-muted-foreground"
               )}
             />
 
@@ -976,7 +976,7 @@ export function Sidebar({
                   onKeyDown={handleKeyDown}
                   onBlur={handleSaveEdit}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-full bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
+                  className="w-full bg-input border border-primary/50 rounded px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               ) : (
                 <>
@@ -987,7 +987,7 @@ export function Sidebar({
                     }}
                     className={cn(
                       "block truncate text-xs",
-                      isActive ? "text-white" : "text-slate-400 group-hover:text-white"
+                      isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
                     )}
                     title="Double-click to rename"
                   >
@@ -1043,8 +1043,8 @@ export function Sidebar({
                   }}
                   className={cn(
                     "p-0.5 rounded opacity-0 group-hover:opacity-100",
-                    "hover:bg-white/10 transition-all duration-150",
-                    "text-slate-500 hover:text-red-400"
+                    "hover:bg-accent transition-all duration-150",
+                    "text-muted-foreground hover:text-destructive"
                   )}
                 >
                   <X className="w-3 h-3" />
@@ -1241,7 +1241,7 @@ export function Sidebar({
                   key={s.id}
                   className={cn(
                     splitGroup.direction === "vertical" && "flex-1 min-w-0",
-                    splitGroup.direction === "vertical" && idx > 0 && "border-l border-white/10"
+                    splitGroup.direction === "vertical" && idx > 0 && "border-l border-border"
                   )}
                 >
                   {renderSession(s, 0, folderId, true)}
@@ -1302,7 +1302,7 @@ export function Sidebar({
     <TooltipProvider delayDuration={200}>
     <div
       className={cn(
-        "h-full flex flex-col bg-slate-900/50 backdrop-blur-md border-r border-white/5",
+        "h-full flex flex-col bg-card/50 backdrop-blur-md border-r border-border",
         "transition-[width] duration-200 relative shrink-0",
         isResizing && "select-none"
       )}
@@ -1313,15 +1313,15 @@ export function Sidebar({
           <div
             className={cn(
               "absolute top-0 right-0 w-1 h-full cursor-ew-resize z-10",
-              "hover:bg-violet-500/50 transition-colors",
-              isResizing && "bg-violet-500/50"
+              "hover:bg-primary/50 transition-colors",
+              isResizing && "bg-primary/50"
             )}
             onMouseDown={handleResizeStart}
           />
         )}
         {/* Header */}
         <div className={cn(
-          "flex items-center border-b border-white/5",
+          "flex items-center border-b border-border",
           collapsed ? "justify-center px-1 py-2" : "justify-between px-3 py-2"
         )}>
           {collapsed ? (
@@ -1332,7 +1332,7 @@ export function Sidebar({
                   onClick={() => onCollapsedChange(false)}
                   variant="ghost"
                   size="icon-sm"
-                  className="h-7 w-7 text-slate-400 hover:text-white hover:bg-white/10"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
                 >
                   <PanelLeft className="w-4 h-4" />
                 </Button>
@@ -1343,15 +1343,15 @@ export function Sidebar({
             // Expanded header
             <>
               <div className="flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5 text-violet-400" />
-                <span className="text-xs font-medium text-white">Sessions</span>
+                <Terminal className="w-3.5 h-3.5 text-primary" />
+                <span className="text-xs font-medium text-foreground">Sessions</span>
               </div>
               <div className="flex items-center gap-0.5">
                 <Button
                   onClick={() => setCreatingFolder(true)}
                   variant="ghost"
                   size="icon-sm"
-                  className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-accent"
                 >
                   <Folder className="w-3.5 h-3.5" />
                 </Button>
@@ -1360,7 +1360,7 @@ export function Sidebar({
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                      className="h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-accent"
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </Button>
@@ -1381,7 +1381,7 @@ export function Sidebar({
                   onClick={() => onCollapsedChange(true)}
                   variant="ghost"
                   size="icon-sm"
-                  className="h-6 w-6 text-slate-400 hover:text-white hover:bg-white/10"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground hover:bg-accent"
                 >
                   <PanelLeftClose className="w-3.5 h-3.5" />
                 </Button>
@@ -1407,7 +1407,7 @@ export function Sidebar({
                       onClick={onQuickNewSession}
                       variant="ghost"
                       size="icon-sm"
-                      className="h-8 w-8 text-slate-500 hover:text-violet-400 hover:bg-violet-500/10"
+                      className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
                     >
                       <Plus className="w-4 h-4" />
                     </Button>
@@ -1417,21 +1417,21 @@ export function Sidebar({
               </div>
             ) : (
               <div className="text-center py-8 px-2">
-                <Terminal className="w-6 h-6 mx-auto text-slate-600 mb-2" />
-                <p className="text-xs text-slate-500 mb-2">No sessions</p>
+                <Terminal className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
+                <p className="text-xs text-muted-foreground mb-2">No sessions</p>
                 <div className="flex flex-col gap-1 items-center">
                   <Button
                     onClick={onQuickNewSession}
                     variant="ghost"
                     size="sm"
-                    className="text-xs text-violet-400 hover:text-violet-300 hover:bg-violet-500/10"
+                    className="text-xs text-primary hover:text-primary/80 hover:bg-primary/10"
                   >
                     <Plus className="w-3 h-3 mr-1" />
                     New Session
                   </Button>
                   <button
                     onClick={onNewSession}
-                    className="text-[10px] text-slate-500 hover:text-slate-400 transition-colors"
+                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Advanced options...
                   </button>
@@ -1443,7 +1443,7 @@ export function Sidebar({
               {/* New folder input (at root level, only when not collapsed) */}
               {creatingFolder && !creatingSubfolderId && !collapsed && (
                 <div className="flex items-center gap-1 px-2 py-1">
-                  <Folder className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                  <Folder className="w-3.5 h-3.5 text-primary shrink-0" />
                   <input
                     ref={folderInputRef}
                     type="text"
@@ -1459,7 +1459,7 @@ export function Sidebar({
                       }
                     }}
                     placeholder="Folder name..."
-                    className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                    className="flex-1 bg-input border border-primary/50 rounded px-1.5 py-0.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                 </div>
               )}
@@ -1645,13 +1645,13 @@ export function Sidebar({
                                 onKeyDown={handleKeyDown}
                                 onBlur={handleSaveEdit}
                                 onClick={(e) => e.stopPropagation()}
-                                className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
+                                className="flex-1 bg-input border border-primary/50 rounded px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                               />
                             ) : (
                               <span
                                 className={cn(
                                   "flex-1 text-xs truncate",
-                                  isTrashFolder ? "text-red-400/70" : "text-slate-300"
+                                  isTrashFolder ? "text-red-400/70" : "text-foreground"
                                 )}
                                 onDoubleClick={(e) => {
                                   e.stopPropagation();
@@ -1690,7 +1690,7 @@ export function Sidebar({
 
                             <span className={cn(
                               "text-[10px] ml-auto",
-                              isTrashFolder ? "text-red-400/50" : "text-slate-500"
+                              isTrashFolder ? "text-red-400/50" : "text-muted-foreground"
                             )}>
                               {totalSessions}
                             </span>
@@ -1827,7 +1827,7 @@ export function Sidebar({
                               }
                             }}
                             placeholder="Subfolder name..."
-                            className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-1.5 py-0.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                            className="flex-1 bg-input border border-primary/50 rounded px-1.5 py-0.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                           />
                         </div>
                       )}
@@ -1893,13 +1893,13 @@ export function Sidebar({
                                     }}
                                     className={cn(
                                       "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-                                      "text-slate-500 hover:text-slate-400 hover:bg-white/5",
+                                      "text-muted-foreground hover:text-foreground hover:bg-accent/50",
                                       "transition-colors duration-150"
                                     )}
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                     <span className="text-xs">.trash</span>
-                                    <span className="ml-auto text-[10px] text-slate-600">
+                                    <span className="ml-auto text-[10px] text-muted-foreground">
                                       {getFolderTrashCount(node.id)}
                                     </span>
                                   </div>
@@ -1941,21 +1941,21 @@ export function Sidebar({
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (
-        <div className="px-3 py-1.5 border-t border-white/5 space-y-1">
+        <div className="px-3 py-1.5 border-t border-border space-y-1">
           {/* Schedules button */}
           {onSchedulesOpen && (
             <button
               onClick={onSchedulesOpen}
               className={cn(
                 "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-slate-400 hover:text-slate-300",
-                "hover:bg-slate-800/50 transition-colors"
+                "text-xs text-muted-foreground hover:text-foreground",
+                "hover:bg-muted/50 transition-colors"
               )}
             >
               <CalendarClock className="w-3.5 h-3.5" />
               <span>Schedules</span>
               {activeScheduleCount > 0 && (
-                <span className="ml-auto text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                   {activeScheduleCount}
                 </span>
               )}
@@ -1967,14 +1967,14 @@ export function Sidebar({
               onClick={onProfilesOpen}
               className={cn(
                 "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-slate-400 hover:text-slate-300",
-                "hover:bg-slate-800/50 transition-colors"
+                "text-xs text-muted-foreground hover:text-foreground",
+                "hover:bg-muted/50 transition-colors"
               )}
             >
               <Fingerprint className="w-3.5 h-3.5" />
               <span>Profiles</span>
               {profileCount > 0 && (
-                <span className="ml-auto text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+                <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                   {profileCount}
                 </span>
               )}
@@ -1986,8 +1986,8 @@ export function Sidebar({
               onClick={onPortsOpen}
               className={cn(
                 "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-slate-400 hover:text-slate-300",
-                "hover:bg-slate-800/50 transition-colors"
+                "text-xs text-muted-foreground hover:text-foreground",
+                "hover:bg-muted/50 transition-colors"
               )}
             >
               <Network className="w-3.5 h-3.5" />
@@ -1997,7 +1997,7 @@ export function Sidebar({
                   "ml-auto text-[10px] px-1.5 py-0.5 rounded",
                   activePorts.size > 0
                     ? "text-emerald-400 bg-emerald-500/10"
-                    : "text-slate-500 bg-slate-800"
+                    : "text-muted-foreground bg-muted"
                 )}>
                   {activePorts.size > 0 ? `${activePorts.size}/${allocations.length}` : allocations.length}
                 </span>
@@ -2010,20 +2010,20 @@ export function Sidebar({
               onClick={onTrashOpen}
               className={cn(
                 "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-slate-400 hover:text-slate-300",
-                "hover:bg-slate-800/50 transition-colors"
+                "text-xs text-muted-foreground hover:text-foreground",
+                "hover:bg-muted/50 transition-colors"
               )}
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>Trash</span>
-              <span className="ml-auto text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">
+              <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                 {trashCount}
               </span>
             </button>
           )}
-          <div className="flex items-center justify-between text-[10px] text-slate-500">
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
             <span>New session</span>
-            <kbd className="px-1 py-0.5 bg-slate-800 rounded">⌘↵</kbd>
+            <kbd className="px-1 py-0.5 bg-muted rounded">⌘↵</kbd>
           </div>
         </div>
       )}

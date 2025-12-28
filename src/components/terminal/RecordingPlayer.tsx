@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
-import { getTerminalTheme, getThemeBackground } from "@/lib/terminal-themes";
+import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { Play, Pause, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -12,7 +12,6 @@ import { formatDuration } from "@/types/recording";
 
 interface RecordingPlayerProps {
   recording: ParsedRecording;
-  theme?: string;
   fontSize?: number;
   fontFamily?: string;
   onClose?: () => void;
@@ -22,11 +21,12 @@ type PlaybackSpeed = 0.5 | 1 | 2 | 4;
 
 export function RecordingPlayer({
   recording,
-  theme = "tokyo-night",
   fontSize = 14,
   fontFamily = "'JetBrainsMono Nerd Font', 'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
   onClose,
 }: RecordingPlayerProps) {
+  // Get terminal theme from appearance context
+  const terminalTheme = useTerminalTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
@@ -62,7 +62,7 @@ export function RecordingPlayer({
         cursorBlink: false,
         fontSize,
         fontFamily,
-        theme: getTerminalTheme(theme),
+        theme: terminalTheme,
         cols: recording.terminalCols,
         rows: recording.terminalRows,
         disableStdin: true, // Read-only for playback
@@ -90,18 +90,18 @@ export function RecordingPlayer({
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [recording, fontSize, fontFamily, theme]);
+  }, [recording, fontSize, fontFamily, terminalTheme]);
 
   // Update terminal options when preferences change
   useEffect(() => {
     const terminal = xtermRef.current;
     if (!terminal) return;
 
-    terminal.options.theme = getTerminalTheme(theme);
+    terminal.options.theme = terminalTheme;
     terminal.options.fontSize = fontSize;
     terminal.options.fontFamily = fontFamily;
     fitAddonRef.current?.fit();
-  }, [theme, fontSize, fontFamily]);
+  }, [terminalTheme, fontSize, fontFamily]);
 
   // Render events up to a given time
   const renderToTime = useCallback(
@@ -230,7 +230,7 @@ export function RecordingPlayer({
       <div
         ref={terminalRef}
         className="flex-1 overflow-hidden"
-        style={{ backgroundColor: getThemeBackground(theme) }}
+        style={{ backgroundColor: terminalTheme.background }}
       />
 
       {/* Controls */}
