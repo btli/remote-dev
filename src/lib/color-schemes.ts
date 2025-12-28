@@ -120,16 +120,16 @@ const oceanLight: ModePalette = {
     cursorAccent: "#eceff4",
     selectionBackground: "#d8dee9",
     black: "#3b4252",
-    red: "#a5545c",            // Muted dusty rose (was #bf616a)
-    green: "#7a9a6d",          // Muted sage green (was #a3be8c)
+    red: "#d4a0a0",            // Light rose for diff backgrounds
+    green: "#a0c4a0",          // Light sage for diff backgrounds
     yellow: "#b8975a",         // Muted gold (was #ebcb8b)
     blue: "#5e81ac",
     magenta: "#9a7a9a",        // Muted mauve (was #b48ead)
     cyan: "#6a9aa8",           // Muted teal (was #88c0d0)
     white: "#4c566a",
     brightBlack: "#434c5e",
-    brightRed: "#b5646c",      // Slightly brighter muted rose
-    brightGreen: "#8aaa7d",    // Slightly brighter sage
+    brightRed: "#e0b0b0",      // Slightly lighter rose
+    brightGreen: "#b0d4b0",    // Slightly lighter sage
     brightYellow: "#c8a76a",
     brightBlue: "#81a1c1",
     brightMagenta: "#aa8aaa",
@@ -217,16 +217,16 @@ const forestLight: ModePalette = {
     cursorAccent: "#f5f5dc",
     selectionBackground: "#e0dcc8",
     black: "#272822",
-    red: "#b8525a",            // Muted rose (was #f92672 neon pink)
-    green: "#6a8a4a",          // Muted olive green (was #a6e22e neon)
+    red: "#d4a8a0",            // Light rose for diff backgrounds
+    green: "#a0c0a0",          // Light sage for diff backgrounds
     yellow: "#a8884a",         // Muted amber (was #f4bf75)
     blue: "#5a8aaa",           // Muted blue (was #66d9ef)
     magenta: "#8a6a9a",        // Muted purple (was #ae81ff)
     cyan: "#5a9a8a",           // Muted teal (was #a1efe4)
     white: "#49483e",
     brightBlack: "#75715e",
-    brightRed: "#c8626a",
-    brightGreen: "#7a9a5a",
+    brightRed: "#e0b8b0",
+    brightGreen: "#b0d0b0",
     brightYellow: "#b8985a",
     brightBlue: "#6a9aba",
     brightMagenta: "#9a7aaa",
@@ -314,16 +314,16 @@ const sunsetLight: ModePalette = {
     cursorAccent: "#fcf5f5",
     selectionBackground: "#e8dfe0",
     black: "#21222c",
-    red: "#b5525a",            // Muted rose (was #ff5555 neon red)
-    green: "#5a9a6a",          // Muted green (was #50fa7b neon)
+    red: "#d4a0a8",            // Light rose for diff backgrounds
+    green: "#a0c4a8",          // Light sage for diff backgrounds
     yellow: "#a89a5a",         // Muted gold (was #f1fa8c neon)
     blue: "#7a6a9a",           // Muted purple-blue (was #bd93f9)
     magenta: "#9a5a7a",        // Muted magenta (was #ff79c6)
     cyan: "#5a8a9a",           // Muted cyan (was #8be9fd)
     white: "#44475a",
     brightBlack: "#6272a4",
-    brightRed: "#c5626a",
-    brightGreen: "#6aaa7a",
+    brightRed: "#e0b0b8",
+    brightGreen: "#b0d4b8",
     brightYellow: "#b8aa6a",
     brightBlue: "#8a7aaa",
     brightMagenta: "#aa6a8a",
@@ -411,16 +411,16 @@ const midnightLight: ModePalette = {
     cursorAccent: "#f0f0f5",
     selectionBackground: "#d8d8e0",
     black: "#32344a",
-    red: "#b5606a",            // Muted rose (was #f7768e)
-    green: "#6a9a5a",          // Muted sage (was #9ece6a)
+    red: "#d4a8b0",            // Light rose for diff backgrounds
+    green: "#a0c4a0",          // Light sage for diff backgrounds
     yellow: "#a8885a",         // Muted amber (was #e0af68)
     blue: "#5a7aaa",           // Muted blue (was #7aa2f7)
     magenta: "#8a6a9a",        // Muted purple (was #ad8ee6)
     cyan: "#4a7a8a",           // Muted teal (was #449dab)
     white: "#565a6e",
     brightBlack: "#444b6a",
-    brightRed: "#c5707a",
-    brightGreen: "#7aaa6a",
+    brightRed: "#e0b8c0",
+    brightGreen: "#b0d4b0",
     brightYellow: "#b8986a",
     brightBlue: "#6a8aba",
     brightMagenta: "#9a7aaa",
@@ -508,16 +508,16 @@ const arcticLight: ModePalette = {
     cursorAccent: "#f8fafc",
     selectionBackground: "#e2e8f0",
     black: "#1e293b",
-    red: "#b54a4a",            // Muted red (was #ef4444)
-    green: "#4a8a5a",          // Muted green (was #22c55e)
+    red: "#d4a0a0",            // Light rose for diff backgrounds
+    green: "#a0c4a0",          // Light sage for diff backgrounds
     yellow: "#a89040",         // Muted gold (was #eab308)
     blue: "#4a6aaa",           // Muted blue (was #3b82f6)
     magenta: "#7a5a9a",        // Muted purple (was #a855f7)
     cyan: "#4a8a9a",           // Muted cyan (was #06b6d4)
     white: "#475569",
     brightBlack: "#64748b",
-    brightRed: "#c55a5a",
-    brightGreen: "#5a9a6a",
+    brightRed: "#e0b0b0",
+    brightGreen: "#b0d4b0",
     brightYellow: "#b8a050",
     brightBlue: "#5a7aba",
     brightMagenta: "#8a6aaa",
@@ -605,16 +605,16 @@ const roseLight: ModePalette = {
     cursorAccent: "#fdf2f8",
     selectionBackground: "#fce7f3",
     black: "#500724",
-    red: "#a53a4a",            // Muted rose (was #e11d48)
-    green: "#4a7a5a",          // Muted green (was #16a34a)
+    red: "#d4a0a8",            // Light rose for diff backgrounds
+    green: "#a0c4a0",          // Light sage for diff backgrounds
     yellow: "#9a7040",         // Muted gold (was #ca8a04)
     blue: "#4a5a8a",           // Muted blue (was #2563eb)
     magenta: "#9a4a6a",        // Muted magenta (was #db2777)
     cyan: "#4a7a8a",           // Muted cyan (was #0891b2)
     white: "#9f1239",
     brightBlack: "#be185d",
-    brightRed: "#b54a5a",
-    brightGreen: "#5a8a6a",
+    brightRed: "#e0b0b8",
+    brightGreen: "#b0d4b0",
     brightYellow: "#aa8050",
     brightBlue: "#5a6a9a",
     brightMagenta: "#aa5a7a",
@@ -702,16 +702,16 @@ const amberLight: ModePalette = {
     cursorAccent: "#fffbeb",
     selectionBackground: "#fef3c7",
     black: "#451a03",
-    red: "#a54a4a",            // Muted red (was #dc2626)
-    green: "#4a7a5a",          // Muted green (was #16a34a)
+    red: "#d4a8a0",            // Light rose for diff backgrounds
+    green: "#a8c4a0",          // Light sage for diff backgrounds
     yellow: "#9a7a30",         // Muted gold (was #f59e0b)
     blue: "#4a5a8a",           // Muted blue (was #2563eb)
     magenta: "#8a4a9a",        // Muted purple (was #c026d3)
     cyan: "#4a7a8a",           // Muted cyan (was #0891b2)
     white: "#92400e",
     brightBlack: "#b45309",
-    brightRed: "#b55a5a",
-    brightGreen: "#5a8a6a",
+    brightRed: "#e0b8b0",
+    brightGreen: "#b8d4b0",
     brightYellow: "#aa8a40",
     brightBlue: "#5a6a9a",
     brightMagenta: "#9a5aaa",
@@ -799,16 +799,16 @@ const monoLight: ModePalette = {
     cursorAccent: "#fafafa",
     selectionBackground: "#e5e5e5",
     black: "#171717",
-    red: "#6a4040",            // Muted dark red (was #7f1d1d)
-    green: "#3a5a40",          // Muted dark green (was #14532d)
+    red: "#c4a0a0",            // Light rose for diff backgrounds
+    green: "#a0b8a0",          // Light sage for diff backgrounds
     yellow: "#5a4a30",         // Muted dark gold (was #713f12)
     blue: "#3a4a6a",           // Muted dark blue (was #1e3a8a)
     magenta: "#5a3a5a",        // Muted dark magenta (was #701a75)
     cyan: "#3a5a5a",           // Muted dark cyan (was #164e63)
     white: "#525252",
     brightBlack: "#737373",
-    brightRed: "#7a5050",
-    brightGreen: "#4a6a50",
+    brightRed: "#d4b0b0",
+    brightGreen: "#b0c8b0",
     brightYellow: "#6a5a40",
     brightBlue: "#4a5a7a",
     brightMagenta: "#6a4a6a",

@@ -1553,7 +1553,7 @@ export function Sidebar({
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="right" className="text-xs">
-                            {node.name} ({totalSessions})
+                            {node.name}{totalSessions > 0 ? ` (${totalSessions})` : ""}
                           </TooltipContent>
                         </Tooltip>
                         {/* Child folders and sessions in collapsed view */}
@@ -1703,12 +1703,16 @@ export function Sidebar({
                               );
                             })()}
 
-                            <span className={cn(
-                              "text-[10px] ml-auto",
-                              isTrashFolder ? "text-destructive/50" : "text-muted-foreground"
-                            )}>
-                              {totalSessions}
-                            </span>
+                            {totalSessions > 0 ? (
+                              <span className={cn(
+                                "text-[10px] ml-auto",
+                                isTrashFolder ? "text-destructive/50" : "text-muted-foreground"
+                              )}>
+                                {totalSessions}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] ml-auto invisible" aria-hidden="true">0</span>
+                            )}
                           </div>
                         </ContextMenuTrigger>
                         <ContextMenuContent className="w-48">
