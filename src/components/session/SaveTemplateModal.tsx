@@ -77,19 +77,19 @@ export function SaveTemplateModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
-      <DialogContent className="sm:max-w-[425px] bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <DialogContent className="sm:max-w-[425px] bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold text-white">
+          <DialogTitle className="text-xl font-semibold text-foreground">
             Save as Template
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Create a reusable template from this session configuration.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 mt-4">
           <div className="space-y-2">
-            <Label htmlFor="template-name" className="text-sm text-slate-300">
+            <Label htmlFor="template-name" className="text-sm text-muted-foreground">
               Template Name *
             </Label>
             <Input
@@ -97,12 +97,12 @@ export function SaveTemplateModal({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="My Dev Environment"
-              className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+              className="bg-card/50 border-border focus:border-primary"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="template-description" className="text-sm text-slate-300">
+            <Label htmlFor="template-description" className="text-sm text-muted-foreground">
               Description
             </Label>
             <Input
@@ -110,12 +110,12 @@ export function SaveTemplateModal({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Optional description"
-              className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+              className="bg-card/50 border-border focus:border-primary"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="session-pattern" className="text-sm text-slate-300">
+            <Label htmlFor="session-pattern" className="text-sm text-muted-foreground">
               Session Name Pattern
             </Label>
             <Input
@@ -123,15 +123,15 @@ export function SaveTemplateModal({
               value={sessionNamePattern}
               onChange={(e) => setSessionNamePattern(e.target.value)}
               placeholder="Dev Server ${n}"
-              className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+              className="bg-card/50 border-border focus:border-primary"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground/70">
               Use {"${n}"} for counter, {"${date}"} for date, {"${time}"} for time
             </p>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="startup-command" className="text-sm text-slate-300">
+            <Label htmlFor="startup-command" className="text-sm text-muted-foreground">
               Startup Command
             </Label>
             <Input
@@ -139,36 +139,36 @@ export function SaveTemplateModal({
               value={startupCommand}
               onChange={(e) => setStartupCommand(e.target.value)}
               placeholder="npm run dev"
-              className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+              className="bg-card/50 border-border focus:border-primary"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground/70">
               Command to run when session starts
             </p>
           </div>
 
           {session?.projectPath && (
-            <div className="p-3 rounded-lg bg-slate-800/30 border border-white/5">
-              <p className="text-xs text-slate-500 mb-1">Working Directory</p>
-              <p className="text-sm text-slate-300 font-mono truncate">
+            <div className="p-3 rounded-lg bg-card/30 border border-border">
+              <p className="text-xs text-muted-foreground/70 mb-1">Working Directory</p>
+              <p className="text-sm text-muted-foreground font-mono truncate">
                 {session.projectPath}
               </p>
             </div>
           )}
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
           <div className="flex justify-end gap-3 pt-2">
             <Button
               variant="ghost"
               onClick={onClose}
-              className="text-slate-400"
+              className="text-muted-foreground"
             >
               Cancel
             </Button>
             <Button
               onClick={handleSave}
               disabled={isSaving}
-              className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {isSaving ? (
                 <>

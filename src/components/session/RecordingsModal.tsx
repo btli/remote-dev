@@ -76,13 +76,13 @@ export function RecordingsModal({ open, onOpenChange }: RecordingsModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[800px] max-h-[80vh] bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <DialogContent className="sm:max-w-[800px] max-h-[80vh] bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold text-white flex items-center gap-2">
-            <Video className="w-5 h-5 text-violet-400" />
+          <DialogTitle className="text-xl font-semibold text-foreground flex items-center gap-2">
+            <Video className="w-5 h-5 text-primary" />
             Session Recordings
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             View and playback your recorded terminal sessions
           </DialogDescription>
         </DialogHeader>
@@ -96,13 +96,13 @@ export function RecordingsModal({ open, onOpenChange }: RecordingsModalProps) {
           <div className="mt-4 max-h-[400px] overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center py-12">
-                <div className="text-slate-400">Loading recordings...</div>
+                <div className="text-muted-foreground">Loading recordings...</div>
               </div>
             ) : recordings.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Video className="w-12 h-12 text-slate-600 mb-4" />
-                <p className="text-slate-400 mb-2">No recordings yet</p>
-                <p className="text-sm text-slate-500">
+                <Video className="w-12 h-12 text-muted-foreground/50 mb-4" />
+                <p className="text-muted-foreground mb-2">No recordings yet</p>
+                <p className="text-sm text-muted-foreground/70">
                   Start recording a session to capture terminal output
                 </p>
               </div>
@@ -111,13 +111,13 @@ export function RecordingsModal({ open, onOpenChange }: RecordingsModalProps) {
                 {recordings.map((recording) => (
                   <div
                     key={recording.id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-slate-800/50 hover:bg-slate-800/80 transition-colors group"
+                    className="flex items-center justify-between p-3 rounded-lg bg-card/50 hover:bg-card/80 transition-colors group"
                   >
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-medium text-white truncate">
+                      <h4 className="text-sm font-medium text-foreground truncate">
                         {recording.name}
                       </h4>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />
                           {formatDuration(recording.duration)}
@@ -126,12 +126,12 @@ export function RecordingsModal({ open, onOpenChange }: RecordingsModalProps) {
                           <Calendar className="w-3 h-3" />
                           {formatDate(recording.createdAt)} at {formatTime(recording.createdAt)}
                         </span>
-                        <span className="text-slate-500">
+                        <span className="text-muted-foreground/70">
                           {recording.terminalCols}x{recording.terminalRows}
                         </span>
                       </div>
                       {recording.description && (
-                        <p className="mt-1 text-xs text-slate-500 truncate">
+                        <p className="mt-1 text-xs text-muted-foreground/70 truncate">
                           {recording.description}
                         </p>
                       )}
@@ -143,7 +143,7 @@ export function RecordingsModal({ open, onOpenChange }: RecordingsModalProps) {
                         size="icon"
                         onClick={() => handlePlay(recording.id)}
                         disabled={loadingId === recording.id}
-                        className="w-8 h-8 text-slate-400 hover:text-white hover:bg-white/10"
+                        className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-accent"
                       >
                         <Play className="w-4 h-4" />
                       </Button>
@@ -151,7 +151,7 @@ export function RecordingsModal({ open, onOpenChange }: RecordingsModalProps) {
                         variant="ghost"
                         size="icon"
                         onClick={() => handleDelete(recording.id)}
-                        className="w-8 h-8 text-slate-400 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="w-8 h-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>

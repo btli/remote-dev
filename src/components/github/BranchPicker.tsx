@@ -85,8 +85,8 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 text-violet-400 animate-spin mb-4" />
-        <p className="text-slate-400">Loading branches...</p>
+        <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+        <p className="text-muted-foreground">Loading branches...</p>
       </div>
     );
   }
@@ -94,13 +94,13 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <GitBranch className="w-12 h-12 text-red-400 mb-4" />
-        <p className="text-red-400 mb-4">{error}</p>
+        <GitBranch className="w-12 h-12 text-destructive mb-4" />
+        <p className="text-destructive mb-4">{error}</p>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onBack} className="text-slate-400">
+          <Button variant="ghost" onClick={onBack} className="text-muted-foreground">
             Back
           </Button>
-          <Button onClick={fetchBranches} className="bg-violet-600 hover:bg-violet-700">
+          <Button onClick={fetchBranches} className="bg-primary hover:bg-primary/90">
             <RefreshCw className="w-4 h-4 mr-2" />
             Retry
           </Button>
@@ -118,8 +118,8 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
           className={cn(
             "flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all",
             mode === "select"
-              ? "bg-violet-500/20 text-violet-400 border border-violet-500/30"
-              : "bg-slate-800/50 text-slate-400 border border-transparent hover:border-white/10"
+              ? "bg-primary/20 text-primary border border-primary/30"
+              : "bg-card/50 text-muted-foreground border border-transparent hover:border-border"
           )}
         >
           <GitBranch className="w-4 h-4 inline mr-2" />
@@ -130,8 +130,8 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
           className={cn(
             "flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-all",
             mode === "create"
-              ? "bg-violet-500/20 text-violet-400 border border-violet-500/30"
-              : "bg-slate-800/50 text-slate-400 border border-transparent hover:border-white/10"
+              ? "bg-primary/20 text-primary border border-primary/30"
+              : "bg-card/50 text-muted-foreground border border-transparent hover:border-border"
           )}
         >
           <Plus className="w-4 h-4 inline mr-2" />
@@ -143,12 +143,12 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
         <>
           {/* Search Input */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search branches..."
-              className="pl-10 bg-slate-800/50 border-white/10 focus:border-violet-500"
+              className="pl-10 bg-card/50 border-border focus:border-primary"
             />
           </div>
 
@@ -162,20 +162,20 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
                   className={cn(
                     "group w-full flex items-center gap-3 p-2.5 rounded-lg text-left",
                     "border border-transparent transition-all duration-200",
-                    "hover:bg-slate-800/80 hover:border-violet-500/50",
-                    branch.name === repository.defaultBranch && "bg-slate-800/30"
+                    "hover:bg-card/80 hover:border-primary/50",
+                    branch.name === repository.defaultBranch && "bg-card/30"
                   )}
                 >
-                  <GitBranch className="w-4 h-4 text-slate-400" />
-                  <span className="flex-1 text-sm text-white truncate">
+                  <GitBranch className="w-4 h-4 text-muted-foreground" />
+                  <span className="flex-1 text-sm text-foreground truncate">
                     {branch.name}
                   </span>
                   {branch.name === repository.defaultBranch && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-400">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary">
                       default
                     </span>
                   )}
-                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-violet-400" />
+                  <ChevronRight className="w-4 h-4 text-muted-foreground/70 group-hover:text-primary" />
                 </button>
               ))}
             </div>
@@ -185,18 +185,18 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
         <div className="space-y-4">
           {/* New Branch Name */}
           <div className="space-y-2">
-            <label className="text-sm text-slate-300">New Branch Name</label>
+            <label className="text-sm text-muted-foreground">New Branch Name</label>
             <Input
               value={newBranchName}
               onChange={(e) => setNewBranchName(e.target.value)}
               placeholder="feature/my-feature"
-              className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+              className="bg-card/50 border-border focus:border-primary"
             />
           </div>
 
           {/* Base Branch */}
           <div className="space-y-2">
-            <label className="text-sm text-slate-300">Base Branch</label>
+            <label className="text-sm text-muted-foreground">Base Branch</label>
             <div className="relative">
               <select
                 value={selectedBaseBranch?.name || ""}
@@ -204,7 +204,7 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
                   const branch = branches.find((b) => b.name === e.target.value);
                   setSelectedBaseBranch(branch || null);
                 }}
-                className="w-full p-2.5 rounded-lg bg-slate-800/50 border border-white/10 text-white text-sm appearance-none focus:border-violet-500 focus:outline-none"
+                className="w-full p-2.5 rounded-lg bg-card/50 border border-border text-foreground text-sm appearance-none focus:border-primary focus:outline-none"
               >
                 {branches.map((branch) => (
                   <option key={branch.name} value={branch.name}>
@@ -212,7 +212,7 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
                   </option>
                 ))}
               </select>
-              <GitBranch className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              <GitBranch className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             </div>
           </div>
 
@@ -220,7 +220,7 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
           <Button
             onClick={handleCreateNew}
             disabled={!newBranchName.trim()}
-            className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700"
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             <Plus className="w-4 h-4 mr-2" />
             Create Worktree with New Branch
@@ -229,14 +229,14 @@ export function BranchPicker({ repository, onSelect, onBack }: BranchPickerProps
       )}
 
       {/* Footer */}
-      <div className="flex justify-between pt-2 border-t border-white/10">
-        <Button variant="ghost" onClick={onBack} className="text-slate-400">
+      <div className="flex justify-between pt-2 border-t border-border">
+        <Button variant="ghost" onClick={onBack} className="text-muted-foreground">
           Back
         </Button>
         <Button
           variant="ghost"
           onClick={handleSkipWorktree}
-          className="text-slate-400"
+          className="text-muted-foreground"
         >
           Skip (use default branch)
         </Button>

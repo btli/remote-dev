@@ -62,20 +62,20 @@ export function SaveRecordingModal({
 
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[425px] bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <DialogContent className="sm:max-w-[425px] bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold text-white flex items-center gap-2">
-            <Video className="w-5 h-5 text-red-400" />
+          <DialogTitle className="text-xl font-semibold text-foreground flex items-center gap-2">
+            <Video className="w-5 h-5 text-destructive" />
             Save Recording
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Your recording is {formatDuration(duration)} long. Give it a name to save it.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="name" className="text-slate-300">
+            <Label htmlFor="name" className="text-muted-foreground">
               Name
             </Label>
             <Input
@@ -84,13 +84,13 @@ export function SaveRecordingModal({
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Enter recording name"
-              className="bg-slate-800/50 border-white/10 text-white placeholder:text-slate-500"
+              className="bg-card/50 border-border text-foreground placeholder:text-muted-foreground/70"
               autoFocus
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="description" className="text-slate-300">
+            <Label htmlFor="description" className="text-muted-foreground">
               Description (optional)
             </Label>
             <Input
@@ -98,7 +98,7 @@ export function SaveRecordingModal({
               value={description}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDescription(e.target.value)}
               placeholder="Add a description..."
-              className="bg-slate-800/50 border-white/10 text-white placeholder:text-slate-500"
+              className="bg-card/50 border-border text-foreground placeholder:text-muted-foreground/70"
             />
           </div>
         </div>
@@ -107,14 +107,14 @@ export function SaveRecordingModal({
           <Button
             variant="ghost"
             onClick={onClose}
-            className="text-slate-400 hover:text-white"
+            className="text-muted-foreground hover:text-foreground"
           >
             Discard
           </Button>
           <Button
             onClick={handleSave}
             disabled={!name.trim() || saving}
-            className="bg-red-600 hover:bg-red-700 text-white"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             {saving ? "Saving..." : "Save Recording"}
           </Button>

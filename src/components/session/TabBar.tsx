@@ -30,7 +30,7 @@ export function TabBar({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex items-center gap-1 px-2 py-1.5 bg-slate-900/50 backdrop-blur-md border-b border-white/5">
+      <div className="flex items-center gap-1 px-2 py-1.5 bg-background/50 backdrop-blur-md border-b border-border">
         {/* Tabs */}
         <div className="flex items-center gap-1 flex-1 overflow-x-auto scrollbar-hide">
           {activeSessions.map((session) => {
@@ -46,8 +46,8 @@ export function TabBar({
                       "text-sm font-medium transition-all duration-200",
                       "border border-transparent",
                       isActive
-                        ? "bg-gradient-to-br from-violet-500/20 via-purple-500/15 to-blue-500/20 border-white/10 text-white shadow-lg"
-                        : "text-slate-400 hover:text-white hover:bg-white/5"
+                        ? "bg-primary/15 border-border text-foreground shadow-lg"
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent"
                     )}
                   >
                     {/* Status indicator */}
@@ -55,8 +55,8 @@ export function TabBar({
                       className={cn(
                         "w-1.5 h-1.5 rounded-full",
                         isActive
-                          ? "bg-green-400 animate-pulse"
-                          : "bg-slate-500"
+                          ? "bg-primary animate-pulse"
+                          : "bg-muted-foreground/50"
                       )}
                     />
 
@@ -71,8 +71,8 @@ export function TabBar({
                       }}
                       className={cn(
                         "p-0.5 rounded-sm opacity-0 group-hover:opacity-100",
-                        "hover:bg-white/10 transition-all duration-150",
-                        "text-slate-400 hover:text-white"
+                        "hover:bg-accent transition-all duration-150",
+                        "text-muted-foreground hover:text-foreground"
                       )}
                     >
                       <X className="w-3 h-3" />
@@ -80,7 +80,7 @@ export function TabBar({
 
                     {/* Active indicator line */}
                     {isActive && (
-                      <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-gradient-to-r from-violet-500 to-purple-500 rounded-full" />
+                      <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-primary rounded-full" />
                     )}
                   </button>
                 </TooltipTrigger>
@@ -88,9 +88,9 @@ export function TabBar({
                   {session.projectPath ? (
                     <div className="space-y-1">
                       <div className="font-medium">{session.name}</div>
-                      <div className="text-slate-400">{session.projectPath}</div>
+                      <div className="text-muted-foreground">{session.projectPath}</div>
                       {session.worktreeBranch && (
-                        <div className="text-purple-400">
+                        <div className="text-primary">
                           Branch: {session.worktreeBranch}
                         </div>
                       )}
@@ -111,7 +111,7 @@ export function TabBar({
               onClick={onNewSession}
               variant="ghost"
               size="icon-sm"
-              className="shrink-0 text-slate-400 hover:text-white hover:bg-white/10"
+              className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent"
             >
               <Plus className="w-4 h-4" />
             </Button>
