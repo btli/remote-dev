@@ -35,6 +35,13 @@ import { DeleteFolderUseCase } from "@/application/use-cases/folder/DeleteFolder
 import { ReorderFoldersUseCase } from "@/application/use-cases/folder/ReorderFoldersUseCase";
 import { ListFoldersUseCase } from "@/application/use-cases/folder/ListFoldersUseCase";
 
+// Tmux Use Cases
+import {
+  ListTmuxSystemSessionsUseCase,
+  KillTmuxSessionUseCase,
+  KillOrphanedSessionsUseCase,
+} from "@/application/use-cases/tmux";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +171,31 @@ export const reorderFoldersUseCase = new ReorderFoldersUseCase(folderRepository)
  */
 export const listFoldersUseCase = new ListFoldersUseCase(
   folderRepository,
+  sessionRepository
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tmux Use Case Instances
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * List tmux system sessions use case.
+ */
+export const listTmuxSystemSessionsUseCase = new ListTmuxSystemSessionsUseCase(
+  tmuxGateway,
+  sessionRepository
+);
+
+/**
+ * Kill tmux session use case.
+ */
+export const killTmuxSessionUseCase = new KillTmuxSessionUseCase(tmuxGateway);
+
+/**
+ * Kill orphaned sessions use case.
+ */
+export const killOrphanedSessionsUseCase = new KillOrphanedSessionsUseCase(
+  tmuxGateway,
   sessionRepository
 );
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Settings, Terminal, Palette, Folder, Pin, PinOff } from "lucide-react";
+import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,7 @@ import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appearance";
+import { TmuxSessionManager } from "@/components/tmux";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
 import { cn } from "@/lib/utils";
 
@@ -154,7 +155,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
         </DialogHeader>
 
         <Tabs defaultValue="terminal" className="mt-4 flex-1 flex flex-col min-h-0">
-          <TabsList className="grid w-full grid-cols-3 bg-muted/50">
+          <TabsList className="grid w-full grid-cols-4 bg-muted/50">
             <TabsTrigger value="terminal" className="data-[state=active]:bg-primary/20">
               <Terminal className="w-4 h-4 mr-2" />
               Terminal
@@ -166,6 +167,10 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             <TabsTrigger value="project" className="data-[state=active]:bg-primary/20">
               <Folder className="w-4 h-4 mr-2" />
               Project
+            </TabsTrigger>
+            <TabsTrigger value="system" className="data-[state=active]:bg-primary/20">
+              <Server className="w-4 h-4 mr-2" />
+              System
             </TabsTrigger>
           </TabsList>
 
@@ -373,6 +378,10 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                 Pin a project to prevent auto-follow from switching it
               </p>
             </div>
+          </TabsContent>
+
+          <TabsContent value="system" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
+            <TmuxSessionManager />
           </TabsContent>
         </Tabs>
 

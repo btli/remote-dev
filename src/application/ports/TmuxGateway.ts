@@ -44,6 +44,11 @@ export interface TmuxGateway {
   getSessionInfo(sessionName: string): Promise<TmuxSessionInfo | null>;
 
   /**
+   * List all tmux sessions on the system.
+   */
+  listSessions(): Promise<TmuxSessionInfo[]>;
+
+  /**
    * Send keys to a tmux session.
    */
   sendKeys(sessionName: string, keys: string): Promise<void>;

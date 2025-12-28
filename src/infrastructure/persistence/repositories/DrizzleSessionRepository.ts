@@ -362,6 +362,20 @@ export class DrizzleSessionRepository implements SessionRepository {
   }
 
   /**
+   * Get all active/suspended tmux session names across ALL users.
+   * SECURITY: This is intentionally user-agnostic to prevent orphan detection
+   * from incorrectly marking other users' sessions as orphaned.
+   */
+  async getAllActiveTmuxSessionNames(): Promise<Set<string>> {
+    const result = await db
+      .select({ tmuxSessionName: terminalSessions.tmuxSessionName })
+      .from(terminalSessions)
+      .where(inArray(terminalSessions.status, ["active", "suspended"]));
+
+    return new Set(result.map((r) => r.tmuxSessionName));
+  }
+
+  /**
    * Build Drizzle order clause from SessionOrderBy.
    */
   private buildOrderClause(orderBy?: SessionOrderBy) {

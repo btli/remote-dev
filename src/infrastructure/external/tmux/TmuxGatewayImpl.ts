@@ -58,6 +58,19 @@ export class TmuxGatewayImpl implements TmuxGateway {
   }
 
   /**
+   * List all tmux sessions on the system.
+   */
+  async listSessions(): Promise<TmuxSessionInfo[]> {
+    const sessions = await TmuxService.listSessions();
+    return sessions.map((s) => ({
+      name: s.name,
+      created: s.created,
+      attached: s.attached,
+      windows: s.windowCount,
+    }));
+  }
+
+  /**
    * Send keys to a tmux session.
    */
   async sendKeys(sessionName: string, keys: string): Promise<void> {
