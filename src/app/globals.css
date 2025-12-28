@@ -611,37 +611,37 @@
 
 /* Modal title - compact but readable */
 .modal-title {
-  @apply text-sm font-semibold text-white;
+  @apply text-sm font-semibold text-foreground;
 }
 
 /* Modal description text */
 .modal-description {
-  @apply text-xs text-slate-400;
+  @apply text-xs text-muted-foreground;
 }
 
 /* Section headers within modals */
 .modal-section-header {
-  @apply text-xs font-medium text-white;
+  @apply text-xs font-medium text-foreground;
 }
 
 /* Form labels */
 .modal-label {
-  @apply text-xs text-slate-300;
+  @apply text-xs text-muted-foreground;
 }
 
 /* Secondary/muted labels */
 .modal-label-muted {
-  @apply text-xs text-slate-400;
+  @apply text-xs text-muted-foreground;
 }
 
 /* Helper text below inputs */
 .modal-helper {
-  @apply text-[10px] text-slate-500;
+  @apply text-[10px] text-muted-foreground/70;
 }
 
 /* Error messages */
 .modal-error {
-  @apply text-xs text-red-400;
+  @apply text-xs text-destructive;
 }
 
 /* Status badges */
@@ -651,12 +651,12 @@
 
 /* Input fields in modals */
 .modal-input {
-  @apply h-8 text-xs bg-slate-800 border-white/10 text-white placeholder:text-slate-500;
+  @apply h-8 text-xs bg-card border-border text-foreground placeholder:text-muted-foreground/70;
 }
 
 /* Select triggers in modals */
 .modal-select {
-  @apply h-8 text-xs bg-slate-800 border-white/10;
+  @apply h-8 text-xs bg-card border-border;
 }
 
 /* Button sizes in modals */

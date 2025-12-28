@@ -47,34 +47,34 @@ export function DeleteWorktreeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[425px] bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <DialogContent className="sm:max-w-[425px] bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-white">
-            <AlertTriangle className="w-5 h-5 text-amber-500" />
+          <DialogTitle className="flex items-center gap-2 text-foreground">
+            <AlertTriangle className="w-5 h-5 text-warning" />
             Delete Worktree Session
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             This action cannot be undone.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          <p className="text-sm text-slate-300">
-            You are about to close the session <strong className="text-white">{sessionName}</strong>.
+          <p className="text-sm text-muted-foreground">
+            You are about to close the session <strong className="text-foreground">{sessionName}</strong>.
           </p>
 
-          <div className="bg-slate-800/50 rounded-lg p-3 space-y-2 border border-white/5">
+          <div className="bg-card/50 rounded-lg p-3 space-y-2 border border-border">
             <div className="flex items-center gap-2 text-sm">
-              <GitBranch className="w-4 h-4 text-violet-400" />
-              <span className="text-slate-400">Branch:</span>
-              <span className="text-white font-mono text-xs bg-slate-700 px-2 py-0.5 rounded">
+              <GitBranch className="w-4 h-4 text-primary" />
+              <span className="text-muted-foreground">Branch:</span>
+              <span className="text-foreground font-mono text-xs bg-muted px-2 py-0.5 rounded">
                 {branchName}
               </span>
             </div>
           </div>
 
-          <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-            <p className="text-sm text-red-400">
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3">
+            <p className="text-sm text-destructive">
               <strong>Warning:</strong> This will permanently delete the worktree directory and its contents from disk. Any uncommitted changes will be lost.
             </p>
           </div>
@@ -85,7 +85,7 @@ export function DeleteWorktreeDialog({
             variant="ghost"
             onClick={onClose}
             disabled={deleting}
-            className="text-slate-400 hover:text-white"
+            className="text-muted-foreground hover:text-foreground"
           >
             Cancel
           </Button>
@@ -93,7 +93,7 @@ export function DeleteWorktreeDialog({
             variant="destructive"
             onClick={handleConfirm}
             disabled={deleting}
-            className="bg-red-600 hover:bg-red-700 text-white"
+            className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
           >
             {deleting ? (
               "Deleting..."

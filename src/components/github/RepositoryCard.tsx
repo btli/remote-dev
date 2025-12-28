@@ -92,8 +92,8 @@ export function RepositoryCard({
   return (
     <div
       className={cn(
-        "rounded-lg border border-white/10 bg-slate-800/50",
-        "hover:bg-slate-800/80 hover:border-violet-500/30",
+        "rounded-lg border border-border bg-card/50",
+        "hover:bg-card/80 hover:border-primary/30",
         "transition-all duration-200",
         className
       )}
@@ -107,7 +107,7 @@ export function RepositoryCard({
         onClick={() => setIsExpanded(!isExpanded)}
       >
         {/* Expand/Collapse */}
-        <button className="text-slate-400 hover:text-white">
+        <button className="text-muted-foreground hover:text-foreground">
           {isExpanded ? (
             <ChevronDown className="w-4 h-4" />
           ) : (
@@ -117,22 +117,22 @@ export function RepositoryCard({
 
         {/* Privacy Icon */}
         {repository.isPrivate ? (
-          <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+          <Lock className="w-4 h-4 text-warning shrink-0" />
         ) : (
-          <Globe className="w-4 h-4 text-slate-400 shrink-0" />
+          <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
         )}
 
         {/* Repository Name */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-white truncate">
+            <span className="text-sm font-medium text-foreground truncate">
               {repository.name}
             </span>
             {repository.hasChanges && (
               <ChangeIndicator count={repository.changeCount} />
             )}
           </div>
-          <span className="text-xs text-slate-500 truncate block">
+          <span className="text-xs text-muted-foreground/70 truncate block">
             {repository.owner}
           </span>
         </div>
@@ -152,7 +152,7 @@ export function RepositoryCard({
             <Button
               variant="ghost"
               size="icon-sm"
-              className="h-6 w-6 text-slate-400 hover:text-white"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
               onClick={(e) => e.stopPropagation()}
             >
               <Plus className="w-3.5 h-3.5" />
@@ -191,11 +191,11 @@ export function RepositoryCard({
 
       {/* Expanded Content */}
       {isExpanded && (
-        <div className="border-t border-white/5 px-3 py-2 space-y-3">
+        <div className="border-t border-border px-3 py-2 space-y-3">
           {/* Open PRs */}
           {repository.pullRequests.length > 0 && (
             <div className="space-y-1.5">
-              <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Open Pull Requests
               </h4>
               <div className="space-y-1">
@@ -215,7 +215,7 @@ export function RepositoryCard({
                 ))}
                 {repository.pullRequests.length > 5 && (
                   <button
-                    className="text-xs text-violet-400 hover:text-violet-300"
+                    className="text-xs text-primary hover:text-primary/80"
                     onClick={() => handleOpenGitHub(`${repository.url}/pulls`)}
                   >
                     View all {repository.pullRequests.length} PRs →
@@ -228,7 +228,7 @@ export function RepositoryCard({
           {/* Recent Commits */}
           {showRecentCommits && repository.stats.recentCommits.length > 0 && (
             <div className="space-y-1.5">
-              <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Recent Commits
               </h4>
               <div className="space-y-1">
@@ -237,13 +237,13 @@ export function RepositoryCard({
                     key={commit.sha}
                     className="flex items-start gap-2 text-xs group"
                   >
-                    <span className="font-mono text-slate-500 shrink-0">
+                    <span className="font-mono text-muted-foreground/70 shrink-0">
                       {commit.sha.slice(0, 7)}
                     </span>
-                    <span className="text-slate-400 truncate flex-1">
+                    <span className="text-muted-foreground truncate flex-1">
                       {commit.message}
                     </span>
-                    <span className="text-slate-600 shrink-0">
+                    <span className="text-muted-foreground/50 shrink-0">
                       {formatRelativeTime(commit.committedDate)}
                     </span>
                   </div>
@@ -254,7 +254,7 @@ export function RepositoryCard({
 
           {/* Last Updated */}
           {repository.stats.lastFetchedAt && (
-            <div className="flex items-center gap-1 text-[10px] text-slate-600">
+            <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50">
               <Clock className="w-3 h-3" />
               Updated {formatRelativeTime(repository.stats.lastFetchedAt.toString())}
             </div>
@@ -288,33 +288,33 @@ function PRItem({
     <div
       className={cn(
         "group flex items-center gap-2 p-2 rounded-md",
-        "bg-slate-900/50 hover:bg-slate-900/80",
-        "border border-transparent hover:border-violet-500/20",
+        "bg-background/50 hover:bg-background/80",
+        "border border-transparent hover:border-primary/20",
         "transition-all duration-150"
       )}
     >
       {/* PR Number + Title */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-violet-400 font-medium shrink-0">
+          <span className="text-xs text-primary font-medium shrink-0">
             #{pr.number}
           </span>
-          <span className="text-xs text-white truncate">{pr.title}</span>
+          <span className="text-xs text-foreground truncate">{pr.title}</span>
           {pr.isNew && (
-            <span className="text-[10px] px-1 py-0.5 bg-violet-500/20 text-violet-400 rounded">
+            <span className="text-[10px] px-1 py-0.5 bg-primary/20 text-primary rounded">
               new
             </span>
           )}
           {pr.isDraft && (
-            <span className="text-[10px] px-1 py-0.5 bg-slate-500/20 text-slate-400 rounded">
+            <span className="text-[10px] px-1 py-0.5 bg-muted text-muted-foreground rounded">
               draft
             </span>
           )}
         </div>
         <div className="flex items-center gap-2 mt-0.5">
-          <User className="w-3 h-3 text-slate-500" />
-          <span className="text-[10px] text-slate-500">{pr.author}</span>
-          <span className="text-[10px] text-slate-600">
+          <User className="w-3 h-3 text-muted-foreground/70" />
+          <span className="text-[10px] text-muted-foreground/70">{pr.author}</span>
+          <span className="text-[10px] text-muted-foreground/50">
             {formatRelativeTime(pr.updatedAt)}
           </span>
         </div>
@@ -331,7 +331,7 @@ function PRItem({
           <Button
             variant="ghost"
             size="icon-sm"
-            className="h-6 w-6 text-slate-400 hover:text-violet-400"
+            className="h-6 w-6 text-muted-foreground hover:text-primary"
             onClick={(e) => {
               e.stopPropagation();
               onCreateWorktree();
@@ -340,7 +340,7 @@ function PRItem({
             title="Create worktree and open session"
           >
             {isCreating ? (
-              <span className="w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
+              <span className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             ) : (
               <FolderGit className="w-3.5 h-3.5" />
             )}
@@ -349,7 +349,7 @@ function PRItem({
         <Button
           variant="ghost"
           size="icon-sm"
-          className="h-6 w-6 text-slate-400 hover:text-white"
+          className="h-6 w-6 text-muted-foreground hover:text-foreground"
           onClick={(e) => {
             e.stopPropagation();
             onOpenGitHub();

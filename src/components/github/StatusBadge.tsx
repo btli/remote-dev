@@ -56,8 +56,8 @@ const statusConfig: Record<
   },
   unknown: {
     icon: HelpCircle,
-    color: "text-slate-400",
-    bgColor: "bg-slate-500/20",
+    color: "text-muted-foreground",
+    bgColor: "bg-muted",
     text: "Unknown",
   },
 };
@@ -115,20 +115,20 @@ const countConfig: Record<
 > = {
   pr: {
     icon: GitPullRequest,
-    color: "text-violet-400",
-    bgColor: "bg-violet-500/20",
+    color: "text-primary",
+    bgColor: "bg-primary/20",
     label: "PRs",
   },
   issue: {
     icon: CircleDot,
-    color: "text-emerald-400",
-    bgColor: "bg-emerald-500/20",
+    color: "text-primary",
+    bgColor: "bg-primary/20",
     label: "Issues",
   },
   commit: {
     icon: CircleDot,
-    color: "text-blue-400",
-    bgColor: "bg-blue-500/20",
+    color: "text-primary",
+    bgColor: "bg-primary/20",
     label: "Commits",
   },
 };
@@ -221,14 +221,14 @@ export function ChangeIndicator({
       <span
         className={cn(
           dotSize,
-          "rounded-full bg-violet-500",
+          "rounded-full bg-primary",
           pulse && "animate-pulse"
         )}
       />
       {count > 1 && (
         <span
           className={cn(
-            "absolute -top-1 -right-1 text-[8px] font-bold text-violet-400",
+            "absolute -top-1 -right-1 text-[8px] font-bold text-primary",
             size === "md" && "text-[10px]"
           )}
         >

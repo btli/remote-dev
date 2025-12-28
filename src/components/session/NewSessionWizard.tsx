@@ -349,12 +349,12 @@ export function NewSessionWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[500px] bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <DialogContent className="sm:max-w-[500px] bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold text-white">
+          <DialogTitle className="text-xl font-semibold text-foreground">
             New Terminal Session
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             {step === "choose-type" && "Choose how to start your session"}
             {step === "simple-form" && "Configure your terminal session"}
             {step === "github-repo" && "Select a GitHub repository"}
@@ -416,29 +416,29 @@ export function NewSessionWizard({
                     key={template.id}
                     onClick={() => handleTemplateSelect(template)}
                     disabled={isCreating}
-                    className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 border border-white/5 hover:border-violet-500/50 hover:bg-slate-800 transition-all text-left group"
+                    className="flex items-center gap-3 p-3 rounded-lg bg-card/50 border border-border hover:border-primary/50 hover:bg-card transition-all text-left group"
                   >
-                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500/20 to-purple-500/20 flex items-center justify-center flex-shrink-0">
-                      <FileBox className="w-5 h-5 text-violet-400" />
+                    <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
+                      <FileBox className="w-5 h-5 text-primary" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-white truncate">
+                        <span className="font-medium text-foreground truncate">
                           {template.name}
                         </span>
                         {template.usageCount > 0 && (
-                          <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <Clock className="w-3 h-3" />
                             {template.usageCount}x
                           </span>
                         )}
                       </div>
                       {template.description && (
-                        <p className="text-xs text-slate-400 truncate">
+                        <p className="text-xs text-muted-foreground truncate">
                           {template.description}
                         </p>
                       )}
-                      <div className="flex gap-2 mt-1 text-[10px] text-slate-500">
+                      <div className="flex gap-2 mt-1 text-[10px] text-muted-foreground">
                         {template.projectPath && (
                           <span className="truncate max-w-[150px]">
                             {template.projectPath}
@@ -451,20 +451,20 @@ export function NewSessionWizard({
                         )}
                       </div>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-violet-400 flex-shrink-0" />
+                    <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary flex-shrink-0" />
                   </button>
                 ))}
               </div>
 
               {error && (
-                <p className="text-sm text-red-400">{error}</p>
+                <p className="text-sm text-destructive">{error}</p>
               )}
 
               <div className="flex justify-between pt-2">
                 <Button
                   variant="ghost"
                   onClick={() => setStep("choose-type")}
-                  className="text-slate-400"
+                  className="text-muted-foreground"
                 >
                   Back
                 </Button>
@@ -476,7 +476,7 @@ export function NewSessionWizard({
           {step === "simple-form" && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="session-name" className="text-sm text-slate-300">
+                <Label htmlFor="session-name" className="text-sm text-foreground">
                   Session Name
                 </Label>
                 <Input
@@ -484,15 +484,15 @@ export function NewSessionWizard({
                   value={sessionName}
                   onChange={(e) => setSessionName(e.target.value)}
                   placeholder="Terminal"
-                  className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                  className="bg-card/50 border-border focus:border-primary"
                 />
               </div>
 
               {/* Profile Selection */}
               {profiles.length > 0 && (
                 <div className="space-y-2">
-                  <Label className="text-sm text-slate-300 flex items-center gap-2">
-                    <Fingerprint className="w-4 h-4 text-violet-400" />
+                  <Label className="text-sm text-foreground flex items-center gap-2">
+                    <Fingerprint className="w-4 h-4 text-primary" />
                     Profile
                   </Label>
                   <ProfileSelector
@@ -501,7 +501,7 @@ export function NewSessionWizard({
                     placeholder="Select a profile (optional)"
                     showProviderBadge={true}
                   />
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Apply git identity, secrets, and MCP servers from a profile
                   </p>
                 </div>
@@ -509,7 +509,7 @@ export function NewSessionWizard({
 
               {sessionType === "folder" && (
                 <div className="space-y-2">
-                  <Label htmlFor="project-path" className="text-sm text-slate-300">
+                  <Label htmlFor="project-path" className="text-sm text-foreground">
                     Working Directory
                   </Label>
                   <PathInput
@@ -520,28 +520,28 @@ export function NewSessionWizard({
                     browserTitle="Select Working Directory"
                     browserDescription="Choose a directory to start your terminal session in"
                   />
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Leave empty to use your home directory
                   </p>
                 </div>
               )}
 
               {error && (
-                <p className="text-sm text-red-400">{error}</p>
+                <p className="text-sm text-destructive">{error}</p>
               )}
 
               <div className="flex justify-between pt-4">
                 <Button
                   variant="ghost"
                   onClick={() => setStep("choose-type")}
-                  className="text-slate-400"
+                  className="text-muted-foreground"
                 >
                   Back
                 </Button>
                 <Button
                   onClick={handleCreate}
                   disabled={isCreating}
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
                   {isCreating ? (
                     <>
@@ -577,25 +577,25 @@ export function NewSessionWizard({
           {step === "github-confirm" && selectedRepo && (
             <div className="space-y-4">
               {/* Summary Card */}
-              <div className="p-4 rounded-lg bg-slate-800/50 border border-white/10 space-y-3">
+              <div className="p-4 rounded-lg bg-card/50 border border-border space-y-3">
                 <div className="flex items-center gap-3">
-                  <Github className="w-5 h-5 text-violet-400" />
+                  <Github className="w-5 h-5 text-primary" />
                   <div>
-                    <p className="text-sm text-slate-400">Repository</p>
-                    <p className="font-medium text-white">{selectedRepo.fullName}</p>
+                    <p className="text-sm text-muted-foreground">Repository</p>
+                    <p className="font-medium text-foreground">{selectedRepo.fullName}</p>
                   </div>
                 </div>
 
                 {(selectedBranch || newBranchName) && (
                   <div className="flex items-center gap-3">
                     <div className="w-5 h-5 flex items-center justify-center">
-                      <div className="w-2 h-2 rounded-full bg-green-400" />
+                      <div className="w-2 h-2 rounded-full bg-primary" />
                     </div>
                     <div>
-                      <p className="text-sm text-slate-400">
+                      <p className="text-sm text-muted-foreground">
                         {newBranchName ? "New Branch" : "Branch"}
                       </p>
-                      <p className="font-medium text-white">
+                      <p className="font-medium text-foreground">
                         {newBranchName || selectedBranch?.name}
                       </p>
                     </div>
@@ -604,10 +604,10 @@ export function NewSessionWizard({
 
                 {createWorktree && (
                   <div className="flex items-center gap-3">
-                    <Folder className="w-5 h-5 text-amber-400" />
+                    <Folder className="w-5 h-5 text-primary" />
                     <div>
-                      <p className="text-sm text-slate-400">Worktree</p>
-                      <p className="font-medium text-white">
+                      <p className="text-sm text-muted-foreground">Worktree</p>
+                      <p className="font-medium text-foreground">
                         Will be created automatically
                       </p>
                     </div>
@@ -617,7 +617,7 @@ export function NewSessionWizard({
 
               {/* Session Name */}
               <div className="space-y-2">
-                <Label htmlFor="github-session-name" className="text-sm text-slate-300">
+                <Label htmlFor="github-session-name" className="text-sm text-foreground">
                   Session Name
                 </Label>
                 <Input
@@ -625,12 +625,12 @@ export function NewSessionWizard({
                   value={sessionName}
                   onChange={(e) => setSessionName(e.target.value)}
                   placeholder={selectedRepo.name}
-                  className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                  className="bg-card/50 border-border focus:border-primary"
                 />
               </div>
 
               {error && (
-                <p className="text-sm text-red-400">{error}</p>
+                <p className="text-sm text-destructive">{error}</p>
               )}
 
               {/* Footer */}
@@ -638,7 +638,7 @@ export function NewSessionWizard({
                 <Button
                   variant="ghost"
                   onClick={() => setStep("github-branch")}
-                  className="text-slate-400"
+                  className="text-muted-foreground"
                   disabled={isCreating}
                 >
                   Back
@@ -646,7 +646,7 @@ export function NewSessionWizard({
                 <Button
                   onClick={handleGitHubCreate}
                   disabled={isCreating}
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
                   {isCreating ? (
                     <>
@@ -666,7 +666,7 @@ export function NewSessionWizard({
             <div className="space-y-4">
               {/* Feature Description */}
               <div className="space-y-2">
-                <Label htmlFor="feature-desc" className="text-sm text-slate-300">
+                <Label htmlFor="feature-desc" className="text-sm text-foreground">
                   Feature Description
                 </Label>
                 <Input
@@ -674,18 +674,18 @@ export function NewSessionWizard({
                   value={featureDescription}
                   onChange={(e) => setFeatureDescription(e.target.value)}
                   placeholder="Add user authentication"
-                  className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                  className="bg-card/50 border-border focus:border-primary"
                 />
                 {generatedBranchName && (
-                  <p className="text-xs text-slate-500">
-                    Branch: <code className="text-violet-400">{generatedBranchName}</code>
+                  <p className="text-xs text-muted-foreground">
+                    Branch: <code className="text-primary">{generatedBranchName}</code>
                   </p>
                 )}
               </div>
 
               {/* Agent Selector */}
               <div className="space-y-2">
-                <Label className="text-sm text-slate-300">AI Agent</Label>
+                <Label className="text-sm text-foreground">AI Agent</Label>
                 <div className="grid grid-cols-2 gap-2">
                   {AGENT_PRESETS.filter((a) => a.id !== "custom").map((agent) => (
                     <button
@@ -695,12 +695,12 @@ export function NewSessionWizard({
                       className={cn(
                         "p-3 rounded-lg text-left transition-all border",
                         selectedAgent === agent.id
-                          ? "border-violet-500 bg-violet-500/10"
-                          : "border-white/10 bg-slate-800/50 hover:border-white/20"
+                          ? "border-primary bg-primary/10"
+                          : "border-border bg-card/50 hover:border-border/80"
                       )}
                     >
-                      <p className="font-medium text-white text-sm">{agent.label}</p>
-                      <p className="text-xs text-slate-400">{agent.description}</p>
+                      <p className="font-medium text-foreground text-sm">{agent.label}</p>
+                      <p className="text-xs text-muted-foreground">{agent.description}</p>
                     </button>
                   ))}
                 </div>
@@ -710,26 +710,26 @@ export function NewSessionWizard({
                   className={cn(
                     "w-full p-3 rounded-lg text-left transition-all border",
                     selectedAgent === "custom"
-                      ? "border-violet-500 bg-violet-500/10"
-                      : "border-white/10 bg-slate-800/50 hover:border-white/20"
+                      ? "border-primary bg-primary/10"
+                      : "border-border bg-card/50 hover:border-border/80"
                   )}
                 >
-                  <p className="font-medium text-white text-sm">Custom Command</p>
-                  <p className="text-xs text-slate-400">Enter your own command</p>
+                  <p className="font-medium text-foreground text-sm">Custom Command</p>
+                  <p className="text-xs text-muted-foreground">Enter your own command</p>
                 </button>
                 {selectedAgent === "custom" && (
                   <Input
                     value={customAgentCommand}
                     onChange={(e) => setCustomAgentCommand(e.target.value)}
                     placeholder="e.g., aider --model gpt-4"
-                    className="mt-2 bg-slate-800/50 border-white/10"
+                    className="mt-2 bg-card/50 border-border"
                   />
                 )}
               </div>
 
               {/* Project Path */}
               <div className="space-y-2">
-                <Label htmlFor="feature-path" className="text-sm text-slate-300">
+                <Label htmlFor="feature-path" className="text-sm text-foreground">
                   Project Path
                 </Label>
                 <PathInput
@@ -745,8 +745,8 @@ export function NewSessionWizard({
               {/* Profile Selection */}
               {profiles.length > 0 && (
                 <div className="space-y-2">
-                  <Label className="text-sm text-slate-300 flex items-center gap-2">
-                    <Fingerprint className="w-4 h-4 text-violet-400" />
+                  <Label className="text-sm text-foreground flex items-center gap-2">
+                    <Fingerprint className="w-4 h-4 text-primary" />
                     Profile
                   </Label>
                   <ProfileSelector
@@ -759,19 +759,19 @@ export function NewSessionWizard({
               )}
 
               {/* Create Worktree Toggle */}
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/30 border border-white/10">
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-card/30 border border-border">
                 <input
                   type="checkbox"
                   id="create-worktree"
                   checked={featureCreateWorktree}
                   onChange={(e) => setFeatureCreateWorktree(e.target.checked)}
-                  className="rounded border-white/20 bg-slate-800 text-violet-500 focus:ring-violet-500"
+                  className="rounded border-border bg-card text-primary focus:ring-primary"
                 />
                 <div>
-                  <Label htmlFor="create-worktree" className="text-sm text-white cursor-pointer">
+                  <Label htmlFor="create-worktree" className="text-sm text-foreground cursor-pointer">
                     Create isolated worktree
                   </Label>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-muted-foreground">
                     Separate directory for this feature branch
                   </p>
                 </div>
@@ -781,15 +781,15 @@ export function NewSessionWizard({
               {featureCreateWorktree && featureProjectPath && (
                 <div className="space-y-2">
                   {isGitRepoValid === false && (
-                    <p className="text-sm text-red-400">Not a git repository</p>
+                    <p className="text-sm text-destructive">Not a git repository</p>
                   )}
                   {isGitRepoValid && availableBranches.length > 0 && (
                     <>
-                      <Label className="text-sm text-slate-300">Base Branch</Label>
+                      <Label className="text-sm text-foreground">Base Branch</Label>
                       <select
                         value={featureBaseBranch}
                         onChange={(e) => setFeatureBaseBranch(e.target.value)}
-                        className="w-full p-2.5 rounded-lg bg-slate-800/50 border border-white/10 text-white text-sm focus:border-violet-500 focus:outline-none"
+                        className="w-full p-2.5 rounded-lg bg-card/50 border border-border text-foreground text-sm focus:border-primary focus:outline-none"
                       >
                         {availableBranches.map((branch) => (
                           <option key={branch} value={branch}>
@@ -802,14 +802,14 @@ export function NewSessionWizard({
                 </div>
               )}
 
-              {error && <p className="text-sm text-red-400">{error}</p>}
+              {error && <p className="text-sm text-destructive">{error}</p>}
 
               {/* Footer */}
               <div className="flex justify-between pt-4">
                 <Button
                   variant="ghost"
                   onClick={() => setStep("choose-type")}
-                  className="text-slate-400"
+                  className="text-muted-foreground"
                 >
                   Back
                 </Button>
@@ -820,7 +820,7 @@ export function NewSessionWizard({
                     (selectedAgent === "custom" && !customAgentCommand.trim()) ||
                     (featureCreateWorktree && isGitRepoValid === false)
                   }
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
                   Review
                   <ChevronRight className="w-4 h-4 ml-2" />
@@ -833,20 +833,20 @@ export function NewSessionWizard({
           {step === "feature-confirm" && (
             <div className="space-y-4">
               {/* Summary Card */}
-              <div className="p-4 rounded-lg bg-slate-800/50 border border-white/10 space-y-3">
+              <div className="p-4 rounded-lg bg-card/50 border border-border space-y-3">
                 <div className="flex items-center gap-3">
-                  <Sparkles className="w-5 h-5 text-violet-400" />
+                  <Sparkles className="w-5 h-5 text-primary" />
                   <div>
-                    <p className="text-sm text-slate-400">Feature</p>
-                    <p className="font-medium text-white">{featureDescription}</p>
+                    <p className="text-sm text-muted-foreground">Feature</p>
+                    <p className="font-medium text-foreground">{featureDescription}</p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <Terminal className="w-5 h-5 text-green-400" />
+                  <Terminal className="w-5 h-5 text-primary" />
                   <div>
-                    <p className="text-sm text-slate-400">Agent Command</p>
-                    <p className="font-medium text-white font-mono text-sm">
+                    <p className="text-sm text-muted-foreground">Agent Command</p>
+                    <p className="font-medium text-foreground font-mono text-sm">
                       {selectedAgent === "custom"
                         ? customAgentCommand
                         : AGENT_PRESETS.find((a) => a.id === selectedAgent)?.command}
@@ -856,10 +856,10 @@ export function NewSessionWizard({
 
                 {featureCreateWorktree && generatedBranchName && (
                   <div className="flex items-center gap-3">
-                    <GitBranch className="w-5 h-5 text-amber-400" />
+                    <GitBranch className="w-5 h-5 text-primary" />
                     <div>
-                      <p className="text-sm text-slate-400">Branch</p>
-                      <p className="font-medium text-white font-mono text-sm">
+                      <p className="text-sm text-muted-foreground">Branch</p>
+                      <p className="font-medium text-foreground font-mono text-sm">
                         {generatedBranchName}
                       </p>
                     </div>
@@ -868,10 +868,10 @@ export function NewSessionWizard({
 
                 {featureCreateWorktree && (
                   <div className="flex items-center gap-3">
-                    <Folder className="w-5 h-5 text-blue-400" />
+                    <Folder className="w-5 h-5 text-primary" />
                     <div>
-                      <p className="text-sm text-slate-400">Worktree</p>
-                      <p className="font-medium text-white">
+                      <p className="text-sm text-muted-foreground">Worktree</p>
+                      <p className="font-medium text-foreground">
                         Will be created from {featureBaseBranch}
                       </p>
                     </div>
@@ -881,7 +881,7 @@ export function NewSessionWizard({
 
               {/* Session Name */}
               <div className="space-y-2">
-                <Label htmlFor="feature-session-name" className="text-sm text-slate-300">
+                <Label htmlFor="feature-session-name" className="text-sm text-foreground">
                   Session Name
                 </Label>
                 <Input
@@ -889,18 +889,18 @@ export function NewSessionWizard({
                   value={sessionName}
                   onChange={(e) => setSessionName(e.target.value)}
                   placeholder={featureDescription || "Feature Session"}
-                  className="bg-slate-800/50 border-white/10 focus:border-violet-500"
+                  className="bg-card/50 border-border focus:border-primary"
                 />
               </div>
 
-              {error && <p className="text-sm text-red-400">{error}</p>}
+              {error && <p className="text-sm text-destructive">{error}</p>}
 
               {/* Footer */}
               <div className="flex justify-between pt-4">
                 <Button
                   variant="ghost"
                   onClick={() => setStep("feature-form")}
-                  className="text-slate-400"
+                  className="text-muted-foreground"
                   disabled={isCreating}
                 >
                   Back
@@ -908,7 +908,7 @@ export function NewSessionWizard({
                 <Button
                   onClick={handleFeatureCreate}
                   disabled={isCreating}
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
                   {isCreating ? (
                     <>
@@ -951,35 +951,35 @@ function SessionTypeCard({
       disabled={disabled}
       className={cn(
         "group relative flex items-center gap-4 p-4 rounded-lg text-left transition-all duration-200",
-        "border border-white/10",
+        "border border-border",
         disabled
-          ? "opacity-50 cursor-not-allowed bg-slate-800/30"
-          : "bg-slate-800/50 hover:bg-slate-800/80 hover:border-violet-500/50 hover:shadow-lg hover:shadow-violet-500/10"
+          ? "opacity-50 cursor-not-allowed bg-card/30"
+          : "bg-card/50 hover:bg-card/80 hover:border-primary/50 hover:shadow-lg hover:shadow-primary/10"
       )}
     >
       <div
         className={cn(
           "p-2.5 rounded-lg",
           disabled
-            ? "bg-slate-700/50 text-slate-400"
-            : "bg-gradient-to-br from-violet-500/20 to-purple-500/20 text-violet-400 group-hover:from-violet-500/30 group-hover:to-purple-500/30"
+            ? "bg-muted/50 text-muted-foreground"
+            : "bg-primary/20 text-primary group-hover:bg-primary/30"
         )}
       >
         {icon}
       </div>
       <div className="flex-1">
         <div className="flex items-center gap-2">
-          <h3 className="font-medium text-white">{title}</h3>
+          <h3 className="font-medium text-foreground">{title}</h3>
           {badge && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400">
+            <span className="text-xs px-2 py-0.5 rounded-full bg-destructive/20 text-destructive">
               {badge}
             </span>
           )}
         </div>
-        <p className="text-sm text-slate-400 mt-0.5">{description}</p>
+        <p className="text-sm text-muted-foreground mt-0.5">{description}</p>
       </div>
       {!disabled && (
-        <ChevronRight className="w-5 h-5 text-slate-500 group-hover:text-violet-400 transition-colors" />
+        <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
       )}
     </button>
   );

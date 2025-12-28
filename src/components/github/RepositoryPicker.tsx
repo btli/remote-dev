@@ -86,8 +86,8 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 text-violet-400 animate-spin mb-4" />
-        <p className="text-slate-400">Loading repositories...</p>
+        <Loader2 className="w-8 h-8 text-primary animate-spin mb-4" />
+        <p className="text-muted-foreground">Loading repositories...</p>
       </div>
     );
   }
@@ -95,13 +95,13 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <Github className="w-12 h-12 text-red-400 mb-4" />
-        <p className="text-red-400 mb-4">{error}</p>
+        <Github className="w-12 h-12 text-destructive mb-4" />
+        <p className="text-destructive mb-4">{error}</p>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onBack} className="text-slate-400">
+          <Button variant="ghost" onClick={onBack} className="text-muted-foreground">
             Back
           </Button>
-          <Button onClick={fetchRepositories} className="bg-violet-600 hover:bg-violet-700">
+          <Button onClick={fetchRepositories} className="bg-primary hover:bg-primary/90">
             <RefreshCw className="w-4 h-4 mr-2" />
             Retry
           </Button>
@@ -114,12 +114,12 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
     <div className="space-y-4">
       {/* Search Input */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search repositories..."
-          className="pl-10 bg-slate-800/50 border-white/10 focus:border-violet-500"
+          className="pl-10 bg-card/50 border-border focus:border-primary"
         />
       </div>
 
@@ -127,7 +127,7 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
       <ScrollArea className="h-[300px]">
         <div className="space-y-2 pr-4">
           {filteredRepos.length === 0 ? (
-            <div className="text-center py-8 text-slate-400">
+            <div className="text-center py-8 text-muted-foreground">
               {searchQuery
                 ? "No repositories match your search"
                 : "No repositories found"}
@@ -139,35 +139,35 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
                 onClick={() => onSelect(repo)}
                 className={cn(
                   "group w-full flex items-start gap-3 p-3 rounded-lg text-left",
-                  "border border-white/10 transition-all duration-200",
-                  "bg-slate-800/50 hover:bg-slate-800/80 hover:border-violet-500/50",
-                  "hover:shadow-lg hover:shadow-violet-500/10"
+                  "border border-border transition-all duration-200",
+                  "bg-card/50 hover:bg-card/80 hover:border-primary/50",
+                  "hover:shadow-lg hover:shadow-primary/10"
                 )}
               >
                 {/* Visibility Icon */}
                 <div className="mt-0.5">
                   {repo.isPrivate ? (
-                    <Lock className="w-4 h-4 text-amber-400" />
+                    <Lock className="w-4 h-4 text-warning" />
                   ) : (
-                    <Globe className="w-4 h-4 text-slate-400" />
+                    <Globe className="w-4 h-4 text-muted-foreground" />
                   )}
                 </div>
 
                 {/* Repo Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-medium text-white truncate">
+                    <h3 className="font-medium text-foreground truncate">
                       {repo.fullName}
                     </h3>
                   </div>
 
                   {repo.description && (
-                    <p className="text-sm text-slate-400 mt-0.5 line-clamp-2">
+                    <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">
                       {repo.description}
                     </p>
                   )}
 
-                  <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
+                  <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground/70">
                     {repo.language && (
                       <span className="flex items-center gap-1">
                         <span
@@ -191,7 +191,7 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
                   </div>
                 </div>
 
-                <ChevronRight className="w-5 h-5 text-slate-500 group-hover:text-violet-400 transition-colors mt-1" />
+                <ChevronRight className="w-5 h-5 text-muted-foreground/70 group-hover:text-primary transition-colors mt-1" />
               </button>
             ))
           )}
@@ -199,14 +199,14 @@ export function RepositoryPicker({ onSelect, onBack }: RepositoryPickerProps) {
       </ScrollArea>
 
       {/* Footer */}
-      <div className="flex justify-between pt-2 border-t border-white/10">
-        <Button variant="ghost" onClick={onBack} className="text-slate-400">
+      <div className="flex justify-between pt-2 border-t border-border">
+        <Button variant="ghost" onClick={onBack} className="text-muted-foreground">
           Back
         </Button>
         <Button
           variant="ghost"
           onClick={fetchRepositories}
-          className="text-slate-400"
+          className="text-muted-foreground"
         >
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
