@@ -18,7 +18,6 @@ interface TerminalWithKeyboardProps {
   projectPath?: string | null;
   session?: TerminalSession;
   wsUrl?: string;
-  theme?: string;
   fontSize?: number;
   fontFamily?: string;
   notificationsEnabled?: boolean;
@@ -41,7 +40,6 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   projectPath,
   session,
   wsUrl = "ws://localhost:3001",
-  theme,
   fontSize,
   fontFamily,
   notificationsEnabled,
@@ -129,7 +127,6 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
           sessionName={sessionName}
           projectPath={projectPath}
           wsUrl={wsUrl}
-          theme={theme}
           fontSize={fontSize}
           fontFamily={fontFamily}
           notificationsEnabled={notificationsEnabled}

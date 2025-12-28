@@ -1127,7 +1127,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile header bar */}
         {activeSessions.length > 0 && (
-          <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-white/5 bg-slate-900/50">
+          <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
             {mobileEditingName !== null ? (
               <input
                 type="text"
@@ -1150,11 +1150,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     setMobileEditingName(null);
                   }
                 }}
-                className="flex-1 bg-slate-800 border border-violet-500/50 rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500"
+                className="flex-1 bg-input border border-primary/50 rounded px-2 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               />
             ) : (
               <span
-                className="text-xs text-slate-400 truncate flex-1 cursor-pointer hover:text-white transition-colors"
+                className="text-xs text-muted-foreground truncate flex-1 cursor-pointer hover:text-foreground transition-colors"
                 onClick={() => {
                   const session = activeSessions.find((s) => s.id === activeSessionId);
                   if (session) {
@@ -1165,7 +1165,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                 {activeSessions.find((s) => s.id === activeSessionId)?.name || "No session"}
               </span>
             )}
-            <span className="text-[10px] text-slate-500">
+            <span className="text-[10px] text-muted-foreground">
               {activeSessions.length} session{activeSessions.length !== 1 ? "s" : ""}
             </span>
           </div>
@@ -1175,22 +1175,22 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         {!loading && activeSessions.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md mx-auto px-4">
-              <div className="relative p-8 rounded-2xl bg-slate-900/50 backdrop-blur-xl border border-white/10 shadow-2xl">
-                <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-violet-500/10 via-transparent to-blue-500/10 pointer-events-none" />
-                <div className="relative mx-auto w-16 h-16 rounded-xl bg-gradient-to-br from-violet-500/20 to-purple-500/20 flex items-center justify-center mb-6">
-                  <TerminalIcon className="w-8 h-8 text-violet-400" />
+              <div className="relative p-8 rounded-2xl bg-card/50 backdrop-blur-xl border border-border shadow-2xl">
+                <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-primary/10 via-transparent to-accent/10 pointer-events-none" />
+                <div className="relative mx-auto w-16 h-16 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mb-6">
+                  <TerminalIcon className="w-8 h-8 text-primary" />
                 </div>
-                <h2 className="relative text-2xl font-semibold text-white mb-3">
+                <h2 className="relative text-2xl font-semibold text-foreground mb-3">
                   No Active Sessions
                 </h2>
-                <p className="relative text-slate-400 mb-6">
-                  Press <kbd className="px-2 py-1 bg-slate-800 rounded text-xs">⌘↵</kbd> to
+                <p className="relative text-muted-foreground mb-6">
+                  Press <kbd className="px-2 py-1 bg-muted rounded text-xs">⌘↵</kbd> to
                   create a new terminal session, or use the wizard for more options.
                 </p>
                 <div className="flex gap-3 justify-center">
                   <Button
                     onClick={handleQuickNewSession}
-                    className="relative bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white shadow-lg shadow-violet-500/25"
+                    className="relative bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg"
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     Quick Terminal
@@ -1198,7 +1198,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                   <Button
                     onClick={handleOpenWizard}
                     variant="outline"
-                    className="border-white/10 text-slate-300 hover:bg-white/5"
+                    className="border-border text-muted-foreground hover:bg-accent/50"
                   >
                     Advanced...
                   </Button>
@@ -1211,8 +1211,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           <div className="flex-1 p-3 overflow-hidden">
             <div className="h-full relative rounded-xl overflow-hidden">
               {/* Gradient border effect */}
-              <div className="absolute inset-0 rounded-xl p-[1px] bg-gradient-to-br from-violet-500/30 via-transparent to-blue-500/30">
-                <div className="absolute inset-[1px] rounded-xl bg-slate-950" />
+              <div className="absolute inset-0 rounded-xl p-[1px] bg-gradient-to-br from-primary/30 via-transparent to-accent/30">
+                <div className="absolute inset-[1px] rounded-xl bg-background" />
               </div>
 
               {/* Split pane controls */}
@@ -1223,7 +1223,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     size="icon"
                     onClick={handleSplitVertical}
                     title="Split vertically (⌘D)"
-                    className="w-7 h-7 bg-slate-800/80 hover:bg-slate-700/80 text-slate-400 hover:text-white"
+                    className="w-7 h-7 bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground"
                   >
                     <Columns className="w-4 h-4" />
                   </Button>
@@ -1232,7 +1232,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     size="icon"
                     onClick={handleSplitHorizontal}
                     title="Split horizontally (⌘⇧D)"
-                    className="w-7 h-7 bg-slate-800/80 hover:bg-slate-700/80 text-slate-400 hover:text-white"
+                    className="w-7 h-7 bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground"
                   >
                     <Rows className="w-4 h-4" />
                   </Button>
@@ -1242,7 +1242,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                       size="icon"
                       onClick={handleExitSplitMode}
                       title="Exit split mode"
-                      className="w-7 h-7 bg-slate-800/80 hover:bg-red-500/50 text-slate-400 hover:text-white"
+                      className="w-7 h-7 bg-muted/80 hover:bg-destructive/50 text-muted-foreground hover:text-foreground"
                     >
                       <Maximize2 className="w-4 h-4" />
                     </Button>
@@ -1290,7 +1290,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           projectPath={session.projectPath}
                           session={session}
                           wsUrl={wsUrl}
-                          theme={prefs.theme}
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
                           notificationsEnabled={true}

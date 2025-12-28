@@ -19,6 +19,7 @@ import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubStatusIcon } from "@/components/header/GitHubStatusIcon";
 import { SecretsStatusButton } from "@/components/header/SecretsStatusButton";
 import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
+import { AppearanceModeToggleCompact } from "@/components/appearance";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import Image from "next/image";
@@ -84,9 +85,9 @@ export default async function Home() {
                       <TrashProvider>
                         <PortProvider>
                           <ScheduleProvider>
-                          <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+                          <div className="flex h-screen flex-col bg-background">
                           {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
-                          <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-white/5 bg-slate-900/30 backdrop-blur-sm">
+                          <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-border bg-card/30 backdrop-blur-sm">
                             {/* Logo */}
                             <div className="flex items-center gap-3">
                               <Image
@@ -96,15 +97,16 @@ export default async function Home() {
                                 height={32}
                                 className="rounded-lg"
                               />
-                              <h1 className="text-lg font-semibold text-white">Remote Dev</h1>
+                              <h1 className="text-lg font-semibold text-foreground">Remote Dev</h1>
                             </div>
 
                             {/* User info and actions */}
                             <div className="flex items-center gap-4">
                               {/* Connection status icons */}
-                              <div className="flex items-center gap-3 pr-2 border-r border-white/10">
+                              <div className="flex items-center gap-3 pr-2 border-r border-border">
                                 <GitHubStatusIcon isConnected={isGitHubConnected} />
                                 <SecretsStatusButton />
+                                <AppearanceModeToggleCompact />
                               </div>
 
                               {/* User settings */}
@@ -121,7 +123,7 @@ export default async function Home() {
                                   variant="ghost"
                                   size="sm"
                                   type="submit"
-                                  className="text-slate-400 hover:text-white"
+                                  className="text-muted-foreground hover:text-foreground"
                                 >
                                   <LogOut className="w-4 h-4 mr-2" />
                                   Sign out

@@ -26,6 +26,7 @@ import { UnsavedChangesDialog } from "@/components/common/UnsavedChangesDialog";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useFolderContext } from "@/contexts/FolderContext";
+import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appearance";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
 import { cn } from "@/lib/utils";
 
@@ -39,13 +40,6 @@ const SHELL_OPTIONS = [
   { value: "/bin/zsh", label: "Zsh" },
   { value: "/bin/fish", label: "Fish" },
   { value: "/bin/sh", label: "Sh" },
-];
-
-const THEME_OPTIONS = [
-  { value: "tokyo-night", label: "Tokyo Night" },
-  { value: "dracula", label: "Dracula" },
-  { value: "nord", label: "Nord" },
-  { value: "monokai", label: "Monokai" },
 ];
 
 const FONT_OPTIONS = [
@@ -148,64 +142,64 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[550px] bg-slate-900/95 backdrop-blur-xl border-white/10">
+      <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-white">
-            <Settings className="w-5 h-5 text-violet-400" />
+          <DialogTitle className="flex items-center gap-2 text-foreground">
+            <Settings className="w-5 h-5 text-primary" />
             User Settings
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Configure your default preferences. These can be overridden per folder.
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="terminal" className="mt-4">
-          <TabsList className="grid w-full grid-cols-3 bg-slate-800/50">
-            <TabsTrigger value="terminal" className="data-[state=active]:bg-violet-500/20">
+        <Tabs defaultValue="terminal" className="mt-4 flex-1 flex flex-col min-h-0">
+          <TabsList className="grid w-full grid-cols-3 bg-muted/50">
+            <TabsTrigger value="terminal" className="data-[state=active]:bg-primary/20">
               <Terminal className="w-4 h-4 mr-2" />
               Terminal
             </TabsTrigger>
-            <TabsTrigger value="appearance" className="data-[state=active]:bg-violet-500/20">
+            <TabsTrigger value="appearance" className="data-[state=active]:bg-primary/20">
               <Palette className="w-4 h-4 mr-2" />
               Appearance
             </TabsTrigger>
-            <TabsTrigger value="project" className="data-[state=active]:bg-violet-500/20">
+            <TabsTrigger value="project" className="data-[state=active]:bg-primary/20">
               <Folder className="w-4 h-4 mr-2" />
               Project
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="terminal" className="space-y-4 mt-4">
+          <TabsContent value="terminal" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
             {/* Working Directory */}
             <div className="space-y-2">
-              <Label className="text-slate-300">Default Working Directory</Label>
+              <Label className="text-foreground">Default Working Directory</Label>
               <Input
                 value={getValue("defaultWorkingDirectory") || ""}
                 onChange={(e) => setValue("defaultWorkingDirectory", e.target.value || null)}
                 placeholder="~/projects"
-                className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Leave empty to use your home directory
               </p>
             </div>
 
             {/* Shell */}
             <div className="space-y-2">
-              <Label className="text-slate-300">Default Shell</Label>
+              <Label className="text-foreground">Default Shell</Label>
               <Select
                 value={getValue("defaultShell") || "/bin/bash"}
                 onValueChange={(value) => setValue("defaultShell", value)}
               >
-                <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                <SelectTrigger className="bg-input border-border text-foreground">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-slate-800 border-white/10">
+                <SelectContent className="bg-popover border-border">
                   {SHELL_OPTIONS.map((option) => (
                     <SelectItem
                       key={option.value}
                       value={option.value}
-                      className="text-white focus:bg-violet-500/20"
+                      className="text-popover-foreground focus:bg-primary/20"
                     >
                       {option.label}
                     </SelectItem>
@@ -216,49 +210,43 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
             {/* Startup Command */}
             <div className="space-y-2">
-              <Label className="text-slate-300">Startup Command</Label>
+              <Label className="text-foreground">Startup Command</Label>
               <Input
                 value={getValue("startupCommand") || ""}
                 onChange={(e) => setValue("startupCommand", e.target.value || null)}
                 placeholder="claude"
-                className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Command to run when a new session starts (e.g., claude, clauded)
               </p>
             </div>
           </TabsContent>
 
-          <TabsContent value="appearance" className="space-y-4 mt-4">
-            {/* Theme */}
+          <TabsContent value="appearance" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
+            {/* Appearance Mode (Light/System/Dark) */}
             <div className="space-y-2">
-              <Label className="text-slate-300">Theme</Label>
-              <Select
-                value={getValue("theme") || "tokyo-night"}
-                onValueChange={(value) => setValue("theme", value)}
-              >
-                <SelectTrigger className="bg-slate-800 border-white/10 text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-slate-800 border-white/10">
-                  {THEME_OPTIONS.map((option) => (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      className="text-white focus:bg-violet-500/20"
-                    >
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label className="text-foreground">Appearance Mode</Label>
+              <AppearanceModeToggle />
+              <p className="text-xs text-muted-foreground">
+                Choose light, dark, or follow your system preference
+              </p>
+            </div>
+
+            {/* Color Schemes */}
+            <div className="space-y-2">
+              <Label className="text-foreground">Color Schemes</Label>
+              <p className="text-xs text-muted-foreground mb-3">
+                Select different color schemes for light and dark modes
+              </p>
+              <ColorSchemeDualSelector />
             </div>
 
             {/* Font Size */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-slate-300">Font Size</Label>
-                <span className="text-sm text-slate-400">
+                <Label className="text-foreground">Font Size</Label>
+                <span className="text-sm text-muted-foreground">
                   {getValue("fontSize") || 14}px
                 </span>
               </div>
@@ -274,20 +262,20 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
             {/* Font Family */}
             <div className="space-y-2">
-              <Label className="text-slate-300">Font Family</Label>
+              <Label className="text-foreground">Font Family</Label>
               <Select
                 value={getValue("fontFamily") || "'JetBrainsMono Nerd Font Mono', monospace"}
                 onValueChange={(value) => setValue("fontFamily", value)}
               >
-                <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                <SelectTrigger className="bg-input border-border text-foreground">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-slate-800 border-white/10">
+                <SelectContent className="bg-popover border-border">
                   {FONT_OPTIONS.map((option) => (
                     <SelectItem
                       key={option.value}
                       value={option.value}
-                      className="text-white focus:bg-violet-500/20"
+                      className="text-popover-foreground focus:bg-primary/20"
                       style={{ fontFamily: option.value }}
                     >
                       {option.label}
@@ -298,12 +286,12 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="project" className="space-y-4 mt-4">
+          <TabsContent value="project" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
             {/* Auto-follow toggle */}
-            <div className="flex items-center justify-between p-3 rounded-lg bg-slate-800/50 border border-white/5">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
               <div className="space-y-0.5">
-                <Label className="text-slate-300">Auto-follow active session</Label>
-                <p className="text-xs text-slate-500">
+                <Label className="text-foreground">Auto-follow active session</Label>
+                <p className="text-xs text-muted-foreground">
                   Automatically switch active project based on selected session
                 </p>
               </div>
@@ -317,9 +305,9 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
             {/* Active project display */}
             <div className="space-y-2">
-              <Label className="text-slate-300">Active Project</Label>
+              <Label className="text-foreground">Active Project</Label>
               {folders.length === 0 ? (
-                <p className="text-sm text-slate-500 p-3 rounded-lg bg-slate-800/50 border border-white/5">
+                <p className="text-sm text-muted-foreground p-3 rounded-lg bg-muted/50 border border-border">
                   No folders created yet. Create a folder to set it as active.
                 </p>
               ) : (
@@ -335,8 +323,8 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                           "flex items-center justify-between p-2 rounded-lg",
                           "transition-colors cursor-pointer",
                           isActive
-                            ? "bg-violet-500/20 border border-violet-500/30"
-                            : "bg-slate-800/50 border border-white/5 hover:bg-slate-800"
+                            ? "bg-primary/20 border border-primary/30"
+                            : "bg-muted/50 border border-border hover:bg-muted"
                         )}
                         onClick={() => setActiveFolder(folder.id, false)}
                       >
@@ -345,14 +333,14 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                             className={cn(
                               "w-4 h-4",
                               isActive
-                                ? "text-violet-400 fill-violet-400/30"
-                                : "text-slate-400"
+                                ? "text-primary fill-primary/30"
+                                : "text-muted-foreground"
                             )}
                           />
                           <span
                             className={cn(
                               "text-sm",
-                              isActive ? "text-white" : "text-slate-300"
+                              isActive ? "text-foreground" : "text-muted-foreground"
                             )}
                           >
                             {folder.name}
@@ -362,7 +350,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-slate-400 hover:text-white"
+                            className="h-6 w-6 text-muted-foreground hover:text-foreground"
                             onClick={(e) => {
                               e.stopPropagation();
                               setActiveFolder(folder.id, !isPinned);
@@ -370,7 +358,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                             title={isPinned ? "Unpin project" : "Pin project"}
                           >
                             {isPinned ? (
-                              <Pin className="w-3.5 h-3.5 fill-violet-400 text-violet-400" />
+                              <Pin className="w-3.5 h-3.5 fill-primary text-primary" />
                             ) : (
                               <PinOff className="w-3.5 h-3.5" />
                             )}
@@ -381,25 +369,25 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                   })}
                 </div>
               )}
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 Pin a project to prevent auto-follow from switching it
               </p>
             </div>
           </TabsContent>
         </Tabs>
 
-        <div className="flex justify-end gap-2 pt-4 border-t border-white/5">
+        <div className="flex justify-end gap-2 pt-4 border-t border-border shrink-0">
           <Button
             variant="ghost"
             onClick={() => handleOpenChange(false)}
-            className="text-slate-400 hover:text-white"
+            className="text-muted-foreground hover:text-foreground"
           >
             Cancel
           </Button>
           <Button
             onClick={handleSave}
             disabled={saving}
-            className="bg-violet-600 hover:bg-violet-700 text-white"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             {saving ? "Saving..." : "Save Changes"}
           </Button>
