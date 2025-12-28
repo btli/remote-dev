@@ -6,7 +6,8 @@ import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
 import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { ConnectionStatus } from "@/types/terminal";
-import { useTerminalTheme } from "@/contexts/AppearanceContext";
+import { useTerminalTheme, useAppearance } from "@/contexts/AppearanceContext";
+import { transformAnsiColors, type ThemeMode } from "@/lib/ansi-color-transform";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
@@ -62,6 +63,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 }, ref) {
   // Get terminal theme from appearance context (derives from site color scheme)
   const terminalTheme = useTerminalTheme();
+  const { effectiveMode } = useAppearance();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
@@ -93,6 +95,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
+  // Track theme mode for color transformation without causing reconnections
+  const effectiveModeRef = useRef<ThemeMode>(effectiveMode);
 
   // FIX: Use refs for theme/font to avoid recreating terminal on changes.
   // These refs are kept in sync with props so that:
@@ -126,7 +130,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     fontFamilyRef.current = fontFamily;
     // Keep environmentVars in sync (only used during initial connection)
     environmentVarsRef.current = environmentVars;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars]);
+    // Keep theme mode in sync for color transformation
+    effectiveModeRef.current = effectiveMode;
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars, effectiveMode]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -394,13 +400,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           try {
             const msg = JSON.parse(event.data);
             switch (msg.type) {
-              case "output":
-                terminal.write(msg.data);
+              case "output": {
+                // Transform 24-bit true colors for theme compatibility
+                const transformedData = transformAnsiColors(
+                  msg.data,
+                  effectiveModeRef.current
+                );
+                terminal.write(transformedData);
                 // Record activity for notification detection
                 recordActivityRef.current?.();
                 // Emit output for recording
                 onOutputRef.current?.(msg.data);
                 break;
+              }
               case "ready":
                 console.log("Terminal session ready:", msg.sessionId);
                 break;
@@ -429,7 +441,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
             }
           } catch {
-            terminal.write(event.data);
+            // Transform 24-bit true colors for theme compatibility
+            const transformedData = transformAnsiColors(
+              event.data,
+              effectiveModeRef.current
+            );
+            terminal.write(transformedData);
             // Record activity for notification detection (raw data)
             recordActivityRef.current?.();
             // Emit output for recording
