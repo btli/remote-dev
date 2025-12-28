@@ -81,8 +81,9 @@ export function AppearanceModeToggleCompact({ className }: { className?: string 
     setMode(nextMode);
   };
 
-  // Show icon based on effective mode, not preference
-  const Icon = effectiveMode === "dark" ? Moon : Sun;
+  // Show icon based on current mode preference
+  const Icon =
+    currentMode === "system" ? Monitor : currentMode === "dark" ? Moon : Sun;
 
   return (
     <Button
