@@ -126,15 +126,15 @@ const oceanLight: ModePalette = {
     blue: "#5e81ac",
     magenta: "#b48ead",
     cyan: "#88c0d0",
-    white: "#e5e9f0",
-    brightBlack: "#4c566a",
+    white: "#4c566a",       // Dark gray for visibility on light bg
+    brightBlack: "#434c5e",
     brightRed: "#bf616a",
     brightGreen: "#a3be8c",
     brightYellow: "#ebcb8b",
     brightBlue: "#81a1c1",
     brightMagenta: "#b48ead",
     brightCyan: "#8fbcbb",
-    brightWhite: "#eceff4",
+    brightWhite: "#3b4252",  // Darker for visibility on light bg
   },
 };
 
@@ -223,7 +223,7 @@ const forestLight: ModePalette = {
     blue: "#66d9ef",
     magenta: "#ae81ff",
     cyan: "#a1efe4",
-    white: "#f8f8f2",
+    white: "#49483e",       // Dark gray for visibility on light bg
     brightBlack: "#75715e",
     brightRed: "#f92672",
     brightGreen: "#a6e22e",
@@ -231,7 +231,7 @@ const forestLight: ModePalette = {
     brightBlue: "#66d9ef",
     brightMagenta: "#ae81ff",
     brightCyan: "#a1efe4",
-    brightWhite: "#f9f8f5",
+    brightWhite: "#272822",  // Darker for visibility on light bg
   },
 };
 
@@ -320,7 +320,7 @@ const sunsetLight: ModePalette = {
     blue: "#bd93f9",
     magenta: "#ff79c6",
     cyan: "#8be9fd",
-    white: "#f8f8f2",
+    white: "#44475a",       // Dark gray for visibility on light bg
     brightBlack: "#6272a4",
     brightRed: "#ff6e6e",
     brightGreen: "#69ff94",
@@ -328,7 +328,7 @@ const sunsetLight: ModePalette = {
     brightBlue: "#d6acff",
     brightMagenta: "#ff92df",
     brightCyan: "#a4ffff",
-    brightWhite: "#ffffff",
+    brightWhite: "#282a36",  // Darker for visibility on light bg
   },
 };
 
@@ -417,7 +417,7 @@ const midnightLight: ModePalette = {
     blue: "#7aa2f7",
     magenta: "#ad8ee6",
     cyan: "#449dab",
-    white: "#787c99",
+    white: "#565a6e",       // Darker gray for visibility on light bg
     brightBlack: "#444b6a",
     brightRed: "#ff7a93",
     brightGreen: "#b9f27c",
@@ -425,7 +425,7 @@ const midnightLight: ModePalette = {
     brightBlue: "#7da6ff",
     brightMagenta: "#bb9af7",
     brightCyan: "#0db9d7",
-    brightWhite: "#acb0d0",
+    brightWhite: "#343b58",  // Darker for visibility on light bg
   },
 };
 
@@ -514,15 +514,15 @@ const arcticLight: ModePalette = {
     blue: "#3b82f6",
     magenta: "#a855f7",
     cyan: "#06b6d4",
-    white: "#f1f5f9",
-    brightBlack: "#475569",
+    white: "#475569",       // Dark gray for visibility on light bg
+    brightBlack: "#64748b",
     brightRed: "#f87171",
     brightGreen: "#4ade80",
     brightYellow: "#facc15",
     brightBlue: "#60a5fa",
     brightMagenta: "#c084fc",
     brightCyan: "#22d3ee",
-    brightWhite: "#ffffff",
+    brightWhite: "#334155",  // Darker for visibility on light bg
   },
 };
 
@@ -611,15 +611,15 @@ const roseLight: ModePalette = {
     blue: "#2563eb",
     magenta: "#db2777",
     cyan: "#0891b2",
-    white: "#fce7f3",
-    brightBlack: "#9f1239",
+    white: "#9f1239",       // Dark rose for visibility on light bg
+    brightBlack: "#be185d",
     brightRed: "#fb7185",
     brightGreen: "#4ade80",
     brightYellow: "#facc15",
     brightBlue: "#60a5fa",
     brightMagenta: "#f472b6",
     brightCyan: "#22d3ee",
-    brightWhite: "#ffffff",
+    brightWhite: "#831843",  // Darker for visibility on light bg
   },
 };
 
@@ -708,15 +708,15 @@ const amberLight: ModePalette = {
     blue: "#2563eb",
     magenta: "#c026d3",
     cyan: "#0891b2",
-    white: "#fef3c7",
-    brightBlack: "#92400e",
+    white: "#92400e",       // Dark amber for visibility on light bg
+    brightBlack: "#b45309",
     brightRed: "#f87171",
     brightGreen: "#4ade80",
     brightYellow: "#fbbf24",
     brightBlue: "#60a5fa",
     brightMagenta: "#e879f9",
     brightCyan: "#22d3ee",
-    brightWhite: "#ffffff",
+    brightWhite: "#78350f",  // Darker for visibility on light bg
   },
 };
 
@@ -805,15 +805,15 @@ const monoLight: ModePalette = {
     blue: "#1e3a8a",
     magenta: "#701a75",
     cyan: "#164e63",
-    white: "#f5f5f5",
-    brightBlack: "#525252",
+    white: "#525252",       // Dark gray for visibility on light bg
+    brightBlack: "#737373",
     brightRed: "#b91c1c",
     brightGreen: "#166534",
     brightYellow: "#a16207",
     brightBlue: "#1d4ed8",
     brightMagenta: "#a21caf",
     brightCyan: "#0e7490",
-    brightWhite: "#ffffff",
+    brightWhite: "#262626",  // Darker for visibility on light bg
   },
 };
 

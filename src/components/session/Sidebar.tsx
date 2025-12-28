@@ -995,7 +995,7 @@ export function Sidebar({
                   </span>
                   {/* Git branch indicator */}
                   {session.worktreeBranch && (
-                    <span className="flex items-center gap-0.5 text-[10px] text-accent-foreground/80 truncate">
+                    <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground truncate">
                       <GitBranch className="w-2.5 h-2.5" />
                       {session.worktreeBranch}
                     </span>
@@ -1676,7 +1676,7 @@ export function Sidebar({
                                     </span>
                                   )}
                                   {repoStats.issueCount > 0 && (
-                                    <span className="flex items-center gap-0.5 text-[9px] text-accent-foreground">
+                                    <span className="flex items-center gap-0.5 text-[9px] text-primary">
                                       <CircleDot className="w-2.5 h-2.5" />
                                       {repoStats.issueCount}
                                     </span>
@@ -1768,7 +1768,7 @@ export function Sidebar({
                                 <GitBranch className="w-3.5 h-3.5 mr-2" />
                                 Repository
                                 {folderHasRepo(node.id) && (
-                                  <span className="ml-auto text-[10px] text-accent-foreground">Linked</span>
+                                  <span className="ml-auto text-[10px] text-primary">Linked</span>
                                 )}
                               </ContextMenuItem>
                               <ContextMenuItem
