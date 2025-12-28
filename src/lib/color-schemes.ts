@@ -120,21 +120,21 @@ const oceanLight: ModePalette = {
     cursorAccent: "#eceff4",
     selectionBackground: "#d8dee9",
     black: "#3b4252",
-    red: "#bf616a",
-    green: "#a3be8c",
-    yellow: "#ebcb8b",
+    red: "#a5545c",            // Muted dusty rose (was #bf616a)
+    green: "#7a9a6d",          // Muted sage green (was #a3be8c)
+    yellow: "#b8975a",         // Muted gold (was #ebcb8b)
     blue: "#5e81ac",
-    magenta: "#b48ead",
-    cyan: "#88c0d0",
-    white: "#4c566a",       // Dark gray for visibility on light bg
+    magenta: "#9a7a9a",        // Muted mauve (was #b48ead)
+    cyan: "#6a9aa8",           // Muted teal (was #88c0d0)
+    white: "#4c566a",
     brightBlack: "#434c5e",
-    brightRed: "#bf616a",
-    brightGreen: "#a3be8c",
-    brightYellow: "#ebcb8b",
+    brightRed: "#b5646c",      // Slightly brighter muted rose
+    brightGreen: "#8aaa7d",    // Slightly brighter sage
+    brightYellow: "#c8a76a",
     brightBlue: "#81a1c1",
-    brightMagenta: "#b48ead",
-    brightCyan: "#8fbcbb",
-    brightWhite: "#3b4252",  // Darker for visibility on light bg
+    brightMagenta: "#aa8aaa",
+    brightCyan: "#7aaab8",
+    brightWhite: "#3b4252",
   },
 };
 
@@ -213,25 +213,25 @@ const forestLight: ModePalette = {
   terminal: {
     background: "#f5f5dc",
     foreground: "#272822",
-    cursor: "#a6e22e",
+    cursor: "#7a9a5a",
     cursorAccent: "#f5f5dc",
     selectionBackground: "#e0dcc8",
     black: "#272822",
-    red: "#f92672",
-    green: "#a6e22e",
-    yellow: "#f4bf75",
-    blue: "#66d9ef",
-    magenta: "#ae81ff",
-    cyan: "#a1efe4",
-    white: "#49483e",       // Dark gray for visibility on light bg
+    red: "#b8525a",            // Muted rose (was #f92672 neon pink)
+    green: "#6a8a4a",          // Muted olive green (was #a6e22e neon)
+    yellow: "#a8884a",         // Muted amber (was #f4bf75)
+    blue: "#5a8aaa",           // Muted blue (was #66d9ef)
+    magenta: "#8a6a9a",        // Muted purple (was #ae81ff)
+    cyan: "#5a9a8a",           // Muted teal (was #a1efe4)
+    white: "#49483e",
     brightBlack: "#75715e",
-    brightRed: "#f92672",
-    brightGreen: "#a6e22e",
-    brightYellow: "#f4bf75",
-    brightBlue: "#66d9ef",
-    brightMagenta: "#ae81ff",
-    brightCyan: "#a1efe4",
-    brightWhite: "#272822",  // Darker for visibility on light bg
+    brightRed: "#c8626a",
+    brightGreen: "#7a9a5a",
+    brightYellow: "#b8985a",
+    brightBlue: "#6a9aba",
+    brightMagenta: "#9a7aaa",
+    brightCyan: "#6aaa9a",
+    brightWhite: "#272822",
   },
 };
 
@@ -310,25 +310,25 @@ const sunsetLight: ModePalette = {
   terminal: {
     background: "#fcf5f5",
     foreground: "#282a36",
-    cursor: "#ff79c6",
+    cursor: "#9a6a8a",
     cursorAccent: "#fcf5f5",
     selectionBackground: "#e8dfe0",
     black: "#21222c",
-    red: "#ff5555",
-    green: "#50fa7b",
-    yellow: "#f1fa8c",
-    blue: "#bd93f9",
-    magenta: "#ff79c6",
-    cyan: "#8be9fd",
-    white: "#44475a",       // Dark gray for visibility on light bg
+    red: "#b5525a",            // Muted rose (was #ff5555 neon red)
+    green: "#5a9a6a",          // Muted green (was #50fa7b neon)
+    yellow: "#a89a5a",         // Muted gold (was #f1fa8c neon)
+    blue: "#7a6a9a",           // Muted purple-blue (was #bd93f9)
+    magenta: "#9a5a7a",        // Muted magenta (was #ff79c6)
+    cyan: "#5a8a9a",           // Muted cyan (was #8be9fd)
+    white: "#44475a",
     brightBlack: "#6272a4",
-    brightRed: "#ff6e6e",
-    brightGreen: "#69ff94",
-    brightYellow: "#ffffa5",
-    brightBlue: "#d6acff",
-    brightMagenta: "#ff92df",
-    brightCyan: "#a4ffff",
-    brightWhite: "#282a36",  // Darker for visibility on light bg
+    brightRed: "#c5626a",
+    brightGreen: "#6aaa7a",
+    brightYellow: "#b8aa6a",
+    brightBlue: "#8a7aaa",
+    brightMagenta: "#aa6a8a",
+    brightCyan: "#6a9aaa",
+    brightWhite: "#282a36",
   },
 };
 
@@ -407,25 +407,25 @@ const midnightLight: ModePalette = {
   terminal: {
     background: "#f0f0f5",
     foreground: "#1a1b26",
-    cursor: "#7aa2f7",
+    cursor: "#6a8ac0",
     cursorAccent: "#f0f0f5",
     selectionBackground: "#d8d8e0",
     black: "#32344a",
-    red: "#f7768e",
-    green: "#9ece6a",
-    yellow: "#e0af68",
-    blue: "#7aa2f7",
-    magenta: "#ad8ee6",
-    cyan: "#449dab",
-    white: "#565a6e",       // Darker gray for visibility on light bg
+    red: "#b5606a",            // Muted rose (was #f7768e)
+    green: "#6a9a5a",          // Muted sage (was #9ece6a)
+    yellow: "#a8885a",         // Muted amber (was #e0af68)
+    blue: "#5a7aaa",           // Muted blue (was #7aa2f7)
+    magenta: "#8a6a9a",        // Muted purple (was #ad8ee6)
+    cyan: "#4a7a8a",           // Muted teal (was #449dab)
+    white: "#565a6e",
     brightBlack: "#444b6a",
-    brightRed: "#ff7a93",
-    brightGreen: "#b9f27c",
-    brightYellow: "#ff9e64",
-    brightBlue: "#7da6ff",
-    brightMagenta: "#bb9af7",
-    brightCyan: "#0db9d7",
-    brightWhite: "#343b58",  // Darker for visibility on light bg
+    brightRed: "#c5707a",
+    brightGreen: "#7aaa6a",
+    brightYellow: "#b8986a",
+    brightBlue: "#6a8aba",
+    brightMagenta: "#9a7aaa",
+    brightCyan: "#5a8a9a",
+    brightWhite: "#343b58",
   },
 };
 
@@ -504,25 +504,25 @@ const arcticLight: ModePalette = {
   terminal: {
     background: "#f8fafc",
     foreground: "#334155",
-    cursor: "#0ea5e9",
+    cursor: "#5a8aaa",
     cursorAccent: "#f8fafc",
     selectionBackground: "#e2e8f0",
     black: "#1e293b",
-    red: "#ef4444",
-    green: "#22c55e",
-    yellow: "#eab308",
-    blue: "#3b82f6",
-    magenta: "#a855f7",
-    cyan: "#06b6d4",
-    white: "#475569",       // Dark gray for visibility on light bg
+    red: "#b54a4a",            // Muted red (was #ef4444)
+    green: "#4a8a5a",          // Muted green (was #22c55e)
+    yellow: "#a89040",         // Muted gold (was #eab308)
+    blue: "#4a6aaa",           // Muted blue (was #3b82f6)
+    magenta: "#7a5a9a",        // Muted purple (was #a855f7)
+    cyan: "#4a8a9a",           // Muted cyan (was #06b6d4)
+    white: "#475569",
     brightBlack: "#64748b",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#facc15",
-    brightBlue: "#60a5fa",
-    brightMagenta: "#c084fc",
-    brightCyan: "#22d3ee",
-    brightWhite: "#334155",  // Darker for visibility on light bg
+    brightRed: "#c55a5a",
+    brightGreen: "#5a9a6a",
+    brightYellow: "#b8a050",
+    brightBlue: "#5a7aba",
+    brightMagenta: "#8a6aaa",
+    brightCyan: "#5a9aaa",
+    brightWhite: "#334155",
   },
 };
 
@@ -601,25 +601,25 @@ const roseLight: ModePalette = {
   terminal: {
     background: "#fdf2f8",
     foreground: "#831843",
-    cursor: "#db2777",
+    cursor: "#9a4a6a",
     cursorAccent: "#fdf2f8",
     selectionBackground: "#fce7f3",
     black: "#500724",
-    red: "#e11d48",
-    green: "#16a34a",
-    yellow: "#ca8a04",
-    blue: "#2563eb",
-    magenta: "#db2777",
-    cyan: "#0891b2",
-    white: "#9f1239",       // Dark rose for visibility on light bg
+    red: "#a53a4a",            // Muted rose (was #e11d48)
+    green: "#4a7a5a",          // Muted green (was #16a34a)
+    yellow: "#9a7040",         // Muted gold (was #ca8a04)
+    blue: "#4a5a8a",           // Muted blue (was #2563eb)
+    magenta: "#9a4a6a",        // Muted magenta (was #db2777)
+    cyan: "#4a7a8a",           // Muted cyan (was #0891b2)
+    white: "#9f1239",
     brightBlack: "#be185d",
-    brightRed: "#fb7185",
-    brightGreen: "#4ade80",
-    brightYellow: "#facc15",
-    brightBlue: "#60a5fa",
-    brightMagenta: "#f472b6",
-    brightCyan: "#22d3ee",
-    brightWhite: "#831843",  // Darker for visibility on light bg
+    brightRed: "#b54a5a",
+    brightGreen: "#5a8a6a",
+    brightYellow: "#aa8050",
+    brightBlue: "#5a6a9a",
+    brightMagenta: "#aa5a7a",
+    brightCyan: "#5a8a9a",
+    brightWhite: "#831843",
   },
 };
 
@@ -698,25 +698,25 @@ const amberLight: ModePalette = {
   terminal: {
     background: "#fffbeb",
     foreground: "#78350f",
-    cursor: "#f59e0b",
+    cursor: "#9a7a40",
     cursorAccent: "#fffbeb",
     selectionBackground: "#fef3c7",
     black: "#451a03",
-    red: "#dc2626",
-    green: "#16a34a",
-    yellow: "#f59e0b",
-    blue: "#2563eb",
-    magenta: "#c026d3",
-    cyan: "#0891b2",
-    white: "#92400e",       // Dark amber for visibility on light bg
+    red: "#a54a4a",            // Muted red (was #dc2626)
+    green: "#4a7a5a",          // Muted green (was #16a34a)
+    yellow: "#9a7a30",         // Muted gold (was #f59e0b)
+    blue: "#4a5a8a",           // Muted blue (was #2563eb)
+    magenta: "#8a4a9a",        // Muted purple (was #c026d3)
+    cyan: "#4a7a8a",           // Muted cyan (was #0891b2)
+    white: "#92400e",
     brightBlack: "#b45309",
-    brightRed: "#f87171",
-    brightGreen: "#4ade80",
-    brightYellow: "#fbbf24",
-    brightBlue: "#60a5fa",
-    brightMagenta: "#e879f9",
-    brightCyan: "#22d3ee",
-    brightWhite: "#78350f",  // Darker for visibility on light bg
+    brightRed: "#b55a5a",
+    brightGreen: "#5a8a6a",
+    brightYellow: "#aa8a40",
+    brightBlue: "#5a6a9a",
+    brightMagenta: "#9a5aaa",
+    brightCyan: "#5a8a9a",
+    brightWhite: "#78350f",
   },
 };
 
@@ -799,21 +799,21 @@ const monoLight: ModePalette = {
     cursorAccent: "#fafafa",
     selectionBackground: "#e5e5e5",
     black: "#171717",
-    red: "#7f1d1d",
-    green: "#14532d",
-    yellow: "#713f12",
-    blue: "#1e3a8a",
-    magenta: "#701a75",
-    cyan: "#164e63",
-    white: "#525252",       // Dark gray for visibility on light bg
+    red: "#6a4040",            // Muted dark red (was #7f1d1d)
+    green: "#3a5a40",          // Muted dark green (was #14532d)
+    yellow: "#5a4a30",         // Muted dark gold (was #713f12)
+    blue: "#3a4a6a",           // Muted dark blue (was #1e3a8a)
+    magenta: "#5a3a5a",        // Muted dark magenta (was #701a75)
+    cyan: "#3a5a5a",           // Muted dark cyan (was #164e63)
+    white: "#525252",
     brightBlack: "#737373",
-    brightRed: "#b91c1c",
-    brightGreen: "#166534",
-    brightYellow: "#a16207",
-    brightBlue: "#1d4ed8",
-    brightMagenta: "#a21caf",
-    brightCyan: "#0e7490",
-    brightWhite: "#262626",  // Darker for visibility on light bg
+    brightRed: "#7a5050",
+    brightGreen: "#4a6a50",
+    brightYellow: "#6a5a40",
+    brightBlue: "#4a5a7a",
+    brightMagenta: "#6a4a6a",
+    brightCyan: "#4a6a6a",
+    brightWhite: "#262626",
   },
 };
 
