@@ -409,7 +409,7 @@ export function Sidebar({
     clone.style.opacity = "0.8";
     clone.style.pointerEvents = "none";
     clone.style.zIndex = "1000";
-    clone.style.backgroundColor = "rgba(139, 92, 246, 0.3)";
+    clone.style.backgroundColor = "hsl(var(--primary) / 0.3)";
     clone.style.borderRadius = "6px";
     document.body.appendChild(clone);
 
@@ -893,13 +893,13 @@ export function Sidebar({
                 className={cn(
                   "w-2 h-2 rounded-full",
                   isActive
-                    ? "bg-green-400 animate-pulse"
+                    ? "bg-primary animate-pulse"
                     : "bg-muted-foreground"
                 )}
               />
               {/* Drop indicator - after */}
               {showDropAfter && (
-                <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-violet-500 rounded-full" />
+                <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
               )}
             </div>
           </TooltipTrigger>
@@ -927,7 +927,7 @@ export function Sidebar({
         {/* Drop indicator - before */}
         {showDropBefore && (
           <div className={cn(
-            "absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full",
+            "absolute -top-0.5 left-2 right-2 h-0.5 bg-primary rounded-full",
             inFolder && "left-6"
           )} />
         )}
@@ -960,7 +960,7 @@ export function Sidebar({
               className={cn(
                 "w-1.5 h-1.5 rounded-full shrink-0",
                 isActive
-                  ? "bg-green-400 animate-pulse"
+                  ? "bg-primary animate-pulse"
                   : "bg-muted-foreground"
               )}
             />
@@ -995,7 +995,7 @@ export function Sidebar({
                   </span>
                   {/* Git branch indicator */}
                   {session.worktreeBranch && (
-                    <span className="flex items-center gap-0.5 text-[10px] text-emerald-400/80 truncate">
+                    <span className="flex items-center gap-0.5 text-[10px] text-accent-foreground/80 truncate">
                       <GitBranch className="w-2.5 h-2.5" />
                       {session.worktreeBranch}
                     </span>
@@ -1017,7 +1017,7 @@ export function Sidebar({
                         e.stopPropagation();
                         onSessionSchedulesView?.(session.id, session.name);
                       }}
-                      className="flex items-center gap-0.5 text-[9px] text-amber-400 shrink-0 hover:text-amber-300 transition-colors"
+                      className="flex items-center gap-0.5 text-[9px] text-primary shrink-0 hover:text-primary/80 transition-colors"
                     >
                       <Clock className="w-2.5 h-2.5" />
                       {activeCount}
@@ -1134,7 +1134,7 @@ export function Sidebar({
           <ContextMenuSeparator />
           <ContextMenuItem
             onClick={() => handleSessionCloseRequest(session)}
-            className="text-red-400 focus:text-red-400"
+            className="text-destructive focus:text-destructive"
           >
             <Trash2 className="w-3.5 h-3.5 mr-2" />
             Close Session
@@ -1144,7 +1144,7 @@ export function Sidebar({
         {/* Drop indicator - after */}
         {showDropAfter && (
           <div className={cn(
-            "absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full",
+            "absolute -bottom-0.5 left-2 right-2 h-0.5 bg-primary rounded-full",
             inFolder && "left-6"
           )} />
         )}
@@ -1226,12 +1226,12 @@ export function Sidebar({
               className={cn(
                 "relative",
                 splitGroup.direction === "horizontal"
-                  ? "border-l-2 border-violet-500/40 pl-1 space-y-0.5"
+                  ? "border-l-2 border-primary/40 pl-1 space-y-0.5"
                   : "flex items-stretch gap-1"
               )}
             >
               {splitGroup.direction === "vertical" && (
-                <div className="absolute -top-0.5 left-0 right-0 flex items-center gap-0.5 text-[9px] text-violet-400/60">
+                <div className="absolute -top-0.5 left-0 right-0 flex items-center gap-0.5 text-[9px] text-primary/60">
                   <SplitSquareVertical className="w-2.5 h-2.5" />
                   <span>Split</span>
                 </div>
@@ -1521,9 +1521,9 @@ export function Sidebar({
                               style={{ marginLeft: node.depth > 0 ? `${node.depth * 8}px` : undefined }}
                               className={cn(
                                 "flex items-center justify-center p-2 rounded-md cursor-pointer",
-                                "hover:bg-white/5 transition-all duration-150",
-                                isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
-                                isActive && "bg-violet-500/10",
+                                "hover:bg-accent/50 transition-all duration-150",
+                                isDragOver && canDropHere && "bg-primary/20 border border-primary/30",
+                                isActive && "bg-primary/10",
                                 isBeingDragged && "opacity-50"
                               )}
                             >
@@ -1532,10 +1532,10 @@ export function Sidebar({
                                   className={cn(
                                     "w-4 h-4",
                                     isTrashFolder
-                                      ? "text-red-400/70"
+                                      ? "text-destructive/70"
                                       : isActive
-                                        ? "text-violet-300 fill-violet-400"
-                                        : "text-violet-400"
+                                        ? "text-primary fill-primary"
+                                        : "text-primary"
                                   )}
                                 />
                               ) : (
@@ -1543,10 +1543,10 @@ export function Sidebar({
                                   className={cn(
                                     "w-4 h-4",
                                     isTrashFolder
-                                      ? "text-red-400/70"
+                                      ? "text-destructive/70"
                                       : isActive
-                                        ? "text-violet-300 fill-violet-400"
-                                        : "text-violet-400"
+                                        ? "text-primary fill-primary"
+                                        : "text-primary"
                                   )}
                                 />
                               )}
@@ -1589,7 +1589,7 @@ export function Sidebar({
                       >
                         {/* Drop indicator - before folder */}
                         {showFolderDropBefore && (
-                          <div className="absolute -top-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
+                          <div className="absolute -top-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
                         )}
                         <ContextMenu>
                           <ContextMenuTrigger asChild>
@@ -1600,9 +1600,9 @@ export function Sidebar({
                               style={{ marginLeft: node.depth > 0 ? `${node.depth * 12}px` : undefined }}
                               className={cn(
                                 "group flex items-center gap-1.5 px-2 py-1 rounded-md",
-                                "hover:bg-white/5 transition-all duration-150",
-                                isDragOver && canDropHere && "bg-violet-500/20 border border-violet-500/30",
-                                isActive && "bg-violet-500/10"
+                                "hover:bg-accent/50 transition-all duration-150",
+                                isDragOver && canDropHere && "bg-primary/20 border border-primary/30",
+                                isActive && "bg-primary/10"
                               )}
                               onClick={() => {
                                 onFolderClick(node.id);
@@ -1620,7 +1620,7 @@ export function Sidebar({
                               <Folder
                                 className={cn(
                                   "w-3.5 h-3.5 shrink-0",
-                                  isTrashFolder ? "text-red-400/70" : "text-violet-400"
+                                  isTrashFolder ? "text-destructive/70" : "text-primary"
                                 )}
                               />
                             ) : (
@@ -1628,10 +1628,10 @@ export function Sidebar({
                                 className={cn(
                                   "w-3.5 h-3.5 shrink-0",
                                   isTrashFolder
-                                    ? "text-red-400/70"
+                                    ? "text-destructive/70"
                                     : isActive
-                                      ? "text-violet-300 fill-violet-400"
-                                      : "text-violet-400"
+                                      ? "text-primary fill-primary"
+                                      : "text-primary"
                                 )}
                               />
                             )}
@@ -1651,7 +1651,7 @@ export function Sidebar({
                               <span
                                 className={cn(
                                   "flex-1 text-xs truncate",
-                                  isTrashFolder ? "text-red-400/70" : "text-foreground"
+                                  isTrashFolder ? "text-destructive/70" : "text-foreground"
                                 )}
                                 onDoubleClick={(e) => {
                                   e.stopPropagation();
@@ -1670,19 +1670,19 @@ export function Sidebar({
                               return (
                                 <div className="flex items-center gap-1 shrink-0">
                                   {repoStats.prCount > 0 && (
-                                    <span className="flex items-center gap-0.5 text-[9px] text-violet-400">
+                                    <span className="flex items-center gap-0.5 text-[9px] text-primary">
                                       <GitPullRequest className="w-2.5 h-2.5" />
                                       {repoStats.prCount}
                                     </span>
                                   )}
                                   {repoStats.issueCount > 0 && (
-                                    <span className="flex items-center gap-0.5 text-[9px] text-emerald-400">
+                                    <span className="flex items-center gap-0.5 text-[9px] text-accent-foreground">
                                       <CircleDot className="w-2.5 h-2.5" />
                                       {repoStats.issueCount}
                                     </span>
                                   )}
                                   {repoStats.hasChanges && (
-                                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+                                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
                                   )}
                                 </div>
                               );
@@ -1690,7 +1690,7 @@ export function Sidebar({
 
                             <span className={cn(
                               "text-[10px] ml-auto",
-                              isTrashFolder ? "text-red-400/50" : "text-muted-foreground"
+                              isTrashFolder ? "text-destructive/50" : "text-muted-foreground"
                             )}>
                               {totalSessions}
                             </span>
@@ -1711,7 +1711,7 @@ export function Sidebar({
                               <ContextMenuItem
                                 onClick={() => onFolderEmpty(node.id)}
                                 disabled={totalSessions === 0}
-                                className="text-red-400 focus:text-red-400"
+                                className="text-destructive focus:text-destructive"
                               >
                                 <Trash2 className="w-3.5 h-3.5 mr-2" />
                                 Empty Trash
@@ -1747,7 +1747,7 @@ export function Sidebar({
                                 <Settings className="w-3.5 h-3.5 mr-2" />
                                 Preferences
                                 {hasPrefs && (
-                                  <span className="ml-auto text-[10px] text-violet-400">Custom</span>
+                                  <span className="ml-auto text-[10px] text-primary">Custom</span>
                                 )}
                               </ContextMenuItem>
                               <ContextMenuItem
@@ -1759,7 +1759,7 @@ export function Sidebar({
                                 <KeyRound className="w-3.5 h-3.5 mr-2" />
                                 Secrets
                                 {folderConfigs.has(node.id) && folderConfigs.get(node.id)?.enabled && (
-                                  <span className="ml-auto text-[10px] text-green-400">Active</span>
+                                  <span className="ml-auto text-[10px] text-primary">Active</span>
                                 )}
                               </ContextMenuItem>
                               <ContextMenuItem
@@ -1768,7 +1768,7 @@ export function Sidebar({
                                 <GitBranch className="w-3.5 h-3.5 mr-2" />
                                 Repository
                                 {folderHasRepo(node.id) && (
-                                  <span className="ml-auto text-[10px] text-emerald-400">Linked</span>
+                                  <span className="ml-auto text-[10px] text-accent-foreground">Linked</span>
                                 )}
                               </ContextMenuItem>
                               <ContextMenuItem
@@ -1790,7 +1790,7 @@ export function Sidebar({
                               <ContextMenuSeparator />
                               <ContextMenuItem
                                 onClick={() => onFolderDelete(node.id)}
-                                className="text-red-400 focus:text-red-400"
+                                className="text-destructive focus:text-destructive"
                               >
                                 <Trash2 className="w-3.5 h-3.5 mr-2" />
                                 Delete
@@ -1801,7 +1801,7 @@ export function Sidebar({
                         </ContextMenu>
                         {/* Drop indicator - after folder */}
                         {showFolderDropAfter && (
-                          <div className="absolute -bottom-0.5 left-2 right-2 h-0.5 bg-violet-500 rounded-full" />
+                          <div className="absolute -bottom-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
                         )}
                       </div>
 
@@ -1811,7 +1811,7 @@ export function Sidebar({
                           className="flex items-center gap-1 px-2 py-1"
                           style={{ marginLeft: `${(node.depth + 1) * 12}px` }}
                         >
-                          <Folder className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                          <Folder className="w-3.5 h-3.5 text-primary shrink-0" />
                           <input
                             ref={folderInputRef}
                             type="text"
@@ -1912,7 +1912,7 @@ export function Sidebar({
                                   <ContextMenuSeparator />
                                   <ContextMenuItem
                                     onClick={() => onEmptyTrash(node.id)}
-                                    className="text-red-400 focus:text-red-400"
+                                    className="text-destructive focus:text-destructive"
                                   >
                                     <Trash2 className="w-3.5 h-3.5 mr-2" />
                                     Empty Permanently
@@ -1996,7 +1996,7 @@ export function Sidebar({
                 <span className={cn(
                   "ml-auto text-[10px] px-1.5 py-0.5 rounded",
                   activePorts.size > 0
-                    ? "text-emerald-400 bg-emerald-500/10"
+                    ? "text-primary bg-primary/10"
                     : "text-muted-foreground bg-muted"
                 )}>
                   {activePorts.size > 0 ? `${activePorts.size}/${allocations.length}` : allocations.length}
