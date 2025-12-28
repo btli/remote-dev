@@ -80,17 +80,17 @@ export function RestoreDialog({
 
         <div className="space-y-4 py-4">
           {/* Item info */}
-          <div className="p-3 rounded-lg bg-slate-800/50 space-y-2">
+          <div className="p-3 rounded-lg bg-muted/50 space-y-2">
             <div className="flex items-center gap-2 text-sm">
-              <GitBranch className="w-4 h-4 text-violet-400" />
-              <span className="text-white font-medium">{item.resourceName}</span>
+              <GitBranch className="w-4 h-4 text-primary" />
+              <span className="text-foreground font-medium">{item.resourceName}</span>
             </div>
             {metadata && (
               <>
-                <div className="text-xs text-slate-500">
+                <div className="text-xs text-muted-foreground">
                   Repository: {metadata.repoName}
                 </div>
-                <div className="text-xs text-slate-500">
+                <div className="text-xs text-muted-foreground">
                   Branch: {metadata.worktreeBranch}
                 </div>
               </>
@@ -111,7 +111,7 @@ export function RestoreDialog({
           {/* Folder selection */}
           {needsFolderSelection && folders.length > 0 && (
             <div className="space-y-2">
-              <Label className="text-sm text-slate-400">
+              <Label className="text-sm text-muted-foreground">
                 <div className="flex items-center gap-2 mb-2">
                   <AlertCircle className="w-4 h-4 text-amber-400" />
                   Original folder no longer exists
@@ -129,20 +129,20 @@ export function RestoreDialog({
                 <SelectContent>
                   <SelectItem value="__root__">
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-400">(No folder)</span>
+                      <span className="text-muted-foreground">(No folder)</span>
                     </div>
                   </SelectItem>
                   {folders.map((folder) => (
                     <SelectItem key={folder.id} value={folder.id}>
                       <div className="flex items-center gap-2">
-                        <Folder className="w-3.5 h-3.5 text-violet-400" />
+                        <Folder className="w-3.5 h-3.5 text-primary" />
                         {folder.name}
                       </div>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-muted-foreground">
                 The original folder &quot;{metadata?.originalFolderName}&quot; was deleted.
                 Choose where to restore this session.
               </p>
@@ -151,7 +151,7 @@ export function RestoreDialog({
 
           {/* Original folder info */}
           {originalFolderId && metadata?.originalFolderName && (
-            <div className="text-xs text-slate-500">
+            <div className="text-xs text-muted-foreground">
               Will restore to folder: {metadata.originalFolderName}
             </div>
           )}

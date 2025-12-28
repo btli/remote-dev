@@ -139,21 +139,21 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 text-xs text-slate-400 pb-2 border-b border-white/5">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground pb-2 border-b border-border">
         <GitBranch className="w-4 h-4" />
         <span>Configure Git identity for this profile</span>
       </div>
 
       {/* Name */}
       <div className="space-y-2">
-        <Label htmlFor="git-name" className="text-slate-300 flex items-center gap-2">
+        <Label htmlFor="git-name" className="text-muted-foreground flex items-center gap-2">
           <User className="w-3.5 h-3.5" />
           User Name <span className="text-red-400">*</span>
         </Label>
@@ -162,13 +162,13 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
           value={userName}
           onChange={(e) => setUserName(e.target.value)}
           placeholder="John Doe"
-          className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+          className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
         />
       </div>
 
       {/* Email */}
       <div className="space-y-2">
-        <Label htmlFor="git-email" className="text-slate-300 flex items-center gap-2">
+        <Label htmlFor="git-email" className="text-muted-foreground flex items-center gap-2">
           <Mail className="w-3.5 h-3.5" />
           Email <span className="text-red-400">*</span>
         </Label>
@@ -178,13 +178,13 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
           value={userEmail}
           onChange={(e) => setUserEmail(e.target.value)}
           placeholder="john@example.com"
-          className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+          className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
         />
       </div>
 
       {/* SSH Key Path */}
       <div className="space-y-2">
-        <Label htmlFor="git-ssh" className="text-slate-300 flex items-center gap-2">
+        <Label htmlFor="git-ssh" className="text-muted-foreground flex items-center gap-2">
           <Key className="w-3.5 h-3.5" />
           SSH Key Path
         </Label>
@@ -197,16 +197,16 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
           showHidden={true}
           browserTitle="Select SSH Private Key"
           browserDescription="Navigate to your .ssh directory and select a private key file"
-          inputClassName="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+          inputClassName="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
         />
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground/70">
           Path to SSH private key for Git operations
         </p>
       </div>
 
       {/* GPG Key ID */}
       <div className="space-y-2">
-        <Label htmlFor="git-gpg" className="text-slate-300 flex items-center gap-2">
+        <Label htmlFor="git-gpg" className="text-muted-foreground flex items-center gap-2">
           <Key className="w-3.5 h-3.5" />
           GPG Key ID
         </Label>
@@ -215,16 +215,16 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
           value={gpgKeyId}
           onChange={(e) => setGpgKeyId(e.target.value)}
           placeholder="ABCD1234EFGH5678"
-          className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+          className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
         />
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground/70">
           GPG key ID for signing commits
         </p>
       </div>
 
       {/* GitHub Username */}
       <div className="space-y-2">
-        <Label htmlFor="git-github" className="text-slate-300 flex items-center gap-2">
+        <Label htmlFor="git-github" className="text-muted-foreground flex items-center gap-2">
           <Github className="w-3.5 h-3.5" />
           GitHub Username
         </Label>
@@ -233,7 +233,7 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
           value={githubUsername}
           onChange={(e) => setGithubUsername(e.target.value)}
           placeholder="johndoe"
-          className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+          className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
         />
       </div>
 
@@ -256,7 +256,7 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
           variant="ghost"
           onClick={handleReset}
           disabled={saving || !hasChanges}
-          className="text-slate-400 hover:text-white"
+          className="text-muted-foreground hover:text-foreground"
         >
           <RotateCcw className="w-4 h-4 mr-2" />
           Reset
@@ -264,7 +264,7 @@ export function ProfileGitIdentityTab({ profileId }: ProfileGitIdentityTabProps)
         <Button
           onClick={handleSave}
           disabled={saving || !hasChanges}
-          className="bg-violet-600 hover:bg-violet-700 text-white"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           {saving ? (
             <>

@@ -36,7 +36,7 @@ export function SecretsStatusButton() {
         onClick={() => setModalOpen(true)}
         className={cn(
           "flex items-center gap-2 text-sm transition-colors",
-          "hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500",
+          "hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
           loading && "opacity-50"
         )}
         title={
@@ -50,7 +50,7 @@ export function SecretsStatusButton() {
         <KeyRound
           className={cn(
             "w-4 h-4 transition-colors",
-            isConnected ? "text-green-400" : "text-slate-500"
+            isConnected ? "text-green-400" : "text-muted-foreground"
           )}
         />
       </button>

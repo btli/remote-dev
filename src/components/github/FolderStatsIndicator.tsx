@@ -39,7 +39,7 @@ const ciColors: Record<CIStatusState, string> = {
   passing: "text-green-400",
   failing: "text-red-400",
   pending: "text-amber-400",
-  unknown: "text-slate-400",
+  unknown: "text-muted-foreground",
 };
 
 export function FolderStatsIndicator({
@@ -67,8 +67,8 @@ export function FolderStatsIndicator({
           className={cn(
             "inline-flex items-center gap-0.5",
             compact
-              ? "text-[10px] text-violet-400"
-              : "text-xs px-1.5 py-0.5 bg-violet-500/20 text-violet-400 rounded"
+              ? "text-[10px] text-primary"
+              : "text-xs px-1.5 py-0.5 bg-primary/20 text-primary rounded"
           )}
         >
           <GitPullRequest className="w-3 h-3" />
@@ -76,14 +76,14 @@ export function FolderStatsIndicator({
         </span>
       )}
 
-      {/* Issue Count */}
+      {/* Issue Count - uses chart-2 for distinction from PRs */}
       {stats.issueCount > 0 && (
         <span
           className={cn(
             "inline-flex items-center gap-0.5",
             compact
-              ? "text-[10px] text-emerald-400"
-              : "text-xs px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 rounded"
+              ? "text-[10px] text-chart-2"
+              : "text-xs px-1.5 py-0.5 bg-chart-2/20 text-chart-2 rounded"
           )}
         >
           <CircleDot className="w-3 h-3" />
@@ -103,7 +103,7 @@ export function FolderStatsIndicator({
 
       {/* Change indicator */}
       {stats.hasChanges && (
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
+        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
       )}
     </div>
   );
@@ -118,7 +118,7 @@ export function FolderStatsIndicator({
         <TooltipTrigger asChild>{content}</TooltipTrigger>
         <TooltipContent
           side="right"
-          className="bg-slate-800 border-slate-700 p-3"
+          className="bg-card border-border p-3"
         >
           <FolderStatsTooltip stats={stats} />
         </TooltipContent>
@@ -147,12 +147,12 @@ function FolderStatsTooltip({ stats }: FolderStatsTooltipProps) {
     <div className="space-y-2 min-w-[180px]">
       {/* Repo Name */}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-white">
+        <span className="text-xs font-medium text-foreground">
           {repository.name}
         </span>
         <button
           onClick={handleOpenGitHub}
-          className="text-slate-400 hover:text-white transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <ExternalLink className="w-3 h-3" />
         </button>
@@ -163,19 +163,19 @@ function FolderStatsTooltip({ stats }: FolderStatsTooltipProps) {
         <StatItem
           label="Open PRs"
           value={stats.prCount}
-          color="violet"
+          color="primary"
         />
         <StatItem
           label="Open Issues"
           value={stats.issueCount}
-          color="emerald"
+          color="chart-2"
         />
       </div>
 
       {/* CI Status */}
       {stats.ciStatus && (
-        <div className="flex items-center gap-2 pt-1 border-t border-slate-700">
-          <span className="text-[10px] text-slate-500">CI Status:</span>
+        <div className="flex items-center gap-2 pt-1 border-t border-border">
+          <span className="text-[10px] text-muted-foreground">CI Status:</span>
           <span
             className={cn(
               "text-[10px] font-medium capitalize",
@@ -189,11 +189,11 @@ function FolderStatsTooltip({ stats }: FolderStatsTooltipProps) {
 
       {/* Recent Commits */}
       {repository.stats.recentCommits.length > 0 && (
-        <div className="pt-1 border-t border-slate-700">
-          <span className="text-[10px] text-slate-500 block mb-1">
+        <div className="pt-1 border-t border-border">
+          <span className="text-[10px] text-muted-foreground block mb-1">
             Latest commit:
           </span>
-          <div className="text-[10px] text-slate-400 truncate">
+          <div className="text-[10px] text-muted-foreground truncate">
             {repository.stats.recentCommits[0].message}
           </div>
         </div>
@@ -205,13 +205,13 @@ function FolderStatsTooltip({ stats }: FolderStatsTooltipProps) {
 interface StatItemProps {
   label: string;
   value: number;
-  color: "violet" | "emerald" | "amber";
+  color: "primary" | "chart-2" | "amber";
 }
 
 function StatItem({ label, value, color }: StatItemProps) {
   const colorClasses = {
-    violet: "text-violet-400",
-    emerald: "text-emerald-400",
+    primary: "text-primary",
+    "chart-2": "text-chart-2",
     amber: "text-amber-400",
   };
 
@@ -220,7 +220,7 @@ function StatItem({ label, value, color }: StatItemProps) {
       <div className={cn("text-lg font-bold", colorClasses[color])}>
         {value}
       </div>
-      <div className="text-[10px] text-slate-500">{label}</div>
+      <div className="text-[10px] text-muted-foreground">{label}</div>
     </div>
   );
 }

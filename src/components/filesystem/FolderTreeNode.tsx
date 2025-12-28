@@ -88,7 +88,7 @@ export function FolderTreeNode({
         className={cn(
           "flex items-center gap-1 py-1 px-2 cursor-pointer rounded-sm transition-colors",
           "hover:bg-white/5",
-          isSelected && "bg-violet-500/20 text-white"
+          isSelected && "bg-primary/20 text-foreground"
         )}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
@@ -104,13 +104,13 @@ export function FolderTreeNode({
           className="p-0.5 hover:bg-white/10 rounded-sm"
         >
           {loading ? (
-            <Loader2 className="w-3 h-3 text-slate-400 animate-spin" />
+            <Loader2 className="w-3 h-3 text-muted-foreground animate-spin" />
           ) : error ? (
             <AlertCircle className="w-3 h-3 text-red-400" />
           ) : (
             <ChevronRight
               className={cn(
-                "w-3 h-3 text-slate-400 transition-transform",
+                "w-3 h-3 text-muted-foreground transition-transform",
                 expanded && "rotate-90"
               )}
             />
@@ -121,7 +121,7 @@ export function FolderTreeNode({
         <Folder
           className={cn(
             "w-4 h-4 shrink-0",
-            isSelected ? "text-violet-400 fill-violet-400/30" : "text-slate-400"
+            isSelected ? "text-primary fill-primary/30" : "text-muted-foreground"
           )}
         />
 
@@ -129,7 +129,7 @@ export function FolderTreeNode({
         <span
           className={cn(
             "text-xs truncate",
-            isSelected ? "text-white font-medium" : "text-slate-300"
+            isSelected ? "text-foreground font-medium" : "text-muted-foreground"
           )}
         >
           {name}
@@ -152,7 +152,7 @@ export function FolderTreeNode({
           ))}
           {loaded && filteredChildren.length === 0 && (
             <div
-              className="text-[10px] text-slate-500 py-1"
+              className="text-[10px] text-muted-foreground py-1"
               style={{ paddingLeft: `${(depth + 1) * 16 + 8}px` }}
             >
               {filter ? "No matches" : "Empty folder"}

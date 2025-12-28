@@ -172,22 +172,22 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between pb-2 border-b border-white/5">
-        <div className="flex items-center gap-2 text-xs text-slate-400">
+      <div className="flex items-center justify-between pb-2 border-b border-border">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Server className="w-4 h-4" />
           <span>Configure MCP servers for this profile</span>
         </div>
         <Button
           size="sm"
           onClick={() => setShowForm(true)}
-          className="bg-violet-600 hover:bg-violet-700 text-white"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <Plus className="w-4 h-4 mr-1" />
           Add Server
@@ -196,7 +196,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
 
       {/* Server List */}
       {servers.length === 0 && !showForm ? (
-        <div className="text-center py-8 text-slate-400">
+        <div className="text-center py-8 text-muted-foreground">
           <Server className="w-12 h-12 mx-auto mb-3 opacity-50" />
           <p className="text-xs">No MCP servers configured</p>
           <p className="text-xs mt-1">
@@ -208,25 +208,25 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
           {servers.map((server) => (
             <div
               key={server.id}
-              className="flex items-center justify-between p-3 rounded-lg bg-slate-800/30 border border-white/5"
+              className="flex items-center justify-between p-3 rounded-lg bg-card/30 border border-border"
             >
               <div className="flex items-center gap-3">
                 <div
                   className={`w-2 h-2 rounded-full ${
-                    server.enabled ? "bg-emerald-400" : "bg-slate-500"
+                    server.enabled ? "bg-emerald-400" : "bg-muted-foreground/50"
                   }`}
                 />
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-white">{server.name}</span>
+                    <span className="font-medium text-foreground">{server.name}</span>
                     <Badge
                       variant="outline"
-                      className="text-[10px] bg-slate-800/50 text-slate-400 border-slate-700"
+                      className="text-[10px] bg-muted/50 text-muted-foreground border-border"
                     >
                       {server.transport}
                     </Badge>
                   </div>
-                  <p className="text-xs text-slate-500 font-mono truncate max-w-[250px]">
+                  <p className="text-xs text-muted-foreground/70 font-mono truncate max-w-[250px]">
                     {server.command}
                   </p>
                 </div>
@@ -252,14 +252,14 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
 
       {/* Add Server Form */}
       {showForm && (
-        <div className="p-4 rounded-lg bg-slate-800/30 border border-white/5 space-y-4">
+        <div className="p-4 rounded-lg bg-card/30 border border-border space-y-4">
           <div className="flex items-center justify-between">
-            <h4 className="font-medium text-white">Add MCP Server</h4>
+            <h4 className="font-medium text-foreground">Add MCP Server</h4>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setShowForm(false)}
-              className="text-slate-400 hover:text-white"
+              className="text-muted-foreground hover:text-foreground"
             >
               Cancel
             </Button>
@@ -267,27 +267,27 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label className="text-slate-300">Name</Label>
+              <Label className="text-muted-foreground">Name</Label>
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="my-server"
-                className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+                className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
               />
             </div>
 
             <div className="space-y-2">
-              <Label className="text-slate-300">Transport</Label>
+              <Label className="text-muted-foreground">Transport</Label>
               <Select value={transport} onValueChange={(v) => setTransport(v as MCPTransport)}>
-                <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+                <SelectTrigger className="bg-card border-border text-foreground">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-slate-800 border-white/10">
+                <SelectContent className="bg-card border-border">
                   {TRANSPORT_OPTIONS.map((option) => (
                     <SelectItem
                       key={option.value}
                       value={option.value}
-                      className="text-white focus:bg-violet-500/20"
+                      className="text-foreground focus:bg-primary/20"
                     >
                       {option.label}
                     </SelectItem>
@@ -298,34 +298,34 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
           </div>
 
           <div className="space-y-2">
-            <Label className="text-slate-300">Command</Label>
+            <Label className="text-muted-foreground">Command</Label>
             <Input
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder="npx -y @modelcontextprotocol/server-filesystem"
-              className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500 font-mono text-sm"
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground/70 font-mono text-sm"
             />
           </div>
 
           <div className="space-y-2">
-            <Label className="text-slate-300">Arguments (one per line)</Label>
+            <Label className="text-muted-foreground">Arguments (one per line)</Label>
             <textarea
               value={args}
               onChange={(e) => setArgs(e.target.value)}
               placeholder="/path/to/allowed/directory"
               rows={2}
-              className="w-full bg-slate-800 border border-white/10 text-white placeholder:text-slate-500 font-mono text-sm rounded-md px-3 py-2"
+              className="w-full bg-card border border-border text-foreground placeholder:text-muted-foreground/70 font-mono text-sm rounded-md px-3 py-2"
             />
           </div>
 
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <Switch checked={enabled} onCheckedChange={setEnabled} />
-              <Label className="text-slate-300">Enabled</Label>
+              <Label className="text-muted-foreground">Enabled</Label>
             </div>
             <div className="flex items-center gap-2">
               <Switch checked={autoStart} onCheckedChange={setAutoStart} />
-              <Label className="text-slate-300">Auto-start</Label>
+              <Label className="text-muted-foreground">Auto-start</Label>
             </div>
           </div>
 
@@ -333,7 +333,7 @@ export function ProfileMcpServersTab({ profileId }: ProfileMcpServersTabProps) {
             <Button
               onClick={handleAddServer}
               disabled={saving}
-              className="bg-violet-600 hover:bg-violet-700 text-white"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {saving ? (
                 <>

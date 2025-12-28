@@ -75,13 +75,13 @@ export function KeyboardShortcutsPanel({ open, onOpenChange }: KeyboardShortcuts
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] bg-slate-900/95 backdrop-blur-xl border-white/10 max-h-[80vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[500px] bg-popover/95 backdrop-blur-xl border-border max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold text-white flex items-center gap-2">
-            <Keyboard className="w-5 h-5 text-violet-400" />
+          <DialogTitle className="text-xl font-semibold text-foreground flex items-center gap-2">
+            <Keyboard className="w-5 h-5 text-primary" />
             Keyboard Shortcuts
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Quick reference for all available keyboard shortcuts
           </DialogDescription>
         </DialogHeader>
@@ -89,19 +89,19 @@ export function KeyboardShortcutsPanel({ open, onOpenChange }: KeyboardShortcuts
         <div className="mt-4 space-y-6">
           {SHORTCUTS.map((category) => (
             <div key={category.name}>
-              <h3 className="text-sm font-medium text-violet-400 mb-3">
+              <h3 className="text-sm font-medium text-primary mb-3">
                 {category.name}
               </h3>
               <div className="space-y-2">
                 {category.shortcuts.map((shortcut) => (
                   <div
                     key={shortcut.keys}
-                    className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-white/5 transition-colors"
+                    className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-accent transition-colors"
                   >
-                    <span className="text-sm text-slate-300">
+                    <span className="text-sm text-muted-foreground">
                       {shortcut.description}
                     </span>
-                    <kbd className="px-2 py-1 rounded bg-slate-800 border border-white/10 text-xs font-mono text-slate-400">
+                    <kbd className="px-2 py-1 rounded bg-muted border border-border text-xs font-mono text-muted-foreground">
                       {shortcut.keys}
                     </kbd>
                   </div>
@@ -111,9 +111,9 @@ export function KeyboardShortcutsPanel({ open, onOpenChange }: KeyboardShortcuts
           ))}
         </div>
 
-        <div className="mt-4 pt-4 border-t border-white/5">
-          <p className="text-xs text-slate-500 text-center">
-            Press <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-[10px]">⌘?</kbd> anytime to show this panel
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-xs text-muted-foreground/70 text-center">
+            Press <kbd className="px-1.5 py-0.5 bg-muted rounded text-[10px]">⌘?</kbd> anytime to show this panel
           </p>
         </div>
       </DialogContent>

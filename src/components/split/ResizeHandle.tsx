@@ -57,20 +57,20 @@ export function ResizeHandle({
       onMouseDown={handleMouseDown}
       className={cn(
         "group flex items-center justify-center shrink-0",
-        "hover:bg-violet-500/30 active:bg-violet-500/50 transition-colors",
+        "hover:bg-primary/30 active:bg-primary/50 transition-colors",
         isHorizontal
           ? "h-1 w-full cursor-row-resize"
           : "w-1 h-full cursor-col-resize",
-        isDragging && "bg-violet-500/50"
+        isDragging && "bg-primary/50"
       )}
     >
       <div
         className={cn(
-          "rounded-full bg-slate-600",
-          "group-hover:bg-violet-400 group-active:bg-violet-300",
+          "rounded-full bg-muted-foreground",
+          "group-hover:bg-primary group-active:bg-primary/80",
           "transition-colors",
           isHorizontal ? "w-8 h-0.5" : "w-0.5 h-8",
-          isDragging && "bg-violet-400"
+          isDragging && "bg-primary"
         )}
       />
     </div>

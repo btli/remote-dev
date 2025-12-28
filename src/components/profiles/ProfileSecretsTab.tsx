@@ -198,15 +198,15 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between pb-2 border-b border-white/5">
-        <div className="flex items-center gap-2 text-xs text-slate-400">
+      <div className="flex items-center justify-between pb-2 border-b border-border">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <KeyRound className="w-4 h-4" />
           <span>Configure secrets provider for this profile</span>
         </div>
@@ -216,7 +216,7 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
             className={
               config.enabled
                 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                : "bg-slate-500/10 text-slate-400 border-slate-500/30"
+                : "bg-muted/50 text-muted-foreground border-border"
             }
           >
             {config.enabled ? "Enabled" : "Disabled"}
@@ -226,26 +226,26 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
 
       {/* Provider Selection */}
       <div className="space-y-2">
-        <Label className="text-slate-300">Secrets Provider</Label>
+        <Label className="text-muted-foreground">Secrets Provider</Label>
         <Select
           value={provider}
           onValueChange={(v) => setProvider(v as ProfileSecretsProviderType)}
         >
-          <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+          <SelectTrigger className="bg-card border-border text-foreground">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-slate-800 border-white/10">
+          <SelectContent className="bg-card border-border">
             {PROVIDER_OPTIONS.map((option) => (
               <SelectItem
                 key={option.value}
                 value={option.value}
                 disabled={!option.available}
-                className="text-white focus:bg-violet-500/20"
+                className="text-foreground focus:bg-primary/20"
               >
                 <span className="flex items-center gap-2">
                   {option.label}
                   {!option.available && (
-                    <span className="text-xs text-slate-500">(Coming soon)</span>
+                    <span className="text-xs text-muted-foreground/70">(Coming soon)</span>
                   )}
                 </span>
               </SelectItem>
@@ -256,9 +256,9 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
 
       {/* Phase Configuration */}
       {provider === "phase" && (
-        <div className="space-y-4 p-4 rounded-lg bg-slate-800/30 border border-white/5">
+        <div className="space-y-4 p-4 rounded-lg bg-card/30 border border-border">
           <div className="space-y-2">
-            <Label htmlFor="phase-env" className="text-slate-300">
+            <Label htmlFor="phase-env" className="text-muted-foreground">
               Environment
             </Label>
             <Input
@@ -266,12 +266,12 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
               value={phaseEnv}
               onChange={(e) => setPhaseEnv(e.target.value)}
               placeholder="development"
-              className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="phase-app" className="text-slate-300">
+            <Label htmlFor="phase-app" className="text-muted-foreground">
               App Name
             </Label>
             <Input
@@ -279,12 +279,12 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
               value={phaseAppName}
               onChange={(e) => setPhaseAppName(e.target.value)}
               placeholder="my-app"
-              className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="phase-secret" className="text-slate-300">
+            <Label htmlFor="phase-secret" className="text-muted-foreground">
               App Secret
             </Label>
             <Input
@@ -293,9 +293,9 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
               value={phaseAppSecret}
               onChange={(e) => setPhaseAppSecret(e.target.value)}
               placeholder="pss_service:v1:..."
-              className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground/70">
               Service token from Phase console
             </p>
           </div>
@@ -307,7 +307,7 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
               size="sm"
               onClick={handleTest}
               disabled={testing || !phaseEnv || !phaseAppName || !phaseAppSecret}
-              className="border-white/10 text-slate-300 hover:bg-white/5"
+              className="border-border text-muted-foreground hover:bg-accent"
             >
               {testing ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -337,10 +337,10 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
 
       {/* Enable/Disable Toggle (only when config exists) */}
       {config && (
-        <div className="flex items-center justify-between p-3 rounded-lg bg-slate-800/50 border border-white/5">
+        <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
           <div className="space-y-0.5">
-            <Label className="text-slate-300">Inject Secrets</Label>
-            <p className="text-xs text-slate-500">
+            <Label className="text-muted-foreground">Inject Secrets</Label>
+            <p className="text-xs text-muted-foreground/70">
               Inject secrets as environment variables in sessions
             </p>
           </div>
@@ -377,7 +377,7 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
         <Button
           onClick={handleSave}
           disabled={saving || deleting}
-          className="bg-violet-600 hover:bg-violet-700 text-white"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           {saving ? (
             <>

@@ -177,13 +177,13 @@ export function DirectoryBrowser({
 
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[600px] max-h-[80vh] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col">
+      <DialogContent className="sm:max-w-[600px] max-h-[80vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
         <DialogHeader>
-          <DialogTitle className="text-xl font-semibold text-white flex items-center gap-2">
-            <FolderOpen className="w-5 h-5 text-violet-400" />
+          <DialogTitle className="text-xl font-semibold text-foreground flex items-center gap-2">
+            <FolderOpen className="w-5 h-5 text-primary" />
             {title || defaultTitle}
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             {description || defaultDescription}
           </DialogDescription>
         </DialogHeader>
@@ -194,7 +194,7 @@ export function DirectoryBrowser({
             variant="ghost"
             size="sm"
             onClick={handleGoHome}
-            className="px-2 text-slate-400 hover:text-white"
+            className="px-2 text-muted-foreground hover:text-foreground"
             title="Go to home directory"
           >
             <Home className="w-4 h-4" />
@@ -204,7 +204,7 @@ export function DirectoryBrowser({
             size="sm"
             onClick={handleGoUp}
             disabled={!parentPath}
-            className="px-2 text-slate-400 hover:text-white disabled:opacity-50"
+            className="px-2 text-muted-foreground hover:text-foreground disabled:opacity-50"
             title="Go up one level"
           >
             <ChevronUp className="w-4 h-4" />
@@ -219,13 +219,13 @@ export function DirectoryBrowser({
                 }
               }}
               placeholder="/path/to/directory"
-              className="bg-slate-800/50 border-white/10 text-white text-sm font-mono"
+              className="bg-card/50 border-border text-foreground text-sm font-mono"
             />
             <Button
               variant="ghost"
               size="sm"
               onClick={handleManualPathSubmit}
-              className="px-3 text-slate-400 hover:text-white"
+              className="px-3 text-muted-foreground hover:text-foreground"
             >
               Go
             </Button>
@@ -236,20 +236,20 @@ export function DirectoryBrowser({
         <div className="flex items-center gap-1 text-sm overflow-x-auto pb-1 scrollbar-thin">
           <button
             onClick={() => fetchDirectory("/")}
-            className="text-slate-400 hover:text-white px-1"
+            className="text-muted-foreground hover:text-foreground px-1"
           >
             /
           </button>
           {breadcrumbs.map((crumb, index) => (
             <div key={crumb.path} className="flex items-center">
-              <ChevronRight className="w-3 h-3 text-slate-600 flex-shrink-0" />
+              <ChevronRight className="w-3 h-3 text-muted-foreground/50 flex-shrink-0" />
               <button
                 onClick={() => handleNavigate(crumb.path)}
                 className={cn(
                   "px-1 truncate max-w-[150px]",
                   index === breadcrumbs.length - 1
-                    ? "text-violet-400 font-medium"
-                    : "text-slate-400 hover:text-white"
+                    ? "text-primary font-medium"
+                    : "text-muted-foreground hover:text-foreground"
                 )}
                 title={crumb.name}
               >
@@ -260,31 +260,31 @@ export function DirectoryBrowser({
         </div>
 
         {/* Directory listing */}
-        <div className="flex-1 min-h-[300px] max-h-[400px] overflow-y-auto border border-white/10 rounded-lg bg-slate-800/30">
+        <div className="flex-1 min-h-[300px] max-h-[400px] overflow-y-auto border border-border rounded-lg bg-card/30">
           {loading ? (
-            <div className="flex items-center justify-center h-full text-slate-400">
+            <div className="flex items-center justify-center h-full text-muted-foreground">
               <Loader2 className="w-6 h-6 animate-spin mr-2" />
               Loading...
             </div>
           ) : error ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-400 p-4">
-              <AlertCircle className="w-8 h-8 text-red-400 mb-2" />
-              <p className="text-red-400 text-center">{error}</p>
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-4">
+              <AlertCircle className="w-8 h-8 text-destructive mb-2" />
+              <p className="text-destructive text-center">{error}</p>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleGoHome}
-                className="mt-2 text-slate-400 hover:text-white"
+                className="mt-2 text-muted-foreground hover:text-foreground"
               >
                 Go to Home
               </Button>
             </div>
           ) : entries.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-slate-500">
+            <div className="flex items-center justify-center h-full text-muted-foreground/70">
               <p>Empty directory</p>
             </div>
           ) : (
-            <div className="divide-y divide-white/5">
+            <div className="divide-y divide-border">
               {entries.map((entry) => {
                 const isSelected = isFileMode && !entry.isDirectory && selectedFile === entry.path;
                 return (
@@ -294,21 +294,21 @@ export function DirectoryBrowser({
                     onDoubleClick={() => handleEntryDoubleClick(entry)}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2 text-left transition-colors",
-                      "hover:bg-slate-700/50 cursor-pointer",
-                      isSelected && "bg-violet-500/20 border-l-2 border-violet-500"
+                      "hover:bg-accent cursor-pointer",
+                      isSelected && "bg-primary/20 border-l-2 border-primary"
                     )}
                   >
                     {entry.isDirectory ? (
-                      <Folder className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <Folder className="w-4 h-4 text-warning flex-shrink-0" />
                     ) : (
-                      <File className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                      <File className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                     )}
                     <span className={cn(
                       "truncate flex-1",
-                      isSelected ? "text-violet-300" : "text-white"
+                      isSelected ? "text-primary" : "text-foreground"
                     )}>{entry.name}</span>
                     {entry.isDirectory && (
-                      <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                      <ChevronRight className="w-4 h-4 text-muted-foreground/70 flex-shrink-0" />
                     )}
                   </button>
                 );
@@ -318,18 +318,18 @@ export function DirectoryBrowser({
         </div>
 
         {/* Current selection */}
-        <div className="text-sm text-slate-400">
+        <div className="text-sm text-muted-foreground">
           {isFileMode ? (
             <>
               <span>Directory: </span>
-              <span className="text-white font-mono">{currentPath || "None"}</span>
+              <span className="text-foreground font-mono">{currentPath || "None"}</span>
               <br />
               <span>Selected file: </span>
-              <span className="text-violet-400 font-mono">{selectedFile ? selectedFile.split("/").pop() : "None"}</span>
+              <span className="text-primary font-mono">{selectedFile ? selectedFile.split("/").pop() : "None"}</span>
             </>
           ) : (
             <>
-              Selected: <span className="text-white font-mono">{currentPath || "None"}</span>
+              Selected: <span className="text-foreground font-mono">{currentPath || "None"}</span>
             </>
           )}
         </div>
@@ -338,14 +338,14 @@ export function DirectoryBrowser({
           <Button
             variant="ghost"
             onClick={onClose}
-            className="text-slate-400 hover:text-white"
+            className="text-muted-foreground hover:text-foreground"
           >
             Cancel
           </Button>
           <Button
             onClick={handleSelect}
             disabled={isFileMode ? !selectedFile : !currentPath}
-            className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground"
           >
             {isFileMode ? "Select File" : "Select Directory"}
           </Button>

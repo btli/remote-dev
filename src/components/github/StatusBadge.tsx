@@ -121,8 +121,8 @@ const countConfig: Record<
   },
   issue: {
     icon: CircleDot,
-    color: "text-primary",
-    bgColor: "bg-primary/20",
+    color: "text-chart-2",
+    bgColor: "bg-chart-2/20",
     label: "Issues",
   },
   commit: {

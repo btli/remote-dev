@@ -501,13 +501,13 @@ export function FolderPreferencesModal({
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[500px] max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col">
+      <DialogContent className="sm:max-w-[500px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
         <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2 text-white">
-            <Folder className="w-5 h-5 text-violet-400 fill-violet-400/30" />
+          <DialogTitle className="flex items-center gap-2 text-foreground">
+            <Folder className="w-5 h-5 text-primary fill-primary/30" />
             {folderName} Preferences
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             Override settings for sessions in this folder.
             Leave empty to inherit from{" "}
             {parentFolderId ? "parent folder" : "user settings"}.
@@ -515,31 +515,31 @@ export function FolderPreferencesModal({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex-1 min-h-0 flex flex-col">
-          <TabsList className="w-full bg-slate-800/50 flex-shrink-0">
-            <TabsTrigger value="general" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+          <TabsList className="w-full bg-muted/50 flex-shrink-0">
+            <TabsTrigger value="general" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-muted">
               <Settings className="w-3.5 h-3.5" />
               General
-              {hasGeneralOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+              {hasGeneralOverrides && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
             </TabsTrigger>
-            <TabsTrigger value="appearance" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+            <TabsTrigger value="appearance" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-muted">
               <Palette className="w-3.5 h-3.5" />
               Appearance
-              {hasAppearanceOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+              {hasAppearanceOverrides && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
             </TabsTrigger>
-            <TabsTrigger value="repository" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+            <TabsTrigger value="repository" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-muted">
               <FolderGit2 className="w-3.5 h-3.5" />
               Repo
-              {hasRepoOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+              {hasRepoOverrides && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
             </TabsTrigger>
-            <TabsTrigger value="environment" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+            <TabsTrigger value="environment" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-muted">
               <Terminal className="w-3.5 h-3.5" />
               Env
-              {hasEnvOverrides && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+              {hasEnvOverrides && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
             </TabsTrigger>
-            <TabsTrigger value="profile" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-slate-700">
+            <TabsTrigger value="profile" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-muted">
               <Fingerprint className="w-3.5 h-3.5" />
               Profile
-              {hasProfileLink && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />}
+              {hasProfileLink && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
             </TabsTrigger>
           </TabsList>
 
@@ -549,9 +549,9 @@ export function FolderPreferencesModal({
               {/* Working Directory */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-slate-300">Working Directory</Label>
+                  <Label className="text-muted-foreground">Working Directory</Label>
                   {isOverridden("defaultWorkingDirectory") && (
-                    <span className="text-xs text-violet-400">Overridden</span>
+                    <span className="text-xs text-primary">Overridden</span>
                   )}
                 </div>
                 <div className="flex gap-2">
@@ -562,8 +562,8 @@ export function FolderPreferencesModal({
                     }
                     placeholder={`${getInheritedSourceLabel("defaultWorkingDirectory")}: ${getInherited("defaultWorkingDirectory")}`}
                     className={cn(
-                      "flex-1 bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
-                      isOverridden("defaultWorkingDirectory") && "border-violet-500/50"
+                      "flex-1 bg-card border-border text-foreground placeholder:text-muted-foreground",
+                      isOverridden("defaultWorkingDirectory") && "border-primary/50"
                     )}
                   />
                   <Button
@@ -584,7 +584,7 @@ export function FolderPreferencesModal({
                         setShowFolderBrowser(true);
                       }
                     }}
-                    className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
+                    className="shrink-0 bg-card border-border hover:bg-accent"
                   >
                     <FolderOpen className="w-4 h-4" />
                   </Button>
@@ -594,9 +594,9 @@ export function FolderPreferencesModal({
               {/* Shell */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-slate-300">Shell</Label>
+                  <Label className="text-muted-foreground">Shell</Label>
                   {isOverridden("defaultShell") && (
-                    <span className="text-xs text-violet-400">Overridden</span>
+                    <span className="text-xs text-primary">Overridden</span>
                   )}
                 </div>
                 <Select
@@ -605,8 +605,8 @@ export function FolderPreferencesModal({
                 >
                   <SelectTrigger
                     className={cn(
-                      "bg-slate-800 border-white/10 text-white",
-                      isOverridden("defaultShell") && "border-violet-500/50"
+                      "bg-card border-border text-foreground",
+                      isOverridden("defaultShell") && "border-primary/50"
                     )}
                   >
                     <SelectValue
@@ -616,15 +616,15 @@ export function FolderPreferencesModal({
                       }`}
                     />
                   </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-white/10">
-                    <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                  <SelectContent className="bg-card border-border">
+                    <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
                       {getInheritedSourceLabel("defaultShell")}
                     </SelectItem>
                     {SHELL_OPTIONS.map((option) => (
                       <SelectItem
                         key={option.value}
                         value={option.value}
-                        className="text-white focus:bg-violet-500/20"
+                        className="text-foreground focus:bg-primary/20"
                       >
                         {option.label}
                       </SelectItem>
@@ -636,9 +636,9 @@ export function FolderPreferencesModal({
               {/* Startup Command */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-slate-300">Startup Command</Label>
+                  <Label className="text-muted-foreground">Startup Command</Label>
                   {isOverridden("startupCommand") && (
-                    <span className="text-xs text-violet-400">Overridden</span>
+                    <span className="text-xs text-primary">Overridden</span>
                   )}
                 </div>
                 <Input
@@ -648,11 +648,11 @@ export function FolderPreferencesModal({
                   }
                   placeholder={getInherited("startupCommand") ? `${getInheritedSourceLabel("startupCommand")}: ${getInherited("startupCommand")}` : "No startup command"}
                   className={cn(
-                    "bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
-                    isOverridden("startupCommand") && "border-violet-500/50"
+                    "bg-card border-border text-foreground placeholder:text-muted-foreground",
+                    isOverridden("startupCommand") && "border-primary/50"
                   )}
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-muted-foreground">
                   Command to run when a new session starts in this folder.
                 </p>
               </div>
@@ -663,9 +663,9 @@ export function FolderPreferencesModal({
               {/* Theme */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-slate-300">Theme</Label>
+                  <Label className="text-muted-foreground">Theme</Label>
                   {isOverridden("theme") && (
-                    <span className="text-xs text-violet-400">Overridden</span>
+                    <span className="text-xs text-primary">Overridden</span>
                   )}
                 </div>
                 <Select
@@ -674,8 +674,8 @@ export function FolderPreferencesModal({
                 >
                   <SelectTrigger
                     className={cn(
-                      "bg-slate-800 border-white/10 text-white",
-                      isOverridden("theme") && "border-violet-500/50"
+                      "bg-card border-border text-foreground",
+                      isOverridden("theme") && "border-primary/50"
                     )}
                   >
                     <SelectValue
@@ -685,15 +685,15 @@ export function FolderPreferencesModal({
                       }`}
                     />
                   </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-white/10">
-                    <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                  <SelectContent className="bg-card border-border">
+                    <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
                       {getInheritedSourceLabel("theme")}
                     </SelectItem>
                     {THEME_OPTIONS.map((option) => (
                       <SelectItem
                         key={option.value}
                         value={option.value}
-                        className="text-white focus:bg-violet-500/20"
+                        className="text-foreground focus:bg-primary/20"
                       >
                         {option.label}
                       </SelectItem>
@@ -705,8 +705,8 @@ export function FolderPreferencesModal({
               {/* Font Size */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-slate-300">Font Size</Label>
-                  <span className="text-sm text-slate-400">
+                  <Label className="text-muted-foreground">Font Size</Label>
+                  <span className="text-sm text-muted-foreground">
                     {getValue("fontSize") || `Inherit: ${getInherited("fontSize")}`}px
                   </span>
                 </div>
@@ -723,9 +723,9 @@ export function FolderPreferencesModal({
               {/* Font Family */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-slate-300">Font Family</Label>
+                  <Label className="text-muted-foreground">Font Family</Label>
                   {isOverridden("fontFamily") && (
-                    <span className="text-xs text-violet-400">Overridden</span>
+                    <span className="text-xs text-primary">Overridden</span>
                   )}
                 </div>
                 <Select
@@ -734,8 +734,8 @@ export function FolderPreferencesModal({
                 >
                   <SelectTrigger
                     className={cn(
-                      "bg-slate-800 border-white/10 text-white",
-                      isOverridden("fontFamily") && "border-violet-500/50"
+                      "bg-card border-border text-foreground",
+                      isOverridden("fontFamily") && "border-primary/50"
                     )}
                   >
                     <SelectValue
@@ -745,15 +745,15 @@ export function FolderPreferencesModal({
                       }`}
                     />
                   </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-white/10 max-h-60">
-                    <SelectItem value={INHERIT_VALUE} className="text-slate-400 focus:bg-violet-500/20">
+                  <SelectContent className="bg-card border-border max-h-60">
+                    <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
                       {getInheritedSourceLabel("fontFamily")}
                     </SelectItem>
                     {FONT_OPTIONS.map((option) => (
                       <SelectItem
                         key={option.value}
                         value={option.value}
-                        className="text-white focus:bg-violet-500/20"
+                        className="text-foreground focus:bg-primary/20"
                         style={{ fontFamily: option.value }}
                       >
                         {option.label}
@@ -767,7 +767,7 @@ export function FolderPreferencesModal({
             {/* Repository Tab */}
             <TabsContent value="repository" className="mt-0 space-y-4">
               <div className="space-y-2">
-                <p className="text-sm text-slate-400">
+                <p className="text-sm text-muted-foreground">
                   Link a repository to enable worktree creation from this folder.
                 </p>
 
@@ -785,8 +785,8 @@ export function FolderPreferencesModal({
                     className={cn(
                       "flex-1 text-xs",
                       repoMode === "none"
-                        ? "bg-slate-700 text-white"
-                        : "text-slate-400 hover:text-white"
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     None
@@ -802,8 +802,8 @@ export function FolderPreferencesModal({
                     className={cn(
                       "flex-1 text-xs",
                       repoMode === "github"
-                        ? "bg-slate-700 text-white"
-                        : "text-slate-400 hover:text-white"
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     <Github className="w-3 h-3 mr-1" />
@@ -820,8 +820,8 @@ export function FolderPreferencesModal({
                     className={cn(
                       "flex-1 text-xs",
                       repoMode === "local"
-                        ? "bg-slate-700 text-white"
-                        : "text-slate-400 hover:text-white"
+                        ? "bg-muted text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     <FolderGit2 className="w-3 h-3 mr-1" />
@@ -833,7 +833,7 @@ export function FolderPreferencesModal({
                 {repoMode === "github" && (
                   <div className="space-y-2 pt-2">
                     {loadingRepos ? (
-                      <div className="flex items-center justify-center py-4 text-slate-400">
+                      <div className="flex items-center justify-center py-4 text-muted-foreground">
                         <Loader2 className="w-4 h-4 animate-spin mr-2" />
                         Loading repositories...
                       </div>
@@ -847,13 +847,13 @@ export function FolderPreferencesModal({
                           variant="ghost"
                           size="sm"
                           onClick={() => setRepoError(null)}
-                          className="text-xs text-slate-400"
+                          className="text-xs text-muted-foreground"
                         >
                           Dismiss
                         </Button>
                       </div>
                     ) : repos.length === 0 ? (
-                      <p className="text-sm text-slate-500 py-2">
+                      <p className="text-sm text-muted-foreground py-2">
                         No repositories found. Connect GitHub to see your repos.
                       </p>
                     ) : (
@@ -863,7 +863,7 @@ export function FolderPreferencesModal({
                           value={repoSearchQuery}
                           onChange={(e) => setRepoSearchQuery(e.target.value)}
                           placeholder="Search repositories..."
-                          className="h-7 text-xs bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+                          className="h-7 text-xs bg-card border-border text-foreground placeholder:text-muted-foreground"
                         />
                         {/* Filter and sort controls */}
                         <div className="flex items-center gap-2">
@@ -875,8 +875,8 @@ export function FolderPreferencesModal({
                               className={cn(
                                 "px-2 py-1 text-xs rounded-md whitespace-nowrap transition-colors",
                                 !repoOwnerFilter
-                                  ? "bg-violet-500/20 text-violet-300"
-                                  : "text-slate-400 hover:text-white hover:bg-white/5"
+                                  ? "bg-primary/20 text-primary"
+                                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                               )}
                             >
                               All ({repos.length})
@@ -891,8 +891,8 @@ export function FolderPreferencesModal({
                                   className={cn(
                                     "px-2 py-1 text-xs rounded-md whitespace-nowrap transition-colors",
                                     repoOwnerFilter === owner
-                                      ? "bg-violet-500/20 text-violet-300"
-                                      : "text-slate-400 hover:text-white hover:bg-white/5"
+                                      ? "bg-primary/20 text-primary"
+                                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                                   )}
                                 >
                                   {owner} ({count})
@@ -905,10 +905,10 @@ export function FolderPreferencesModal({
                             value={repoSortBy}
                             onValueChange={(v) => setRepoSortBy(v as typeof repoSortBy)}
                           >
-                            <SelectTrigger className="w-[100px] h-7 text-xs bg-slate-800 border-white/10">
+                            <SelectTrigger className="w-[100px] h-7 text-xs bg-card border-border">
                               <SelectValue />
                             </SelectTrigger>
-                            <SelectContent className="bg-slate-800 border-white/10">
+                            <SelectContent className="bg-card border-border">
                               <SelectItem value="updated" className="text-xs">Recent</SelectItem>
                               <SelectItem value="name" className="text-xs">Name</SelectItem>
                               <SelectItem value="cloned" className="text-xs">Cloned</SelectItem>
@@ -917,9 +917,9 @@ export function FolderPreferencesModal({
                         </div>
 
                         {/* Repo list */}
-                        <div className="max-h-[180px] overflow-y-auto rounded-md border border-white/10 bg-slate-800/50">
+                        <div className="max-h-[180px] overflow-y-auto rounded-md border border-border bg-muted/50">
                           {filteredAndSortedRepos.length === 0 ? (
-                            <div className="px-3 py-4 text-center text-sm text-slate-500">
+                            <div className="px-3 py-4 text-center text-sm text-muted-foreground">
                               No repos match filter
                             </div>
                           ) : (
@@ -936,18 +936,18 @@ export function FolderPreferencesModal({
                                   disabled={isCloning || cloningRepoId !== null}
                                   className={cn(
                                     "w-full flex items-start gap-2 px-2.5 py-1.5 text-left transition-colors",
-                                    "hover:bg-white/5 focus:bg-white/5 focus:outline-none",
-                                    "border-b border-white/5 last:border-b-0",
-                                    isSelected && "bg-violet-500/20",
+                                    "hover:bg-accent/50 focus:bg-accent/50 focus:outline-none",
+                                    "border-b border-border/50 last:border-b-0",
+                                    isSelected && "bg-primary/20",
                                     (isCloning || (cloningRepoId !== null && !isCloning)) && "opacity-50 cursor-not-allowed"
                                   )}
                                 >
                                   {/* Status icon */}
                                   <div className="mt-0.5 shrink-0">
                                     {isCloning ? (
-                                      <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin" />
+                                      <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
                                     ) : isSelected ? (
-                                      <Check className="w-3.5 h-3.5 text-violet-400" />
+                                      <Check className="w-3.5 h-3.5 text-primary" />
                                     ) : isCloned ? (
                                       <FolderGit2 className="w-3.5 h-3.5 text-emerald-400" />
                                     ) : (
@@ -958,14 +958,14 @@ export function FolderPreferencesModal({
                                   <div className="flex-1 min-w-0">
                                     <span className={cn(
                                       "block text-xs font-medium truncate",
-                                      isSelected ? "text-white" : isCloned ? "text-slate-200" : "text-slate-300"
+                                      isSelected ? "text-foreground" : isCloned ? "text-foreground/90" : "text-muted-foreground"
                                     )}>
                                       {repo.name}
                                     </span>
                                     {isCloning ? (
-                                      <span className="text-[10px] text-violet-400">Cloning...</span>
+                                      <span className="text-[10px] text-primary">Cloning...</span>
                                     ) : isCloned ? (
-                                      <span className="text-[10px] text-slate-500 truncate block">
+                                      <span className="text-[10px] text-muted-foreground truncate block">
                                         {repo.localPath}
                                       </span>
                                     ) : (
@@ -990,8 +990,8 @@ export function FolderPreferencesModal({
                       onChange={(e) => setValue("localRepoPath", e.target.value || null)}
                       placeholder="/path/to/local/git/repository"
                       className={cn(
-                        "flex-1 bg-slate-800 border-white/10 text-white placeholder:text-slate-500",
-                        isOverridden("localRepoPath") && "border-violet-500/50"
+                        "flex-1 bg-card border-border text-foreground placeholder:text-muted-foreground",
+                        isOverridden("localRepoPath") && "border-primary/50"
                       )}
                     />
                     <Button
@@ -1012,7 +1012,7 @@ export function FolderPreferencesModal({
                           setShowFolderBrowser(true);
                         }
                       }}
-                      className="shrink-0 bg-slate-800 border-white/10 hover:bg-slate-700"
+                      className="shrink-0 bg-card border-border hover:bg-accent"
                     >
                       <FolderOpen className="w-4 h-4" />
                     </Button>
@@ -1023,12 +1023,12 @@ export function FolderPreferencesModal({
 
             {/* Environment Tab */}
             <TabsContent value="environment" className="mt-0 space-y-4">
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted-foreground">
                 Set environment variables for terminal sessions in this folder.
                 Variables are inherited from parent folders and can be overridden.
               </p>
               {loadingEnvVars ? (
-                <div className="flex items-center justify-center py-4 text-slate-400">
+                <div className="flex items-center justify-center py-4 text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin mr-2" />
                   Loading environment...
                 </div>
@@ -1045,13 +1045,13 @@ export function FolderPreferencesModal({
 
             {/* Profile Tab */}
             <TabsContent value="profile" className="mt-0 space-y-4">
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-muted-foreground">
                 Link an agent profile to apply git identity, secrets, and MCP servers
                 to all sessions created in this folder.
               </p>
 
               <div className="space-y-3">
-                <Label className="text-slate-300">Agent Profile</Label>
+                <Label className="text-muted-foreground">Agent Profile</Label>
                 <ProfileSelector
                   value={linkedProfileId}
                   onChange={handleProfileChange}
@@ -1060,7 +1060,7 @@ export function FolderPreferencesModal({
                   showProviderBadge={true}
                 />
                 {linkingProfile && (
-                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     Updating...
                   </div>
@@ -1069,20 +1069,20 @@ export function FolderPreferencesModal({
 
               {/* Profile Summary */}
               {linkedProfile && (
-                <div className="p-4 rounded-lg bg-slate-800/50 border border-white/10 space-y-3">
+                <div className="p-4 rounded-lg bg-muted/50 border border-border space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Fingerprint className="w-4 h-4 text-violet-400" />
-                      <span className="font-medium text-white">{linkedProfile.name}</span>
+                      <Fingerprint className="w-4 h-4 text-primary" />
+                      <span className="font-medium text-foreground">{linkedProfile.name}</span>
                     </div>
-                    <span className="text-xs text-slate-500 capitalize">
+                    <span className="text-xs text-muted-foreground capitalize">
                       {linkedProfile.provider}
                     </span>
                   </div>
                   {linkedProfile.description && (
-                    <p className="text-sm text-slate-400">{linkedProfile.description}</p>
+                    <p className="text-sm text-muted-foreground">{linkedProfile.description}</p>
                   )}
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-muted-foreground">
                     Sessions in this folder will use this profile&apos;s git identity,
                     secrets, and MCP servers.
                   </p>
@@ -1091,10 +1091,10 @@ export function FolderPreferencesModal({
 
               {/* Empty state */}
               {!linkedProfile && profiles.length === 0 && (
-                <div className="p-4 rounded-lg bg-slate-800/30 border border-white/5 text-center">
-                  <Fingerprint className="w-8 h-8 mx-auto mb-2 text-slate-600" />
-                  <p className="text-sm text-slate-400">No profiles created yet</p>
-                  <p className="text-xs text-slate-500 mt-1">
+                <div className="p-4 rounded-lg bg-muted/30 border border-border/50 text-center">
+                  <Fingerprint className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">No profiles created yet</p>
+                  <p className="text-xs text-muted-foreground mt-1">
                     Create profiles to manage git identity, secrets, and MCP servers.
                   </p>
                 </div>
@@ -1103,7 +1103,7 @@ export function FolderPreferencesModal({
           </div>
         </Tabs>
 
-        <div className="flex flex-col gap-2 pt-4 border-t border-white/5 flex-shrink-0">
+        <div className="flex flex-col gap-2 pt-4 border-t border-border/50 flex-shrink-0">
           {saveError && (
             <p className="text-sm text-red-400">{saveError}</p>
           )}
@@ -1118,14 +1118,14 @@ export function FolderPreferencesModal({
                   <li key={idx}>
                     Port {conflict.port} ({conflict.variableName}) conflicts with folder &quot;{conflict.conflictingFolder.name}&quot;
                     {conflict.suggestedPort && (
-                      <span className="text-slate-400 ml-1">
+                      <span className="text-muted-foreground ml-1">
                         (suggested: {conflict.suggestedPort})
                       </span>
                     )}
                   </li>
                 ))}
               </ul>
-              <p className="text-xs text-slate-400 mt-2">
+              <p className="text-xs text-muted-foreground mt-2">
                 Changes saved. You may want to update the conflicting ports.
               </p>
             </div>
@@ -1146,14 +1146,14 @@ export function FolderPreferencesModal({
             <Button
               variant="ghost"
               onClick={() => handleOpenChange(false)}
-              className="text-slate-400 hover:text-white"
+              className="text-muted-foreground hover:text-foreground"
             >
               Cancel
             </Button>
             <Button
               onClick={handleSave}
               disabled={saving}
-              className="bg-violet-600 hover:bg-violet-700 text-white"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {saving ? "Saving..." : "Save Changes"}
             </Button>

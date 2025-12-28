@@ -129,7 +129,7 @@ export function PortAllocationsTab({
 
   if (allocations.length === 0) {
     return (
-      <div className="text-center py-12 text-slate-400">
+      <div className="text-center py-12 text-muted-foreground">
         <Network className="w-12 h-12 mx-auto mb-3 opacity-50" />
         <p className="text-xs">No port allocations</p>
         <p className="text-xs mt-1">
@@ -144,12 +144,12 @@ export function PortAllocationsTab({
       {/* Filters */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search ports, variables, folders..."
-            className="pl-8 bg-slate-800 border-white/10 text-white placeholder:text-slate-500 text-xs h-8"
+            className="pl-8 bg-card border-border text-foreground placeholder:text-muted-foreground text-xs h-8"
           />
         </div>
 
@@ -157,18 +157,18 @@ export function PortAllocationsTab({
           value={selectedFolderId || "all"}
           onValueChange={(v) => onSelectFolder(v === "all" ? null : v)}
         >
-          <SelectTrigger className="w-[140px] bg-slate-800 border-white/10 text-white text-xs h-8">
+          <SelectTrigger className="w-[140px] bg-card border-border text-foreground text-xs h-8">
             <SelectValue placeholder="All folders" />
           </SelectTrigger>
-          <SelectContent className="bg-slate-800 border-white/10">
-            <SelectItem value="all" className="text-white text-xs">
+          <SelectContent className="bg-card border-border">
+            <SelectItem value="all" className="text-foreground text-xs">
               All folders
             </SelectItem>
             {folderOptions.map((folder) => (
               <SelectItem
                 key={folder.id}
                 value={folder.id}
-                className="text-white text-xs"
+                className="text-foreground text-xs"
               >
                 {folder.name}
               </SelectItem>
@@ -182,17 +182,17 @@ export function PortAllocationsTab({
             setFilterActive(v === "all" ? null : v === "active")
           }
         >
-          <SelectTrigger className="w-[100px] bg-slate-800 border-white/10 text-white text-xs h-8">
+          <SelectTrigger className="w-[100px] bg-card border-border text-foreground text-xs h-8">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
-          <SelectContent className="bg-slate-800 border-white/10">
-            <SelectItem value="all" className="text-white text-xs">
+          <SelectContent className="bg-card border-border">
+            <SelectItem value="all" className="text-foreground text-xs">
               All
             </SelectItem>
-            <SelectItem value="active" className="text-white text-xs">
+            <SelectItem value="active" className="text-foreground text-xs">
               Active
             </SelectItem>
-            <SelectItem value="inactive" className="text-white text-xs">
+            <SelectItem value="inactive" className="text-foreground text-xs">
               Inactive
             </SelectItem>
           </SelectContent>
@@ -200,32 +200,32 @@ export function PortAllocationsTab({
       </div>
 
       {/* Table Header */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/50 rounded-lg text-xs text-slate-400">
+      <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg text-xs text-muted-foreground">
         <button
           onClick={() => handleSort("port")}
-          className="w-20 text-left hover:text-white flex items-center gap-1"
+          className="w-20 text-left hover:text-foreground flex items-center gap-1"
         >
           Port
           {sortField === "port" && (
-            <span className="text-violet-400">{sortDirection === "asc" ? "↑" : "↓"}</span>
+            <span className="text-primary">{sortDirection === "asc" ? "↑" : "↓"}</span>
           )}
         </button>
         <button
           onClick={() => handleSort("variable")}
-          className="w-32 text-left hover:text-white flex items-center gap-1"
+          className="w-32 text-left hover:text-foreground flex items-center gap-1"
         >
           Variable
           {sortField === "variable" && (
-            <span className="text-violet-400">{sortDirection === "asc" ? "↑" : "↓"}</span>
+            <span className="text-primary">{sortDirection === "asc" ? "↑" : "↓"}</span>
           )}
         </button>
         <button
           onClick={() => handleSort("folder")}
-          className="flex-1 text-left hover:text-white flex items-center gap-1"
+          className="flex-1 text-left hover:text-foreground flex items-center gap-1"
         >
           Folder
           {sortField === "folder" && (
-            <span className="text-violet-400">{sortDirection === "asc" ? "↑" : "↓"}</span>
+            <span className="text-primary">{sortDirection === "asc" ? "↑" : "↓"}</span>
           )}
         </button>
         <div className="w-16 text-center">Status</div>
@@ -235,7 +235,7 @@ export function PortAllocationsTab({
       {/* Allocations List */}
       <div className="space-y-1">
         {filteredAllocations.length === 0 ? (
-          <div className="text-center py-8 text-slate-500 text-xs">
+          <div className="text-center py-8 text-muted-foreground text-xs">
             No matching allocations
           </div>
         ) : (
@@ -251,7 +251,7 @@ export function PortAllocationsTab({
       </div>
 
       {/* Summary */}
-      <div className="text-xs text-slate-500 pt-2 border-t border-white/5">
+      <div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
         Showing {filteredAllocations.length} of {allocations.length} allocations
       </div>
     </div>
@@ -274,17 +274,17 @@ function PortAllocationRow({
   onOpenFolderPrefs,
 }: PortAllocationRowProps) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800/30 border border-white/5 hover:border-violet-500/30 transition-colors">
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/50 hover:border-primary/30 transition-colors">
       {/* Port */}
       <div className="w-20">
-        <span className="font-mono text-white text-xs">{allocation.port}</span>
+        <span className="font-mono text-foreground text-xs">{allocation.port}</span>
       </div>
 
       {/* Variable Name */}
       <div className="w-32">
         <Badge
           variant="outline"
-          className="font-mono text-[10px] bg-slate-800/50 text-slate-300 border-slate-700"
+          className="font-mono text-[10px] bg-muted/50 text-muted-foreground border-border"
         >
           {allocation.variableName}
         </Badge>
@@ -292,8 +292,8 @@ function PortAllocationRow({
 
       {/* Folder */}
       <div className="flex-1 flex items-center gap-1.5">
-        <FolderOpen className="w-3.5 h-3.5 text-slate-500" />
-        <span className="text-xs text-slate-300 truncate">
+        <FolderOpen className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-xs text-muted-foreground truncate">
           {allocation.folderName}
         </span>
       </div>
@@ -303,12 +303,12 @@ function PortAllocationRow({
         <span className="flex items-center gap-1">
           <Circle
             className={`w-2 h-2 ${
-              isActive ? "fill-emerald-400 text-emerald-400" : "fill-slate-500 text-slate-500"
+              isActive ? "fill-emerald-400 text-emerald-400" : "fill-muted-foreground text-muted-foreground"
             }`}
           />
           <span
             className={`text-[10px] ${
-              isActive ? "text-emerald-400" : "text-slate-500"
+              isActive ? "text-emerald-400" : "text-muted-foreground"
             }`}
           >
             {isActive ? "Active" : "Idle"}
@@ -322,7 +322,7 @@ function PortAllocationRow({
           variant="ghost"
           size="icon"
           onClick={() => onOpenFolderPrefs(allocation.folderId)}
-          className="h-6 w-6 text-slate-400 hover:text-violet-400"
+          className="h-6 w-6 text-muted-foreground hover:text-primary"
           title="Edit in folder preferences"
         >
           <ExternalLink className="w-3.5 h-3.5" />

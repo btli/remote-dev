@@ -104,7 +104,7 @@ export function ProfileForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* Name */}
       <div className="space-y-2">
-        <Label htmlFor="profile-name" className="text-slate-300">
+        <Label htmlFor="profile-name" className="text-muted-foreground">
           Name <span className="text-red-400">*</span>
         </Label>
         <Input
@@ -112,13 +112,13 @@ export function ProfileForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="My Profile"
-          className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500"
+          className="bg-card border-border text-foreground placeholder:text-muted-foreground/70"
         />
       </div>
 
       {/* Description */}
       <div className="space-y-2">
-        <Label htmlFor="profile-description" className="text-slate-300">
+        <Label htmlFor="profile-description" className="text-muted-foreground">
           Description
         </Label>
         <Textarea
@@ -126,41 +126,41 @@ export function ProfileForm({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Optional description for this profile"
-          className="bg-slate-800 border-white/10 text-white placeholder:text-slate-500 min-h-[60px]"
+          className="bg-card border-border text-foreground placeholder:text-muted-foreground/70 min-h-[60px]"
         />
       </div>
 
       {/* Provider */}
       <div className="space-y-2">
-        <Label htmlFor="profile-provider" className="text-slate-300">
+        <Label htmlFor="profile-provider" className="text-muted-foreground">
           Agent Provider
         </Label>
         <Select value={provider} onValueChange={(v) => setProvider(v as AgentProvider)}>
-          <SelectTrigger className="bg-slate-800 border-white/10 text-white">
+          <SelectTrigger className="bg-card border-border text-foreground">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="bg-slate-800 border-white/10">
+          <SelectContent className="bg-card border-border">
             {PROVIDER_OPTIONS.map((option) => (
               <SelectItem
                 key={option.value}
                 value={option.value}
-                className="text-white focus:bg-violet-500/20"
+                className="text-foreground focus:bg-primary/20"
               >
                 {option.label}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-muted-foreground/70">
           Select the AI agent this profile is optimized for
         </p>
       </div>
 
       {/* Default toggle */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-slate-800/50 border border-white/5">
+      <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
         <div className="space-y-0.5">
-          <Label className="text-slate-300">Set as Default</Label>
-          <p className="text-xs text-slate-500">
+          <Label className="text-muted-foreground">Set as Default</Label>
+          <p className="text-xs text-muted-foreground/70">
             Use this profile for new sessions by default
           </p>
         </div>
@@ -185,14 +185,14 @@ export function ProfileForm({
           variant="ghost"
           onClick={onCancel}
           disabled={saving}
-          className="text-slate-400 hover:text-white"
+          className="text-muted-foreground hover:text-foreground"
         >
           Cancel
         </Button>
         <Button
           type="submit"
           disabled={saving}
-          className="bg-violet-600 hover:bg-violet-700 text-white"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           {saving ? (
             <>

@@ -29,7 +29,7 @@ const PROVIDER_COLORS: Record<AgentProvider, string> = {
   codex: "bg-emerald-500/20 text-emerald-300",
   gemini: "bg-blue-500/20 text-blue-300",
   opencode: "bg-orange-500/20 text-orange-300",
-  all: "bg-slate-500/20 text-slate-300",
+  all: "bg-muted/50 text-muted-foreground",
 };
 
 export function ProfileSelector({
@@ -65,14 +65,14 @@ export function ProfileSelector({
     >
       <SelectTrigger
         className={cn(
-          "bg-slate-800 border-white/10 text-white",
+          "bg-card border-border text-foreground",
           className
         )}
       >
         <SelectValue placeholder={placeholder}>
           {selectedProfile ? (
             <div className="flex items-center gap-2">
-              <Fingerprint className="w-4 h-4 text-violet-400" />
+              <Fingerprint className="w-4 h-4 text-primary" />
               <span>{selectedProfile.name}</span>
               {selectedProfile.isDefault && (
                 <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
@@ -90,15 +90,15 @@ export function ProfileSelector({
               )}
             </div>
           ) : (
-            <span className="text-slate-400">{placeholder}</span>
+            <span className="text-muted-foreground">{placeholder}</span>
           )}
         </SelectValue>
       </SelectTrigger>
-      <SelectContent className="bg-slate-800 border-white/10">
+      <SelectContent className="bg-card border-border">
         {/* None option */}
-        <SelectItem value="none" className="text-slate-400 focus:bg-violet-500/20">
+        <SelectItem value="none" className="text-muted-foreground focus:bg-primary/20">
           <span className="flex items-center gap-2">
-            <span className="text-slate-500">No profile</span>
+            <span className="text-muted-foreground/70">No profile</span>
           </span>
         </SelectItem>
 
@@ -107,10 +107,10 @@ export function ProfileSelector({
           <SelectItem
             key={profile.id}
             value={profile.id}
-            className="text-white focus:bg-violet-500/20"
+            className="text-foreground focus:bg-primary/20"
           >
             <div className="flex items-center gap-2">
-              <Fingerprint className="w-4 h-4 text-violet-400" />
+              <Fingerprint className="w-4 h-4 text-primary" />
               <span>{profile.name}</span>
               {profile.isDefault && (
                 <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
@@ -132,7 +132,7 @@ export function ProfileSelector({
 
         {/* Empty state */}
         {profiles.length === 0 && (
-          <div className="px-2 py-4 text-center text-sm text-slate-400">
+          <div className="px-2 py-4 text-center text-sm text-muted-foreground">
             No profiles created yet
           </div>
         )}

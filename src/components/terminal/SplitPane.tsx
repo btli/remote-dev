@@ -200,8 +200,8 @@ function ResizeHandle({ direction, onDrag }: ResizeHandleProps) {
       className={cn(
         "group relative flex-shrink-0 z-10",
         direction === "horizontal"
-          ? "w-1 cursor-col-resize hover:bg-violet-500/30"
-          : "h-1 cursor-row-resize hover:bg-violet-500/30",
+          ? "w-1 cursor-col-resize hover:bg-primary/30"
+          : "h-1 cursor-row-resize hover:bg-primary/30",
         "transition-colors"
       )}
       onMouseDown={handleMouseDown}
@@ -210,7 +210,7 @@ function ResizeHandle({ direction, onDrag }: ResizeHandleProps) {
       <div
         className={cn(
           "absolute opacity-0 group-hover:opacity-100 transition-opacity",
-          "bg-violet-500/50",
+          "bg-primary/50",
           direction === "horizontal"
             ? "w-1 h-8 top-1/2 -translate-y-1/2 left-0"
             : "h-1 w-8 left-1/2 -translate-x-1/2 top-0"
@@ -273,8 +273,8 @@ export function SplitPaneContainer({
             "relative h-full w-full overflow-hidden",
             "ring-inset transition-all duration-150",
             isActive
-              ? "ring-2 ring-violet-500/50"
-              : "ring-1 ring-white/5 hover:ring-white/10"
+              ? "ring-2 ring-primary/50"
+              : "ring-1 ring-border hover:ring-border/50"
           )}
           onClick={() => onPaneClick(node.id)}
         >
@@ -285,7 +285,7 @@ export function SplitPaneContainer({
               size="icon"
               className={cn(
                 "absolute top-1 right-1 z-20 w-5 h-5",
-                "bg-slate-800/80 hover:bg-red-500/80",
+                "bg-card/80 hover:bg-red-500/80",
                 "opacity-0 hover:opacity-100 transition-opacity",
                 isActive && "opacity-50"
               )}

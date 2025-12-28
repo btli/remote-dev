@@ -93,23 +93,23 @@ export function PortManagerModal({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[700px] max-h-[85vh] bg-slate-900/95 backdrop-blur-xl border-white/10 flex flex-col">
+      <DialogContent className="sm:max-w-[700px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-white">
-            <Network className="w-5 h-5 text-violet-400" />
+          <DialogTitle className="flex items-center gap-2 text-foreground">
+            <Network className="w-5 h-5 text-primary" />
             Port Manager
           </DialogTitle>
-          <DialogDescription className="text-slate-400">
+          <DialogDescription className="text-muted-foreground">
             View and manage port allocations across folders
           </DialogDescription>
         </DialogHeader>
 
         {/* Quick Stats Bar */}
-        <div className="flex items-center justify-between px-1 py-2 border-b border-white/5">
+        <div className="flex items-center justify-between px-1 py-2 border-b border-border">
           <div className="flex items-center gap-3">
             <Badge
               variant="outline"
-              className="bg-slate-800/50 text-slate-300 border-slate-700"
+              className="bg-muted/50 text-muted-foreground border-border"
             >
               {stats.total} port{stats.total !== 1 ? "s" : ""}
             </Badge>
@@ -121,14 +121,14 @@ export function PortManagerModal({
             </Badge>
             <Badge
               variant="outline"
-              className="bg-violet-500/10 text-violet-400 border-violet-500/30"
+              className="bg-primary/10 text-primary border-primary/30"
             >
               {stats.folders} folder{stats.folders !== 1 ? "s" : ""}
             </Badge>
           </div>
           <div className="flex items-center gap-2">
             {monitoring.lastCheck && (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-muted-foreground/70">
                 Last check: {new Date(monitoring.lastCheck).toLocaleTimeString()}
               </span>
             )}
@@ -137,7 +137,7 @@ export function PortManagerModal({
               size="sm"
               onClick={handleRefresh}
               disabled={refreshing}
-              className="text-slate-400 hover:text-white"
+              className="text-muted-foreground hover:text-foreground"
             >
               {refreshing ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -150,7 +150,7 @@ export function PortManagerModal({
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+            <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
         ) : (
           <Tabs
@@ -158,17 +158,17 @@ export function PortManagerModal({
             onValueChange={(v) => setActiveTab(v as TabValue)}
             className="flex-1 flex flex-col min-h-0"
           >
-            <TabsList className="w-full bg-slate-800/50 flex-shrink-0">
+            <TabsList className="w-full bg-muted/50 flex-shrink-0">
               <TabsTrigger
                 value="allocations"
-                className="data-[state=active]:bg-violet-500/20"
+                className="data-[state=active]:bg-primary/20"
               >
                 <ListFilter className="w-4 h-4 mr-2" />
                 Allocations
               </TabsTrigger>
               <TabsTrigger
                 value="frameworks"
-                className="data-[state=active]:bg-violet-500/20"
+                className="data-[state=active]:bg-primary/20"
               >
                 <Cpu className="w-4 h-4 mr-2" />
                 Frameworks
