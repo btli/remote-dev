@@ -112,6 +112,31 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     terminalThemeRef.current = terminalTheme;
   }, [terminalTheme]);
 
+  // Track previous effectiveMode to detect theme changes
+  const prevEffectiveModeRef = useRef<ThemeMode>(effectiveMode);
+
+  // When theme mode changes, clear xterm buffer and request tmux redraw
+  // This is needed because xterm resolves ANSI colors to RGB at write time,
+  // so historical content won't update with the new theme colors
+  useEffect(() => {
+    const terminal = xtermRef.current;
+    const ws = wsRef.current;
+
+    // Only act if mode actually changed (not on initial mount)
+    if (prevEffectiveModeRef.current !== effectiveMode && terminal) {
+      // Clear xterm's buffer (tmux still has the scrollback)
+      terminal.clear();
+
+      // Send Ctrl+L to tmux to trigger a screen redraw
+      // This will re-send the visible content with new color transformations
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "input", data: "\x0c" })); // Ctrl+L
+      }
+    }
+
+    prevEffectiveModeRef.current = effectiveMode;
+  }, [effectiveMode]);
+
   // FIX: Use ref for environmentVars to prevent re-initialization on every render.
   // Environment variables are only used during initial WebSocket connection.
   // Without this, getEnvironmentForFolder() returning a new object on each render
@@ -705,6 +730,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     terminal.options.theme = terminalTheme;
     terminal.options.fontSize = fontSize;
     terminal.options.fontFamily = fontFamily;
+
+    // Force xterm.js to re-render all visible rows with the new theme
+    // This is needed because xterm caches rendered cells and won't update
+    // semantic ANSI colors (like \x1b[39m default fg) without a refresh
+    terminal.refresh(0, terminal.rows - 1);
 
     // Load the font before fitting to ensure accurate cell dimensions
     // The fontFamily value is like "'FiraCode Nerd Font Mono', monospace"

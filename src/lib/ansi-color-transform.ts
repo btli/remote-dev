@@ -36,22 +36,17 @@ interface ColorMapping {
 
 /**
  * Color mappings for light mode themes
- * These transform saturated CLI colors to pastel/muted alternatives
+ * Note: Light/white foreground colors are handled by luminance-based logic in findReplacement()
+ * These mappings are for specific colors that need custom transformations
  */
 const LIGHT_MODE_FG_MAPPINGS: ColorMapping[] = [
-  // White/near-white foreground → dark gray (readable on light backgrounds)
-  {
-    source: { r: [240, 255], g: [240, 255], b: [240, 255] },
-    target: { r: 51, g: 51, b: 51 }, // #333333
-  },
-  // Bright/light foreground colors that are hard to see on light bg
-  {
-    source: { r: [200, 255], g: [200, 255], b: [200, 255] },
-    target: { r: 68, g: 68, b: 68 }, // #444444
-  },
+  // Additional specific foreground color mappings can be added here
 ];
 
 const LIGHT_MODE_BG_MAPPINGS: ColorMapping[] = [
+  // Note: Generic dark backgrounds are handled by luminance-based logic in findReplacement()
+  // These mappings handle specific saturated colors that need custom transformations
+  //
   // Saturated red background (Claude Code diff deletions) → pastel red
   // Original: ~rgb(92,34,34) to rgb(140,60,60)
   {
@@ -99,6 +94,14 @@ const DARK_MODE_BG_MAPPINGS: ColorMapping[] = [
 ];
 
 /**
+ * Calculate perceived luminance of a color (0-255 scale)
+ * Uses the standard formula for relative luminance
+ */
+function getLuminance(r: number, g: number, b: number): number {
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/**
  * Check if a color falls within a mapping's source range
  */
 function colorInRange(
@@ -118,17 +121,72 @@ function colorInRange(
 }
 
 /**
+ * Semantic ANSI color codes that follow the xterm.js theme
+ * Using these instead of 24-bit RGB means colors auto-update on theme change
+ */
+const SEMANTIC_COLORS = {
+  // Foreground colors (30-37, 90-97)
+  FG_DEFAULT: "\x1b[39m",      // Default foreground (follows theme)
+  FG_BLACK: "\x1b[30m",        // ANSI color 0
+  FG_WHITE: "\x1b[37m",        // ANSI color 7
+  FG_BRIGHT_WHITE: "\x1b[97m", // ANSI color 15
+  FG_BRIGHT_BLACK: "\x1b[90m", // ANSI color 8 (gray)
+  // Background colors (40-47, 100-107)
+  BG_DEFAULT: "\x1b[49m",      // Default background (follows theme)
+  BG_BLACK: "\x1b[40m",        // ANSI color 0
+  BG_WHITE: "\x1b[47m",        // ANSI color 7
+  BG_BRIGHT_WHITE: "\x1b[107m", // ANSI color 15
+  BG_BRIGHT_BLACK: "\x1b[100m", // ANSI color 8 (gray)
+} as const;
+
+/**
+ * Result type for color replacement - can be RGB or semantic ANSI code
+ */
+type ColorReplacement =
+  | { type: "rgb"; r: number; g: number; b: number }
+  | { type: "semantic"; code: string };
+
+/**
  * Find a replacement color for the given RGB values
+ * Returns semantic ANSI codes for theme-following colors, or RGB for specific mappings
  */
 function findReplacement(
   r: number,
   g: number,
   b: number,
-  mappings: ColorMapping[]
-): { r: number; g: number; b: number } | null {
+  mappings: ColorMapping[],
+  isForeground: boolean,
+  _themeMode: ThemeMode
+): ColorReplacement | null {
+  const luminance = getLuminance(r, g, b);
+
+  // Use semantic colors for extreme light/dark values
+  // These automatically follow the xterm.js theme on theme changes
+  if (isForeground) {
+    // Very light foreground → use theme's default foreground
+    if (luminance > 200) {
+      return { type: "semantic", code: SEMANTIC_COLORS.FG_DEFAULT };
+    }
+    // Very dark foreground → use theme's default foreground
+    if (luminance < 50) {
+      return { type: "semantic", code: SEMANTIC_COLORS.FG_DEFAULT };
+    }
+  } else {
+    // Dark background → use theme's default background
+    // Threshold 80 catches dark grays like rgb(55,55,55) which have lum=55
+    if (luminance < 80) {
+      return { type: "semantic", code: SEMANTIC_COLORS.BG_DEFAULT };
+    }
+    // Very light background → use theme's default background
+    if (luminance > 220) {
+      return { type: "semantic", code: SEMANTIC_COLORS.BG_DEFAULT };
+    }
+  }
+
+  // Fall back to explicit color mappings for specific colors (e.g., diff colors)
   for (const mapping of mappings) {
     if (colorInRange(r, g, b, mapping)) {
-      return mapping.target;
+      return { type: "rgb", ...mapping.target };
     }
   }
   return null;
@@ -154,15 +212,6 @@ const ANSI_24BIT_REGEX =
  * @returns Transformed terminal output with adjusted colors
  */
 export function transformAnsiColors(data: string, themeMode: ThemeMode): string {
-  // Skip transformation for dark mode if no mappings defined
-  if (
-    themeMode === "dark" &&
-    DARK_MODE_FG_MAPPINGS.length === 0 &&
-    DARK_MODE_BG_MAPPINGS.length === 0
-  ) {
-    return data;
-  }
-
   const fgMappings =
     themeMode === "light" ? LIGHT_MODE_FG_MAPPINGS : DARK_MODE_FG_MAPPINGS;
   const bgMappings =
@@ -177,15 +226,32 @@ export function transformAnsiColors(data: string, themeMode: ThemeMode): string 
     // Determine if this is foreground (38) or background (48)
     const isForeground = type === "38";
     const mappings = isForeground ? fgMappings : bgMappings;
+    const luminance = getLuminance(rNum, gNum, bNum);
 
-    const replacement = findReplacement(rNum, gNum, bNum, mappings);
+    // DEBUG: Log all 24-bit color sequences
+    console.log(`[ANSI] ${isForeground ? "FG" : "BG"} rgb(${rNum},${gNum},${bNum}) lum=${luminance.toFixed(0)} mode=${themeMode}${extra ? ` extra=${extra}` : ""}`);
+
+    const replacement = findReplacement(rNum, gNum, bNum, mappings, isForeground, themeMode);
 
     if (replacement) {
-      // Rebuild the escape sequence with new color
-      const newSequence = `\x1b[${type};2;${replacement.r};${replacement.g};${replacement.b}${extra}m`;
-      return newSequence;
+      if (replacement.type === "semantic") {
+        console.log(`  → semantic: ${replacement.code.replace(/\x1b/g, "\\x1b")}`);
+        // Use semantic ANSI code that follows the xterm.js theme
+        // If there's an extra color in the sequence, we need to handle it
+        if (extra) {
+          // Parse and transform extra colors too
+          return replacement.code.slice(0, -1) + extra + "m";
+        }
+        return replacement.code;
+      } else {
+        console.log(`  → rgb(${replacement.r},${replacement.g},${replacement.b})`);
+        // Rebuild the escape sequence with new RGB color
+        const newSequence = `\x1b[${type};2;${replacement.r};${replacement.g};${replacement.b}${extra}m`;
+        return newSequence;
+      }
     }
 
+    console.log(`  → (no transform)`);
     return match; // No replacement needed
   });
 }
