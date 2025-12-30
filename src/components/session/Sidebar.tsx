@@ -107,6 +107,7 @@ interface SidebarProps {
   onSchedulesOpen?: () => void;
   onProfilesOpen?: () => void;
   onPortsOpen?: () => void;
+  onViewIssues?: (folderId: string) => void;
 }
 
 export function Sidebar({
@@ -149,6 +150,7 @@ export function Sidebar({
   onSchedulesOpen,
   onProfilesOpen,
   onPortsOpen,
+  onViewIssues,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -1790,6 +1792,14 @@ export function Sidebar({
                                   <span className="ml-auto text-[10px] text-primary">Linked</span>
                                 )}
                               </ContextMenuItem>
+                              {onViewIssues && folderHasRepo(node.id) && (
+                                <ContextMenuItem
+                                  onClick={() => onViewIssues(node.id)}
+                                >
+                                  <CircleDot className="w-3.5 h-3.5 mr-2" />
+                                  View Issues
+                                </ContextMenuItem>
+                              )}
                               <ContextMenuItem
                                 onClick={() => {
                                   setEditingId(node.id);

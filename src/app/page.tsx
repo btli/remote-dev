@@ -14,6 +14,7 @@ import { ScheduleProvider } from "@/contexts/ScheduleContext";
 import { SecretsProvider } from "@/contexts/SecretsContext";
 import { ProfileProvider } from "@/contexts/ProfileContext";
 import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
+import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { GitHubStatusIcon } from "@/components/header/GitHubStatusIcon";
@@ -80,6 +81,7 @@ export default async function Home() {
             <TemplateProvider>
               <RecordingProvider>
                 <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
+                  <GitHubIssuesProvider>
                   <SessionProvider initialSessions={initialSessions}>
                     <SplitProvider>
                       <TrashProvider>
@@ -140,6 +142,7 @@ export default async function Home() {
                       </TrashProvider>
                     </SplitProvider>
                 </SessionProvider>
+                  </GitHubIssuesProvider>
               </GitHubStatsProvider>
             </RecordingProvider>
             </TemplateProvider>

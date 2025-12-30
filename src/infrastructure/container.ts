@@ -10,12 +10,16 @@
 
 import { DrizzleSessionRepository } from "./persistence/repositories/DrizzleSessionRepository";
 import { DrizzleFolderRepository } from "./persistence/repositories/DrizzleFolderRepository";
+import { DrizzleGitHubIssueRepository } from "./persistence/repositories/DrizzleGitHubIssueRepository";
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
+import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import type { WorktreeGateway } from "@/application/ports/WorktreeGateway";
+import type { GitHubIssueRepository } from "@/application/ports/GitHubIssueRepository";
+import type { GitHubIssueGateway } from "@/application/ports/GitHubIssueGateway";
 
 // Session Use Cases
 import { CreateSessionUseCase } from "@/application/use-cases/session/CreateSessionUseCase";
@@ -42,6 +46,12 @@ import {
   KillOrphanedSessionsUseCase,
 } from "@/application/use-cases/tmux";
 
+// GitHub Use Cases
+import {
+  FetchIssuesForRepositoryUseCase,
+  MarkIssuesSeenUseCase,
+} from "@/application/use-cases/github";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +68,12 @@ export const sessionRepository: SessionRepository = new DrizzleSessionRepository
  */
 export const folderRepository: FolderRepository = new DrizzleFolderRepository();
 
+/**
+ * GitHub issue repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const githubIssueRepository: GitHubIssueRepository = new DrizzleGitHubIssueRepository();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Gateway Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +89,12 @@ export const tmuxGateway: TmuxGateway = new TmuxGatewayImpl();
  * Wraps the existing WorktreeService.
  */
 export const worktreeGateway: WorktreeGateway = new WorktreeGatewayImpl();
+
+/**
+ * GitHub issue gateway instance.
+ * Wraps the existing GitHubService issue functions.
+ */
+export const githubIssueGateway: GitHubIssueGateway = new GitHubIssueGatewayImpl();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Use Case Instances
@@ -200,6 +222,25 @@ export const killOrphanedSessionsUseCase = new KillOrphanedSessionsUseCase(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GitHub Use Case Instances
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch issues for repository use case.
+ */
+export const fetchIssuesForRepositoryUseCase = new FetchIssuesForRepositoryUseCase(
+  githubIssueRepository,
+  githubIssueGateway
+);
+
+/**
+ * Mark issues as seen use case.
+ */
+export const markIssuesSeenUseCase = new MarkIssuesSeenUseCase(
+  githubIssueRepository
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -210,8 +251,10 @@ export const killOrphanedSessionsUseCase = new KillOrphanedSessionsUseCase(
 export interface Container {
   sessionRepository: SessionRepository;
   folderRepository: FolderRepository;
+  githubIssueRepository: GitHubIssueRepository;
   tmuxGateway: TmuxGateway;
   worktreeGateway: WorktreeGateway;
+  githubIssueGateway: GitHubIssueGateway;
 }
 
 /**
@@ -220,8 +263,10 @@ export interface Container {
 export const defaultContainer: Container = {
   sessionRepository,
   folderRepository,
+  githubIssueRepository,
   tmuxGateway,
   worktreeGateway,
+  githubIssueGateway,
 };
 
 /**
