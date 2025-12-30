@@ -680,6 +680,41 @@ export const githubChangeNotifications = sqliteTable(
   ]
 );
 
+// GitHub Issues cache - stores issue details from GitHub API
+export const githubIssues = sqliteTable(
+  "github_issue",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    issueNumber: integer("issue_number").notNull(),
+    title: text("title").notNull(),
+    state: text("state").$type<"open" | "closed">().notNull(),
+    body: text("body"),
+    htmlUrl: text("html_url").notNull(),
+    author: text("author"), // JSON: { login, avatarUrl }
+    labels: text("labels").notNull().default("[]"), // JSON array: [{ name, color }]
+    assignees: text("assignees").notNull().default("[]"), // JSON array: [{ login, avatarUrl }]
+    milestone: text("milestone"), // JSON: { title, number }
+    comments: integer("comments").notNull().default(0),
+    isNew: integer("is_new", { mode: "boolean" }).notNull().default(false), // New since last user view
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    cachedAt: integer("cached_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("github_issue_repo_idx").on(table.repositoryId),
+    uniqueIndex("github_issue_repo_number_idx").on(table.repositoryId, table.issueNumber),
+    index("github_issue_state_idx").on(table.repositoryId, table.state),
+    index("github_issue_cached_idx").on(table.cachedAt),
+  ]
+);
+
 // =============================================================================
 // Scheduled Commands Tables
 // =============================================================================

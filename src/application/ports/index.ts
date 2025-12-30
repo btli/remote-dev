@@ -30,3 +30,15 @@ export type {
   CreateWorktreeOptions,
   CreateWorktreeResult,
 } from "./WorktreeGateway";
+
+export type {
+  GitHubIssueRepository,
+  IssueFilters,
+  IssueOrderBy,
+} from "./GitHubIssueRepository";
+
+export type {
+  GitHubIssueGateway,
+  FetchIssuesParams,
+  FetchIssueParams,
+} from "./GitHubIssueGateway";

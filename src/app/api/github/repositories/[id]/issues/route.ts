@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
+import { fetchIssuesForRepositoryUseCase } from "@/infrastructure/container";
+import { GitHubIssueMapper } from "@/infrastructure/persistence/mappers/GitHubIssueMapper";
 
 /**
  * GET /api/github/repositories/:id/issues - List issues for a repository
  *
- * This endpoint is designed for the Agent API orchestrator workflow.
- * An orchestrator can list issues, then create worktree sessions to address each one.
+ * This endpoint supports both direct API access (for Agent workflows) and
+ * cached access (for UI with background sync).
  *
  * Query Parameters:
  * - state: "open" | "closed" | "all" (default: "open")
  * - per_page: Number of issues (default: 100, max: 100)
  * - page: Page number (default: 1)
+ * - refresh: "true" to force refresh cache
  *
  * Authentication: Supports both session auth and API key auth (Bearer token).
  */
@@ -41,6 +44,7 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
     // Parse query parameters with validation
     const { searchParams } = new URL(request.url);
     const state = (searchParams.get("state") as "open" | "closed" | "all") ?? "open";
+    const forceRefresh = searchParams.get("refresh") === "true";
 
     const perPageRaw = parseInt(searchParams.get("per_page") ?? "100", 10);
     const perPage = Number.isNaN(perPageRaw)
@@ -53,26 +57,38 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
     // Split fullName into owner/repo
     const [owner, repoName] = repo.fullName.split("/");
 
-    // Fetch issues
-    const issues = await GitHubService.listIssuesFromAPI(
-      accessToken,
+    // Use the use case with caching
+    const result = await fetchIssuesForRepositoryUseCase.execute({
+      userId,
+      repositoryId: repoId,
       owner,
-      repoName,
+      repo: repoName,
+      accessToken,
+      forceRefresh,
       state,
-      perPage,
-      page
-    );
+    });
+
+    // Apply pagination to the results
+    const startIndex = (page - 1) * perPage;
+    const paginatedIssues = result.issues.slice(startIndex, startIndex + perPage);
 
     return NextResponse.json({
       repository: {
         id: repo.id,
         fullName: repo.fullName,
       },
-      issues,
+      issues: GitHubIssueMapper.toApiResponseMany(paginatedIssues),
       pagination: {
         page,
         perPage,
-        count: issues.length,
+        count: paginatedIssues.length,
+        total: result.issues.length,
+      },
+      meta: {
+        fromCache: result.fromCache,
+        cachedAt: result.cachedAt?.toISOString() ?? null,
+        hasNewIssues: result.hasNewIssues,
+        newIssueCount: result.newIssueCount,
       },
     });
   } catch (error) {

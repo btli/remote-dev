@@ -13,3 +13,9 @@ export {
   type FolderDbRecord,
   type FolderDbInsert,
 } from "./FolderMapper";
+
+export {
+  GitHubIssueMapper,
+  type GitHubIssueDbRecord,
+  type GitHubIssueDbInsert,
+} from "./GitHubIssueMapper";

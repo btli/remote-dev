@@ -13,6 +13,8 @@ import { TrashModal } from "@/components/trash/TrashModal";
 import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
+import { IssuesModal } from "@/components/github/IssuesModal";
+import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
@@ -229,6 +231,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Port manager modal state
   const [isPortsModalOpen, setIsPortsModalOpen] = useState(false);
+
+  // Issues modal state
+  const [issuesModal, setIssuesModal] = useState<{
+    open: boolean;
+    folderId: string;
+    repositoryId: string;
+    repositoryName: string;
+    repositoryUrl?: string;
+  } | null>(null);
 
   // Get trash count for a specific folder
   const getFolderTrashCount = useCallback(
@@ -681,6 +692,50 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [resolvePreferencesForFolder, getRepositoryById]
   );
 
+  // Handle viewing issues for a folder's linked repository
+  const handleViewIssues = useCallback(
+    (folderId: string) => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      if (!prefs?.githubRepoId) return;
+
+      const repo = getRepositoryById(prefs.githubRepoId);
+      if (!repo) return;
+
+      setIssuesModal({
+        open: true,
+        folderId,
+        repositoryId: repo.id,
+        repositoryName: repo.fullName,
+        repositoryUrl: repo.url,
+      });
+    },
+    [resolvePreferencesForFolder, getRepositoryById]
+  );
+
+  // Handle creating a worktree from an issue
+  const handleCreateWorktreeFromIssue = useCallback(
+    async (issue: GitHubIssueDTO, repositoryId: string) => {
+      if (!issuesModal) return;
+
+      try {
+        const newSession = await createSession({
+          name: `#${issue.number} ${issue.title}`.slice(0, 50),
+          folderId: issuesModal.folderId,
+          githubRepoId: repositoryId,
+          worktreeBranch: issue.suggestedBranchName,
+          createWorktree: true,
+        });
+        if (newSession) {
+          setActiveSession(newSession.id);
+        }
+        setIssuesModal(null);
+      } catch (error) {
+        console.error("Failed to create worktree from issue:", error);
+      }
+    },
+    [issuesModal, createSession, setActiveSession]
+  );
+
   const handleFolderNewSession = useCallback(
     async (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
@@ -1120,6 +1175,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             }}
             onProfilesOpen={() => setIsProfilesModalOpen(true)}
             onPortsOpen={() => setIsPortsModalOpen(true)}
+            onViewIssues={handleViewIssues}
           />
       </div>
 
@@ -1423,6 +1479,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         open={isPortsModalOpen}
         onClose={() => setIsPortsModalOpen(false)}
       />
+
+      {/* Issues Modal */}
+      {issuesModal && (
+        <IssuesModal
+          open={issuesModal.open}
+          onClose={() => setIssuesModal(null)}
+          repositoryId={issuesModal.repositoryId}
+          repositoryName={issuesModal.repositoryName}
+          repositoryUrl={issuesModal.repositoryUrl}
+          onCreateWorktree={handleCreateWorktreeFromIssue}
+        />
+      )}
     </div>
   );
 }
