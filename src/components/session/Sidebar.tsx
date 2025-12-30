@@ -108,6 +108,7 @@ interface SidebarProps {
   onProfilesOpen?: () => void;
   onPortsOpen?: () => void;
   onViewIssues?: (folderId: string) => void;
+  onViewPRs?: (folderId: string) => void;
 }
 
 export function Sidebar({
@@ -151,6 +152,7 @@ export function Sidebar({
   onProfilesOpen,
   onPortsOpen,
   onViewIssues,
+  onViewPRs,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -1798,6 +1800,14 @@ export function Sidebar({
                                 >
                                   <CircleDot className="w-3.5 h-3.5 mr-2" />
                                   View Issues
+                                </ContextMenuItem>
+                              )}
+                              {onViewPRs && folderHasRepo(node.id) && (
+                                <ContextMenuItem
+                                  onClick={() => onViewPRs(node.id)}
+                                >
+                                  <GitPullRequest className="w-3.5 h-3.5 mr-2" />
+                                  View PRs
                                 </ContextMenuItem>
                               )}
                               <ContextMenuItem

@@ -14,6 +14,7 @@ import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { IssuesModal } from "@/components/github/IssuesModal";
+import { PRsModal } from "@/components/github/PRsModal";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
@@ -234,6 +235,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Issues modal state
   const [issuesModal, setIssuesModal] = useState<{
+    open: boolean;
+    folderId: string;
+    repositoryId: string;
+    repositoryName: string;
+    repositoryUrl?: string;
+  } | null>(null);
+
+  // PRs modal state
+  const [prsModal, setPrsModal] = useState<{
     open: boolean;
     folderId: string;
     repositoryId: string;
@@ -712,6 +722,26 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [resolvePreferencesForFolder, getRepositoryById]
   );
 
+  // Handle viewing PRs for a folder's linked repository
+  const handleViewPRs = useCallback(
+    (folderId: string) => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      if (!prefs?.githubRepoId) return;
+
+      const repo = getRepositoryById(prefs.githubRepoId);
+      if (!repo) return;
+
+      setPrsModal({
+        open: true,
+        folderId,
+        repositoryId: repo.id,
+        repositoryName: repo.fullName,
+        repositoryUrl: repo.url,
+      });
+    },
+    [resolvePreferencesForFolder, getRepositoryById]
+  );
+
   // Handle creating a worktree from an issue
   const handleCreateWorktreeFromIssue = useCallback(
     async (issue: GitHubIssueDTO, repositoryId: string) => {
@@ -1176,6 +1206,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onProfilesOpen={() => setIsProfilesModalOpen(true)}
             onPortsOpen={() => setIsPortsModalOpen(true)}
             onViewIssues={handleViewIssues}
+            onViewPRs={handleViewPRs}
           />
       </div>
 
@@ -1489,6 +1520,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           repositoryName={issuesModal.repositoryName}
           repositoryUrl={issuesModal.repositoryUrl}
           onCreateWorktree={handleCreateWorktreeFromIssue}
+        />
+      )}
+
+      {/* PRs Modal */}
+      {prsModal && (
+        <PRsModal
+          open={prsModal.open}
+          onClose={() => setPrsModal(null)}
+          repositoryId={prsModal.repositoryId}
+          repositoryName={prsModal.repositoryName}
+          repositoryUrl={prsModal.repositoryUrl}
         />
       )}
     </div>
