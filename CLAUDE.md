@@ -12,6 +12,8 @@ Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 
 - Session templates for reusable configurations
 - Hierarchical folder organization with preference inheritance
 - Split pane terminal layouts
+- **Multi-agent CLI support** (Claude Code, Codex, Gemini, OpenCode)
+- **Agent profiles** with isolated environments and per-profile theming
 - Modern glassmorphism UI with shadcn/ui components
 
 ## Commands
@@ -208,8 +210,45 @@ Located in `src/services/`:
 | `WorktreeTrashService` | Worktree-specific trash operations, restore logic |
 | `PortRegistryService` | Port allocation tracking and conflict detection |
 | `SecretsService` | Secrets provider abstraction, credential management |
+| `AgentCLIService` | CLI installation verification for all supported agents |
+| `AgentProfileService` | Agent profile CRUD, config file management |
+| `AgentProfileAppearanceService` | Per-profile appearance settings |
+| `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
+
+### Multi-Agent CLI Support
+
+Remote Dev supports multiple AI coding agents with unified management:
+
+| Agent | CLI Command | Config File | Required Env Vars |
+|-------|-------------|-------------|-------------------|
+| **Claude Code** | `claude` | `CLAUDE.md` | `ANTHROPIC_API_KEY` |
+| **OpenAI Codex** | `codex` | `AGENTS.md` | `OPENAI_API_KEY` |
+| **Gemini CLI** | `gemini` | `GEMINI.md` | `GOOGLE_API_KEY` |
+| **OpenCode** | `opencode` | `OPENCODE.md` | `OPENAI_API_KEY` |
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/services/agent-cli-service.ts` | CLI verification, version checking, install instructions |
+| `src/services/agent-profile-service.ts` | Profile directory management, config initialization |
+| `src/services/agent-profile-appearance-service.ts` | Per-profile theme settings |
+| `src/services/agent-config-template-service.ts` | Config file templates per provider |
+| `src/types/agent.ts` | Agent types, provider configs, profile interfaces |
+
+**Agent Profile Isolation:**
+```
+~/.remote-dev/profiles/{profile-id}/
+├── .claude/           # Claude Code config
+│   ├── settings.json
+│   └── CLAUDE.md
+├── .codex/            # Codex CLI config
+├── .gemini/           # Gemini CLI config
+├── .config/opencode/  # OpenCode config
+├── .gitconfig         # Isolated git identity
+└── .env               # Secrets from provider
+```
 
 ### UI Components
 
@@ -240,6 +279,8 @@ Located in `src/services/`:
 | `SecretsStatusButton.tsx` | Header indicator for secrets connection status |
 | `DirectoryBrowser.tsx` | Modal for visual filesystem directory navigation |
 | `PathInput.tsx` | Text input with browse button for directory selection |
+| `AgentCLIStatusPanel.tsx` | CLI installation status for all supported agents |
+| `AgentProfileAppearanceSettings.tsx` | Per-profile theming with mode toggle and color schemes |
 
 ### State Management
 
@@ -377,6 +418,14 @@ React Contexts in `src/contexts/`:
 - `DELETE /api/secrets/folders/:folderId` - Delete secrets config
 - `GET /api/secrets/folders/:folderId/secrets` - Fetch secret values from provider
 - `POST /api/secrets/validate` - Validate provider credentials
+
+### Agent CLI
+- `GET /api/agent-cli/status` - Get all CLI installation statuses (version, path, install instructions)
+
+### Agent Profiles
+- `GET /api/profiles/:id/appearance` - Get profile appearance settings
+- `PUT /api/profiles/:id/appearance` - Update profile appearance (mode, schemes, terminal settings)
+- `DELETE /api/profiles/:id/appearance` - Reset profile appearance to defaults
 
 ## Adding Authorized Users
 
