@@ -29,6 +29,7 @@ import {
   KeyRound,
   Server,
   Loader2,
+  Settings2,
 } from "lucide-react";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { ProfileCard } from "./ProfileCard";
@@ -36,6 +37,7 @@ import { ProfileForm } from "./ProfileForm";
 import { ProfileGitIdentityTab } from "./ProfileGitIdentityTab";
 import { ProfileSecretsTab } from "./ProfileSecretsTab";
 import { ProfileMcpServersTab } from "./ProfileMcpServersTab";
+import { ProfileConfigTab } from "./ProfileConfigTab";
 import type { AgentProfile, CreateAgentProfileInput, UpdateAgentProfileInput } from "@/types/agent";
 
 interface ProfilesModalProps {
@@ -44,7 +46,7 @@ interface ProfilesModalProps {
   initialProfileId?: string | null;
 }
 
-type TabValue = "overview" | "general" | "git" | "secrets" | "mcp";
+type TabValue = "overview" | "general" | "config" | "git" | "secrets" | "mcp";
 
 export function ProfilesModal({
   open,
@@ -194,6 +196,14 @@ export function ProfilesModal({
                   General
                 </TabsTrigger>
                 <TabsTrigger
+                  value="config"
+                  disabled={!selectedProfileId}
+                  className="data-[state=active]:bg-primary/20"
+                >
+                  <Settings2 className="w-4 h-4 mr-2" />
+                  Config
+                </TabsTrigger>
+                <TabsTrigger
                   value="git"
                   disabled={!selectedProfileId}
                   className="data-[state=active]:bg-primary/20"
@@ -275,6 +285,18 @@ export function ProfilesModal({
                       onCancel={handleFormCancel}
                       isCreating={isCreating}
                     />
+                  </ScrollArea>
+                </TabsContent>
+
+                {/* Config Tab - Agent-specific settings */}
+                <TabsContent value="config" className="h-full m-0">
+                  <ScrollArea className="h-full pr-4">
+                    {selectedProfileId && selectedProfile && (
+                      <ProfileConfigTab
+                        profileId={selectedProfileId}
+                        provider={selectedProfile.provider}
+                      />
+                    )}
                   </ScrollArea>
                 </TabsContent>
 
