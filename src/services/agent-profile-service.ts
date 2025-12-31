@@ -398,6 +398,23 @@ Add your project-specific instructions here.
 `;
     await writeFile(join(configDir, ".gemini", "GEMINI.md"), geminiMd);
   }
+
+  // Create default OPENCODE.md if OpenCode provider
+  if (provider === "all" || provider === "opencode") {
+    const opencodeMd = `# OPENCODE.md
+
+This is the global configuration file for OpenCode in this profile.
+
+## Project Guidelines
+
+Add your project-specific instructions here.
+
+## Provider Configuration
+
+OpenCode supports multiple AI providers. Configure your preferred provider in settings.
+`;
+    await writeFile(join(configDir, ".config", "opencode", "OPENCODE.md"), opencodeMd);
+  }
 }
 
 /**

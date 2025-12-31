@@ -12,7 +12,7 @@ export type AgentProvider = "claude" | "codex" | "gemini" | "opencode" | "all";
 /**
  * Agent configuration file types.
  */
-export type AgentConfigType = "CLAUDE.md" | "AGENTS.md" | "GEMINI.md";
+export type AgentConfigType = "CLAUDE.md" | "AGENTS.md" | "GEMINI.md" | "OPENCODE.md";
 
 /**
  * MCP server transport types.
@@ -312,12 +312,13 @@ export const PROVIDER_DISPLAY_NAMES: Record<AgentProvider, string> = {
  * Agent provider config file mapping.
  */
 export const PROVIDER_CONFIG_FILES: Record<
-  Exclude<AgentProvider, "all" | "opencode">,
+  Exclude<AgentProvider, "all">,
   AgentConfigType
 > = {
   claude: "CLAUDE.md",
   codex: "AGENTS.md",
   gemini: "GEMINI.md",
+  opencode: "OPENCODE.md",
 };
 
 /**
