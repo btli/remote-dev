@@ -82,9 +82,10 @@ export class TmuxGatewayImpl implements TmuxGateway {
    * Note: TmuxService doesn't have a detach method, so this is a no-op.
    * The actual detachment happens when the WebSocket connection closes.
    */
-  async detachSession(_sessionName: string): Promise<void> {
+  async detachSession(sessionName: string): Promise<void> {
     // Tmux sessions are automatically detached when the PTY closes.
     // This is a no-op for compatibility with the interface.
+    void sessionName; // Parameter required by interface but unused
   }
 
   /**
