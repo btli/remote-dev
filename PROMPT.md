@@ -1274,9 +1274,544 @@ The Agents tab is the third tab in UserSettingsModal:
 **Tab Contents:**
 - **Terminal**: Working directory, shell, startup command
 - **Appearance**: Mode toggle, color schemes, font settings
-- **Agents**: CLI status panel (future: profile appearance)
+- **Agents**: Full agent configuration UI (see requirements below)
 - **Project**: Active folder, auto-follow settings
 - **System**: Tmux session management
+
+---
+
+## Multi-Agent Configuration System Requirements
+
+This section defines the COMPLETE requirements for implementing full configuration support for all AI coding agents. The current implementation only shows installation status - this must be expanded to provide comprehensive configuration management.
+
+### UI Architecture
+
+The Agents configuration UI must be organized as a **tabbed interface within the Agents tab**:
+
+```
+UserSettingsModal
+└── Agents Tab
+    ├── Overview (CLI status, quick actions)
+    ├── Profiles (create, manage, switch profiles)
+    ├── Claude Code Config
+    ├── Gemini CLI Config
+    ├── OpenCode Config
+    └── Codex CLI Config
+```
+
+Each agent config tab should have sub-sections organized by category (Model, Permissions, UI, Tools, etc.).
+
+### Known UI Bugs to Fix
+
+Before implementing new features, fix these existing issues:
+
+1. **Settings boxes overlapping** - Tab content containers have z-index/overflow issues
+2. **Selection highlight not working** - Select components don't show proper background on hover/focus
+3. **Inconsistent spacing** - Gaps between form elements vary
+4. **Mobile responsiveness** - Settings modal breaks on small screens
+
+---
+
+### Claude Code Configuration (Full Implementation)
+
+Reference: [code.claude.com/docs/en/settings](https://code.claude.com/docs/en/settings)
+
+#### Core Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `model` | string | Select dropdown | Default model (claude-sonnet-4, claude-opus-4, etc.) |
+| `cleanupPeriodDays` | number | Slider (1-90) | Session cleanup period |
+| `env` | object | Key-value editor | Environment variables for sessions |
+
+#### Attribution Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `attribution.commit` | string | Textarea | Git commit attribution text |
+| `attribution.pr` | string | Textarea | Pull request attribution text |
+| `includeCoAuthoredBy` | boolean | Toggle | Include co-author line |
+
+#### Permission Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `permissions.allow` | string[] | Tag input | Allowed tool patterns |
+| `permissions.ask` | string[] | Tag input | Tools requiring confirmation |
+| `permissions.deny` | string[] | Tag input | Blocked tools/files |
+| `permissions.additionalDirectories` | string[] | Path list | Extra accessible directories |
+| `permissions.defaultMode` | enum | Radio group | acceptEdits, askOnEdit, readOnly |
+| `permissions.disableBypassPermissionsMode` | string | Toggle | Prevent permission bypass |
+
+#### Sandbox Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `sandbox.enabled` | boolean | Toggle | Enable sandboxing |
+| `sandbox.autoAllowBashIfSandboxed` | boolean | Toggle | Auto-approve bash in sandbox |
+| `sandbox.excludedCommands` | string[] | Tag input | Commands outside sandbox |
+| `sandbox.allowUnsandboxedCommands` | boolean | Toggle | Allow unsandboxed via flag |
+| `sandbox.network.allowUnixSockets` | string[] | Path list | Allowed Unix sockets |
+| `sandbox.network.allowLocalBinding` | boolean | Toggle | Allow localhost binding |
+| `sandbox.network.httpProxyPort` | number | Number input | HTTP proxy port |
+| `sandbox.network.socksProxyPort` | number | Number input | SOCKS5 proxy port |
+
+#### Hook Configuration
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `hooks.PreToolUse` | object | Hook editor | Pre-tool execution hooks |
+| `hooks.PostToolUse` | object | Hook editor | Post-tool execution hooks |
+| `disableAllHooks` | boolean | Toggle | Disable all hooks |
+
+#### Status Line Configuration
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `statusLine.type` | enum | Radio | disabled, command |
+| `statusLine.command` | string | Path input | Status line script path |
+
+#### MCP Server Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `enableAllProjectMcpServers` | boolean | Toggle | Auto-approve project MCP servers |
+| `enabledMcpjsonServers` | string[] | Checkbox list | Enabled MCP servers |
+| `disabledMcpjsonServers` | string[] | Checkbox list | Disabled MCP servers |
+
+#### Output Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `outputStyle` | string | Select | Output style preset |
+| `alwaysThinkingEnabled` | boolean | Toggle | Enable extended thinking |
+
+---
+
+### Gemini CLI Configuration (Full Implementation)
+
+Reference: [geminicli.com/docs/get-started/configuration](https://geminicli.com/docs/get-started/configuration/)
+
+#### General Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `previewFeatures` | boolean | Toggle | Enable preview models |
+| `preferredEditor` | string | Text input | Editor command |
+| `vimMode` | boolean | Toggle | Vim keybindings |
+| `disableAutoUpdate` | boolean | Toggle | Block auto-updates |
+| `checkpointing.enabled` | boolean | Toggle | Session recovery |
+| `enablePromptCompletion` | boolean | Toggle | AI completion suggestions |
+| `retryFetchErrors` | boolean | Toggle | Retry on fetch failures |
+
+#### Session Retention
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `sessionRetention.enabled` | boolean | Toggle | Enable auto-cleanup |
+| `sessionRetention.maxAge` | string | Text input | Keep period (e.g., "30d") |
+| `sessionRetention.maxCount` | number | Number input | Max sessions to retain |
+
+#### UI Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `theme` | string | Theme picker | Color theme |
+| `customThemes` | object | Theme editor | Custom theme definitions |
+| `hideWindowTitle` | boolean | Toggle | Remove title bar |
+| `showStatusInTitle` | boolean | Toggle | Status in window title |
+| `hideTips` | boolean | Toggle | Hide helpful tips |
+| `hideBanner` | boolean | Toggle | Hide application banner |
+| `hideContextSummary` | boolean | Toggle | Hide context summary |
+| `footer.hideCWD` | boolean | Toggle | Hide current directory |
+| `footer.hideModelInfo` | boolean | Toggle | Hide model name |
+| `footer.hideContextPercentage` | boolean | Toggle | Hide context percentage |
+| `hideFooter` | boolean | Toggle | Remove footer entirely |
+| `showMemoryUsage` | boolean | Toggle | Display memory info |
+| `showLineNumbers` | boolean | Toggle | Show line numbers |
+| `useFullWidth` | boolean | Toggle | Use entire terminal width |
+| `useAlternateBuffer` | boolean | Toggle | Preserve shell history |
+| `incrementalRendering` | boolean | Toggle | Reduce flickering |
+| `accessibility.screenReader` | boolean | Toggle | Screen reader mode |
+
+#### Model Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `model.name` | string | Select dropdown | Default Gemini model |
+| `model.maxSessionTurns` | number | Slider | Max turns (-1 unlimited) |
+| `model.compressionThreshold` | number | Slider (0-1) | Context compression trigger |
+
+#### Context Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `context.fileName` | string/array | Tag input | Context file(s) |
+| `context.discoveryMaxDirs` | number | Number input | Directory search limit |
+| `context.includeDirectories` | array | Path list | Additional workspace dirs |
+| `fileFiltering.respectGitIgnore` | boolean | Toggle | Honor .gitignore |
+| `fileFiltering.respectGeminiIgnore` | boolean | Toggle | Honor .geminiignore |
+
+#### Tool Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `tools.sandbox` | boolean/string | Toggle + input | Sandbox mode |
+| `tools.shell.enableInteractiveShell` | boolean | Toggle | node-pty support |
+| `tools.shell.inactivityTimeout` | number | Number input | Timeout seconds |
+| `tools.autoAccept` | boolean | Toggle | Auto-approve safe ops |
+| `tools.core` | array | Checkbox list | Enabled built-in tools |
+| `tools.allowed` | array | Tag input | Tools bypassing confirmation |
+| `tools.exclude` | array | Tag input | Disabled tools |
+| `tools.useRipgrep` | boolean | Toggle | Use ripgrep for search |
+| `tools.enableHooks` | boolean | Toggle | Enable hook system |
+
+#### Security Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `security.disableYoloMode` | boolean | Toggle | Block auto-approval |
+| `security.enablePermanentToolApproval` | boolean | Toggle | Allow permanent approvals |
+| `security.blockGitExtensions` | boolean | Toggle | Prevent Git extensions |
+| `security.folderTrust.enabled` | boolean | Toggle | Track folder trust |
+| `environmentVariableRedaction.enabled` | boolean | Toggle | Enable redaction |
+| `environmentVariableRedaction.allowed` | array | Tag input | Never redact these |
+| `environmentVariableRedaction.blocked` | array | Tag input | Always redact these |
+
+#### Hook Configuration
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `hooks.disabled` | array | Checkbox list | Disabled hook names |
+| `hooks.BeforeTool` | array | Hook editor | Pre-execution hooks |
+| `hooks.AfterTool` | array | Hook editor | Post-execution hooks |
+| `hooks.SessionStart` | array | Hook editor | Session init hooks |
+| `hooks.SessionEnd` | array | Hook editor | Session cleanup hooks |
+| `hooks.Notification` | array | Hook editor | Event notification hooks |
+
+#### MCP Servers
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `mcpServers` | object | Server editor | Per-server configuration |
+| `mcp.allowed` | array | Tag input | Allowed MCP servers |
+| `mcp.excluded` | array | Tag input | Blocked MCP servers |
+
+#### Experimental Features
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `experimental.enableAgents` | boolean | Toggle | Local/remote subagents |
+| `experimental.skills` | boolean | Toggle | Agent Skills feature |
+| `experimental.jitContext` | boolean | Toggle | Just-In-Time context |
+
+---
+
+### OpenCode Configuration (Full Implementation)
+
+Reference: [opencode.ai/docs/config](https://opencode.ai/docs/config/)
+
+#### Models & Providers
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `model` | string | Select dropdown | Primary model ID |
+| `small_model` | string | Select dropdown | Lightweight model |
+| `disabled_providers` | array | Checkbox list | Disabled providers |
+| `enabled_providers` | array | Checkbox list | Enabled providers |
+
+#### Interface Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `theme` | string | Theme picker | Visual theme |
+| `tui.scroll_speed` | number | Slider | Scroll multiplier |
+| `tui.scroll_acceleration.enabled` | boolean | Toggle | macOS-style acceleration |
+| `tui.diff_style` | enum | Radio | auto, stacked |
+
+#### Server Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `server.port` | number | Number input | Listen port |
+| `server.hostname` | string | Text input | Listen hostname |
+| `server.mdns` | boolean | Toggle | Service discovery |
+
+#### Tools & Permissions
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `tools.write` | boolean | Toggle | Enable write tool |
+| `tools.bash` | boolean | Toggle | Enable bash tool |
+| `permission` | enum | Select | ask, auto, never |
+
+#### Agents & Commands
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `agent` | object | Agent editor | Custom agents |
+| `default_agent` | string | Select dropdown | Default agent |
+| `command` | object | Command editor | Custom commands |
+
+#### Code Quality
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `formatter` | object | Formatter editor | Code formatters |
+| `instructions` | array | Path list | Instruction files |
+| `keybinds` | object | Keybind editor | Custom shortcuts |
+
+#### Context Management
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `compaction.auto` | boolean | Toggle | Auto-compact |
+| `compaction.prune` | boolean | Toggle | Prune old outputs |
+| `watcher.ignore` | array | Tag input | File watch exclusions |
+
+#### Advanced
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `share` | enum | Radio | manual, auto, disabled |
+| `autoupdate` | boolean/string | Toggle + select | Update settings |
+| `mcp` | object | MCP editor | MCP servers config |
+| `plugin` | array | Plugin manager | Loaded plugins |
+
+---
+
+### Codex CLI Configuration (Full Implementation)
+
+Reference: [github.com/openai/codex/blob/main/docs/config.md](https://github.com/openai/codex/blob/main/docs/config.md)
+
+#### Model Settings
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `model` | string | Select dropdown | Default model |
+| `model_provider` | string | Select dropdown | Provider ID |
+| `model_reasoning_effort` | enum | Select | minimal, low, medium, high, xhigh |
+| `model_reasoning_summary` | enum | Select | auto, concise, detailed, none |
+| `model_verbosity` | enum | Select | low, medium, high |
+| `model_context_window` | number | Number input | Context window tokens |
+| `oss_provider` | enum | Select | lmstudio, ollama (for local) |
+
+#### Execution Environment
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `approval_policy` | enum | Radio | untrusted, on-failure, on-request, never |
+| `sandbox_mode` | enum | Radio | read-only, workspace-write, danger-full-access |
+
+#### Sandbox Workspace-Write
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `sandbox_workspace_write.exclude_tmpdir_env_var` | boolean | Toggle | Exclude tmpdir |
+| `sandbox_workspace_write.exclude_slash_tmp` | boolean | Toggle | Exclude /tmp |
+| `sandbox_workspace_write.writable_roots` | array | Path list | Additional writable paths |
+| `sandbox_workspace_write.network_access` | boolean | Toggle | Allow network |
+
+#### Feature Flags
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `features.unified_exec` | boolean | Toggle | PTY-backed execution |
+| `features.apply_patch_freeform` | boolean | Toggle | Freeform patch |
+| `features.view_image_tool` | boolean | Toggle | Image viewing |
+| `features.web_search_request` | boolean | Toggle | Web search |
+| `features.skills` | boolean | Toggle | Skill discovery |
+| `features.tui2` | boolean | Toggle | New TUI v2 |
+
+#### Model Providers
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `model_providers` | object | Provider editor | Custom providers |
+| Provider: `name` | string | Text input | Display name |
+| Provider: `base_url` | string | URL input | API endpoint |
+| Provider: `env_key` | string | Text input | Auth env var |
+| Provider: `wire_api` | enum | Select | chat, responses |
+
+#### MCP Servers
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `mcp_servers` | object | MCP editor | Server configurations |
+| Server: `command` | string | Text input | Executable |
+| Server: `args` | array | Tag input | Command arguments |
+| Server: `env` | object | Key-value editor | Environment variables |
+
+#### Observability
+| Setting | Type | UI Component | Description |
+|---------|------|--------------|-------------|
+| `hide_agent_reasoning` | boolean | Toggle | Suppress reasoning |
+| `show_raw_agent_reasoning` | boolean | Toggle | Raw reasoning output |
+| `otel` | object | OTEL config editor | OpenTelemetry config |
+
+---
+
+### Profile Management UI
+
+#### Profile CRUD Operations
+```
+GET    /api/agent-profiles              # List profiles
+POST   /api/agent-profiles              # Create profile
+GET    /api/agent-profiles/:id          # Get profile
+PATCH  /api/agent-profiles/:id          # Update profile
+DELETE /api/agent-profiles/:id          # Delete profile
+POST   /api/agent-profiles/:id/clone    # Clone profile
+```
+
+#### Profile Properties
+```typescript
+interface AgentProfile {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  icon?: string;  // emoji or icon name
+  color?: string; // hex color
+  agents: {
+    claude?: ClaudeCodeConfig;
+    gemini?: GeminiCLIConfig;
+    opencode?: OpenCodeConfig;
+    codex?: CodexCLIConfig;
+  };
+  secrets: {
+    provider: 'phase' | 'vault' | 'aws' | '1password' | 'env';
+    config: Record<string, unknown>;
+  };
+  gitIdentity?: {
+    name: string;
+    email: string;
+    signingKey?: string;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+```
+
+#### Profile Switching
+- Quick switcher in header (dropdown or command palette)
+- Folder → Profile linking (inherit agent config from profile)
+- Session → Profile association
+- Profile comparison view
+
+---
+
+### Configuration Editor Components
+
+#### Required UI Components
+
+1. **Tag Input** - For array of strings (permissions, exclusions)
+2. **Path List** - Directory/file path editor with browse
+3. **Key-Value Editor** - For env vars, headers, etc.
+4. **Hook Editor** - Command + trigger configuration
+5. **MCP Server Editor** - Full server config with test button
+6. **Theme Picker** - Visual theme selection with preview
+7. **Provider Editor** - Model provider configuration
+8. **Agent Editor** - Custom agent definition
+9. **Command Editor** - Custom command templates
+10. **Keybind Editor** - Keyboard shortcut customization
+
+#### Component Requirements
+
+```typescript
+// Example: Tag Input Component
+interface TagInputProps {
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+  suggestions?: string[];  // Autocomplete
+  validation?: (tag: string) => boolean;
+  maxTags?: number;
+}
+
+// Example: Hook Editor Component
+interface HookEditorProps {
+  hooks: Record<string, HookConfig>;
+  onChange: (hooks: Record<string, HookConfig>) => void;
+  availableHooks: string[];  // PreToolUse, PostToolUse, etc.
+}
+
+interface HookConfig {
+  command: string;
+  timeout?: number;
+  env?: Record<string, string>;
+}
+```
+
+---
+
+### Database Schema Additions
+
+```sql
+-- Agent profiles table
+CREATE TABLE agent_profile (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES user(id),
+  name TEXT NOT NULL,
+  description TEXT,
+  icon TEXT,
+  color TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Agent-specific config (one per agent per profile)
+CREATE TABLE agent_config (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL REFERENCES agent_profile(id),
+  agent_type TEXT NOT NULL,  -- claude, gemini, opencode, codex
+  config_json TEXT NOT NULL, -- Full JSON config
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(profile_id, agent_type)
+);
+
+-- Folder → Profile linking
+CREATE TABLE folder_profile_link (
+  folder_id TEXT PRIMARY KEY REFERENCES session_folder(id),
+  profile_id TEXT NOT NULL REFERENCES agent_profile(id),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
+### API Routes to Implement
+
+```
+# Profiles
+GET    /api/agent-profiles
+POST   /api/agent-profiles
+GET    /api/agent-profiles/:id
+PATCH  /api/agent-profiles/:id
+DELETE /api/agent-profiles/:id
+POST   /api/agent-profiles/:id/clone
+POST   /api/agent-profiles/:id/export
+POST   /api/agent-profiles/import
+
+# Agent Configs (per profile)
+GET    /api/agent-profiles/:id/config/:agent
+PUT    /api/agent-profiles/:id/config/:agent
+DELETE /api/agent-profiles/:id/config/:agent
+POST   /api/agent-profiles/:id/config/:agent/validate
+POST   /api/agent-profiles/:id/config/:agent/reset
+
+# Folder Linking
+GET    /api/folders/:id/profile
+PUT    /api/folders/:id/profile
+DELETE /api/folders/:id/profile
+
+# Config Templates
+GET    /api/agent-config-templates
+GET    /api/agent-config-templates/:agent
+POST   /api/agent-config-templates/:agent/apply
+```
+
+---
+
+### Implementation Priority
+
+**Phase 1: Foundation**
+1. Fix UI bugs (overlapping, selection)
+2. Database schema for profiles and configs
+3. Profile CRUD API
+4. Basic profile management UI
+
+**Phase 2: Claude Code**
+5. Full Claude Code config editor
+6. Permissions editor
+7. Sandbox settings
+8. Hook configuration
+
+**Phase 3: Gemini CLI**
+9. Full Gemini CLI config editor
+10. UI settings
+11. Tool configuration
+12. Security settings
+
+**Phase 4: OpenCode & Codex**
+13. OpenCode config editor
+14. Codex config editor
+15. Provider management
+16. MCP server editor
+
+**Phase 5: Integration**
+17. Profile switching UI
+18. Folder-profile linking
+19. Export/import profiles
+20. Config validation
 
 ---
 
