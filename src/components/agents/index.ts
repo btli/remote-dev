@@ -28,3 +28,9 @@ export {
   GeminiSecuritySettings,
   GeminiCLIConfigEditor,
 } from "./gemini";
+
+// OpenCode configuration components
+export { OpenCodeConfigEditor } from "./opencode";
+
+// Codex CLI configuration components
+export { CodexCLIConfigEditor } from "./codex";
