@@ -128,7 +128,9 @@ describe("AgentProfileAppearanceService", () => {
           })),
         })),
       }));
-      vi.mocked(db.update).mockImplementation(mockUpdate as any);
+      vi.mocked(db.update).mockImplementation(
+        mockUpdate as unknown as typeof db.update
+      );
 
       const result = await updateProfileAppearance("profile-456", "user-789", {
         appearanceMode: "light",
@@ -149,7 +151,9 @@ describe("AgentProfileAppearanceService", () => {
           returning: vi.fn().mockResolvedValue([mockAppearanceRecord]),
         })),
       }));
-      vi.mocked(db.insert).mockImplementation(mockInsert as any);
+      vi.mocked(db.insert).mockImplementation(
+        mockInsert as unknown as typeof db.insert
+      );
 
       const result = await updateProfileAppearance("profile-456", "user-789", {
         appearanceMode: "dark",
@@ -178,7 +182,9 @@ describe("AgentProfileAppearanceService", () => {
           };
         }),
       }));
-      vi.mocked(db.insert).mockImplementation(mockInsert as any);
+      vi.mocked(db.insert).mockImplementation(
+        mockInsert as unknown as typeof db.insert
+      );
 
       await updateProfileAppearance("profile-456", "user-789", {});
 
@@ -191,7 +197,9 @@ describe("AgentProfileAppearanceService", () => {
       const mockDelete = vi.fn(() => ({
         where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
       }));
-      vi.mocked(db.delete).mockImplementation(mockDelete as any);
+      vi.mocked(db.delete).mockImplementation(
+        mockDelete as unknown as typeof db.delete
+      );
 
       const result = await deleteProfileAppearance("profile-456", "user-789");
 
@@ -203,7 +211,9 @@ describe("AgentProfileAppearanceService", () => {
       const mockDelete = vi.fn(() => ({
         where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
       }));
-      vi.mocked(db.delete).mockImplementation(mockDelete as any);
+      vi.mocked(db.delete).mockImplementation(
+        mockDelete as unknown as typeof db.delete
+      );
 
       const result = await deleteProfileAppearance("nonexistent", "user-789");
 
