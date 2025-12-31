@@ -58,6 +58,7 @@ export function AgentProfileAppearanceSettings({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [originalSettings, setOriginalSettings] =
     useState<ProfileAppearanceSettings | null>(null);
 
@@ -83,8 +84,9 @@ export function AgentProfileAppearanceSettings({
             });
           }
         }
-      } catch (error) {
-        console.error("Failed to fetch appearance settings:", error);
+      } catch (err) {
+        console.error("Failed to fetch appearance settings:", err);
+        setError("Failed to load appearance settings. Please try again.");
       } finally {
         setLoading(false);
       }
@@ -106,10 +108,12 @@ export function AgentProfileAppearanceSettings({
         const saved = await response.json();
         setOriginalSettings(saved);
         setHasChanges(false);
+        setError(null);
         onSave?.(saved);
       }
-    } catch (error) {
-      console.error("Failed to save appearance settings:", error);
+    } catch (err) {
+      console.error("Failed to save appearance settings:", err);
+      setError("Failed to save settings. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -132,9 +136,11 @@ export function AgentProfileAppearanceSettings({
         });
         setOriginalSettings(null);
         setHasChanges(false);
+        setError(null);
       }
-    } catch (error) {
-      console.error("Failed to reset appearance settings:", error);
+    } catch (err) {
+      console.error("Failed to reset appearance settings:", err);
+      setError("Failed to reset settings. Please try again.");
     }
   };
 
@@ -159,6 +165,13 @@ export function AgentProfileAppearanceSettings({
 
   return (
     <div className="space-y-5">
+      {/* Error Display */}
+      {error && (
+        <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-sm">
+          {error}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

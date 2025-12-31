@@ -94,9 +94,13 @@ export function AgentCLIStatusPanel() {
   };
 
   const copyToClipboard = async (text: string, provider: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopiedCommand(provider);
-    setTimeout(() => setCopiedCommand(null), 2000);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCommand(provider);
+      setTimeout(() => setCopiedCommand(null), 2000);
+    } catch (error) {
+      console.error("Failed to copy to clipboard:", error);
+    }
   };
 
   if (loading) {
@@ -176,6 +180,8 @@ export function AgentCLIStatusPanel() {
               <button
                 onClick={() => toggleProvider(cli.provider)}
                 className="w-full flex items-center justify-between p-3 hover:bg-muted/30 transition-colors rounded-lg"
+                aria-expanded={isExpanded}
+                aria-label={`${PROVIDER_LABELS[cli.provider] || cli.provider} - ${cli.installed ? "Installed" : "Not installed"}. Click to ${isExpanded ? "collapse" : "expand"} details`}
               >
                 <div className="flex items-center gap-3">
                   <span className="text-lg">{providerStyle.icon}</span>
@@ -276,6 +282,7 @@ export function AgentCLIStatusPanel() {
                               cli.provider
                             )
                           }
+                          aria-label="Copy installation command"
                         >
                           <Copy
                             className={cn(
