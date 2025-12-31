@@ -9,7 +9,6 @@ import {
   Loader2,
   Save,
   RotateCcw,
-  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -63,36 +62,36 @@ export function AgentProfileAppearanceSettings({
     useState<ProfileAppearanceSettings | null>(null);
 
   useEffect(() => {
+    const fetchSettings = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/profiles/${profile.id}/appearance`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data) {
+            setSettings(data);
+            setOriginalSettings(data);
+          } else {
+            // No custom settings, use defaults
+            setSettings({
+              appearanceMode: "system",
+              lightColorScheme: "ocean",
+              darkColorScheme: "midnight",
+              terminalOpacity: 100,
+              terminalBlur: 0,
+              terminalCursorStyle: "block",
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch appearance settings:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchSettings();
   }, [profile.id]);
-
-  const fetchSettings = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/profiles/${profile.id}/appearance`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data) {
-          setSettings(data);
-          setOriginalSettings(data);
-        } else {
-          // No custom settings, use defaults
-          setSettings({
-            appearanceMode: "system",
-            lightColorScheme: "ocean",
-            darkColorScheme: "midnight",
-            terminalOpacity: 100,
-            terminalBlur: 0,
-            terminalCursorStyle: "block",
-          });
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch appearance settings:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSave = async () => {
     setSaving(true);
