@@ -309,15 +309,131 @@ bun run typecheck # TypeScript checks
 `,
 };
 
+const TYPESCRIPT_OPENCODE_TEMPLATE: AgentConfigTemplate = {
+  id: "typescript-opencode",
+  name: "TypeScript - OpenCode",
+  description: "OpenCode configuration for TypeScript/Node.js projects",
+  provider: "opencode",
+  configType: "OPENCODE.md",
+  tags: ["typescript", "javascript", "node", "bun"],
+  projectType: "typescript",
+  content: `# OPENCODE.md - TypeScript Project
+
+## Project Overview
+This is a TypeScript project. OpenCode provides multi-provider AI assistance.
+
+## Code Style
+- Use TypeScript strict mode
+- Prefer \`const\` over \`let\`, avoid \`var\`
+- Use async/await over Promises where possible
+- Use descriptive variable and function names
+- Add JSDoc comments for public APIs
+
+## Commands
+\`\`\`bash
+# Development
+bun run dev        # Start development server
+bun run build      # Build for production
+bun run typecheck  # Run TypeScript type checking
+bun run lint       # Run ESLint
+bun run test       # Run tests
+\`\`\`
+
+## Provider Configuration
+OpenCode supports multiple AI providers. Configure your preferred provider in settings.
+
+## Testing
+- Write tests for new functionality
+- Use describe/it pattern for test organization
+- Mock external dependencies
+`,
+};
+
+const PYTHON_OPENCODE_TEMPLATE: AgentConfigTemplate = {
+  id: "python-opencode",
+  name: "Python - OpenCode",
+  description: "OpenCode configuration for Python projects",
+  provider: "opencode",
+  configType: "OPENCODE.md",
+  tags: ["python", "uv", "ruff"],
+  projectType: "python",
+  content: `# OPENCODE.md - Python Project
+
+## Project Overview
+Python project managed with uv. OpenCode provides multi-provider AI assistance.
+
+## Package Manager
+**ALWAYS use uv** for Python operations:
+- \`uv sync\` - Install dependencies
+- \`uv run pytest\` - Run tests
+- \`uv run ruff check --fix\` - Lint and fix
+- \`uv add <package>\` - Add dependency
+
+## Code Quality
+- Run \`uv run ruff check --fix && uv run ruff format\` before commits
+- Use type hints for function signatures
+- Write docstrings for public functions
+
+## Provider Configuration
+OpenCode supports multiple AI providers. Configure in ~/.config/opencode/config.json
+
+## Commands
+\`\`\`bash
+uv sync                    # Install dependencies
+uv run pytest              # Run tests
+uv run ruff check --fix    # Lint
+uv run ruff format         # Format
+uv run mypy .              # Type check
+\`\`\`
+`,
+};
+
+const RUST_OPENCODE_TEMPLATE: AgentConfigTemplate = {
+  id: "rust-opencode",
+  name: "Rust - OpenCode",
+  description: "OpenCode configuration for Rust projects",
+  provider: "opencode",
+  configType: "OPENCODE.md",
+  tags: ["rust", "cargo"],
+  projectType: "rust",
+  content: `# OPENCODE.md - Rust Project
+
+## Project Overview
+Rust project managed with Cargo. OpenCode provides multi-provider AI assistance.
+
+## Commands
+\`\`\`bash
+cargo build          # Build project
+cargo run            # Run project
+cargo test           # Run tests
+cargo clippy         # Lint
+cargo fmt            # Format code
+cargo doc --open     # Generate docs
+\`\`\`
+
+## Code Quality
+- Run \`cargo clippy\` before commits
+- Use \`cargo fmt\` for consistent formatting
+- Add documentation comments for public items
+- Handle all Result/Option types explicitly
+
+## Provider Configuration
+OpenCode supports multiple AI providers. Configure in ~/.config/opencode/config.json
+`,
+};
+
 // Collection of all built-in templates
 const BUILT_IN_TEMPLATES: AgentConfigTemplate[] = [
   TYPESCRIPT_CLAUDE_TEMPLATE,
   TYPESCRIPT_CODEX_TEMPLATE,
   TYPESCRIPT_GEMINI_TEMPLATE,
+  TYPESCRIPT_OPENCODE_TEMPLATE,
   PYTHON_CLAUDE_TEMPLATE,
   PYTHON_CODEX_TEMPLATE,
   PYTHON_GEMINI_TEMPLATE,
+  PYTHON_OPENCODE_TEMPLATE,
   RUST_CLAUDE_TEMPLATE,
+  RUST_OPENCODE_TEMPLATE,
   REACT_CLAUDE_TEMPLATE,
   NEXTJS_CLAUDE_TEMPLATE,
 ];
