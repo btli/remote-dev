@@ -65,7 +65,8 @@ export function KeyValueEditor({
 
   const removeEntry = useCallback(
     (key: string) => {
-      const { [key]: _, ...rest } = value;
+      const { [key]: _removed, ...rest } = value;
+      void _removed; // Intentionally unused - just removing from object
       onChange(rest);
     },
     [value, onChange]
@@ -84,7 +85,8 @@ export function KeyValueEditor({
     if (!trimmedKey || !trimmedValue) return;
 
     // Remove old key if it changed
-    const { [editing.originalKey]: _, ...rest } = value;
+    const { [editing.originalKey]: _oldValue, ...rest } = value;
+    void _oldValue; // Intentionally unused - just removing from object
 
     // Check for duplicate key (if key changed)
     if (trimmedKey !== editing.originalKey && rest[trimmedKey] !== undefined) {

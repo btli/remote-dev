@@ -9,7 +9,7 @@
 
 import { eq, and } from "drizzle-orm";
 import { db } from "@/db";
-import { agentProfileJsonConfigs, agentProfiles } from "@/db/schema";
+import { agentProfileJsonConfigs } from "@/db/schema";
 import type { AgentProvider } from "@/types/agent";
 import type {
   AgentJsonConfig,

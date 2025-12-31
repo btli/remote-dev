@@ -34,3 +34,11 @@ export { OpenCodeConfigEditor } from "./opencode";
 
 // Codex CLI configuration components
 export { CodexCLIConfigEditor } from "./codex";
+
+// Profile management components
+export { ProfileSwitcher, useProfileSwitcher } from "./ProfileSwitcher";
+export { ProfileExportImport, useProfileExportImport } from "./ProfileExportImport";
+export {
+  ProfileTemplateSelector,
+  ProfileTemplateSelectorCompact,
+} from "./ProfileTemplateSelector";

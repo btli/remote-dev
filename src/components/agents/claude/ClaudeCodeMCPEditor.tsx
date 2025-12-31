@@ -204,7 +204,8 @@ export function ClaudeCodeMCPEditor({
   };
 
   const removeServer = (name: string) => {
-    const { [name]: _, ...rest } = mcpServers;
+    const { [name]: _removed, ...rest } = mcpServers;
+    void _removed; // Intentionally unused - just removing from object
     updateServers(rest);
   };
 
