@@ -182,7 +182,7 @@ function SingleAgentConfig({ profileId, agentType }: SingleAgentConfigProps) {
 
   // Render the appropriate config editor
   return (
-    <div className="h-full">
+    <div className="h-full flex flex-col">
       {agentType === "claude" && (
         <ClaudeCodeConfigEditor
           config={config as ClaudeCodeConfig}
@@ -243,8 +243,8 @@ export function ProfileConfigTab({ profileId, provider }: ProfileConfigTabProps)
 
   // All agents mode - show tabs for each agent
   return (
-    <div className="h-full flex flex-col">
-      <div className="mb-4">
+    <div className="h-full flex flex-col min-h-0">
+      <div className="mb-4 shrink-0">
         <h3 className="text-lg font-semibold text-foreground">
           Multi-Agent Configuration
         </h3>
@@ -256,7 +256,7 @@ export function ProfileConfigTab({ profileId, provider }: ProfileConfigTabProps)
       <Tabs
         value={activeAgent}
         onValueChange={(v) => setActiveAgent(v as AgentConfigType)}
-        className="flex-1 flex flex-col"
+        className="flex-1 flex flex-col min-h-0"
       >
         <TabsList className="grid grid-cols-4 w-full bg-muted/50 shrink-0">
           {ALL_AGENT_TYPES.map((type) => (
@@ -272,7 +272,8 @@ export function ProfileConfigTab({ profileId, provider }: ProfileConfigTabProps)
           ))}
         </TabsList>
 
-        <div className="mt-4 flex-1 overflow-y-auto">
+        {/* No overflow here - let child config editors handle their own scrolling */}
+        <div className="mt-4 flex-1 min-h-0">
           {ALL_AGENT_TYPES.map((type) => (
             <TabsContent key={type} value={type} className="m-0 h-full">
               <SingleAgentConfig profileId={profileId} agentType={type} />
