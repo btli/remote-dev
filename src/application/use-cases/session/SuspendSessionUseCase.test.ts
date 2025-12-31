@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { SuspendSessionUseCase, type SuspendSessionInput } from "./SuspendSessionUseCase";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
@@ -60,7 +60,7 @@ describe("SuspendSessionUseCase", () => {
   describe("successful suspension", () => {
     it("suspends an active session", async () => {
       const activeSession = createTestSession();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -75,7 +75,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("detaches the tmux session", async () => {
       const activeSession = createTestSession();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -91,7 +91,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("persists the suspended state", async () => {
       const activeSession = createTestSession();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -115,7 +115,7 @@ describe("SuspendSessionUseCase", () => {
         projectPath: "/special/path",
         folderId: "folder-456",
       });
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -132,7 +132,7 @@ describe("SuspendSessionUseCase", () => {
 
   describe("error handling - session not found", () => {
     it("throws EntityNotFoundError when session does not exist", async () => {
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(null);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(null);
 
       const input: SuspendSessionInput = {
         sessionId: "nonexistent-id",
@@ -143,7 +143,7 @@ describe("SuspendSessionUseCase", () => {
     });
 
     it("throws EntityNotFoundError when session belongs to different user", async () => {
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(null);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(null);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -154,7 +154,7 @@ describe("SuspendSessionUseCase", () => {
     });
 
     it("does not call tmux gateway when session not found", async () => {
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(null);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(null);
 
       const input: SuspendSessionInput = {
         sessionId: "nonexistent-id",
@@ -170,7 +170,7 @@ describe("SuspendSessionUseCase", () => {
   describe("error handling - invalid state transitions", () => {
     it("throws InvalidStateTransitionError when suspending suspended session", async () => {
       const suspendedSession = createTestSession().suspend();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(suspendedSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(suspendedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -182,7 +182,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("throws InvalidStateTransitionError when suspending closed session", async () => {
       const closedSession = createTestSession().close();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(closedSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(closedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -194,7 +194,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("does not call tmux gateway when state transition is invalid", async () => {
       const closedSession = createTestSession().close();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(closedSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(closedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -210,7 +210,7 @@ describe("SuspendSessionUseCase", () => {
   describe("execution order", () => {
     it("validates state before calling tmux", async () => {
       const closedSession = createTestSession().close();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(closedSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(closedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -226,13 +226,13 @@ describe("SuspendSessionUseCase", () => {
 
     it("calls tmux before persisting", async () => {
       const activeSession = createTestSession();
-      vi.mocked(mockSessionRepository.findById).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
 
       const callOrder: string[] = [];
-      vi.mocked(mockTmuxGateway.detachSession).mockImplementation(async () => {
+      (mockTmuxGateway.detachSession as Mock).mockImplementation(async () => {
         callOrder.push("detach");
       });
-      vi.mocked(mockSessionRepository.save).mockImplementation(async (session) => {
+      (mockSessionRepository.save as Mock).mockImplementation(async (session) => {
         callOrder.push("save");
         return session;
       });
