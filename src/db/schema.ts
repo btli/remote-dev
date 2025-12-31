@@ -1320,3 +1320,56 @@ export const appearanceSettings = sqliteTable(
     index("appearance_settings_user_idx").on(table.userId),
   ]
 );
+
+/**
+ * Agent profile appearance settings.
+ * Allows each agent profile to have its own theme/color preferences.
+ * Falls back to user's appearance settings when not specified.
+ */
+export const profileAppearanceSettings = sqliteTable(
+  "profile_appearance_settings",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    profileId: text("profile_id")
+      .notNull()
+      .unique()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Mode preference: light, dark, or system (follows OS)
+    appearanceMode: text("appearance_mode")
+      .$type<AppearanceMode>()
+      .notNull()
+      .default("system"),
+    // Color scheme for light mode
+    lightColorScheme: text("light_color_scheme")
+      .$type<ColorSchemeId>()
+      .notNull()
+      .default("ocean"),
+    // Color scheme for dark mode
+    darkColorScheme: text("dark_color_scheme")
+      .$type<ColorSchemeId>()
+      .notNull()
+      .default("midnight"),
+    // Terminal appearance settings
+    terminalOpacity: integer("terminal_opacity").notNull().default(100), // 0-100
+    terminalBlur: integer("terminal_blur").notNull().default(0), // px
+    terminalCursorStyle: text("terminal_cursor_style")
+      .$type<"block" | "underline" | "bar">()
+      .notNull()
+      .default("block"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("profile_appearance_profile_idx").on(table.profileId),
+    index("profile_appearance_user_idx").on(table.userId),
+  ]
+);
