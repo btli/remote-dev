@@ -2,6 +2,8 @@
  * Agent-related type definitions for AI coding agent management.
  */
 
+import type { AppearanceMode, ColorSchemeId } from "./appearance";
+
 /**
  * Supported AI coding agent providers.
  */
@@ -191,6 +193,42 @@ export interface UpdateProfileSecretsConfigInput {
   provider: ProfileSecretsProviderType;
   config: Record<string, string>;
   enabled?: boolean;
+}
+
+/**
+ * Profile appearance settings for per-profile theming.
+ */
+export interface ProfileAppearanceSettings {
+  id: string;
+  profileId: string;
+  userId: string;
+  appearanceMode: AppearanceMode;
+  lightColorScheme: ColorSchemeId;
+  darkColorScheme: ColorSchemeId;
+  terminalOpacity: number;
+  terminalBlur: number;
+  terminalCursorStyle: "block" | "underline" | "bar";
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Input for updating profile appearance settings.
+ */
+export interface UpdateProfileAppearanceInput {
+  appearanceMode?: AppearanceMode;
+  lightColorScheme?: ColorSchemeId;
+  darkColorScheme?: ColorSchemeId;
+  terminalOpacity?: number;
+  terminalBlur?: number;
+  terminalCursorStyle?: "block" | "underline" | "bar";
+}
+
+/**
+ * Extended agent profile with appearance settings.
+ */
+export interface AgentProfileWithAppearance extends AgentProfile {
+  appearance?: ProfileAppearanceSettings;
 }
 
 /**
