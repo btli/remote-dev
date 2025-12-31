@@ -4,9 +4,12 @@ import { useState, useCallback } from "react";
 import { Trash2, Plus, Key, Edit2, Check, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 interface KeyValueEditorProps {
+  label?: string;
+  description?: string;
   value: Record<string, string>;
   onChange: (value: Record<string, string>) => void;
   keyPlaceholder?: string;
@@ -31,6 +34,8 @@ interface EditingEntry {
  * - Custom provider configs
  */
 export function KeyValueEditor({
+  label,
+  description,
   value,
   onChange,
   keyPlaceholder = "Key",
@@ -96,6 +101,14 @@ export function KeyValueEditor({
 
   return (
     <div className={cn("space-y-2", className)}>
+      {(label || description) && (
+        <div className="space-y-0.5">
+          {label && <Label className="text-foreground font-medium">{label}</Label>}
+          {description && (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          )}
+        </div>
+      )}
       {/* Existing entries */}
       {entries.length > 0 && (
         <div className="space-y-1.5 rounded-lg bg-muted/30 border border-border p-2">
