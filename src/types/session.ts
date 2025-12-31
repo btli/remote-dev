@@ -99,7 +99,7 @@ export const AGENT_PROVIDERS: AgentProviderConfig[] = [
     name: "OpenCode",
     description: "Multi-provider AI coding assistant",
     command: "opencode",
-    configFile: "",
+    configFile: "OPENCODE.md",
     defaultFlags: [],
   },
   {
