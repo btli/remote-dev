@@ -265,15 +265,16 @@ export async function copyFolderConfigs(
  * Get config file type for a provider
  */
 export function getConfigTypeForProvider(
-  provider: Exclude<AgentProvider, "all" | "opencode">
+  provider: Exclude<AgentProvider, "all">
 ): AgentConfigType {
   const mapping: Record<
-    Exclude<AgentProvider, "all" | "opencode">,
+    Exclude<AgentProvider, "all">,
     AgentConfigType
   > = {
     claude: "CLAUDE.md",
     codex: "AGENTS.md",
     gemini: "GEMINI.md",
+    opencode: "OPENCODE.md",
   };
   return mapping[provider];
 }
