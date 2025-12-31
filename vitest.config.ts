@@ -31,6 +31,7 @@ export default defineConfig({
         "src/app/**", // Exclude Next.js app routes for now
         "src/components/**", // Exclude React components for now
         "src/contexts/**", // Exclude React contexts for now
+        "src/db/schema.ts", // Exclude Drizzle schema (declarative, no logic)
         "electron/**",
         "scripts/**",
       ],
