@@ -7,11 +7,15 @@ import {
 } from "@/lib/cloudflare-access";
 
 /**
- * Middleware that handles authentication via either:
+ * Proxy handler for authentication at the network boundary.
+ * Handles auth via either:
  * 1. Cloudflare Access JWT (production via tunnel)
  * 2. NextAuth session (local development)
+ *
+ * Note: Renamed from middleware to proxy per Next.js 16 conventions.
+ * See: https://nextjs.org/docs/messages/middleware-to-proxy
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   // Always allow static assets and PWA files

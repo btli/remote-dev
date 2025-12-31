@@ -156,8 +156,9 @@ function findReplacement(
   b: number,
   mappings: ColorMapping[],
   isForeground: boolean,
-  _themeMode: ThemeMode
+  themeMode: ThemeMode
 ): ColorReplacement | null {
+  void themeMode; // Reserved for future theme-specific transformations
   const luminance = getLuminance(r, g, b);
 
   // Use semantic colors for extreme light/dark values

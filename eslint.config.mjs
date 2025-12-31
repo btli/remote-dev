@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Worktree trash
     ".trash/**",
+    // Test coverage reports
+    "coverage/**",
   ]),
 ]);
 
