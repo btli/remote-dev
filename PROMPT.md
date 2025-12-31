@@ -1033,65 +1033,219 @@ Configure hooks in `.claude/settings.json`:
 
 ## Agent Profile Configuration
 
-### Database Schema Extension
+Remote Dev supports multiple AI coding agents through a unified profile system.
+Each profile provides environment isolation, theme preferences, and agent-specific configuration.
 
-Add to user settings:
+### Supported AI Coding Agents
+
+| Agent | Provider | Config Dir | Documentation |
+|-------|----------|------------|---------------|
+| **Claude Code** | Anthropic | `~/.claude/` | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
+| **OpenCode** | OpenCode.ai | `~/.config/opencode/` | [opencode.ai/docs](https://opencode.ai/docs/) |
+| **Codex CLI** | OpenAI | `~/.codex/` | [developers.openai.com/codex/cli](https://developers.openai.com/codex/cli) |
+| **Gemini CLI** | Google | `~/.gemini/` | [geminicli.com/docs](https://geminicli.com/docs/) |
+
+### Profile Isolation Architecture
+
+```
+~/.remote-dev/profiles/{profile-id}/
+├── .claude/           # Claude Code config
+│   ├── settings.json
+│   └── CLAUDE.md
+├── .codex/            # Codex CLI config
+├── .gemini/           # Gemini CLI config
+├── .config/
+│   └── opencode/      # OpenCode config
+├── .gitconfig         # Isolated git identity
+├── .ssh/              # Isolated SSH keys
+└── .env               # Secrets from provider
+```
+
+### Environment Overlay
+
+When a session uses a profile, these environment variables are injected:
+
+```bash
+HOME=/Users/user/.remote-dev/profiles/{id}/
+XDG_CONFIG_HOME=$HOME/.config
+CLAUDE_CONFIG_DIR=$HOME/.claude
+CODEX_HOME=$HOME/.codex
+GEMINI_HOME=$HOME/.gemini
+GIT_CONFIG=$HOME/.gitconfig
+GIT_SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+
+# From secrets provider (Phase, Vault, AWS, 1Password)
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=...
+GOOGLE_API_KEY=...
+```
+
+### Per-Profile Appearance Settings
+
+Each profile can have its own theme preferences:
 
 ```typescript
-// Agent profile configuration
-interface AgentProfile {
-  id: string;
-  name: string;  // e.g., "Claude Code", "Cursor", "Windsurf"
-  enabled: boolean;
-
-  // Model preferences
-  defaultModel: string;
-  subagentModel: string;
-  planningModel: string;
-
-  // Status line
-  statusLineEnabled: boolean;
-  statusLineScript: string;
-
-  // Memory files
-  memoryFiles: {
-    user: string;      // ~/.claude/CLAUDE.md path
-    project: string;   // ./CLAUDE.md path
-    local: string;     // ./CLAUDE.local.md path
-  };
-
-  // Hooks
-  hooks: {
-    preToolCall?: string;
-    postToolCall?: string;
-    notification?: string;
-  };
-
-  // Theme integration
-  themeSync: boolean;  // Sync with Remote Dev theme
-  terminalTheme: string;
+interface ProfileAppearanceSettings {
+  appearanceMode: "light" | "dark" | "system";
+  lightColorScheme: ColorSchemeId;  // e.g., "ocean", "forest"
+  darkColorScheme: ColorSchemeId;   // e.g., "midnight", "arctic"
+  terminalOpacity: number;          // 0-100
+  terminalBlur: number;             // px
+  terminalCursorStyle: "block" | "underline" | "bar";
 }
+```
+
+**API Endpoints:**
+```
+GET    /api/profiles/:id/appearance     # Get profile appearance
+PUT    /api/profiles/:id/appearance     # Update appearance
+DELETE /api/profiles/:id/appearance     # Reset to user defaults
+```
+
+### Agent-Specific Configuration
+
+#### Claude Code
+```bash
+# Startup command
+claude
+
+# Config files
+~/.claude/settings.json       # Global settings
+~/.claude/CLAUDE.md          # User instructions
+./CLAUDE.md                   # Project instructions
+./CLAUDE.local.md            # Local overrides (gitignored)
+```
+
+#### OpenCode
+```bash
+# Startup command
+opencode
+
+# Config files
+~/.config/opencode/config.toml  # Global config
+./OPENCODE.md                    # Project instructions
+```
+
+#### Codex CLI
+```bash
+# Startup command
+codex
+
+# Config files
+~/.codex/config.yaml    # Global config
+./AGENTS.md             # Project instructions
+```
+
+#### Gemini CLI
+```bash
+# Startup command
+gemini
+
+# Config files
+~/.gemini/config.json   # Global config
+./GEMINI.md             # Project instructions
 ```
 
 ### Profile Management API
 
 ```
-GET  /api/profiles              # List agent profiles
-POST /api/profiles              # Create profile
-GET  /api/profiles/:id          # Get profile
-PATCH /api/profiles/:id         # Update profile
-DELETE /api/profiles/:id        # Delete profile
-POST /api/profiles/:id/generate # Generate config files
+GET    /api/profiles              # List user's profiles
+POST   /api/profiles              # Create profile
+GET    /api/profiles/:id          # Get profile details
+PATCH  /api/profiles/:id          # Update profile
+DELETE /api/profiles/:id          # Delete profile
+
+# Git Identity
+GET    /api/profiles/:id/git-identity   # Get git identity
+PUT    /api/profiles/:id/git-identity   # Set git identity
+
+# Secrets
+GET    /api/profiles/:id/secrets        # Get secrets config
+PUT    /api/profiles/:id/secrets        # Set secrets provider
+
+# Environment
+GET    /api/profiles/:id/environment    # Get computed env vars
+
+# Folder Linking
+PUT    /api/profiles/folders/:folderId  # Link folder to profile
+DELETE /api/profiles/folders/:folderId  # Unlink folder
 ```
 
-### Config File Generation
+### Folder-Profile Inheritance
 
-The `generate` endpoint creates:
-- `.claude/settings.json`
-- `~/.claude/CLAUDE.md` (with imports)
-- `.claude/rules/*.md` files
-- Status line script
-- Hook scripts
+Sessions inherit profiles through folder linkage:
+
+```
+User Settings (defaults)
+    ↓
+Folder Preferences
+    ↓ (folder_profile_link)
+Agent Profile
+    ↓
+Terminal Session
+```
+
+---
+
+## Implementation Insights
+
+### Theme System Architecture
+
+The theme system uses a multi-layer approach:
+
+1. **OKLCH Color Space**: Site UI uses perceptually uniform OKLCH colors
+2. **xterm.js ANSI Palette**: Terminal uses 16-color + 24-bit true colors
+3. **ANSI Color Transform**: Intercepts 24-bit colors and maps to theme-appropriate values
+
+**Key Insight**: CLI tools output hardcoded RGB values that bypass xterm.js themes.
+The `transformAnsiColors()` function solves this by:
+- Detecting high-luminance foreground → semantic default (`\x1b[39m`)
+- Detecting low-luminance background → semantic default (`\x1b[49m`)
+- Mapping saturated colors (diff red/green) → pastel variants for light mode
+
+### Preference Inheritance Chain
+
+```
+┌─────────────────┐
+│  User Settings  │ ← DEFAULT_APPEARANCE defaults
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│ Agent Profile   │ ← profileAppearanceSettings table
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│ Folder Prefs    │ ← folderPreferences table
+└────────┬────────┘
+         ↓
+┌─────────────────┐
+│ Terminal Session│ ← Computed at render time
+└─────────────────┘
+```
+
+### Clean Architecture Pattern
+
+The codebase follows strict layer separation:
+
+```
+src/
+├── domain/           # Layer 1: Pure business logic
+│   ├── entities/     # Session, Folder (immutable)
+│   ├── value-objects/# SessionStatus, TmuxSessionName
+│   └── errors/       # Domain exceptions
+├── application/      # Layer 2: Use cases
+│   ├── use-cases/    # CreateSession, SuspendSession
+│   └── ports/        # Repository interfaces
+├── infrastructure/   # Layer 3: Implementations
+│   ├── persistence/  # DrizzleSessionRepository
+│   └── external/     # TmuxGateway, WorktreeGateway
+└── interface/        # Layer 4: API adapters
+```
+
+**Testing Strategy**:
+- Domain tests: Pure unit tests with no mocks
+- Use case tests: Mock repository/gateway ports
+- API tests: Integration tests with test database
 
 ---
 
