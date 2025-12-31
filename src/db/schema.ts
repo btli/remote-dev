@@ -1322,6 +1322,50 @@ export const appearanceSettings = sqliteTable(
 );
 
 /**
+ * Agent JSON configuration storage per profile.
+ * Stores full JSON configuration for each CLI agent (Claude Code, Gemini, OpenCode, Codex).
+ * Each profile can have separate configs for each agent type.
+ */
+export const agentProfileJsonConfigs = sqliteTable(
+  "agent_profile_json_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    agentType: text("agent_type")
+      .$type<Exclude<AgentProvider, "all">>()
+      .notNull(), // "claude" | "gemini" | "opencode" | "codex"
+    // Full JSON configuration for the agent
+    // Structure varies by agent type - see types/agent-config.ts
+    configJson: text("config_json").notNull().default("{}"),
+    // Validation status
+    isValid: integer("is_valid", { mode: "boolean" }).notNull().default(true),
+    validationErrors: text("validation_errors"), // JSON array of error messages
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("agent_profile_json_config_profile_idx").on(table.profileId),
+    index("agent_profile_json_config_user_idx").on(table.userId),
+    // Unique: one config per agent type per profile
+    uniqueIndex("agent_profile_json_config_unique_idx").on(
+      table.profileId,
+      table.agentType
+    ),
+  ]
+);
+
+/**
  * Agent profile appearance settings.
  * Allows each agent profile to have its own theme/color preferences.
  * Falls back to user's appearance settings when not specified.
