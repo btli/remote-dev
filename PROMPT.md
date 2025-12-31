@@ -1185,6 +1185,99 @@ Agent Profile
 Terminal Session
 ```
 
+### Agent UI Components
+
+The Agents tab in UserSettingsModal provides UI for managing agent configurations.
+
+#### AgentCLIStatusPanel
+
+Displays CLI installation status for all supported agents.
+
+**Features:**
+- Installation status badges (installed/not installed)
+- Version information for installed CLIs
+- Required environment variables display
+- Installation instructions (copyable)
+- Documentation links
+- Expandable cards per provider
+
+**Location:** `src/components/agents/AgentCLIStatusPanel.tsx`
+
+**API Endpoint:** `GET /api/agent-cli/status`
+
+**Response Schema:**
+```typescript
+interface CLIStatus {
+  provider: string;        // claude, codex, gemini, opencode
+  installed: boolean;
+  version?: string;
+  command: string;         // CLI command name
+  path?: string;           // Binary location
+  error?: string;
+  installInstructions?: string;
+  docsUrl?: string;
+  requiredEnvVars?: string[];
+}
+
+interface AllCLIStatus {
+  statuses: CLIStatus[];
+  installedCount: number;
+  totalCount: number;
+  summary: string;
+}
+```
+
+#### AgentProfileAppearanceSettings
+
+Per-profile theming controls with live preview.
+
+**Features:**
+- Appearance mode toggle (Light/System/Dark)
+- Light color scheme selector (uses light palette preview)
+- Dark color scheme selector (uses dark palette preview)
+- Terminal opacity slider (50-100%)
+- Terminal backdrop blur slider (0-20px)
+- Cursor style selector (Block/Underline/Bar)
+- Save/Reset buttons with loading states
+
+**Location:** `src/components/agents/AgentProfileAppearanceSettings.tsx`
+
+**API Endpoints:**
+```
+GET    /api/profiles/:id/appearance     # Fetch settings
+PUT    /api/profiles/:id/appearance     # Save settings
+DELETE /api/profiles/:id/appearance     # Reset to defaults
+```
+
+**Default Settings:**
+```typescript
+{
+  appearanceMode: "system",
+  lightColorScheme: "ocean",
+  darkColorScheme: "midnight",
+  terminalOpacity: 100,
+  terminalBlur: 0,
+  terminalCursorStyle: "block"
+}
+```
+
+#### UserSettingsModal Integration
+
+The Agents tab is the third tab in UserSettingsModal:
+
+```
+[Terminal] [Appearance] [Agents] [Project] [System]
+                           ↑
+                     New 5-tab layout
+```
+
+**Tab Contents:**
+- **Terminal**: Working directory, shell, startup command
+- **Appearance**: Mode toggle, color schemes, font settings
+- **Agents**: CLI status panel (future: profile appearance)
+- **Project**: Active folder, auto-follow settings
+- **System**: Tmux session management
+
 ---
 
 ## Implementation Insights
