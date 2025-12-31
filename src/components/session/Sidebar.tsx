@@ -300,6 +300,51 @@ export function Sidebar({
     return false;
   }, [folders]);
 
+  // Calculate rolled-up stats for a folder
+  // When a folder is collapsed, aggregate stats from all descendants
+  // When expanded, show only its own stats (children show theirs)
+  const getRolledUpStats = useCallback((folderId: string): FolderRepoStats | null => {
+    const folder = folders.find(f => f.id === folderId);
+    if (!folder) return null;
+
+    // If folder is expanded, show only its own stats
+    if (!folder.collapsed) {
+      return getFolderRepoStats(folderId);
+    }
+
+    // Folder is collapsed - aggregate stats from self and all descendants
+    const sumDescendantStats = (nodeId: string): { prCount: number; issueCount: number; hasChanges: boolean } => {
+      let prCount = 0;
+      let issueCount = 0;
+      let hasChanges = false;
+
+      // Get this folder's own stats
+      const ownStats = getFolderRepoStats(nodeId);
+      if (ownStats) {
+        prCount += ownStats.prCount;
+        issueCount += ownStats.issueCount;
+        hasChanges = hasChanges || ownStats.hasChanges;
+      }
+
+      // Find children and recursively add their stats
+      const children = folders.filter(f => f.parentId === nodeId);
+      for (const child of children) {
+        const childStats = sumDescendantStats(child.id);
+        prCount += childStats.prCount;
+        issueCount += childStats.issueCount;
+        hasChanges = hasChanges || childStats.hasChanges;
+      }
+
+      return { prCount, issueCount, hasChanges };
+    };
+
+    const stats = sumDescendantStats(folderId);
+    if (stats.prCount === 0 && stats.issueCount === 0 && !stats.hasChanges) {
+      return null;
+    }
+    return stats;
+  }, [folders, getFolderRepoStats]);
+
   // Focus input when editing starts
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -1667,9 +1712,9 @@ export function Sidebar({
                               </span>
                             )}
 
-                            {/* Repo stats badges */}
+                            {/* Repo stats badges - rolled up from collapsed descendants */}
                             {(() => {
-                              const repoStats = getFolderRepoStats(node.id);
+                              const repoStats = getRolledUpStats(node.id);
                               if (!repoStats) return null;
                               // Only show badges container if there's at least one non-zero value
                               const hasAnyStats = repoStats.prCount > 0 || repoStats.issueCount > 0 || repoStats.hasChanges;
