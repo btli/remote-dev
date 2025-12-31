@@ -5,7 +5,6 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SettingToggle, TagInput, SliderWithInput } from "../shared";
-import { cn } from "@/lib/utils";
 import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import type {
   GeminiCLIConfig,

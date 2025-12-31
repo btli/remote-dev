@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -22,7 +21,7 @@ import {
   RotateCcw,
   Loader2,
 } from "lucide-react";
-import { SettingToggle, SliderWithInput, EnumRadioGroup, TagInput } from "../shared";
+import { SettingToggle, EnumRadioGroup, TagInput } from "../shared";
 import type { OpenCodeConfig } from "@/types/agent-config";
 import { DEFAULT_OPENCODE_CONFIG } from "@/types/agent-config";
 
