@@ -7,8 +7,12 @@ import { cn } from "@/lib/utils";
 interface SettingToggleProps {
   label: string;
   description?: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
+  checked?: boolean;
+  onCheckedChange?: (checked: boolean) => void;
+  /** Alias for checked */
+  value?: boolean;
+  /** Alias for onCheckedChange */
+  onChange?: (checked: boolean) => void;
   disabled?: boolean;
   className?: string;
 }
@@ -28,9 +32,15 @@ export function SettingToggle({
   description,
   checked,
   onCheckedChange,
+  value,
+  onChange,
   disabled = false,
   className,
 }: SettingToggleProps) {
+  // Support both checked/onCheckedChange and value/onChange
+  const isChecked = checked ?? value ?? false;
+  const handleChange = onCheckedChange ?? onChange ?? (() => {});
+
   return (
     <div
       className={cn(
@@ -45,8 +55,8 @@ export function SettingToggle({
         )}
       </div>
       <Switch
-        checked={checked}
-        onCheckedChange={onCheckedChange}
+        checked={isChecked}
+        onCheckedChange={handleChange}
         disabled={disabled}
       />
     </div>

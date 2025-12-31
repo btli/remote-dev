@@ -9,3 +9,13 @@ export {
   SettingToggle,
   EnumRadioGroup,
 } from "./shared";
+
+// Claude Code configuration components
+export {
+  ClaudeCodeCoreSettings,
+  ClaudeCodePermissionsEditor,
+  ClaudeCodeSandboxEditor,
+  ClaudeCodeHooksEditor,
+  ClaudeCodeMCPEditor,
+  ClaudeCodeConfigEditor,
+} from "./claude";

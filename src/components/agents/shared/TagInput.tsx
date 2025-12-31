@@ -5,9 +5,12 @@ import { X, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 interface TagInputProps {
+  label?: string;
+  description?: string;
   value: string[];
   onChange: (value: string[]) => void;
   placeholder?: string;
@@ -27,6 +30,8 @@ interface TagInputProps {
  * - autoAccept.patterns
  */
 export function TagInput({
+  label,
+  description,
   value,
   onChange,
   placeholder = "Add item...",
@@ -69,6 +74,14 @@ export function TagInput({
 
   return (
     <div className={cn("space-y-2", className)}>
+      {(label || description) && (
+        <div className="space-y-0.5">
+          {label && <Label className="text-foreground font-medium">{label}</Label>}
+          {description && (
+            <p className="text-xs text-muted-foreground">{description}</p>
+          )}
+        </div>
+      )}
       <div className="flex gap-2">
         <Input
           value={inputValue}
