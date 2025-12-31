@@ -155,31 +155,31 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="terminal" className="mt-4 flex-1 flex flex-col min-h-0">
-          <TabsList className="grid w-full grid-cols-5 bg-muted/50">
-            <TabsTrigger value="terminal" className="data-[state=active]:bg-primary/20">
+        <Tabs defaultValue="terminal" className="mt-4 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <TabsList className="grid w-full grid-cols-5 bg-muted/50 shrink-0">
+            <TabsTrigger value="terminal" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
               <Terminal className="w-4 h-4 mr-1.5" />
               Terminal
             </TabsTrigger>
-            <TabsTrigger value="appearance" className="data-[state=active]:bg-primary/20">
+            <TabsTrigger value="appearance" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
               <Palette className="w-4 h-4 mr-1.5" />
               Appearance
             </TabsTrigger>
-            <TabsTrigger value="agents" className="data-[state=active]:bg-primary/20">
+            <TabsTrigger value="agents" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
               <Bot className="w-4 h-4 mr-1.5" />
               Agents
             </TabsTrigger>
-            <TabsTrigger value="project" className="data-[state=active]:bg-primary/20">
+            <TabsTrigger value="project" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
               <Folder className="w-4 h-4 mr-1.5" />
               Project
             </TabsTrigger>
-            <TabsTrigger value="system" className="data-[state=active]:bg-primary/20">
+            <TabsTrigger value="system" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
               <Server className="w-4 h-4 mr-1.5" />
               System
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="terminal" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
+          <TabsContent value="terminal" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
             {/* Working Directory */}
             <div className="space-y-2">
               <Label className="text-foreground">Default Working Directory</Label>
@@ -233,7 +233,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="appearance" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
+          <TabsContent value="appearance" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
             {/* Appearance Mode (Light/System/Dark) */}
             <div className="space-y-2">
               <Label className="text-foreground">Appearance Mode</Label>
@@ -296,11 +296,11 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="agents" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
+          <TabsContent value="agents" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
             <AgentCLIStatusPanel />
           </TabsContent>
 
-          <TabsContent value="project" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
+          <TabsContent value="project" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
             {/* Auto-follow toggle */}
             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
               <div className="space-y-0.5">
@@ -389,7 +389,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="system" className="space-y-4 mt-4 flex-1 overflow-y-auto pr-2">
+          <TabsContent value="system" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
             <TmuxSessionManager />
           </TabsContent>
         </Tabs>
