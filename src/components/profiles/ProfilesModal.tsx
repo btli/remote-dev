@@ -289,15 +289,14 @@ export function ProfilesModal({
                 </TabsContent>
 
                 {/* Config Tab - Agent-specific settings */}
-                <TabsContent value="config" className="h-full m-0">
-                  <ScrollArea className="h-full pr-4">
-                    {selectedProfileId && selectedProfile && (
-                      <ProfileConfigTab
-                        profileId={selectedProfileId}
-                        provider={selectedProfile.provider}
-                      />
-                    )}
-                  </ScrollArea>
+                {/* Note: No ScrollArea wrapper - config editors handle their own scrolling */}
+                <TabsContent value="config" className="h-full m-0 overflow-hidden">
+                  {selectedProfileId && selectedProfile && (
+                    <ProfileConfigTab
+                      profileId={selectedProfileId}
+                      provider={selectedProfile.provider}
+                    />
+                  )}
                 </TabsContent>
 
                 {/* Git Identity Tab */}
