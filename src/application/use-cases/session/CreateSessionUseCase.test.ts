@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import {
   CreateSessionUseCase,
   CreateSessionError,
@@ -92,7 +92,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("assigns next available tab order", async () => {
-      vi.mocked(mockSessionRepository.getNextTabOrder).mockResolvedValue(5);
+      (mockSessionRepository.getNextTabOrder as Mock).mockResolvedValue(5);
 
       const input: CreateSessionInput = {
         userId: "user-123",
@@ -216,7 +216,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - not git repo", () => {
     it("throws when project path is not a git repo", async () => {
-      vi.mocked(mockWorktreeGateway.isGitRepo).mockResolvedValue(false);
+      (mockWorktreeGateway.isGitRepo as Mock).mockResolvedValue(false);
 
       const input: CreateSessionInput = {
         userId: "user-123",
@@ -235,7 +235,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - worktree creation failure", () => {
     it("throws when worktree creation fails", async () => {
-      vi.mocked(mockWorktreeGateway.createWorktree).mockRejectedValue(
+      (mockWorktreeGateway.createWorktree as Mock).mockRejectedValue(
         new Error("Branch already exists")
       );
 
@@ -256,7 +256,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - tmux creation failure", () => {
     it("throws when tmux session creation fails", async () => {
-      vi.mocked(mockTmuxGateway.createSession).mockRejectedValue(
+      (mockTmuxGateway.createSession as Mock).mockRejectedValue(
         new Error("tmux error")
       );
 
@@ -273,7 +273,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("cleans up worktree when tmux creation fails", async () => {
-      vi.mocked(mockTmuxGateway.createSession).mockRejectedValue(
+      (mockTmuxGateway.createSession as Mock).mockRejectedValue(
         new Error("tmux error")
       );
 
@@ -297,7 +297,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - persistence failure", () => {
     it("throws when persistence fails", async () => {
-      vi.mocked(mockSessionRepository.save).mockRejectedValue(
+      (mockSessionRepository.save as Mock).mockRejectedValue(
         new Error("Database error")
       );
 
@@ -313,7 +313,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("cleans up tmux session when persistence fails", async () => {
-      vi.mocked(mockSessionRepository.save).mockRejectedValue(
+      (mockSessionRepository.save as Mock).mockRejectedValue(
         new Error("Database error")
       );
 
@@ -328,7 +328,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("cleans up both tmux and worktree when persistence fails", async () => {
-      vi.mocked(mockSessionRepository.save).mockRejectedValue(
+      (mockSessionRepository.save as Mock).mockRejectedValue(
         new Error("Database error")
       );
 
@@ -349,10 +349,10 @@ describe("CreateSessionUseCase", () => {
 
   describe("cleanup error handling", () => {
     it("continues even if worktree cleanup fails", async () => {
-      vi.mocked(mockTmuxGateway.createSession).mockRejectedValue(
+      (mockTmuxGateway.createSession as Mock).mockRejectedValue(
         new Error("tmux error")
       );
-      vi.mocked(mockWorktreeGateway.removeWorktree).mockRejectedValue(
+      (mockWorktreeGateway.removeWorktree as Mock).mockRejectedValue(
         new Error("cleanup failed")
       );
 
@@ -376,10 +376,10 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("continues even if tmux cleanup fails", async () => {
-      vi.mocked(mockSessionRepository.save).mockRejectedValue(
+      (mockSessionRepository.save as Mock).mockRejectedValue(
         new Error("Database error")
       );
-      vi.mocked(mockTmuxGateway.killSession).mockRejectedValue(
+      (mockTmuxGateway.killSession as Mock).mockRejectedValue(
         new Error("tmux cleanup failed")
       );
 
