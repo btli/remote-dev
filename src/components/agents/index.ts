@@ -19,3 +19,12 @@ export {
   ClaudeCodeMCPEditor,
   ClaudeCodeConfigEditor,
 } from "./claude";
+
+// Gemini CLI configuration components
+export {
+  GeminiGeneralSettings,
+  GeminiModelSettings,
+  GeminiToolSettings,
+  GeminiSecuritySettings,
+  GeminiCLIConfigEditor,
+} from "./gemini";
