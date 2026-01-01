@@ -158,8 +158,8 @@ export function ProfilesModal({
   return (
     <>
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-[700px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[700px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2 text-foreground">
               <Fingerprint className="w-5 h-5 text-primary" />
               Agent Profiles
@@ -179,7 +179,7 @@ export function ProfilesModal({
               onValueChange={(v) => setActiveTab(v as TabValue)}
               className="flex-1 flex flex-col min-h-0"
             >
-              <TabsList className="w-full bg-muted/50 flex-shrink-0">
+              <TabsList className="w-full bg-muted/50 shrink-0">
                 <TabsTrigger
                   value="overview"
                   className="data-[state=active]:bg-primary/20"
@@ -229,7 +229,7 @@ export function ProfilesModal({
                 </TabsTrigger>
               </TabsList>
 
-              <div className="flex-1 min-h-0 mt-4">
+              <div className="flex-1 min-h-0 mt-4 overflow-hidden">
                 {/* Overview Tab */}
                 <TabsContent value="overview" className="h-full m-0">
                   <div className="flex flex-col h-full">
