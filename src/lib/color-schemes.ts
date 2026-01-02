@@ -120,20 +120,20 @@ const oceanLight: ModePalette = {
     cursorAccent: "#eceff4",
     selectionBackground: "#d8dee9",
     black: "#3b4252",
-    red: "#d4a0a0",            // Light rose for diff backgrounds
-    green: "#a0c4a0",          // Light sage for diff backgrounds
-    yellow: "#b8975a",         // Muted gold (was #ebcb8b)
-    blue: "#5e81ac",
-    magenta: "#9a7a9a",        // Muted mauve (was #b48ead)
-    cyan: "#6a9aa8",           // Muted teal (was #88c0d0)
+    red: "#bf616a",            // Nord red - good for text
+    green: "#5a9a5a",          // Muted green - readable as text
+    yellow: "#9a7020",         // Dark gold - readable as text on light bg
+    blue: "#5e81ac",           // Nord blue - good for text
+    magenta: "#8a5a8a",        // Muted magenta - readable as text
+    cyan: "#2a7a8a",           // Dark cyan - readable as text on light bg
     white: "#4c566a",
     brightBlack: "#434c5e",
-    brightRed: "#e0b0b0",      // Slightly lighter rose
-    brightGreen: "#b0d4b0",    // Slightly lighter sage
-    brightYellow: "#c8a76a",
-    brightBlue: "#81a1c1",
-    brightMagenta: "#aa8aaa",
-    brightCyan: "#7aaab8",
+    brightRed: "#d08770",      // Nord orange
+    brightGreen: "#6aaa6a",    // Brighter green
+    brightYellow: "#aa8030",   // Brighter gold - still readable
+    brightBlue: "#81a1c1",     // Nord light blue
+    brightMagenta: "#b48ead",  // Nord magenta
+    brightCyan: "#3a8a9a",     // Dark teal - readable as foreground text on light bg
     brightWhite: "#3b4252",
   },
 };
@@ -217,20 +217,20 @@ const forestLight: ModePalette = {
     cursorAccent: "#f5f5dc",
     selectionBackground: "#e0dcc8",
     black: "#272822",
-    red: "#d4a8a0",            // Light rose for diff backgrounds
-    green: "#a0c0a0",          // Light sage for diff backgrounds
-    yellow: "#a8884a",         // Muted amber (was #f4bf75)
-    blue: "#5a8aaa",           // Muted blue (was #66d9ef)
-    magenta: "#8a6a9a",        // Muted purple (was #ae81ff)
-    cyan: "#5a9a8a",           // Muted teal (was #a1efe4)
+    red: "#f0d8d0",            // Light rose - readable as bg with dark text
+    green: "#d8e8d0",          // Light sage - readable as bg with dark text
+    yellow: "#e8e0c8",         // Light amber - readable as bg with dark text
+    blue: "#c8dce8",           // Light blue - readable as bg with dark text
+    magenta: "#e0d0e8",        // Light purple - readable as bg with dark text
+    cyan: "#c8e8e0",           // Light teal - readable as bg with dark text
     white: "#49483e",
     brightBlack: "#75715e",
-    brightRed: "#e0b8b0",
-    brightGreen: "#b0d0b0",
-    brightYellow: "#b8985a",
-    brightBlue: "#6a9aba",
-    brightMagenta: "#9a7aaa",
-    brightCyan: "#6aaa9a",
+    brightRed: "#b05050",       // Dark red - readable as foreground text
+    brightGreen: "#3a8a4a",     // Dark green - readable as foreground text
+    brightYellow: "#9a7a20",    // Dark gold - readable as foreground text
+    brightBlue: "#4a70a0",      // Dark blue - readable as foreground text
+    brightMagenta: "#8a4a9a",   // Dark magenta - readable as foreground text
+    brightCyan: "#2a8a7a",      // Dark teal - readable as foreground text
     brightWhite: "#272822",
   },
 };
@@ -314,20 +314,20 @@ const sunsetLight: ModePalette = {
     cursorAccent: "#fcf5f5",
     selectionBackground: "#e8dfe0",
     black: "#21222c",
-    red: "#d4a0a8",            // Light rose for diff backgrounds
-    green: "#a0c4a8",          // Light sage for diff backgrounds
-    yellow: "#a89a5a",         // Muted gold (was #f1fa8c neon)
-    blue: "#7a6a9a",           // Muted purple-blue (was #bd93f9)
-    magenta: "#9a5a7a",        // Muted magenta (was #ff79c6)
-    cyan: "#5a8a9a",           // Muted cyan (was #8be9fd)
+    red: "#f0d8d8",            // Light rose - readable as bg with dark text
+    green: "#d0e8d8",          // Light sage - readable as bg with dark text
+    yellow: "#e8e0c8",         // Light gold - readable as bg with dark text
+    blue: "#d8d0e8",           // Light purple-blue - readable as bg with dark text
+    magenta: "#f0d0e0",        // Light magenta - readable as bg with dark text
+    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
     white: "#44475a",
     brightBlack: "#6272a4",
-    brightRed: "#e0b0b8",
-    brightGreen: "#b0d4b8",
-    brightYellow: "#b8aa6a",
-    brightBlue: "#8a7aaa",
-    brightMagenta: "#aa6a8a",
-    brightCyan: "#6a9aaa",
+    brightRed: "#c04050",       // Dark coral - readable as foreground text
+    brightGreen: "#408050",     // Dark green - readable as foreground text
+    brightYellow: "#a07030",    // Dark amber - readable as foreground text
+    brightBlue: "#6050a0",      // Dark purple-blue - readable as foreground text
+    brightMagenta: "#a04080",   // Dark magenta - readable as foreground text
+    brightCyan: "#307090",      // Dark cyan - readable as foreground text
     brightWhite: "#282a36",
   },
 };
@@ -411,20 +411,20 @@ const midnightLight: ModePalette = {
     cursorAccent: "#f0f0f5",
     selectionBackground: "#d8d8e0",
     black: "#32344a",
-    red: "#d4a8b0",            // Light rose for diff backgrounds
-    green: "#a0c4a0",          // Light sage for diff backgrounds
-    yellow: "#a8885a",         // Muted amber (was #e0af68)
-    blue: "#5a7aaa",           // Muted blue (was #7aa2f7)
-    magenta: "#8a6a9a",        // Muted purple (was #ad8ee6)
-    cyan: "#4a7a8a",           // Muted teal (was #449dab)
+    red: "#f0d8d8",            // Light rose - readable as bg with dark text
+    green: "#d0e8d0",          // Light sage - readable as bg with dark text
+    yellow: "#e8dcc0",         // Light amber - readable as bg with dark text
+    blue: "#c8d8e8",           // Light blue - readable as bg with dark text
+    magenta: "#e0d0e8",        // Light purple - readable as bg with dark text
+    cyan: "#c0d8e0",           // Light teal - readable as bg with dark text
     white: "#565a6e",
     brightBlack: "#444b6a",
-    brightRed: "#e0b8c0",
-    brightGreen: "#b0d4b0",
-    brightYellow: "#b8986a",
-    brightBlue: "#6a8aba",
-    brightMagenta: "#9a7aaa",
-    brightCyan: "#5a8a9a",
+    brightRed: "#c05050",       // Dark red - readable as foreground text
+    brightGreen: "#4a9a4a",     // Dark green - readable as foreground text
+    brightYellow: "#a08020",    // Dark gold - readable as foreground text
+    brightBlue: "#5070a0",      // Dark blue - readable as foreground text
+    brightMagenta: "#9050a0",   // Dark magenta - readable as foreground text
+    brightCyan: "#308090",      // Dark teal - readable as foreground text
     brightWhite: "#343b58",
   },
 };
@@ -508,20 +508,20 @@ const arcticLight: ModePalette = {
     cursorAccent: "#f8fafc",
     selectionBackground: "#e2e8f0",
     black: "#1e293b",
-    red: "#d4a0a0",            // Light rose for diff backgrounds
-    green: "#a0c4a0",          // Light sage for diff backgrounds
-    yellow: "#a89040",         // Muted gold (was #eab308)
-    blue: "#4a6aaa",           // Muted blue (was #3b82f6)
-    magenta: "#7a5a9a",        // Muted purple (was #a855f7)
-    cyan: "#4a8a9a",           // Muted cyan (was #06b6d4)
+    red: "#f0d8d8",            // Light rose - readable as bg with dark text
+    green: "#d0e8d0",          // Light sage - readable as bg with dark text
+    yellow: "#e8e0c8",         // Light gold - readable as bg with dark text
+    blue: "#c8d8e8",           // Light blue - readable as bg with dark text
+    magenta: "#e0d0e8",        // Light purple - readable as bg with dark text
+    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
     white: "#475569",
     brightBlack: "#64748b",
-    brightRed: "#e0b0b0",
-    brightGreen: "#b0d4b0",
-    brightYellow: "#b8a050",
-    brightBlue: "#5a7aba",
-    brightMagenta: "#8a6aaa",
-    brightCyan: "#5a9aaa",
+    brightRed: "#b85050",       // Dark red - readable as foreground text
+    brightGreen: "#4a8a50",     // Dark green - readable as foreground text
+    brightYellow: "#9a7a20",    // Dark gold - readable as foreground text
+    brightBlue: "#4a6a9a",      // Dark blue - readable as foreground text
+    brightMagenta: "#8a4a8a",   // Dark magenta - readable as foreground text
+    brightCyan: "#2a7a8a",      // Dark cyan - readable as foreground text
     brightWhite: "#334155",
   },
 };
@@ -605,20 +605,20 @@ const roseLight: ModePalette = {
     cursorAccent: "#fdf2f8",
     selectionBackground: "#fce7f3",
     black: "#500724",
-    red: "#d4a0a8",            // Light rose for diff backgrounds
-    green: "#a0c4a0",          // Light sage for diff backgrounds
-    yellow: "#9a7040",         // Muted gold (was #ca8a04)
-    blue: "#4a5a8a",           // Muted blue (was #2563eb)
-    magenta: "#9a4a6a",        // Muted magenta (was #db2777)
-    cyan: "#4a7a8a",           // Muted cyan (was #0891b2)
+    red: "#f8d8e0",            // Light rose - readable as bg with dark text
+    green: "#d8e8d8",          // Light sage - readable as bg with dark text
+    yellow: "#f0e0c8",         // Light gold - readable as bg with dark text
+    blue: "#d0d8e8",           // Light blue - readable as bg with dark text
+    magenta: "#f8d0e0",        // Light magenta - readable as bg with dark text
+    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
     white: "#9f1239",
     brightBlack: "#be185d",
-    brightRed: "#e0b0b8",
-    brightGreen: "#b0d4b0",
-    brightYellow: "#aa8050",
-    brightBlue: "#5a6a9a",
-    brightMagenta: "#aa5a7a",
-    brightCyan: "#5a8a9a",
+    brightRed: "#c04060",       // Dark rose - readable as foreground text
+    brightGreen: "#4a8a50",     // Dark green - readable as foreground text
+    brightYellow: "#9a7a20",    // Dark gold - readable as foreground text
+    brightBlue: "#4a5a90",      // Dark blue - readable as foreground text
+    brightMagenta: "#a03070",   // Dark magenta - readable as foreground text
+    brightCyan: "#2a7a8a",      // Dark cyan - readable as foreground text
     brightWhite: "#831843",
   },
 };
@@ -702,20 +702,20 @@ const amberLight: ModePalette = {
     cursorAccent: "#fffbeb",
     selectionBackground: "#fef3c7",
     black: "#451a03",
-    red: "#d4a8a0",            // Light rose for diff backgrounds
-    green: "#a8c4a0",          // Light sage for diff backgrounds
-    yellow: "#9a7a30",         // Muted gold (was #f59e0b)
-    blue: "#4a5a8a",           // Muted blue (was #2563eb)
-    magenta: "#8a4a9a",        // Muted purple (was #c026d3)
-    cyan: "#4a7a8a",           // Muted cyan (was #0891b2)
+    red: "#f8e0d8",            // Light rose - readable as bg with dark text
+    green: "#d8e8d0",          // Light sage - readable as bg with dark text
+    yellow: "#f0e8c8",         // Light gold - readable as bg with dark text
+    blue: "#d0d8e8",           // Light blue - readable as bg with dark text
+    magenta: "#e8d0f0",        // Light purple - readable as bg with dark text
+    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
     white: "#92400e",
     brightBlack: "#b45309",
-    brightRed: "#e0b8b0",
-    brightGreen: "#b8d4b0",
-    brightYellow: "#aa8a40",
-    brightBlue: "#5a6a9a",
-    brightMagenta: "#9a5aaa",
-    brightCyan: "#5a8a9a",
+    brightRed: "#b85040",       // Dark coral - readable as foreground text
+    brightGreen: "#4a8a40",     // Dark green - readable as foreground text
+    brightYellow: "#9a6a10",    // Dark amber - readable as foreground text
+    brightBlue: "#4a5a8a",      // Dark blue - readable as foreground text
+    brightMagenta: "#8a4090",   // Dark purple - readable as foreground text
+    brightCyan: "#2a7a80",      // Dark teal - readable as foreground text
     brightWhite: "#78350f",
   },
 };
@@ -799,20 +799,20 @@ const monoLight: ModePalette = {
     cursorAccent: "#fafafa",
     selectionBackground: "#e5e5e5",
     black: "#171717",
-    red: "#c4a0a0",            // Light rose for diff backgrounds
-    green: "#a0b8a0",          // Light sage for diff backgrounds
-    yellow: "#5a4a30",         // Muted dark gold (was #713f12)
-    blue: "#3a4a6a",           // Muted dark blue (was #1e3a8a)
-    magenta: "#5a3a5a",        // Muted dark magenta (was #701a75)
-    cyan: "#3a5a5a",           // Muted dark cyan (was #164e63)
+    red: "#e8d8d8",            // Light rose - readable as bg with dark text
+    green: "#d8e8d8",          // Light sage - readable as bg with dark text
+    yellow: "#e8e0d0",         // Light gold - readable as bg with dark text
+    blue: "#d0d8e8",           // Light blue - readable as bg with dark text
+    magenta: "#e0d0e0",        // Light magenta - readable as bg with dark text
+    cyan: "#d0e0e0",           // Light cyan - readable as bg with dark text
     white: "#525252",
     brightBlack: "#737373",
-    brightRed: "#d4b0b0",
-    brightGreen: "#b0c8b0",
-    brightYellow: "#6a5a40",
-    brightBlue: "#4a5a7a",
-    brightMagenta: "#6a4a6a",
-    brightCyan: "#4a6a6a",
+    brightRed: "#8a5050",       // Dark muted red - readable as foreground text
+    brightGreen: "#508a50",     // Dark muted green - readable as foreground text
+    brightYellow: "#8a7a40",    // Dark muted gold - readable as foreground text
+    brightBlue: "#505a8a",      // Dark muted blue - readable as foreground text
+    brightMagenta: "#7a507a",   // Dark muted magenta - readable as foreground text
+    brightCyan: "#507a7a",      // Dark muted cyan - readable as foreground text
     brightWhite: "#262626",
   },
 };
