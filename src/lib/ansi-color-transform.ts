@@ -149,6 +149,10 @@ type ColorReplacement =
 /**
  * Find a replacement color for the given RGB values
  * Returns semantic ANSI codes for theme-following colors, or RGB for specific mappings
+ *
+ * Theme-specific logic:
+ * - Light mode: Replace light foreground colors with dark (FG_DEFAULT), keep dark unchanged
+ * - Dark mode: Replace dark foreground colors with light (FG_DEFAULT), keep light unchanged
  */
 function findReplacement(
   r: number,
@@ -158,29 +162,40 @@ function findReplacement(
   isForeground: boolean,
   themeMode: ThemeMode
 ): ColorReplacement | null {
-  void themeMode; // Reserved for future theme-specific transformations
   const luminance = getLuminance(r, g, b);
 
-  // Use semantic colors for extreme light/dark values
+  // Use semantic colors for colors with poor contrast against the theme background
   // These automatically follow the xterm.js theme on theme changes
   if (isForeground) {
-    // Very light foreground → use theme's default foreground
-    if (luminance > 200) {
-      return { type: "semantic", code: SEMANTIC_COLORS.FG_DEFAULT };
-    }
-    // Very dark foreground → use theme's default foreground
-    if (luminance < 50) {
-      return { type: "semantic", code: SEMANTIC_COLORS.FG_DEFAULT };
+    if (themeMode === "light") {
+      // Light mode: Light foreground on light background = poor contrast
+      // Replace colors with luminance > 130 (catches cyan, yellow, bright colors)
+      if (luminance > 130) {
+        return { type: "semantic", code: SEMANTIC_COLORS.FG_DEFAULT };
+      }
+      // Dark foreground colors are fine in light mode - good contrast
+    } else {
+      // Dark mode: Dark foreground on dark background = poor contrast
+      // Replace colors with luminance < 70 (catches dark blues, purples, etc.)
+      if (luminance < 70) {
+        return { type: "semantic", code: SEMANTIC_COLORS.FG_DEFAULT };
+      }
+      // Light foreground colors are fine in dark mode - good contrast
     }
   } else {
-    // Dark background → use theme's default background
-    // Threshold 80 catches dark grays like rgb(55,55,55) which have lum=55
-    if (luminance < 80) {
-      return { type: "semantic", code: SEMANTIC_COLORS.BG_DEFAULT };
-    }
-    // Very light background → use theme's default background
-    if (luminance > 220) {
-      return { type: "semantic", code: SEMANTIC_COLORS.BG_DEFAULT };
+    // Background color handling
+    if (themeMode === "light") {
+      // Light mode: Dark backgrounds clash with light theme
+      if (luminance < 80) {
+        return { type: "semantic", code: SEMANTIC_COLORS.BG_DEFAULT };
+      }
+      // Very light background is fine in light mode
+    } else {
+      // Dark mode: Very light backgrounds clash with dark theme
+      if (luminance > 200) {
+        return { type: "semantic", code: SEMANTIC_COLORS.BG_DEFAULT };
+      }
+      // Dark background is fine in dark mode
     }
   }
 
@@ -206,7 +221,46 @@ const ANSI_24BIT_REGEX =
   /\x1b\[(?:([34]8);2;(\d{1,3});(\d{1,3});(\d{1,3}))((?:;(?:[34]8);2;\d{1,3};\d{1,3};\d{1,3})*)m/g;
 
 /**
- * Transform 24-bit true color ANSI sequences based on theme
+ * Regular expression to match 256-color palette ANSI sequences
+ *
+ * Matches:
+ * - \x1b[38;5;Nm - Set foreground to 256-color palette index N
+ * - \x1b[48;5;Nm - Set background to 256-color palette index N
+ */
+const ANSI_256_REGEX = /\x1b\[([34]8);5;(\d{1,3})m/g;
+
+/**
+ * Convert 256-color palette index to RGB
+ * - 0-15: Standard 16 colors (return null to skip - handled by theme)
+ * - 16-231: 6x6x6 RGB cube
+ * - 232-255: 24 grayscale shades
+ */
+function palette256ToRgb(index: number): { r: number; g: number; b: number } | null {
+  if (index < 16) {
+    // Standard 16 colors - handled by xterm theme, skip transformation
+    return null;
+  }
+
+  if (index < 232) {
+    // 6x6x6 color cube (indices 16-231)
+    const cubeIndex = index - 16;
+    const r = Math.floor(cubeIndex / 36);
+    const g = Math.floor((cubeIndex % 36) / 6);
+    const b = cubeIndex % 6;
+    // Convert 0-5 to actual RGB values: 0, 95, 135, 175, 215, 255
+    const toRgb = (v: number) => (v === 0 ? 0 : 55 + v * 40);
+    return { r: toRgb(r), g: toRgb(g), b: toRgb(b) };
+  }
+
+  // Grayscale (indices 232-255)
+  // Values: 8, 18, 28, ..., 238 (24 shades)
+  const gray = 8 + (index - 232) * 10;
+  return { r: gray, g: gray, b: gray };
+}
+
+/**
+ * Transform ANSI color sequences based on theme
+ * Handles both 24-bit true color and 256-color palette formats
  *
  * @param data - Raw terminal output containing ANSI sequences
  * @param themeMode - Current theme mode ("light" or "dark")
@@ -218,8 +272,34 @@ export function transformAnsiColors(data: string, themeMode: ThemeMode): string 
   const bgMappings =
     themeMode === "light" ? LIGHT_MODE_BG_MAPPINGS : DARK_MODE_BG_MAPPINGS;
 
-  // Transform each 24-bit color sequence
-  return data.replace(ANSI_24BIT_REGEX, (match, type, r, g, b, extra) => {
+  // First, transform 256-color palette sequences
+  let result = data.replace(ANSI_256_REGEX, (match, type, colorIndex) => {
+    const index = parseInt(colorIndex, 10);
+    const rgb = palette256ToRgb(index);
+
+    // Skip standard 16 colors (handled by xterm theme)
+    if (!rgb) {
+      return match;
+    }
+
+    const isForeground = type === "38";
+    const mappings = isForeground ? fgMappings : bgMappings;
+    const replacement = findReplacement(rgb.r, rgb.g, rgb.b, mappings, isForeground, themeMode);
+
+    if (replacement) {
+      if (replacement.type === "semantic") {
+        return replacement.code;
+      } else {
+        // Convert to 24-bit RGB sequence for better precision
+        return `\x1b[${type};2;${replacement.r};${replacement.g};${replacement.b}m`;
+      }
+    }
+
+    return match;
+  });
+
+  // Then, transform 24-bit color sequences
+  result = result.replace(ANSI_24BIT_REGEX, (match, type, r, g, b, extra) => {
     const rNum = parseInt(r, 10);
     const gNum = parseInt(g, 10);
     const bNum = parseInt(b, 10);
@@ -227,16 +307,11 @@ export function transformAnsiColors(data: string, themeMode: ThemeMode): string 
     // Determine if this is foreground (38) or background (48)
     const isForeground = type === "38";
     const mappings = isForeground ? fgMappings : bgMappings;
-    const luminance = getLuminance(rNum, gNum, bNum);
-
-    // DEBUG: Log all 24-bit color sequences
-    console.log(`[ANSI] ${isForeground ? "FG" : "BG"} rgb(${rNum},${gNum},${bNum}) lum=${luminance.toFixed(0)} mode=${themeMode}${extra ? ` extra=${extra}` : ""}`);
 
     const replacement = findReplacement(rNum, gNum, bNum, mappings, isForeground, themeMode);
 
     if (replacement) {
       if (replacement.type === "semantic") {
-        console.log(`  → semantic: ${replacement.code.replace(/\x1b/g, "\\x1b")}`);
         // Use semantic ANSI code that follows the xterm.js theme
         // If there's an extra color in the sequence, we need to handle it
         if (extra) {
@@ -245,16 +320,16 @@ export function transformAnsiColors(data: string, themeMode: ThemeMode): string 
         }
         return replacement.code;
       } else {
-        console.log(`  → rgb(${replacement.r},${replacement.g},${replacement.b})`);
         // Rebuild the escape sequence with new RGB color
         const newSequence = `\x1b[${type};2;${replacement.r};${replacement.g};${replacement.b}${extra}m`;
         return newSequence;
       }
     }
 
-    console.log(`  → (no transform)`);
     return match; // No replacement needed
   });
+
+  return result;
 }
 
 /**
