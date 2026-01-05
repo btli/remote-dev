@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle, Activity } from "react";
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle, useMemo, Activity } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
@@ -8,6 +8,7 @@ import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { ConnectionStatus } from "@/types/terminal";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
 
 const IMAGE_EXTENSIONS: Record<string, string> = {
@@ -83,6 +84,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     inactivityDelay: 3000, // 3 seconds of inactivity = command finished
   });
 
+  // Terminal theme from appearance context
+  const terminalTheme = useTerminalTheme();
+
   // FIX: Use refs for callbacks to avoid re-creating terminal on callback changes
   const onStatusChangeRef = useRef(onStatusChange);
   const onWebSocketReadyRef = useRef(onWebSocketReady);
@@ -98,6 +102,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   // This prevents race conditions where preferences load after terminal mounts.
   const fontSizeRef = useRef(fontSize);
   const fontFamilyRef = useRef(fontFamily);
+
+  // FIX: Use ref for terminal theme to avoid recreating terminal on theme changes.
+  // Theme updates are applied dynamically via terminal.options.theme
+  const terminalThemeRef = useRef(terminalTheme);
 
   // FIX: Use ref for environmentVars to prevent re-initialization on every render.
   // Environment variables are only used during initial WebSocket connection.
@@ -117,7 +125,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     fontFamilyRef.current = fontFamily;
     // Keep environmentVars in sync (only used during initial connection)
     environmentVarsRef.current = environmentVars;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars]);
+    // Keep theme ref in sync for pending terminal initialization
+    terminalThemeRef.current = terminalTheme;
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -163,11 +173,40 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       if (!mounted || !terminalRef.current) return;
 
+      // Build xterm.js theme from terminal palette
+      const theme = terminalThemeRef.current;
+      const xtermTheme = {
+        background: theme.background,
+        foreground: theme.foreground,
+        cursor: theme.cursor,
+        cursorAccent: theme.cursorAccent,
+        selectionBackground: theme.selectionBackground,
+        black: theme.black,
+        red: theme.red,
+        green: theme.green,
+        yellow: theme.yellow,
+        blue: theme.blue,
+        magenta: theme.magenta,
+        cyan: theme.cyan,
+        white: theme.white,
+        brightBlack: theme.brightBlack,
+        brightRed: theme.brightRed,
+        brightGreen: theme.brightGreen,
+        brightYellow: theme.brightYellow,
+        brightBlue: theme.brightBlue,
+        brightMagenta: theme.brightMagenta,
+        brightCyan: theme.brightCyan,
+        brightWhite: theme.brightWhite,
+      };
+
       terminal = new XTerm({
         cursorBlink: true,
+        cursorStyle: theme.cursorStyle,
         fontSize: fontSizeRef.current,
         fontFamily: fontFamilyRef.current,
+        theme: xtermTheme,
         allowProposedApi: true,
+        allowTransparency: true, // Required for opacity/glass effect
         scrollback: 10000,
         // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
         // Shift+click also works by default to bypass mouse mode
@@ -785,6 +824,41 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     return () => clearTimeout(timeoutId);
   }, [isActive]);
 
+  // Update terminal theme when appearance changes
+  useEffect(() => {
+    const terminal = xtermRef.current;
+    if (!terminal) return;
+
+    // Build xterm.js theme from terminal palette
+    const xtermTheme = {
+      background: terminalTheme.background,
+      foreground: terminalTheme.foreground,
+      cursor: terminalTheme.cursor,
+      cursorAccent: terminalTheme.cursorAccent,
+      selectionBackground: terminalTheme.selectionBackground,
+      black: terminalTheme.black,
+      red: terminalTheme.red,
+      green: terminalTheme.green,
+      yellow: terminalTheme.yellow,
+      blue: terminalTheme.blue,
+      magenta: terminalTheme.magenta,
+      cyan: terminalTheme.cyan,
+      white: terminalTheme.white,
+      brightBlack: terminalTheme.brightBlack,
+      brightRed: terminalTheme.brightRed,
+      brightGreen: terminalTheme.brightGreen,
+      brightYellow: terminalTheme.brightYellow,
+      brightBlue: terminalTheme.brightBlue,
+      brightMagenta: terminalTheme.brightMagenta,
+      brightCyan: terminalTheme.brightCyan,
+      brightWhite: terminalTheme.brightWhite,
+    };
+
+    // Apply theme and cursor style
+    terminal.options.theme = xtermTheme;
+    terminal.options.cursorStyle = terminalTheme.cursorStyle;
+  }, [terminalTheme]);
+
   // Search functions
   const findNext = useCallback(() => {
     if (!searchAddonRef.current || !searchQuery) return;
@@ -1014,12 +1088,24 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     xtermRef.current?.focus();
   }, []);
 
+  // Compute glass effect styles from terminal theme
+  const glassStyles = useMemo(() => {
+    const opacity = terminalTheme.opacity / 100; // Convert 0-100 to 0-1
+    const blur = terminalTheme.blur;
+    return {
+      opacity: opacity < 1 ? opacity : undefined,
+      backdropFilter: blur > 0 ? `blur(${blur}px)` : undefined,
+      WebkitBackdropFilter: blur > 0 ? `blur(${blur}px)` : undefined, // Safari
+    } as React.CSSProperties;
+  }, [terminalTheme.opacity, terminalTheme.blur]);
+
   return (
     <div
       ref={terminalRef}
       className={`h-full w-full rounded-lg overflow-hidden relative ${
         isDragging ? "ring-2 ring-blue-500 ring-opacity-50" : ""
       }`}
+      style={glassStyles}
       onMouseDown={handleContainerInteraction}
       onTouchStart={handleContainerInteraction}
       onDragOver={handleDragOver}

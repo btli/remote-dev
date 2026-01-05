@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import { Play, Pause, RotateCcw, X } from "lucide-react";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import type { ParsedRecording } from "@/types/recording";
 import { formatDuration } from "@/types/recording";
+import { useTerminalTheme } from "@/contexts/AppearanceContext";
 
 interface RecordingPlayerProps {
   recording: ParsedRecording;
@@ -38,6 +39,16 @@ export function RecordingPlayer({
   const eventIndexRef = useRef<number>(0);
   const lastRenderedTimeRef = useRef<number>(0);
 
+  // Terminal theme from appearance context
+  const terminalTheme = useTerminalTheme();
+  // Use ref to avoid recreating terminal on theme changes
+  const terminalThemeRef = useRef(terminalTheme);
+
+  // Keep theme ref in sync for pending terminal initialization
+  useEffect(() => {
+    terminalThemeRef.current = terminalTheme;
+  }, [terminalTheme]);
+
   // Initialize terminal
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -56,13 +67,42 @@ export function RecordingPlayer({
 
       if (!mounted || !terminalRef.current) return;
 
+      // Build xterm.js theme from terminal palette
+      const theme = terminalThemeRef.current;
+      const xtermTheme = {
+        background: theme.background,
+        foreground: theme.foreground,
+        cursor: theme.cursor,
+        cursorAccent: theme.cursorAccent,
+        selectionBackground: theme.selectionBackground,
+        black: theme.black,
+        red: theme.red,
+        green: theme.green,
+        yellow: theme.yellow,
+        blue: theme.blue,
+        magenta: theme.magenta,
+        cyan: theme.cyan,
+        white: theme.white,
+        brightBlack: theme.brightBlack,
+        brightRed: theme.brightRed,
+        brightGreen: theme.brightGreen,
+        brightYellow: theme.brightYellow,
+        brightBlue: theme.brightBlue,
+        brightMagenta: theme.brightMagenta,
+        brightCyan: theme.brightCyan,
+        brightWhite: theme.brightWhite,
+      };
+
       terminal = new XTerm({
         cursorBlink: false,
+        cursorStyle: theme.cursorStyle,
         fontSize,
         fontFamily,
+        theme: xtermTheme,
         cols: recording.terminalCols,
         rows: recording.terminalRows,
         disableStdin: true, // Read-only for playback
+        allowTransparency: true, // Required for opacity/glass effect
       });
 
       fitAddon = new FitAddon();
@@ -98,6 +138,52 @@ export function RecordingPlayer({
     terminal.options.fontFamily = fontFamily;
     fitAddonRef.current?.fit();
   }, [fontSize, fontFamily]);
+
+  // Update terminal theme when appearance changes
+  useEffect(() => {
+    const terminal = xtermRef.current;
+    if (!terminal) return;
+
+    // Build xterm.js theme from terminal palette
+    const xtermTheme = {
+      background: terminalTheme.background,
+      foreground: terminalTheme.foreground,
+      cursor: terminalTheme.cursor,
+      cursorAccent: terminalTheme.cursorAccent,
+      selectionBackground: terminalTheme.selectionBackground,
+      black: terminalTheme.black,
+      red: terminalTheme.red,
+      green: terminalTheme.green,
+      yellow: terminalTheme.yellow,
+      blue: terminalTheme.blue,
+      magenta: terminalTheme.magenta,
+      cyan: terminalTheme.cyan,
+      white: terminalTheme.white,
+      brightBlack: terminalTheme.brightBlack,
+      brightRed: terminalTheme.brightRed,
+      brightGreen: terminalTheme.brightGreen,
+      brightYellow: terminalTheme.brightYellow,
+      brightBlue: terminalTheme.brightBlue,
+      brightMagenta: terminalTheme.brightMagenta,
+      brightCyan: terminalTheme.brightCyan,
+      brightWhite: terminalTheme.brightWhite,
+    };
+
+    // Apply theme and cursor style
+    terminal.options.theme = xtermTheme;
+    terminal.options.cursorStyle = terminalTheme.cursorStyle;
+  }, [terminalTheme]);
+
+  // Compute glass effect styles from terminal theme
+  const glassStyles = useMemo(() => {
+    const opacity = terminalTheme.opacity / 100; // Convert 0-100 to 0-1
+    const blur = terminalTheme.blur;
+    return {
+      opacity: opacity < 1 ? opacity : undefined,
+      backdropFilter: blur > 0 ? `blur(${blur}px)` : undefined,
+      WebkitBackdropFilter: blur > 0 ? `blur(${blur}px)` : undefined, // Safari
+    } as React.CSSProperties;
+  }, [terminalTheme.opacity, terminalTheme.blur]);
 
   // Render events up to a given time
   const renderToTime = useCallback(
@@ -229,6 +315,7 @@ export function RecordingPlayer({
       <div
         ref={terminalRef}
         className="flex-1 overflow-hidden"
+        style={glassStyles}
       />
 
       {/* Controls */}
