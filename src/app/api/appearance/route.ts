@@ -6,6 +6,7 @@ import {
   getAllColorSchemes,
   AppearanceServiceError,
 } from "@/services/appearance-service";
+import { oklchToHex } from "@/lib/color-schemes";
 import type { UpdateAppearanceInput } from "@/types/appearance";
 
 /**
@@ -21,6 +22,8 @@ export const GET = withAuth(async (_request, { userId }) => {
 
     return NextResponse.json({
       settings,
+      // Use semantic colors for preview (not terminal colors, since terminal
+      // always uses dark palette even in light mode for CLI readability)
       schemes: schemes.map((s) => ({
         id: s.id,
         name: s.name,
@@ -28,17 +31,16 @@ export const GET = withAuth(async (_request, { userId }) => {
         category: s.category,
         isBuiltIn: s.isBuiltIn,
         sortOrder: s.sortOrder,
-        // Include preview colors for UI
         preview: {
           light: {
-            background: s.light.terminal.background,
-            foreground: s.light.terminal.foreground,
-            accent: s.light.terminal.blue,
+            background: oklchToHex(s.light.semantic.background),
+            foreground: oklchToHex(s.light.semantic.foreground),
+            accent: oklchToHex(s.light.semantic.primary),
           },
           dark: {
-            background: s.dark.terminal.background,
-            foreground: s.dark.terminal.foreground,
-            accent: s.dark.terminal.blue,
+            background: oklchToHex(s.dark.semantic.background),
+            foreground: oklchToHex(s.dark.semantic.foreground),
+            accent: oklchToHex(s.dark.semantic.primary),
           },
         },
       })),

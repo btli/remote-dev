@@ -461,6 +461,78 @@ export async function validateToken(accessToken: string): Promise<boolean> {
   }
 }
 
+/**
+ * Delete a repository from cache
+ * @param repoId - Database repository ID
+ * @param userId - User ID for ownership verification
+ * @param removeLocalFiles - Whether to also delete local clone
+ */
+export async function deleteRepositoryCache(
+  repoId: string,
+  userId: string,
+  removeLocalFiles: boolean = false
+): Promise<void> {
+  const { rmSync } = await import("fs");
+
+  // Get repo to verify ownership and get local path
+  const repo = await db.query.githubRepositories.findFirst({
+    where: and(
+      eq(githubRepositories.id, repoId),
+      eq(githubRepositories.userId, userId)
+    ),
+  });
+
+  if (!repo) {
+    throw new GitHubServiceError("Repository not found", "NOT_FOUND", 404);
+  }
+
+  // Remove local files if requested
+  if (removeLocalFiles && repo.localPath && existsSync(repo.localPath)) {
+    try {
+      rmSync(repo.localPath, { recursive: true, force: true });
+    } catch {
+      // Continue even if we can't delete files
+    }
+  }
+
+  // Delete from database
+  await db.delete(githubRepositories).where(eq(githubRepositories.id, repoId));
+}
+
+/**
+ * Clear all cached repositories for a user
+ * @param userId - User ID
+ * @param removeLocalFiles - Whether to also delete local clones
+ */
+export async function clearAllRepositoryCache(
+  userId: string,
+  removeLocalFiles: boolean = false
+): Promise<void> {
+  const { rmSync } = await import("fs");
+
+  // Get all repos to potentially remove local files
+  if (removeLocalFiles) {
+    const repos = await db.query.githubRepositories.findMany({
+      where: eq(githubRepositories.userId, userId),
+    });
+
+    for (const repo of repos) {
+      if (repo.localPath && existsSync(repo.localPath)) {
+        try {
+          rmSync(repo.localPath, { recursive: true, force: true });
+        } catch {
+          // Continue even if we can't delete some files
+        }
+      }
+    }
+  }
+
+  // Delete all from database
+  await db
+    .delete(githubRepositories)
+    .where(eq(githubRepositories.userId, userId));
+}
+
 // Helper to map database result to TypeScript type
 function mapDbRepoToCachedRepository(
   dbRepo: typeof githubRepositories.$inferSelect

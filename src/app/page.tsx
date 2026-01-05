@@ -17,13 +17,7 @@ import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
 import { SessionManager } from "@/components/session/SessionManager";
-import { GitHubStatusIcon } from "@/components/header/GitHubStatusIcon";
-import { SecretsStatusButton } from "@/components/header/SecretsStatusButton";
-import { HeaderUserMenu } from "@/components/header/HeaderUserMenu";
-import { AppearanceModeToggleCompact } from "@/components/appearance";
-import { Button } from "@/components/ui/button";
-import { LogOut } from "lucide-react";
-import Image from "next/image";
+import { Header } from "@/components/header/Header";
 import type { TerminalSession } from "@/types/session";
 
 export default async function Home() {
@@ -89,51 +83,14 @@ export default async function Home() {
                           <ScheduleProvider>
                           <div className="flex h-screen flex-col bg-background">
                           {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
-                          <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-border bg-card/30 backdrop-blur-sm">
-                            {/* Logo */}
-                            <div className="flex items-center gap-3">
-                              <Image
-                                src="/favicon.svg"
-                                alt="Remote Dev"
-                                width={32}
-                                height={32}
-                                className="rounded-lg"
-                                unoptimized
-                              />
-                              <h1 className="text-lg font-semibold text-foreground">Remote Dev</h1>
-                            </div>
-
-                            {/* User info and actions */}
-                            <div className="flex items-center gap-4">
-                              {/* Connection status icons */}
-                              <div className="flex items-center gap-3 pr-2 border-r border-border">
-                                <GitHubStatusIcon isConnected={isGitHubConnected} />
-                                <SecretsStatusButton />
-                                <AppearanceModeToggleCompact />
-                              </div>
-
-                              {/* User settings */}
-                              <HeaderUserMenu email={session.user.email || ""} />
-
-                              {/* Sign out */}
-                              <form
-                                action={async () => {
-                                  "use server";
-                                  await signOut();
-                                }}
-                              >
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  type="submit"
-                                  className="text-muted-foreground hover:text-foreground"
-                                >
-                                  <LogOut className="w-4 h-4 mr-2" />
-                                  Sign out
-                                </Button>
-                              </form>
-                            </div>
-                          </header>
+                          <Header
+                            isGitHubConnected={isGitHubConnected}
+                            userEmail={session.user.email || ""}
+                            onSignOut={async () => {
+                              "use server";
+                              await signOut();
+                            }}
+                          />
 
                           {/* Main content */}
                           <SessionManager isGitHubConnected={isGitHubConnected} />
