@@ -94,10 +94,15 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
       const data = await response.json();
       const profileList: AgentProfile[] = data.profiles || [];
-      const links: FolderProfileLink[] = data.folderLinks || [];
+      const rawLinks = data.folderLinks || [];
+
+      // Handle both array format (new) and object format (legacy) for folderLinks
+      const linksMap: Map<string, string> = Array.isArray(rawLinks)
+        ? new Map(rawLinks.map((l: FolderProfileLink) => [l.folderId, l.profileId]))
+        : new Map(Object.entries(rawLinks));
 
       setProfiles(profileList);
-      setFolderProfileLinks(new Map(links.map((l) => [l.folderId, l.profileId])));
+      setFolderProfileLinks(linksMap);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
