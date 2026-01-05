@@ -296,7 +296,7 @@ export async function unlinkFolderFromProfile(folderId: string): Promise<void> {
  */
 export async function getFolderProfileLinks(
   userId: string
-): Promise<Record<string, string>> {
+): Promise<Array<{ folderId: string; profileId: string }>> {
   // Get all profiles for user to verify ownership
   const userProfiles = await db.query.agentProfiles.findMany({
     where: eq(agentProfiles.userId, userId),
@@ -307,15 +307,10 @@ export async function getFolderProfileLinks(
   // Get all links
   const links = await db.query.folderProfileLinks.findMany();
 
-  // Filter to only links for user's profiles
-  const result: Record<string, string> = {};
-  for (const link of links) {
-    if (profileIds.has(link.profileId)) {
-      result[link.folderId] = link.profileId;
-    }
-  }
-
-  return result;
+  // Filter to only links for user's profiles and return as array
+  return links
+    .filter((link) => profileIds.has(link.profileId))
+    .map((link) => ({ folderId: link.folderId, profileId: link.profileId }));
 }
 
 /**
