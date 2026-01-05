@@ -275,7 +275,7 @@ export function ProfileConfigTab({ profileId, provider }: ProfileConfigTabProps)
         {/* No overflow here - let child config editors handle their own scrolling */}
         <div className="mt-4 flex-1 min-h-0">
           {ALL_AGENT_TYPES.map((type) => (
-            <TabsContent key={type} value={type} className="m-0 h-full">
+            <TabsContent key={type} value={type} className="m-0 h-full min-h-0">
               <SingleAgentConfig profileId={profileId} agentType={type} />
             </TabsContent>
           ))}

@@ -7,8 +7,8 @@
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "concurrently --kill-others --kill-signal SIGTERM -n next,term -c blue,green \"bun run dev:next\" \"bun run dev:terminal\"",
-    "dev:next": "next dev --turbopack",
-    "dev:terminal": "TERMINAL_PORT=3001 tsx src/server/index.ts",
+    "dev:next": "next dev --turbopack -p 6001",
+    "dev:terminal": "TERMINAL_PORT=6002 tsx src/server/index.ts",
     "build": "next build",
     "start": "next start -p 6001",
     "start:terminal": "TERMINAL_PORT=6002 tsx src/server/index.ts",

@@ -294,7 +294,12 @@ async function handleInternalApi(
   return false;
 }
 
-export function createTerminalServer(port: number = 3001) {
+interface ServerOptions {
+  port?: number;
+  socket?: string;
+}
+
+export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   // Check tmux is installed at startup
   if (!checkTmuxInstalled()) {
     console.error("ERROR: tmux is not installed. Please install with: brew install tmux");
@@ -318,11 +323,21 @@ export function createTerminalServer(port: number = 3001) {
   // Attach WebSocket server to HTTP server
   const wss = new WebSocketServer({ server });
 
-  server.listen(port, () => {
-    console.log(`Terminal server running on http://localhost:${port}`);
-    console.log(`  - WebSocket: ws://localhost:${port}`);
-    console.log(`  - Internal API: http://localhost:${port}/internal/scheduler/*`);
-  });
+  // Listen on socket or port
+  if (options.socket) {
+    server.listen(options.socket, () => {
+      console.log(`Terminal server running on unix:${options.socket}`);
+      console.log(`  - WebSocket: unix:${options.socket}`);
+      console.log(`  - Internal API: unix:${options.socket}/internal/scheduler/*`);
+    });
+  } else {
+    const port = options.port || 6002;
+    server.listen(port, () => {
+      console.log(`Terminal server running on http://localhost:${port}`);
+      console.log(`  - WebSocket: ws://localhost:${port}`);
+      console.log(`  - Internal API: http://localhost:${port}/internal/scheduler/*`);
+    });
+  }
 
   wss.on("connection", (ws, req) => {
     const query = parse(req.url || "", true).query;

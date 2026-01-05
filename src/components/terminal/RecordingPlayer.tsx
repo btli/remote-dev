@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
-import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { Play, Pause, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -25,8 +24,6 @@ export function RecordingPlayer({
   fontFamily = "'JetBrainsMono Nerd Font', 'JetBrains Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
   onClose,
 }: RecordingPlayerProps) {
-  // Get terminal theme from appearance context
-  const terminalTheme = useTerminalTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
@@ -39,6 +36,7 @@ export function RecordingPlayer({
   const startTimeRef = useRef<number | null>(null);
   const pausedAtRef = useRef<number>(0);
   const eventIndexRef = useRef<number>(0);
+  const lastRenderedTimeRef = useRef<number>(0);
 
   // Initialize terminal
   useEffect(() => {
@@ -62,7 +60,6 @@ export function RecordingPlayer({
         cursorBlink: false,
         fontSize,
         fontFamily,
-        theme: terminalTheme,
         cols: recording.terminalCols,
         rows: recording.terminalRows,
         disableStdin: true, // Read-only for playback
@@ -90,18 +87,17 @@ export function RecordingPlayer({
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [recording, fontSize, fontFamily, terminalTheme]);
+  }, [recording, fontSize, fontFamily]);
 
-  // Update terminal options when preferences change
+  // Update terminal options when font preferences change
   useEffect(() => {
     const terminal = xtermRef.current;
     if (!terminal) return;
 
-    terminal.options.theme = terminalTheme;
     terminal.options.fontSize = fontSize;
     terminal.options.fontFamily = fontFamily;
     fitAddonRef.current?.fit();
-  }, [terminalTheme, fontSize, fontFamily]);
+  }, [fontSize, fontFamily]);
 
   // Render events up to a given time
   const renderToTime = useCallback(
@@ -111,8 +107,8 @@ export function RecordingPlayer({
 
       const events = recording.data.events;
 
-      // If seeking backwards, reset and replay
-      if (targetTime < currentTime) {
+      // If seeking backwards, reset and replay from the beginning
+      if (targetTime < lastRenderedTimeRef.current) {
         terminal.reset();
         eventIndexRef.current = 0;
       }
@@ -126,9 +122,10 @@ export function RecordingPlayer({
         eventIndexRef.current++;
       }
 
+      lastRenderedTimeRef.current = targetTime;
       setCurrentTime(targetTime);
     },
-    [recording.data.events, currentTime]
+    [recording.data.events]
   );
 
   // Playback loop
@@ -159,7 +156,8 @@ export function RecordingPlayer({
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-      pausedAtRef.current = currentTime;
+      // Use the ref value, not state, to avoid dependency on currentTime
+      pausedAtRef.current = lastRenderedTimeRef.current;
       startTimeRef.current = null;
     }
 
@@ -168,12 +166,13 @@ export function RecordingPlayer({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [isPlaying, tick, currentTime]);
+  }, [isPlaying, tick]);
 
   const handleRestart = useCallback(() => {
     setIsPlaying(false);
     pausedAtRef.current = 0;
     eventIndexRef.current = 0;
+    lastRenderedTimeRef.current = 0;
     xtermRef.current?.reset();
     setCurrentTime(0);
   }, []);
@@ -230,7 +229,6 @@ export function RecordingPlayer({
       <div
         ref={terminalRef}
         className="flex-1 overflow-hidden"
-        style={{ backgroundColor: terminalTheme.background }}
       />
 
       {/* Controls */}

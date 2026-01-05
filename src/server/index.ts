@@ -9,12 +9,18 @@ import {
 // Load .env.local to match Next.js environment
 config({ path: ".env.local" });
 
-const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "3001");
+// Support both port and socket modes
+const TERMINAL_SOCKET = process.env.TERMINAL_SOCKET;
+const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "6002");
 const MCP_ENABLED = process.env.MCP_ENABLED === "true";
 
 async function startServer() {
-  // Start the terminal WebSocket server
-  createTerminalServer(TERMINAL_PORT);
+  // Start the terminal WebSocket server (socket mode takes precedence)
+  if (TERMINAL_SOCKET) {
+    createTerminalServer({ socket: TERMINAL_SOCKET });
+  } else {
+    createTerminalServer({ port: TERMINAL_PORT });
+  }
 
   // Start the scheduler orchestrator
   try {
