@@ -96,3 +96,36 @@ export const POST = withAuth(async (request, { userId, params }) => {
     repositoryId: repository.id,
   });
 });
+
+/**
+ * DELETE /api/github/repositories/:id - Delete repository from cache
+ * Accepts either database UUID or GitHub numeric ID
+ *
+ * Query params:
+ * - removeFiles: boolean - Whether to also delete local clone (default: false)
+ */
+export const DELETE = withAuth(async (request, { userId, params }) => {
+  const { searchParams } = new URL(request.url);
+  const removeFiles = searchParams.get("removeFiles") === "true";
+
+  const repository = await getRepositoryByIdOrGitHubId(params!.id, userId);
+
+  if (!repository) {
+    return errorResponse("Repository not found", 404);
+  }
+
+  try {
+    await GitHubService.deleteRepositoryCache(repository.id, userId, removeFiles);
+
+    return NextResponse.json({
+      success: true,
+      message: "Repository removed from cache",
+      removedFiles: removeFiles && repository.localPath ? true : false,
+    });
+  } catch (error) {
+    if (error instanceof GitHubService.GitHubServiceError) {
+      return errorResponse(error.message, error.statusCode || 500, error.code);
+    }
+    throw error;
+  }
+});

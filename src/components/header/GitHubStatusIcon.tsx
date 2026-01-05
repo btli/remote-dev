@@ -4,7 +4,7 @@
  * GitHubStatusIcon - Icon-only GitHub connection indicator
  *
  * Shows green when connected, gray when disconnected.
- * Clicking opens the GitHub OAuth flow when disconnected.
+ * Clicking always opens the GitHub maintenance modal.
  */
 
 import { Github } from "lucide-react";
@@ -12,24 +12,18 @@ import { cn } from "@/lib/utils";
 
 interface GitHubStatusIconProps {
   isConnected: boolean;
+  onClick?: () => void;
 }
 
-export function GitHubStatusIcon({ isConnected }: GitHubStatusIconProps) {
-  const handleClick = () => {
-    if (!isConnected) {
-      window.location.href = "/api/auth/github/link";
-    }
-  };
-
+export function GitHubStatusIcon({ isConnected, onClick }: GitHubStatusIconProps) {
   return (
     <button
-      onClick={handleClick}
+      onClick={onClick}
       className={cn(
-        "flex items-center transition-colors",
-        "hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-        !isConnected && "cursor-pointer"
+        "flex items-center transition-colors cursor-pointer",
+        "hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       )}
-      title={isConnected ? "GitHub Connected" : "Connect GitHub"}
+      title="GitHub Maintenance"
     >
       <Github
         className={cn(

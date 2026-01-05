@@ -562,6 +562,11 @@
   display: none;
 }
 
+/* xterm.js container - ensure it fills parent height */
+.terminal.xterm {
+  height: 100%;
+}
+
 /* Hide xterm scrollbar */
 .xterm-viewport {
   scrollbar-width: none; /* Firefox */
