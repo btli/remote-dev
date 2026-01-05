@@ -427,6 +427,18 @@ React Contexts in `src/contexts/`:
 - `PUT /api/profiles/:id/appearance` - Update profile appearance (mode, schemes, terminal settings)
 - `DELETE /api/profiles/:id/appearance` - Reset profile appearance to defaults
 
+## Quick Setup
+
+Use the init script for guided setup:
+```bash
+./scripts/init.sh
+```
+
+Or with options:
+```bash
+./scripts/init.sh --email your@email.com --port 6001 --terminal-port 6002
+```
+
 ## Adding Authorized Users
 
 Set the `AUTHORIZED_USERS` environment variable with comma-separated emails:
@@ -439,14 +451,15 @@ AUTHORIZED_USERS="user@example.com,another@example.com" bun run db:seed
 Required in `.env.local`:
 ```bash
 AUTH_SECRET=<generate with: openssl rand -base64 32>
+PORT=6001
+TERMINAL_PORT=6002
+NEXTAUTH_URL=http://localhost:6001
 ```
 
 Optional (for GitHub integration):
 ```bash
 GITHUB_CLIENT_ID=<your-client-id>
 GITHUB_CLIENT_SECRET=<your-client-secret>
-TERMINAL_PORT=3001
-NEXTAUTH_URL=http://localhost:3000
 ```
 
 For database seeding:

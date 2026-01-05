@@ -65,27 +65,26 @@ This installs all Node.js dependencies including:
 
 ### 3. Configure Environment
 
-Copy the example environment file:
+Create `.env.local` with your settings:
 
 ```bash
-cp .env.example .env.local
-```
+# Required: Auth secret (generate with: openssl rand -base64 32)
+AUTH_SECRET=<your-generated-secret>
 
-Edit `.env.local` with your settings:
-
-```bash
-# Required: Generate a secret key
-AUTH_SECRET=$(openssl rand -base64 32)
+# Server ports (customize as needed)
+PORT=6001
+TERMINAL_PORT=6002
+NEXTAUTH_URL=http://localhost:6001
 
 # Optional: GitHub OAuth (see GitHub Setup below)
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 ```
 
-Generate `AUTH_SECRET` automatically:
+Or use the init script for guided setup (recommended):
 
 ```bash
-echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env.local
+./scripts/init.sh
 ```
 
 ### 4. Initialize Database
@@ -116,9 +115,42 @@ AUTHORIZED_USERS="user1@example.com,user2@example.com" bun run db:seed
 bun run dev
 ```
 
-This starts both servers:
-- Next.js on http://localhost:3000
-- Terminal server on ws://localhost:3001
+This starts both servers using ports from `.env.local`:
+- Next.js on http://localhost:6001 (or `$PORT`)
+- Terminal server on ws://localhost:6002 (or `$TERMINAL_PORT`)
+
+## Quick Setup with Init Script
+
+For a streamlined setup experience, use the init script:
+
+```bash
+./scripts/init.sh
+```
+
+The script will:
+1. Check and install prerequisites (bun, tmux)
+2. Install dependencies
+3. Generate `.env.local` with secure defaults
+4. Prompt for GitHub OAuth credentials (optional)
+5. Initialize the database
+6. Add authorized users
+7. Start the development server
+
+### Init Script Options
+
+```bash
+# Full interactive setup
+./scripts/init.sh
+
+# Skip prompts, use defaults
+./scripts/init.sh --defaults
+
+# Specify authorized email directly
+./scripts/init.sh --email your@email.com
+
+# Custom ports
+./scripts/init.sh --port 3000 --terminal-port 3001
+```
 
 ## GitHub Integration Setup
 
@@ -131,13 +163,13 @@ GitHub integration enables:
 
 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
 2. Click **"New OAuth App"**
-3. Fill in the form:
+3. Fill in the form (adjust port if using custom `$PORT`):
 
 | Field | Value |
 |-------|-------|
 | Application name | `Remote Dev` |
-| Homepage URL | `http://localhost:3000` |
-| Authorization callback URL | `http://localhost:3000/api/auth/github/callback` |
+| Homepage URL | `http://localhost:6001` |
+| Authorization callback URL | `http://localhost:6001/api/auth/github/callback` |
 
 4. Click **"Register application"**
 5. Copy the **Client ID**
@@ -294,8 +326,9 @@ sudo apt install tmux
 
 ### GitHub OAuth errors
 
-1. Verify callback URL matches exactly:
-   `http://localhost:3000/api/auth/github/callback`
+1. Verify callback URL matches your port:
+   `http://localhost:6001/api/auth/github/callback`
+   (adjust port to match your `$PORT` in `.env.local`)
 
 2. Check credentials in `.env.local`
 
@@ -320,11 +353,40 @@ sudo apt install tmux
    tmux list-sessions | grep rdv- | cut -d: -f1 | xargs -I{} tmux kill-session -t {}
    ```
 
+## MCP Server Integration
+
+Remote Dev includes configuration for the Next.js MCP (Model Context Protocol) server, which enables AI coding assistants to interact with your development server.
+
+### Configuration
+
+The `.mcp.json` file at the project root configures the MCP server:
+
+```json
+{
+  "mcpServers": {
+    "next-devtools": {
+      "command": "npx",
+      "args": ["-y", "next-devtools-mcp@latest"]
+    }
+  }
+}
+```
+
+### Usage
+
+When running `bun run dev`, the MCP server automatically:
+1. Discovers your running Next.js instance
+2. Provides context to AI coding assistants
+3. Enables enhanced development workflows
+
+For more details, see the [Next.js MCP documentation](https://nextjs.org/docs/app/guides/mcp).
+
 ## File Locations
 
 | File | Purpose |
 |------|---------|
 | `.env.local` | Environment variables |
+| `.mcp.json` | MCP server configuration |
 | `sqlite.db` | SQLite database |
 | `~/.remote-dev/repos/` | Cloned repositories |
 
