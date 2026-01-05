@@ -1,0 +1,261 @@
+#!/bin/bash
+
+# Remote Dev - Initialization Script
+# This script sets up the development environment for Remote Dev
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default values
+DEFAULT_PORT=6001
+DEFAULT_TERMINAL_PORT=6002
+USE_DEFAULTS=false
+EMAIL=""
+PORT=""
+TERMINAL_PORT=""
+SKIP_START=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --defaults)
+            USE_DEFAULTS=true
+            shift
+            ;;
+        --email)
+            EMAIL="$2"
+            shift 2
+            ;;
+        --port)
+            PORT="$2"
+            shift 2
+            ;;
+        --terminal-port)
+            TERMINAL_PORT="$2"
+            shift 2
+            ;;
+        --skip-start)
+            SKIP_START=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [options]"
+            echo ""
+            echo "Options:"
+            echo "  --defaults        Use default values, skip prompts"
+            echo "  --email EMAIL     Set authorized user email"
+            echo "  --port PORT       Set Next.js port (default: 6001)"
+            echo "  --terminal-port   Set terminal server port (default: 6002)"
+            echo "  --skip-start      Skip starting dev server at the end"
+            echo "  -h, --help        Show this help message"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+echo -e "${BLUE}"
+echo "╔══════════════════════════════════════════╗"
+echo "║       Remote Dev - Setup Script          ║"
+echo "╚══════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# Function to prompt user
+prompt() {
+    local prompt_text="$1"
+    local default_value="$2"
+    local var_name="$3"
+
+    if [ "$USE_DEFAULTS" = true ] && [ -n "$default_value" ]; then
+        eval "$var_name='$default_value'"
+        return
+    fi
+
+    if [ -n "$default_value" ]; then
+        read -p "$prompt_text [$default_value]: " input
+        eval "$var_name='${input:-$default_value}'"
+    else
+        read -p "$prompt_text: " input
+        eval "$var_name='$input'"
+    fi
+}
+
+# Function to check if command exists
+check_command() {
+    if command -v "$1" &> /dev/null; then
+        echo -e "${GREEN}✓${NC} $1 found"
+        return 0
+    else
+        echo -e "${RED}✗${NC} $1 not found"
+        return 1
+    fi
+}
+
+# Step 1: Check prerequisites
+echo -e "\n${YELLOW}Step 1: Checking prerequisites...${NC}\n"
+
+# Check bun
+if ! check_command "bun"; then
+    echo -e "${YELLOW}Installing bun...${NC}"
+    curl -fsSL https://bun.sh/install | bash
+    export PATH="$HOME/.bun/bin:$PATH"
+fi
+
+# Check tmux
+if ! check_command "tmux"; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo -e "${YELLOW}Installing tmux via Homebrew...${NC}"
+        if ! check_command "brew"; then
+            echo -e "${RED}Homebrew not found. Please install tmux manually:${NC}"
+            echo "  brew install tmux"
+            exit 1
+        fi
+        brew install tmux
+    else
+        echo -e "${RED}tmux not found. Please install it:${NC}"
+        echo "  Ubuntu/Debian: sudo apt install tmux"
+        echo "  Fedora: sudo dnf install tmux"
+        exit 1
+    fi
+fi
+
+# Check git
+check_command "git" || {
+    echo -e "${RED}Git is required. Please install it first.${NC}"
+    exit 1
+}
+
+# Step 2: Install dependencies
+echo -e "\n${YELLOW}Step 2: Installing dependencies...${NC}\n"
+bun install
+
+# Step 3: Configure environment
+echo -e "\n${YELLOW}Step 3: Configuring environment...${NC}\n"
+
+ENV_FILE=".env.local"
+
+if [ -f "$ENV_FILE" ]; then
+    echo -e "${YELLOW}Existing .env.local found.${NC}"
+    if [ "$USE_DEFAULTS" = false ]; then
+        read -p "Overwrite? (y/N): " overwrite
+        if [[ ! "$overwrite" =~ ^[Yy]$ ]]; then
+            echo "Keeping existing configuration."
+        else
+            rm "$ENV_FILE"
+        fi
+    fi
+fi
+
+if [ ! -f "$ENV_FILE" ]; then
+    # Generate AUTH_SECRET
+    AUTH_SECRET=$(openssl rand -base64 32)
+
+    # Get port configuration
+    [ -z "$PORT" ] && prompt "Next.js port" "$DEFAULT_PORT" PORT
+    [ -z "$TERMINAL_PORT" ] && prompt "Terminal server port" "$DEFAULT_TERMINAL_PORT" TERMINAL_PORT
+
+    # GitHub OAuth (optional)
+    GITHUB_CLIENT_ID=""
+    GITHUB_CLIENT_SECRET=""
+
+    if [ "$USE_DEFAULTS" = false ]; then
+        echo ""
+        echo -e "${BLUE}GitHub OAuth Setup (optional - press Enter to skip)${NC}"
+        echo "Create an OAuth app at: https://github.com/settings/developers"
+        echo "Callback URL: http://localhost:$PORT/api/auth/github/callback"
+        echo ""
+        read -p "GitHub Client ID: " GITHUB_CLIENT_ID
+        if [ -n "$GITHUB_CLIENT_ID" ]; then
+            read -p "GitHub Client Secret: " GITHUB_CLIENT_SECRET
+        fi
+    fi
+
+    # Write .env.local
+    cat > "$ENV_FILE" << EOF
+# Generated by init.sh on $(date)
+AUTH_SECRET=$AUTH_SECRET
+
+# Server ports
+PORT=$PORT
+TERMINAL_PORT=$TERMINAL_PORT
+NEXT_PUBLIC_TERMINAL_PORT=$TERMINAL_PORT
+NEXTAUTH_URL=http://localhost:$PORT
+
+# GitHub OAuth (optional)
+GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
+GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
+EOF
+
+    echo -e "${GREEN}✓${NC} Created .env.local"
+fi
+
+# Step 4: Initialize database
+echo -e "\n${YELLOW}Step 4: Initializing database...${NC}\n"
+bun run db:push
+
+# Step 5: Add authorized users
+echo -e "\n${YELLOW}Step 5: Adding authorized users...${NC}\n"
+
+if [ -z "$EMAIL" ] && [ "$USE_DEFAULTS" = false ]; then
+    read -p "Enter your email address for authorization: " EMAIL
+fi
+
+if [ -n "$EMAIL" ]; then
+    AUTHORIZED_USERS="$EMAIL" bun run db:seed
+    echo -e "${GREEN}✓${NC} Added authorized user: $EMAIL"
+else
+    echo -e "${YELLOW}⚠${NC} No email provided. Add users later with:"
+    echo "  AUTHORIZED_USERS=\"your@email.com\" bun run db:seed"
+fi
+
+# Step 6: Build check
+echo -e "\n${YELLOW}Step 6: Verifying build...${NC}\n"
+bun run build
+
+# Done!
+echo -e "\n${GREEN}"
+echo "╔══════════════════════════════════════════╗"
+echo "║         Setup Complete!                  ║"
+echo "╚══════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# Load port from .env.local for display
+source "$ENV_FILE" 2>/dev/null || true
+
+echo -e "Configuration:"
+echo -e "  Next.js:    http://localhost:${PORT:-6001}"
+echo -e "  Terminal:   ws://localhost:${TERMINAL_PORT:-6002}"
+echo ""
+
+if [ -n "$GITHUB_CLIENT_ID" ]; then
+    echo -e "  ${GREEN}✓${NC} GitHub OAuth configured"
+else
+    echo -e "  ${YELLOW}⚠${NC} GitHub OAuth not configured (optional)"
+fi
+
+echo ""
+echo -e "To start the development server:"
+echo -e "  ${BLUE}bun run dev${NC}"
+echo ""
+
+if [ "$SKIP_START" = false ]; then
+    if [ "$USE_DEFAULTS" = true ]; then
+        start_server="y"
+    else
+        read -p "Start development server now? (Y/n): " start_server
+    fi
+
+    if [[ ! "$start_server" =~ ^[Nn]$ ]]; then
+        echo -e "\n${YELLOW}Starting development server...${NC}\n"
+        exec bun run dev
+    fi
+fi

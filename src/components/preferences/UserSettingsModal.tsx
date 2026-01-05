@@ -144,7 +144,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[550px] max-h-[85vh] flex flex-col bg-popover/95 backdrop-blur-xl border-border">
+      <DialogContent className="sm:max-w-[600px] max-h-[85vh] flex flex-col bg-popover/95 backdrop-blur-xl border-border">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-foreground">
             <Settings className="w-5 h-5 text-primary" />
@@ -156,26 +156,26 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
         </DialogHeader>
 
         <Tabs defaultValue="terminal" className="mt-4 flex-1 flex flex-col min-h-0 overflow-hidden">
-          <TabsList className="grid w-full grid-cols-5 bg-muted/50 shrink-0">
-            <TabsTrigger value="terminal" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
-              <Terminal className="w-4 h-4 mr-1.5" />
-              Terminal
+          <TabsList className="inline-flex w-full justify-center gap-0.5 bg-muted/50 h-auto p-1 rounded-lg shrink-0 overflow-x-auto">
+            <TabsTrigger value="terminal" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
+              <Terminal className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Terminal</span>
             </TabsTrigger>
-            <TabsTrigger value="appearance" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
-              <Palette className="w-4 h-4 mr-1.5" />
-              Appearance
+            <TabsTrigger value="appearance" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
+              <Palette className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Appearance</span>
             </TabsTrigger>
-            <TabsTrigger value="agents" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
-              <Bot className="w-4 h-4 mr-1.5" />
-              Agents
+            <TabsTrigger value="agents" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
+              <Bot className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Agents</span>
             </TabsTrigger>
-            <TabsTrigger value="project" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
-              <Folder className="w-4 h-4 mr-1.5" />
-              Project
+            <TabsTrigger value="project" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
+              <Folder className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Project</span>
             </TabsTrigger>
-            <TabsTrigger value="system" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
-              <Server className="w-4 h-4 mr-1.5" />
-              System
+            <TabsTrigger value="system" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
+              <Server className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">System</span>
             </TabsTrigger>
           </TabsList>
 

@@ -98,6 +98,7 @@ export default async function Home() {
                                 width={32}
                                 height={32}
                                 className="rounded-lg"
+                                unoptimized
                               />
                               <h1 className="text-lg font-semibold text-foreground">Remote Dev</h1>
                             </div>
