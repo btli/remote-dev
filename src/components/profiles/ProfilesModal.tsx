@@ -290,7 +290,8 @@ export function ProfilesModal({
 
                 {/* Config Tab - Agent-specific settings */}
                 {/* Note: No ScrollArea wrapper - config editors handle their own scrolling */}
-                <TabsContent value="config" className="h-full m-0 overflow-hidden">
+                {/* min-h-0 is critical for nested flexbox scrolling */}
+                <TabsContent value="config" className="h-full m-0 overflow-hidden min-h-0">
                   {selectedProfileId && selectedProfile && (
                     <ProfileConfigTab
                       profileId={selectedProfileId}

@@ -9,33 +9,51 @@
  * Modes: dev (default), prod
  *
  * Examples:
- *   bun run scripts/rdv.ts start dev     # Start dev servers (ports 3000, 3001)
- *   bun run scripts/rdv.ts start prod    # Start prod servers (ports 6001, 6002)
+ *   bun run scripts/rdv.ts start dev     # Start dev servers (ports 6001, 6002)
+ *   bun run scripts/rdv.ts start prod    # Start prod servers (Unix sockets)
  *   bun run scripts/rdv.ts stop          # Stop all servers
  *   bun run scripts/rdv.ts restart prod  # Restart prod servers
  *   bun run scripts/rdv.ts status        # Show running processes
  */
 
 import { spawn, spawnSync } from "bun";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 
 const PROJECT_ROOT = join(import.meta.dir, "..");
 const PID_DIR = join(PROJECT_ROOT, ".pids");
 const NEXT_PID_FILE = join(PID_DIR, "next.pid");
 const TERMINAL_PID_FILE = join(PID_DIR, "terminal.pid");
 const MODE_FILE = join(PID_DIR, "mode");
+const STANDALONE_DIR = join(PROJECT_ROOT, ".next", "standalone");
+const SOCKET_DIR = "/tmp/rdv";
+
+interface DevConfig {
+  type: "port";
+  nextPort: number;
+  terminalPort: number;
+  nextCmd: string[];
+}
+
+interface ProdConfig {
+  type: "socket";
+  nextSocket: string;
+  terminalSocket: string;
+  nextCmd: string[];
+}
 
 const CONFIG = {
   dev: {
-    nextPort: 3000,
-    terminalPort: 3001,
-    nextCmd: ["bun", "run", "next", "dev", "--turbopack"],
-  },
-  prod: {
+    type: "port" as const,
     nextPort: 6001,
     terminalPort: 6002,
-    nextCmd: ["bun", "run", "next", "start", "-p", "6001"],
+    nextCmd: ["bun", "run", "next", "dev", "--turbopack", "-p", "6001"],
+  },
+  prod: {
+    type: "socket" as const,
+    nextSocket: join(SOCKET_DIR, "next.sock"),
+    terminalSocket: join(SOCKET_DIR, "terminal.sock"),
+    nextCmd: ["node", "scripts/standalone-server.js"],
   },
 } as const;
 
@@ -45,6 +63,49 @@ type SpawnedProcess = ReturnType<typeof spawn>;
 function ensurePidDir(): void {
   if (!existsSync(PID_DIR)) {
     mkdirSync(PID_DIR, { recursive: true });
+  }
+}
+
+function ensureSocketDir(): void {
+  if (!existsSync(SOCKET_DIR)) {
+    console.log(`Creating socket directory: ${SOCKET_DIR}`);
+    try {
+      mkdirSync(SOCKET_DIR, { recursive: true, mode: 0o755 });
+    } catch (err) {
+      console.error(`Failed to create socket directory. Try: sudo mkdir -p ${SOCKET_DIR} && sudo chown $(whoami) ${SOCKET_DIR}`);
+      process.exit(1);
+    }
+  }
+}
+
+function cleanupSocket(socketPath: string): void {
+  if (existsSync(socketPath)) {
+    console.log(`Removing stale socket: ${socketPath}`);
+    try {
+      unlinkSync(socketPath);
+    } catch (err) {
+      console.error(`Failed to remove socket ${socketPath}:`, err);
+    }
+  }
+}
+
+function prepareStandalone(): void {
+  // Next.js standalone mode requires static files to be copied/symlinked
+  const staticSrc = join(PROJECT_ROOT, ".next", "static");
+  const staticDest = join(STANDALONE_DIR, ".next", "static");
+  const publicSrc = join(PROJECT_ROOT, "public");
+  const publicDest = join(STANDALONE_DIR, "public");
+
+  // Create symlink for .next/static
+  if (existsSync(staticSrc) && !existsSync(staticDest)) {
+    console.log("Linking static files for standalone mode...");
+    symlinkSync(staticSrc, staticDest);
+  }
+
+  // Create symlink for public
+  if (existsSync(publicSrc) && !existsSync(publicDest)) {
+    console.log("Linking public files for standalone mode...");
+    symlinkSync(publicSrc, publicDest);
   }
 }
 
@@ -88,7 +149,6 @@ function getProcessOnPort(port: number): number | null {
   if (result.stdout) {
     const output = result.stdout.toString().trim();
     if (output) {
-      // lsof can return multiple PIDs, take the first one
       const pid = parseInt(output.split("\n")[0]);
       return isNaN(pid) ? null : pid;
     }
@@ -103,19 +163,16 @@ function killProcessOnPort(port: number): boolean {
     try {
       process.kill(pid, "SIGTERM");
 
-      // Wait for process to exit (up to 5 seconds)
       let attempts = 0;
       while (getProcessOnPort(port) && attempts < 50) {
         spawnSync(["sleep", "0.1"]);
         attempts++;
       }
 
-      // Force kill if still running
       const remainingPid = getProcessOnPort(port);
       if (remainingPid) {
         console.log(`Force killing process on port ${port}...`);
         process.kill(remainingPid, "SIGKILL");
-        // Wait for port to be released after SIGKILL
         attempts = 0;
         while (getProcessOnPort(port) && attempts < 20) {
           spawnSync(["sleep", "0.1"]);
@@ -170,17 +227,14 @@ function stopProcess(pidFile: string, name: string): boolean {
   if (pid && isProcessRunning(pid)) {
     console.log(`Stopping ${name} (PID: ${pid})...`);
     try {
-      // Send SIGTERM for graceful shutdown
       process.kill(pid, "SIGTERM");
 
-      // Wait up to 5 seconds for process to exit
       let attempts = 0;
       while (isProcessRunning(pid) && attempts < 50) {
         spawnSync(["sleep", "0.1"]);
         attempts++;
       }
 
-      // Force kill if still running
       if (isProcessRunning(pid)) {
         console.log(`Force killing ${name}...`);
         process.kill(pid, "SIGKILL");
@@ -231,49 +285,94 @@ async function start(mode: Mode): Promise<void> {
 
   const config = CONFIG[mode];
 
-  // Check if ports are in use
-  const nextPortPid = getProcessOnPort(config.nextPort);
-  const terminalPortPid = getProcessOnPort(config.terminalPort);
+  if (config.type === "port") {
+    // Dev mode: check if ports are in use
+    const nextPortPid = getProcessOnPort(config.nextPort);
+    const terminalPortPid = getProcessOnPort(config.terminalPort);
 
-  if (nextPortPid || terminalPortPid) {
-    console.error(`\nPorts already in use:`);
-    if (nextPortPid) {
-      console.error(`  Port ${config.nextPort}: PID ${nextPortPid}`);
+    if (nextPortPid || terminalPortPid) {
+      console.error(`\nPorts already in use:`);
+      if (nextPortPid) {
+        console.error(`  Port ${config.nextPort}: PID ${nextPortPid}`);
+      }
+      if (terminalPortPid) {
+        console.error(`  Port ${config.terminalPort}: PID ${terminalPortPid}`);
+      }
+      console.error("\nRun 'bun run rdv:stop' first or 'bun run rdv restart' to restart");
+      process.exit(1);
     }
-    if (terminalPortPid) {
-      console.error(`  Port ${config.terminalPort}: PID ${terminalPortPid}`);
-    }
-    console.error("\nRun 'bun run rdv:stop' first or 'bun run rdv restart' to restart");
-    process.exit(1);
+
+    console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode`);
+    console.log(`  Next.js:  http://localhost:${config.nextPort}`);
+    console.log(`  Terminal: ws://localhost:${config.terminalPort}\n`);
+
+    // Start terminal server first
+    const terminalProc = await startServer(
+      "Terminal Server",
+      ["bun", "run", "tsx", "src/server/index.ts"],
+      { TERMINAL_PORT: config.terminalPort.toString() },
+      TERMINAL_PID_FILE
+    );
+
+    console.log("Waiting for terminal server to initialize...");
+    await Bun.sleep(1500);
+
+    // Start Next.js
+    const nextProc = await startServer(
+      "Next.js",
+      [...config.nextCmd],
+      {
+        PORT: config.nextPort.toString(),
+        NEXT_PUBLIC_TERMINAL_PORT: config.terminalPort.toString(),
+      },
+      NEXT_PID_FILE
+    );
+
+    await waitForExit(mode, terminalProc, nextProc);
+  } else {
+    // Prod mode: use Unix sockets
+    ensureSocketDir();
+    prepareStandalone();
+
+    // Clean up stale sockets
+    cleanupSocket(config.nextSocket);
+    cleanupSocket(config.terminalSocket);
+
+    console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode (Unix sockets)`);
+    console.log(`  Next.js:  ${config.nextSocket}`);
+    console.log(`  Terminal: ${config.terminalSocket}\n`);
+
+    // Start terminal server first
+    const terminalProc = await startServer(
+      "Terminal Server",
+      ["bun", "run", "tsx", "src/server/index.ts"],
+      { TERMINAL_SOCKET: config.terminalSocket },
+      TERMINAL_PID_FILE
+    );
+
+    console.log("Waiting for terminal server to initialize...");
+    await Bun.sleep(1500);
+
+    // Start Next.js with socket
+    const nextProc = await startServer(
+      "Next.js",
+      [...config.nextCmd],
+      {
+        SOCKET_PATH: config.nextSocket,
+        TERMINAL_SOCKET: config.terminalSocket,
+      },
+      NEXT_PID_FILE
+    );
+
+    await waitForExit(mode, terminalProc, nextProc);
   }
+}
 
-  console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode`);
-  console.log(`  Next.js:  http://localhost:${config.nextPort}`);
-  console.log(`  Terminal: ws://localhost:${config.terminalPort}\n`);
-
-  // Start terminal server first
-  const terminalProc = await startServer(
-    "Terminal Server",
-    ["bun", "run", "tsx", "src/server/index.ts"],
-    { TERMINAL_PORT: config.terminalPort.toString() },
-    TERMINAL_PID_FILE
-  );
-
-  // Wait for terminal server to be ready
-  console.log("Waiting for terminal server to initialize...");
-  await Bun.sleep(1500);
-
-  // Start Next.js
-  const nextProc = await startServer(
-    "Next.js",
-    [...config.nextCmd],
-    {
-      NEXT_PUBLIC_TERMINAL_PORT:
-        process.env.NEXT_PUBLIC_TERMINAL_PORT ?? config.terminalPort.toString(),
-    },
-    NEXT_PID_FILE
-  );
-
+async function waitForExit(
+  mode: Mode,
+  terminalProc: SpawnedProcess | null,
+  nextProc: SpawnedProcess | null
+): Promise<void> {
   saveMode(mode);
 
   console.log(`\nRemote Dev started in ${mode.toUpperCase()} mode`);
@@ -288,7 +387,6 @@ async function start(mode: Mode): Promise<void> {
     process.exit(exitCode);
   };
 
-  // Handle Ctrl+C gracefully
   process.on("SIGINT", () => shutdown("Received SIGINT", 0));
   process.on("SIGTERM", () => shutdown("Received SIGTERM", 0));
 
@@ -322,37 +420,24 @@ function stop(mode?: Mode): void {
   let stoppedNext = stopProcess(NEXT_PID_FILE, "Next.js");
   let stoppedTerminal = stopProcess(TERMINAL_PID_FILE, "Terminal Server");
 
-  // Also check and kill by port (handles processes not started by rdv)
   const targetMode = mode || getRunningMode();
 
-  // Check both dev and prod ports if no mode specified
-  const portsToCheck = targetMode
-    ? [CONFIG[targetMode].nextPort, CONFIG[targetMode].terminalPort]
-    : [CONFIG.dev.nextPort, CONFIG.dev.terminalPort, CONFIG.prod.nextPort, CONFIG.prod.terminalPort];
+  // For dev mode, also check and kill by port
+  if (!targetMode || targetMode === "dev") {
+    const devConfig = CONFIG.dev;
+    if (killProcessOnPort(devConfig.nextPort)) stoppedNext = true;
+    if (killProcessOnPort(devConfig.terminalPort)) stoppedTerminal = true;
 
-  for (const port of portsToCheck) {
-    if (port && killProcessOnPort(port)) {
-      if (port === CONFIG.dev.nextPort || port === CONFIG.prod.nextPort) {
-        stoppedNext = true;
-      } else {
-        stoppedTerminal = true;
-      }
-    }
+    console.log("Verifying ports are released...");
+    waitForPortFree(devConfig.nextPort, 3000);
+    waitForPortFree(devConfig.terminalPort, 3000);
   }
 
-  // Verify ports are actually free
-  if (targetMode) {
-    const config = CONFIG[targetMode];
-    console.log("Verifying ports are released...");
-    const nextFree = waitForPortFree(config.nextPort, 3000);
-    const terminalFree = waitForPortFree(config.terminalPort, 3000);
-
-    if (!nextFree) {
-      console.warn(`Warning: Port ${config.nextPort} still in use`);
-    }
-    if (!terminalFree) {
-      console.warn(`Warning: Port ${config.terminalPort} still in use`);
-    }
+  // For prod mode, clean up sockets
+  if (targetMode === "prod") {
+    const prodConfig = CONFIG.prod;
+    cleanupSocket(prodConfig.nextSocket);
+    cleanupSocket(prodConfig.terminalSocket);
   }
 
   if (!stoppedNext && !stoppedTerminal) {
@@ -377,48 +462,42 @@ function status(): void {
 
   const nextPid = readPid(NEXT_PID_FILE);
   const terminalPid = readPid(TERMINAL_PID_FILE);
+  const runningMode = getRunningMode();
 
   console.log("\nRemote Dev Status");
   console.log("─".repeat(40));
 
-  // Check both dev and prod ports
-  const devNextPid = getProcessOnPort(CONFIG.dev.nextPort);
-  const devTerminalPid = getProcessOnPort(CONFIG.dev.terminalPort);
-  const prodNextPid = getProcessOnPort(CONFIG.prod.nextPort);
-  const prodTerminalPid = getProcessOnPort(CONFIG.prod.terminalPort);
-
+  // Check dev mode (ports)
+  const devConfig = CONFIG.dev;
+  const devNextPid = getProcessOnPort(devConfig.nextPort);
+  const devTerminalPid = getProcessOnPort(devConfig.terminalPort);
   const devRunning = devNextPid || devTerminalPid;
-  const prodRunning = prodNextPid || prodTerminalPid;
+
+  // Check prod mode (sockets)
+  const prodConfig = CONFIG.prod;
+  const prodNextRunning = existsSync(prodConfig.nextSocket);
+  const prodTerminalRunning = existsSync(prodConfig.terminalSocket);
+  const prodRunning = prodNextRunning || prodTerminalRunning;
 
   if (devRunning) {
-    console.log("\nDEV Mode (ports 3000, 3001):");
-    if (devNextPid) {
-      console.log(`  Next.js:   RUNNING (PID: ${devNextPid})`);
-    } else {
-      console.log("  Next.js:   STOPPED");
+    console.log(`\nDEV Mode (ports ${devConfig.nextPort}, ${devConfig.terminalPort}):`);
+    console.log(`  Next.js:   ${devNextPid ? `RUNNING (PID: ${devNextPid})` : "STOPPED"}`);
+    console.log(`  Terminal:  ${devTerminalPid ? `RUNNING (PID: ${devTerminalPid})` : "STOPPED"}`);
+  }
+
+  if (prodRunning || runningMode === "prod") {
+    console.log("\nPROD Mode (Unix sockets):");
+    console.log(`  Next.js:   ${prodNextRunning ? `RUNNING (${prodConfig.nextSocket})` : "STOPPED"}`);
+    console.log(`  Terminal:  ${prodTerminalRunning ? `RUNNING (${prodConfig.terminalSocket})` : "STOPPED"}`);
+    if (nextPid && isProcessRunning(nextPid)) {
+      console.log(`  Next.js PID: ${nextPid}`);
     }
-    if (devTerminalPid) {
-      console.log(`  Terminal:  RUNNING (PID: ${devTerminalPid})`);
-    } else {
-      console.log("  Terminal:  STOPPED");
+    if (terminalPid && isProcessRunning(terminalPid)) {
+      console.log(`  Terminal PID: ${terminalPid}`);
     }
   }
 
-  if (prodRunning) {
-    console.log("\nPROD Mode (ports 6001, 6002):");
-    if (prodNextPid) {
-      console.log(`  Next.js:   RUNNING (PID: ${prodNextPid})`);
-    } else {
-      console.log("  Next.js:   STOPPED");
-    }
-    if (prodTerminalPid) {
-      console.log(`  Terminal:  RUNNING (PID: ${prodTerminalPid})`);
-    } else {
-      console.log("  Terminal:  STOPPED");
-    }
-  }
-
-  if (!devRunning && !prodRunning) {
+  if (!devRunning && !prodRunning && runningMode !== "prod") {
     console.log("\nNo servers running");
   }
 
@@ -460,8 +539,8 @@ Commands:
   status             Show server status
 
 Modes:
-  dev   Development (Next.js: 3000, Terminal: 3001)
-  prod  Production  (Next.js: 6001, Terminal: 6002)
+  dev   Development (ports 6001, 6002)
+  prod  Production  (Unix sockets: ${CONFIG.prod.nextSocket}, ${CONFIG.prod.terminalSocket})
 
 Examples:
   bun run rdv start          # Start dev servers

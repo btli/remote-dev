@@ -4,13 +4,20 @@
  * This client is used by the Next.js API routes to notify the terminal server
  * (which runs the actual scheduler) about schedule changes.
  *
- * The terminal server runs on a different port (TERMINAL_PORT) and may be
- * on a different host in production, so we use HTTP to communicate.
+ * Supports both TCP port mode (development) and Unix socket mode (production).
  */
 
+import http from "http";
+
 /**
- * Get the terminal server URL from environment
- * Supports both development (localhost) and production configurations
+ * Get the terminal server socket path if using Unix socket mode
+ */
+function getTerminalSocket(): string | null {
+  return process.env.TERMINAL_SOCKET || null;
+}
+
+/**
+ * Get the terminal server URL for port mode
  */
 function getTerminalServerUrl(): string {
   // Allow explicit override for complex deployments
@@ -19,7 +26,7 @@ function getTerminalServerUrl(): string {
   }
 
   // Default to localhost with TERMINAL_PORT
-  const port = process.env.TERMINAL_PORT || "3001";
+  const port = process.env.TERMINAL_PORT || "6002";
   return `http://127.0.0.1:${port}`;
 }
 
@@ -31,14 +38,77 @@ function getAuthSecret(): string {
 }
 
 /**
+ * Make an HTTP request over a Unix socket
+ */
+function socketRequest(
+  socketPath: string,
+  path: string,
+  body?: Record<string, unknown>
+): Promise<{ success: boolean; error?: string; data?: unknown }> {
+  return new Promise((resolve) => {
+    const postData = body ? JSON.stringify(body) : undefined;
+
+    const options: http.RequestOptions = {
+      socketPath,
+      path,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getAuthSecret()}`,
+        ...(postData && { "Content-Length": Buffer.byteLength(postData) }),
+      },
+    };
+
+    const req = http.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve({ success: true, data: parsed });
+          } else {
+            resolve({ success: false, error: parsed.error || `HTTP ${res.statusCode}` });
+          }
+        } catch {
+          resolve({ success: false, error: "Invalid response" });
+        }
+      });
+    });
+
+    req.on("error", (error) => {
+      console.warn(`[SchedulerClient] Socket request failed:`, error.message);
+      resolve({ success: false, error: "Terminal server unavailable" });
+    });
+
+    if (postData) {
+      req.write(postData);
+    }
+    req.end();
+  });
+}
+
+/**
  * Make a request to the terminal server's internal scheduler API
+ * Automatically uses Unix socket or HTTP based on configuration
  */
 async function schedulerRequest(
   action: string,
   body?: Record<string, unknown>
 ): Promise<{ success: boolean; error?: string; data?: unknown }> {
+  const socketPath = getTerminalSocket();
+  const path = `/internal/scheduler/${action}`;
+
+  // Use Unix socket if configured
+  if (socketPath) {
+    return socketRequest(socketPath, path, body);
+  }
+
+  // Fall back to HTTP for port mode
   const baseUrl = getTerminalServerUrl();
-  const url = `${baseUrl}/internal/scheduler/${action}`;
+  const url = `${baseUrl}${path}`;
 
   try {
     const response = await fetch(url, {

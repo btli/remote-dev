@@ -6,8 +6,6 @@ import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
 import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
 import type { ConnectionStatus } from "@/types/terminal";
-import { useTerminalTheme, useAppearance } from "@/contexts/AppearanceContext";
-import { transformAnsiColors, type ThemeMode } from "@/lib/ansi-color-transform";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
@@ -61,9 +59,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onOutput,
   onDimensionsChange,
 }, ref) {
-  // Get terminal theme from appearance context (derives from site color scheme)
-  const terminalTheme = useTerminalTheme();
-  const { effectiveMode } = useAppearance();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
@@ -95,47 +90,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
-  // Track theme mode for color transformation without causing reconnections
-  const effectiveModeRef = useRef<ThemeMode>(effectiveMode);
 
-  // FIX: Use refs for theme/font to avoid recreating terminal on changes.
+  // FIX: Use refs for font to avoid recreating terminal on changes.
   // These refs are kept in sync with props so that:
   // 1. If terminal hasn't initialized yet, it will use the latest values
   // 2. If terminal already exists, the update effect applies changes directly
   // This prevents race conditions where preferences load after terminal mounts.
-  const terminalThemeRef = useRef(terminalTheme);
   const fontSizeRef = useRef(fontSize);
   const fontFamilyRef = useRef(fontFamily);
-
-  // Keep theme ref in sync with hook value
-  useEffect(() => {
-    terminalThemeRef.current = terminalTheme;
-  }, [terminalTheme]);
-
-  // Track previous effectiveMode to detect theme changes
-  const prevEffectiveModeRef = useRef<ThemeMode>(effectiveMode);
-
-  // When theme mode changes, clear xterm buffer and request tmux redraw
-  // This is needed because xterm resolves ANSI colors to RGB at write time,
-  // so historical content won't update with the new theme colors
-  useEffect(() => {
-    const terminal = xtermRef.current;
-    const ws = wsRef.current;
-
-    // Only act if mode actually changed (not on initial mount)
-    if (prevEffectiveModeRef.current !== effectiveMode && terminal) {
-      // Clear xterm's buffer (tmux still has the scrollback)
-      terminal.clear();
-
-      // Send Ctrl+L to tmux to trigger a screen redraw
-      // This will re-send the visible content with new color transformations
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "input", data: "\x0c" })); // Ctrl+L
-      }
-    }
-
-    prevEffectiveModeRef.current = effectiveMode;
-  }, [effectiveMode]);
 
   // FIX: Use ref for environmentVars to prevent re-initialization on every render.
   // Environment variables are only used during initial WebSocket connection.
@@ -155,9 +117,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     fontFamilyRef.current = fontFamily;
     // Keep environmentVars in sync (only used during initial connection)
     environmentVarsRef.current = environmentVars;
-    // Keep theme mode in sync for color transformation
-    effectiveModeRef.current = effectiveMode;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars, effectiveMode]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -207,7 +167,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         cursorBlink: true,
         fontSize: fontSizeRef.current,
         fontFamily: fontFamilyRef.current,
-        theme: terminalThemeRef.current,
         allowProposedApi: true,
         scrollback: 10000,
         // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
@@ -426,12 +385,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             const msg = JSON.parse(event.data);
             switch (msg.type) {
               case "output": {
-                // Transform 24-bit true colors for theme compatibility
-                const transformedData = transformAnsiColors(
-                  msg.data,
-                  effectiveModeRef.current
-                );
-                terminal.write(transformedData);
+                terminal.write(msg.data);
                 // Record activity for notification detection
                 recordActivityRef.current?.();
                 // Emit output for recording
@@ -466,12 +420,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
             }
           } catch {
-            // Transform 24-bit true colors for theme compatibility
-            const transformedData = transformAnsiColors(
-              event.data,
-              effectiveModeRef.current
-            );
-            terminal.write(transformedData);
+            terminal.write(event.data);
             // Record activity for notification detection (raw data)
             recordActivityRef.current?.();
             // Emit output for recording
@@ -719,7 +668,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus]);
 
-  // Update terminal options when preferences or theme change
+  // Update terminal options when font preferences change
   useEffect(() => {
     const terminal = xtermRef.current;
     if (!terminal) return;
@@ -727,14 +676,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // Track if this effect has been superseded by a newer one
     let cancelled = false;
 
-    terminal.options.theme = terminalTheme;
     terminal.options.fontSize = fontSize;
     terminal.options.fontFamily = fontFamily;
-
-    // Force xterm.js to re-render all visible rows with the new theme
-    // This is needed because xterm caches rendered cells and won't update
-    // semantic ANSI colors (like \x1b[39m default fg) without a refresh
-    terminal.refresh(0, terminal.rows - 1);
 
     // Load the font before fitting to ensure accurate cell dimensions
     // The fontFamily value is like "'FiraCode Nerd Font Mono', monospace"
@@ -808,7 +751,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     return () => {
       cancelled = true;
     };
-  }, [terminalTheme, fontSize, fontFamily]);
+  }, [fontSize, fontFamily]);
 
   // Trigger resize when terminal becomes active (e.g., switching tabs or splits)
   useEffect(() => {
@@ -1077,7 +1020,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       className={`h-full w-full rounded-lg overflow-hidden relative ${
         isDragging ? "ring-2 ring-blue-500 ring-opacity-50" : ""
       }`}
-      style={{ backgroundColor: terminalTheme.background }}
       onMouseDown={handleContainerInteraction}
       onTouchStart={handleContainerInteraction}
       onDragOver={handleDragOver}
