@@ -69,8 +69,22 @@ export function RecordingPlayer({
 
       // Build xterm.js theme from terminal palette
       const theme = terminalThemeRef.current;
+
+      // Convert hex background to RGBA with opacity for glass effect
+      const hexToRgba = (hex: string, alpha: number): string => {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      };
+
+      const bgOpacity = theme.opacity / 100;
+      const background = bgOpacity < 1
+        ? hexToRgba(theme.background, bgOpacity)
+        : theme.background;
+
       const xtermTheme = {
-        background: theme.background,
+        background,
         foreground: theme.foreground,
         cursor: theme.cursor,
         cursorAccent: theme.cursorAccent,
@@ -144,9 +158,22 @@ export function RecordingPlayer({
     const terminal = xtermRef.current;
     if (!terminal) return;
 
+    // Convert hex background to RGBA with opacity for glass effect
+    const hexToRgba = (hex: string, alpha: number): string => {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
+    const bgOpacity = terminalTheme.opacity / 100;
+    const background = bgOpacity < 1
+      ? hexToRgba(terminalTheme.background, bgOpacity)
+      : terminalTheme.background;
+
     // Build xterm.js theme from terminal palette
     const xtermTheme = {
-      background: terminalTheme.background,
+      background,
       foreground: terminalTheme.foreground,
       cursor: terminalTheme.cursor,
       cursorAccent: terminalTheme.cursorAccent,
@@ -175,15 +202,15 @@ export function RecordingPlayer({
   }, [terminalTheme]);
 
   // Compute glass effect styles from terminal theme
+  // Note: We only apply backdropFilter here. Background opacity is applied
+  // via the terminal theme's background color with alpha channel.
   const glassStyles = useMemo(() => {
-    const opacity = terminalTheme.opacity / 100; // Convert 0-100 to 0-1
     const blur = terminalTheme.blur;
     return {
-      opacity: opacity < 1 ? opacity : undefined,
       backdropFilter: blur > 0 ? `blur(${blur}px)` : undefined,
       WebkitBackdropFilter: blur > 0 ? `blur(${blur}px)` : undefined, // Safari
     } as React.CSSProperties;
-  }, [terminalTheme.opacity, terminalTheme.blur]);
+  }, [terminalTheme.blur]);
 
   // Render events up to a given time
   const renderToTime = useCallback(

@@ -310,6 +310,17 @@ export function useAppearance(): AppearanceContextValue {
  * Hook to get the terminal theme for xterm.js
  * Returns the terminal palette and appearance settings.
  *
+ * APPROACH: This uses xterm.js native theme property which sets the 16-color
+ * ANSI palette (colors 0-15) plus background/foreground/cursor colors. This is
+ * different from the previously removed ANSI color transformation approach
+ * (commit 965ce09) which intercepted 24-bit escape sequences - that was removed
+ * because it caused issues with CLI tools using hardcoded true colors.
+ *
+ * This native approach works because:
+ * 1. It only affects the standard 16-color ANSI palette, not 24-bit colors
+ * 2. CLI tools using 24-bit true colors bypass the palette entirely
+ * 3. We always use dark palette, so dark-on-dark 24-bit colors remain readable
+ *
  * NOTE: Terminal always uses DARK palette regardless of site light/dark mode.
  * Many CLI tools and applications don't render well on light backgrounds,
  * so we always use the dark terminal palette for best compatibility.
