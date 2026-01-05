@@ -307,17 +307,25 @@ export function useAppearance(): AppearanceContextValue {
 }
 
 /**
- * Hook to get just the terminal theme for xterm.js
- * Returns the terminal palette for the current appearance
+ * Hook to get the terminal theme for xterm.js
+ * Returns the terminal palette and appearance settings.
+ *
+ * NOTE: Terminal always uses DARK palette regardless of site light/dark mode.
+ * Many CLI tools and applications don't render well on light backgrounds,
+ * so we always use the dark terminal palette for best compatibility.
  */
 export function useTerminalTheme() {
   const { appearance } = useAppearance();
   return useMemo(() => {
-    const palette = appearance.colorScheme[appearance.mode].terminal;
+    // Always use dark terminal palette - CLI tools work better on dark backgrounds
+    const palette = appearance.colorScheme.dark.terminal;
     return {
+      // Terminal palette for xterm.js ITheme
       ...palette,
-      // Include cursor style from settings
+      // Terminal appearance settings
       cursorStyle: appearance.terminalCursorStyle,
+      opacity: appearance.terminalOpacity,
+      blur: appearance.terminalBlur,
     };
   }, [appearance]);
 }
