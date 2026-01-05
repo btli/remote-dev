@@ -31,7 +31,11 @@ export type ColorSchemeId =
   | "arctic" // Cool grays and blues (Nord-inspired)
   | "rose" // Pinks and magentas
   | "amber" // Warm yellows and oranges
-  | "mono"; // Grayscale minimal
+  | "mono" // Grayscale minimal
+  | "catppuccin" // Catppuccin Mocha - pastel colors
+  | "solarized" // Solarized Dark - precise lab colors
+  | "oneDark" // One Dark - Atom-inspired
+  | "gruvbox"; // Gruvbox - retro warm
 
 /**
  * Color scheme category for grouping in UI
@@ -242,6 +246,10 @@ export const COLOR_SCHEME_IDS: readonly ColorSchemeId[] = [
   "rose",
   "amber",
   "mono",
+  "catppuccin",
+  "solarized",
+  "oneDark",
+  "gruvbox",
 ] as const;
 
 /**
