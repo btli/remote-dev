@@ -338,15 +338,22 @@ async function start(mode: Mode): Promise<void> {
     cleanupSocket(config.nextSocket);
     cleanupSocket(config.terminalSocket);
 
+    // Use standalone database for both processes in prod mode
+    const prodDatabaseUrl = `file:${join(STANDALONE_DIR, "sqlite.db")}`;
+
     console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode (Unix sockets)`);
     console.log(`  Next.js:  ${config.nextSocket}`);
-    console.log(`  Terminal: ${config.terminalSocket}\n`);
+    console.log(`  Terminal: ${config.terminalSocket}`);
+    console.log(`  Database: ${join(STANDALONE_DIR, "sqlite.db")}\n`);
 
     // Start terminal server first
     const terminalProc = await startServer(
       "Terminal Server",
       ["bun", "run", "tsx", "src/server/index.ts"],
-      { TERMINAL_SOCKET: config.terminalSocket },
+      {
+        TERMINAL_SOCKET: config.terminalSocket,
+        DATABASE_URL: prodDatabaseUrl,
+      },
       TERMINAL_PID_FILE
     );
 
@@ -360,6 +367,7 @@ async function start(mode: Mode): Promise<void> {
       {
         SOCKET_PATH: config.nextSocket,
         TERMINAL_SOCKET: config.terminalSocket,
+        DATABASE_URL: prodDatabaseUrl,
       },
       NEXT_PID_FILE
     );
