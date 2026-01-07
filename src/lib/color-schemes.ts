@@ -114,27 +114,29 @@ const oceanLight: ModePalette = {
     ring: oklch(0.55, 0.15, 240),
   },
   terminal: {
-    background: "#eceff4",
-    foreground: "#2e3440",
-    cursor: "#5e81ac",
-    cursorAccent: "#eceff4",
-    selectionBackground: "#d8dee9",
-    black: "#3b4252",
-    red: "#bf616a",            // Nord red - good for text
-    green: "#5a9a5a",          // Muted green - readable as text
-    yellow: "#9a7020",         // Dark gold - readable as text on light bg
-    blue: "#5e81ac",           // Nord blue - good for text
-    magenta: "#8a5a8a",        // Muted magenta - readable as text
-    cyan: "#2a7a8a",           // Dark cyan - readable as text on light bg
-    white: "#4c566a",
-    brightBlack: "#434c5e",
-    brightRed: "#d08770",      // Nord orange
-    brightGreen: "#6aaa6a",    // Brighter green
-    brightYellow: "#aa8030",   // Brighter gold - still readable
-    brightBlue: "#81a1c1",     // Nord light blue
-    brightMagenta: "#b48ead",  // Nord magenta
-    brightCyan: "#3a8a9a",     // Dark teal - readable as foreground text on light bg
-    brightWhite: "#3b4252",
+    // Light mode uses Nord dark palette for better terminal readability
+    // Official Nord colors: https://www.nordtheme.com/
+    background: "#2e3440",     // Nord0 - Polar Night
+    foreground: "#d8dee9",     // Nord4 - Snow Storm
+    cursor: "#d8dee9",
+    cursorAccent: "#2e3440",
+    selectionBackground: "#434c5e", // Nord2
+    black: "#3b4252",          // Nord1
+    red: "#bf616a",            // Nord11 - Aurora Red
+    green: "#a3be8c",          // Nord14 - Aurora Green
+    yellow: "#ebcb8b",         // Nord13 - Aurora Yellow
+    blue: "#81a1c1",           // Nord9 - Frost
+    magenta: "#b48ead",        // Nord15 - Aurora Purple
+    cyan: "#88c0d0",           // Nord8 - Frost
+    white: "#e5e9f0",          // Nord5 - Snow Storm
+    brightBlack: "#4c566a",    // Nord3
+    brightRed: "#bf616a",      // Nord11
+    brightGreen: "#a3be8c",    // Nord14
+    brightYellow: "#ebcb8b",   // Nord13
+    brightBlue: "#81a1c1",     // Nord9
+    brightMagenta: "#b48ead",  // Nord15
+    brightCyan: "#8fbcbb",     // Nord7 - Frost
+    brightWhite: "#eceff4",    // Nord6 - Snow Storm
   },
 };
 
@@ -211,27 +213,29 @@ const forestLight: ModePalette = {
     ring: oklch(0.55, 0.15, 140),
   },
   terminal: {
-    background: "#f5f5dc",
-    foreground: "#272822",
-    cursor: "#7a9a5a",
-    cursorAccent: "#f5f5dc",
-    selectionBackground: "#e0dcc8",
+    // Light mode uses Monokai dark palette for better terminal readability
+    // Official Monokai colors: https://monokai.pro/
+    background: "#272822",     // Monokai background
+    foreground: "#f8f8f2",     // Monokai foreground
+    cursor: "#f8f8f2",
+    cursorAccent: "#272822",
+    selectionBackground: "#49483e",
     black: "#272822",
-    red: "#f0d8d0",            // Light rose - readable as bg with dark text
-    green: "#d8e8d0",          // Light sage - readable as bg with dark text
-    yellow: "#e8e0c8",         // Light amber - readable as bg with dark text
-    blue: "#c8dce8",           // Light blue - readable as bg with dark text
-    magenta: "#e0d0e8",        // Light purple - readable as bg with dark text
-    cyan: "#c8e8e0",           // Light teal - readable as bg with dark text
-    white: "#49483e",
-    brightBlack: "#75715e",
-    brightRed: "#b05050",       // Dark red - readable as foreground text
-    brightGreen: "#3a8a4a",     // Dark green - readable as foreground text
-    brightYellow: "#9a7a20",    // Dark gold - readable as foreground text
-    brightBlue: "#4a70a0",      // Dark blue - readable as foreground text
-    brightMagenta: "#8a4a9a",   // Dark magenta - readable as foreground text
-    brightCyan: "#2a8a7a",      // Dark teal - readable as foreground text
-    brightWhite: "#272822",
+    red: "#f92672",            // Monokai pink/red
+    green: "#a6e22e",          // Monokai green
+    yellow: "#f4bf75",         // Monokai yellow
+    blue: "#66d9ef",           // Monokai blue/cyan
+    magenta: "#ae81ff",        // Monokai purple
+    cyan: "#a1efe4",           // Monokai cyan
+    white: "#f8f8f2",
+    brightBlack: "#75715e",    // Monokai comment
+    brightRed: "#f92672",
+    brightGreen: "#a6e22e",
+    brightYellow: "#f4bf75",
+    brightBlue: "#66d9ef",
+    brightMagenta: "#ae81ff",
+    brightCyan: "#a1efe4",
+    brightWhite: "#f9f8f5",
   },
 };
 
@@ -308,27 +312,29 @@ const sunsetLight: ModePalette = {
     ring: oklch(0.6, 0.2, 340),
   },
   terminal: {
-    background: "#fcf5f5",
-    foreground: "#282a36",
-    cursor: "#9a6a8a",
-    cursorAccent: "#fcf5f5",
-    selectionBackground: "#e8dfe0",
+    // Light mode uses Dracula dark palette for better terminal readability
+    // Official Dracula colors: https://draculatheme.com/
+    background: "#282a36",     // Dracula background
+    foreground: "#f8f8f2",     // Dracula foreground
+    cursor: "#f8f8f2",
+    cursorAccent: "#282a36",
+    selectionBackground: "#44475a", // Dracula selection
     black: "#21222c",
-    red: "#f0d8d8",            // Light rose - readable as bg with dark text
-    green: "#d0e8d8",          // Light sage - readable as bg with dark text
-    yellow: "#e8e0c8",         // Light gold - readable as bg with dark text
-    blue: "#d8d0e8",           // Light purple-blue - readable as bg with dark text
-    magenta: "#f0d0e0",        // Light magenta - readable as bg with dark text
-    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
-    white: "#44475a",
-    brightBlack: "#6272a4",
-    brightRed: "#c04050",       // Dark coral - readable as foreground text
-    brightGreen: "#408050",     // Dark green - readable as foreground text
-    brightYellow: "#a07030",    // Dark amber - readable as foreground text
-    brightBlue: "#6050a0",      // Dark purple-blue - readable as foreground text
-    brightMagenta: "#a04080",   // Dark magenta - readable as foreground text
-    brightCyan: "#307090",      // Dark cyan - readable as foreground text
-    brightWhite: "#282a36",
+    red: "#ff5555",            // Dracula red
+    green: "#50fa7b",          // Dracula green
+    yellow: "#f1fa8c",         // Dracula yellow
+    blue: "#bd93f9",           // Dracula purple (used as blue)
+    magenta: "#ff79c6",        // Dracula pink
+    cyan: "#8be9fd",           // Dracula cyan
+    white: "#f8f8f2",
+    brightBlack: "#6272a4",    // Dracula comment
+    brightRed: "#ff6e6e",
+    brightGreen: "#69ff94",
+    brightYellow: "#ffffa5",
+    brightBlue: "#d6acff",
+    brightMagenta: "#ff92df",
+    brightCyan: "#a4ffff",
+    brightWhite: "#ffffff",
   },
 };
 
@@ -405,27 +411,29 @@ const midnightLight: ModePalette = {
     ring: oklch(0.55, 0.18, 270),
   },
   terminal: {
-    background: "#f0f0f5",
-    foreground: "#1a1b26",
-    cursor: "#6a8ac0",
-    cursorAccent: "#f0f0f5",
-    selectionBackground: "#d8d8e0",
+    // Light mode uses Tokyo Night dark palette for better terminal readability
+    // Official Tokyo Night colors: https://github.com/enkia/tokyo-night-vscode-theme
+    background: "#1a1b26",     // Tokyo Night background
+    foreground: "#a9b1d6",     // Tokyo Night foreground
+    cursor: "#c0caf5",
+    cursorAccent: "#1a1b26",
+    selectionBackground: "#33467c",
     black: "#32344a",
-    red: "#f0d8d8",            // Light rose - readable as bg with dark text
-    green: "#d0e8d0",          // Light sage - readable as bg with dark text
-    yellow: "#e8dcc0",         // Light amber - readable as bg with dark text
-    blue: "#c8d8e8",           // Light blue - readable as bg with dark text
-    magenta: "#e0d0e8",        // Light purple - readable as bg with dark text
-    cyan: "#c0d8e0",           // Light teal - readable as bg with dark text
-    white: "#565a6e",
+    red: "#f7768e",            // Tokyo Night red
+    green: "#9ece6a",          // Tokyo Night green
+    yellow: "#e0af68",         // Tokyo Night yellow
+    blue: "#7aa2f7",           // Tokyo Night blue
+    magenta: "#ad8ee6",        // Tokyo Night magenta
+    cyan: "#449dab",           // Tokyo Night cyan
+    white: "#787c99",
     brightBlack: "#444b6a",
-    brightRed: "#c05050",       // Dark red - readable as foreground text
-    brightGreen: "#4a9a4a",     // Dark green - readable as foreground text
-    brightYellow: "#a08020",    // Dark gold - readable as foreground text
-    brightBlue: "#5070a0",      // Dark blue - readable as foreground text
-    brightMagenta: "#9050a0",   // Dark magenta - readable as foreground text
-    brightCyan: "#308090",      // Dark teal - readable as foreground text
-    brightWhite: "#343b58",
+    brightRed: "#ff7a93",
+    brightGreen: "#b9f27c",
+    brightYellow: "#ff9e64",
+    brightBlue: "#7da6ff",
+    brightMagenta: "#bb9af7",
+    brightCyan: "#0db9d7",
+    brightWhite: "#acb0d0",
   },
 };
 
@@ -502,27 +510,29 @@ const arcticLight: ModePalette = {
     ring: oklch(0.6, 0.12, 220),
   },
   terminal: {
-    background: "#f8fafc",
-    foreground: "#334155",
-    cursor: "#5a8aaa",
-    cursorAccent: "#f8fafc",
-    selectionBackground: "#e2e8f0",
-    black: "#1e293b",
-    red: "#f0d8d8",            // Light rose - readable as bg with dark text
-    green: "#d0e8d0",          // Light sage - readable as bg with dark text
-    yellow: "#e8e0c8",         // Light gold - readable as bg with dark text
-    blue: "#c8d8e8",           // Light blue - readable as bg with dark text
-    magenta: "#e0d0e8",        // Light purple - readable as bg with dark text
-    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
-    white: "#475569",
-    brightBlack: "#64748b",
-    brightRed: "#b85050",       // Dark red - readable as foreground text
-    brightGreen: "#4a8a50",     // Dark green - readable as foreground text
-    brightYellow: "#9a7a20",    // Dark gold - readable as foreground text
-    brightBlue: "#4a6a9a",      // Dark blue - readable as foreground text
-    brightMagenta: "#8a4a8a",   // Dark magenta - readable as foreground text
-    brightCyan: "#2a7a8a",      // Dark cyan - readable as foreground text
-    brightWhite: "#334155",
+    // Light mode uses Arctic dark palette for better terminal readability
+    // Based on Tailwind Slate colors: https://tailwindcss.com/docs/customizing-colors
+    background: "#0f172a",     // slate-900
+    foreground: "#e2e8f0",     // slate-200
+    cursor: "#38bdf8",         // sky-400
+    cursorAccent: "#0f172a",
+    selectionBackground: "#334155", // slate-700
+    black: "#1e293b",          // slate-800
+    red: "#f87171",            // red-400
+    green: "#4ade80",          // green-400
+    yellow: "#facc15",         // yellow-400
+    blue: "#60a5fa",           // blue-400
+    magenta: "#c084fc",        // purple-400
+    cyan: "#22d3ee",           // cyan-400
+    white: "#f1f5f9",          // slate-100
+    brightBlack: "#475569",    // slate-600
+    brightRed: "#fca5a5",      // red-300
+    brightGreen: "#86efac",    // green-300
+    brightYellow: "#fde047",   // yellow-300
+    brightBlue: "#93c5fd",     // blue-300
+    brightMagenta: "#d8b4fe",  // purple-300
+    brightCyan: "#67e8f9",     // cyan-300
+    brightWhite: "#ffffff",
   },
 };
 
@@ -599,27 +609,29 @@ const roseLight: ModePalette = {
     ring: oklch(0.6, 0.2, 350),
   },
   terminal: {
-    background: "#fdf2f8",
-    foreground: "#831843",
-    cursor: "#9a4a6a",
-    cursorAccent: "#fdf2f8",
-    selectionBackground: "#fce7f3",
-    black: "#500724",
-    red: "#f8d8e0",            // Light rose - readable as bg with dark text
-    green: "#d8e8d8",          // Light sage - readable as bg with dark text
-    yellow: "#f0e0c8",         // Light gold - readable as bg with dark text
-    blue: "#d0d8e8",           // Light blue - readable as bg with dark text
-    magenta: "#f8d0e0",        // Light magenta - readable as bg with dark text
-    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
-    white: "#9f1239",
-    brightBlack: "#be185d",
-    brightRed: "#c04060",       // Dark rose - readable as foreground text
-    brightGreen: "#4a8a50",     // Dark green - readable as foreground text
-    brightYellow: "#9a7a20",    // Dark gold - readable as foreground text
-    brightBlue: "#4a5a90",      // Dark blue - readable as foreground text
-    brightMagenta: "#a03070",   // Dark magenta - readable as foreground text
-    brightCyan: "#2a7a8a",      // Dark cyan - readable as foreground text
-    brightWhite: "#831843",
+    // Light mode uses Rose dark palette for better terminal readability
+    // Based on Tailwind Rose/Pink colors: https://tailwindcss.com/docs/customizing-colors
+    background: "#1c0a14",     // Deep rose-tinted black
+    foreground: "#fce7f3",     // pink-100
+    cursor: "#f472b6",         // pink-400
+    cursorAccent: "#1c0a14",
+    selectionBackground: "#4c0519", // rose-950
+    black: "#500724",          // rose-900
+    red: "#fb7185",            // rose-400
+    green: "#4ade80",          // green-400
+    yellow: "#facc15",         // yellow-400
+    blue: "#60a5fa",           // blue-400
+    magenta: "#f472b6",        // pink-400
+    cyan: "#22d3ee",           // cyan-400
+    white: "#fce7f3",          // pink-100
+    brightBlack: "#9f1239",    // rose-800
+    brightRed: "#fda4af",      // rose-300
+    brightGreen: "#86efac",    // green-300
+    brightYellow: "#fde047",   // yellow-300
+    brightBlue: "#93c5fd",     // blue-300
+    brightMagenta: "#f9a8d4",  // pink-300
+    brightCyan: "#67e8f9",     // cyan-300
+    brightWhite: "#ffffff",
   },
 };
 
@@ -696,27 +708,29 @@ const amberLight: ModePalette = {
     ring: oklch(0.7, 0.18, 70),
   },
   terminal: {
-    background: "#fffbeb",
-    foreground: "#78350f",
-    cursor: "#9a7a40",
-    cursorAccent: "#fffbeb",
-    selectionBackground: "#fef3c7",
-    black: "#451a03",
-    red: "#f8e0d8",            // Light rose - readable as bg with dark text
-    green: "#d8e8d0",          // Light sage - readable as bg with dark text
-    yellow: "#f0e8c8",         // Light gold - readable as bg with dark text
-    blue: "#d0d8e8",           // Light blue - readable as bg with dark text
-    magenta: "#e8d0f0",        // Light purple - readable as bg with dark text
-    cyan: "#c8e0e8",           // Light cyan - readable as bg with dark text
-    white: "#92400e",
-    brightBlack: "#b45309",
-    brightRed: "#b85040",       // Dark coral - readable as foreground text
-    brightGreen: "#4a8a40",     // Dark green - readable as foreground text
-    brightYellow: "#9a6a10",    // Dark amber - readable as foreground text
-    brightBlue: "#4a5a8a",      // Dark blue - readable as foreground text
-    brightMagenta: "#8a4090",   // Dark purple - readable as foreground text
-    brightCyan: "#2a7a80",      // Dark teal - readable as foreground text
-    brightWhite: "#78350f",
+    // Light mode uses Amber dark palette for better terminal readability
+    // Based on Tailwind Amber/Yellow colors: https://tailwindcss.com/docs/customizing-colors
+    background: "#1c1208",     // Deep amber-tinted black
+    foreground: "#fef3c7",     // amber-100
+    cursor: "#fbbf24",         // amber-400
+    cursorAccent: "#1c1208",
+    selectionBackground: "#451a03", // amber-950
+    black: "#451a03",          // orange-950
+    red: "#f87171",            // red-400
+    green: "#4ade80",          // green-400
+    yellow: "#fbbf24",         // amber-400
+    blue: "#60a5fa",           // blue-400
+    magenta: "#e879f9",        // fuchsia-400
+    cyan: "#22d3ee",           // cyan-400
+    white: "#fef3c7",          // amber-100
+    brightBlack: "#92400e",    // amber-800
+    brightRed: "#fca5a5",      // red-300
+    brightGreen: "#86efac",    // green-300
+    brightYellow: "#fcd34d",   // amber-300
+    brightBlue: "#93c5fd",     // blue-300
+    brightMagenta: "#f0abfc",  // fuchsia-300
+    brightCyan: "#67e8f9",     // cyan-300
+    brightWhite: "#ffffff",
   },
 };
 
@@ -793,27 +807,29 @@ const monoLight: ModePalette = {
     ring: oklch(0.3, 0, 0),
   },
   terminal: {
-    background: "#fafafa",
-    foreground: "#171717",
-    cursor: "#404040",
-    cursorAccent: "#fafafa",
-    selectionBackground: "#e5e5e5",
-    black: "#171717",
-    red: "#e8d8d8",            // Light rose - readable as bg with dark text
-    green: "#d8e8d8",          // Light sage - readable as bg with dark text
-    yellow: "#e8e0d0",         // Light gold - readable as bg with dark text
-    blue: "#d0d8e8",           // Light blue - readable as bg with dark text
-    magenta: "#e0d0e0",        // Light magenta - readable as bg with dark text
-    cyan: "#d0e0e0",           // Light cyan - readable as bg with dark text
-    white: "#525252",
-    brightBlack: "#737373",
-    brightRed: "#8a5050",       // Dark muted red - readable as foreground text
-    brightGreen: "#508a50",     // Dark muted green - readable as foreground text
-    brightYellow: "#8a7a40",    // Dark muted gold - readable as foreground text
-    brightBlue: "#505a8a",      // Dark muted blue - readable as foreground text
-    brightMagenta: "#7a507a",   // Dark muted magenta - readable as foreground text
-    brightCyan: "#507a7a",      // Dark muted cyan - readable as foreground text
-    brightWhite: "#262626",
+    // Light mode uses Mono dark palette for better terminal readability
+    // Based on Tailwind Neutral colors: https://tailwindcss.com/docs/customizing-colors
+    background: "#0a0a0a",     // neutral-950
+    foreground: "#e5e5e5",     // neutral-200
+    cursor: "#a3a3a3",         // neutral-400
+    cursorAccent: "#0a0a0a",
+    selectionBackground: "#262626", // neutral-800
+    black: "#171717",          // neutral-900
+    red: "#f87171",            // red-400
+    green: "#4ade80",          // green-400
+    yellow: "#fbbf24",         // amber-400
+    blue: "#60a5fa",           // blue-400
+    magenta: "#e879f9",        // fuchsia-400
+    cyan: "#22d3ee",           // cyan-400
+    white: "#f5f5f5",          // neutral-100
+    brightBlack: "#525252",    // neutral-600
+    brightRed: "#fca5a5",      // red-300
+    brightGreen: "#86efac",    // green-300
+    brightYellow: "#fcd34d",   // amber-300
+    brightBlue: "#93c5fd",     // blue-300
+    brightMagenta: "#f0abfc",  // fuchsia-300
+    brightCyan: "#67e8f9",     // cyan-300
+    brightWhite: "#ffffff",
   },
 };
 
