@@ -10,6 +10,7 @@ import { folderSecretsConfig, sessionFolders } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { SecretsServiceError } from "@/lib/errors";
+import { encrypt, decryptSafe } from "@/lib/encryption";
 import type {
   FolderSecretsConfig,
   UpdateFolderSecretsConfigInput,
@@ -106,7 +107,9 @@ export async function updateFolderSecretsConfig(
     );
   }
 
+  // Encrypt provider config before storage (contains service tokens)
   const configJson = JSON.stringify(input.config);
+  const encryptedConfig = encrypt(configJson);
   const now = new Date();
 
   // Check for existing config
@@ -118,7 +121,7 @@ export async function updateFolderSecretsConfig(
       .update(folderSecretsConfig)
       .set({
         provider: input.provider,
-        providerConfig: configJson,
+        providerConfig: encryptedConfig,
         enabled: input.enabled ?? true,
         updatedAt: now,
       })
@@ -140,7 +143,7 @@ export async function updateFolderSecretsConfig(
       folderId,
       userId,
       provider: input.provider,
-      providerConfig: configJson,
+      providerConfig: encryptedConfig,
       enabled: input.enabled ?? true,
       createdAt: now,
       updatedAt: now,
@@ -295,17 +298,30 @@ export async function hasFolderSecretsConfig(
 }
 
 /**
- * Map database record to TypeScript type
+ * Map database record to TypeScript type.
+ * Decrypts provider config (handles both encrypted and legacy plaintext).
  */
 function mapDbSecretsConfig(
   dbRecord: typeof folderSecretsConfig.$inferSelect
 ): FolderSecretsConfig {
+  // Decrypt provider config - handles both encrypted and legacy plaintext
+  const decryptedConfig = decryptSafe(dbRecord.providerConfig);
+  let providerConfig: Record<string, string>;
+  
+  try {
+    providerConfig = JSON.parse(decryptedConfig ?? "{}");
+  } catch {
+    // If JSON parsing fails after decryption, config may be corrupted
+    console.error("Failed to parse provider config for folder:", dbRecord.folderId);
+    providerConfig = {};
+  }
+
   return {
     id: dbRecord.id,
     folderId: dbRecord.folderId,
     userId: dbRecord.userId,
     provider: dbRecord.provider as SecretsProviderType,
-    providerConfig: JSON.parse(dbRecord.providerConfig),
+    providerConfig,
     enabled: dbRecord.enabled ?? true,
     lastFetchedAt: dbRecord.lastFetchedAt ? new Date(dbRecord.lastFetchedAt) : null,
     createdAt: new Date(dbRecord.createdAt),

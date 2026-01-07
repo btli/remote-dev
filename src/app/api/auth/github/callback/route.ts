@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { accounts } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
+import { validateSignedState } from "@/lib/oauth-state";
+import { encrypt } from "@/lib/encryption";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -12,12 +14,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/?error=missing_params", request.url));
   }
 
-  let stateData: { userId: string; action: string };
-  try {
-    stateData = JSON.parse(Buffer.from(state, "base64").toString("utf-8"));
-  } catch {
-    return NextResponse.redirect(new URL("/?error=invalid_state", request.url));
+  // Validate HMAC-signed state to prevent CSRF attacks
+  const stateResult = validateSignedState(state);
+  if (!stateResult.valid) {
+    console.warn("OAuth state validation failed:", stateResult.error);
+    return NextResponse.redirect(new URL(`/?error=${stateResult.error}`, request.url));
   }
+
+  const stateData = stateResult.payload;
 
   if (stateData.action !== "link") {
     return NextResponse.redirect(new URL("/?error=invalid_action", request.url));
@@ -74,13 +78,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Encrypt access token before storage for security
+  const encryptedToken = encrypt(access_token);
+
   // Upsert the account link
   if (existingAccount) {
     // Update existing account using composite key
     await db
       .update(accounts)
       .set({
-        access_token,
+        access_token: encryptedToken,
         token_type,
         scope,
       })
@@ -97,7 +104,7 @@ export async function GET(request: NextRequest) {
       type: "oauth",
       provider: "github",
       providerAccountId: String(githubUser.id),
-      access_token,
+      access_token: encryptedToken,
       token_type,
       scope,
     });

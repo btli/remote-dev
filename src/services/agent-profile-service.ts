@@ -21,6 +21,7 @@ import { mkdir, writeFile, access } from "fs/promises";
 import { join, resolve as pathResolve, isAbsolute } from "path";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
+import { encrypt, decryptSafe } from "@/lib/encryption";
 import type {
   AgentProfile,
   CreateAgentProfileInput,
@@ -641,7 +642,9 @@ export async function updateProfileSecretsConfig(
     );
   }
 
+  // Encrypt provider config before storage (contains service tokens)
   const configJson = JSON.stringify(input.config);
+  const encryptedConfig = encrypt(configJson);
   const now = new Date();
 
   // Check for existing config
@@ -653,7 +656,7 @@ export async function updateProfileSecretsConfig(
       .update(profileSecretsConfig)
       .set({
         provider: input.provider,
-        providerConfig: configJson,
+        providerConfig: encryptedConfig,
         enabled: input.enabled ?? true,
         updatedAt: now,
       })
@@ -675,7 +678,7 @@ export async function updateProfileSecretsConfig(
       profileId,
       userId,
       provider: input.provider,
-      providerConfig: configJson,
+      providerConfig: encryptedConfig,
       enabled: input.enabled ?? true,
       createdAt: now,
       updatedAt: now,
@@ -791,17 +794,21 @@ export async function fetchProfileSecrets(
 }
 
 /**
- * Map database record to ProfileSecretsConfig type
+ * Map database record to ProfileSecretsConfig type.
+ * Decrypts provider config (handles both encrypted and legacy plaintext).
  */
 function mapDbToSecretsConfig(
   dbRecord: typeof profileSecretsConfig.$inferSelect
 ): ProfileSecretsConfig {
+  // Decrypt provider config - handles both encrypted and legacy plaintext
+  const decryptedConfig = decryptSafe(dbRecord.providerConfig);
+  
   return {
     id: dbRecord.id,
     profileId: dbRecord.profileId,
     userId: dbRecord.userId,
     provider: dbRecord.provider as ProfileSecretsProviderType,
-    providerConfig: safeJsonParse(dbRecord.providerConfig),
+    providerConfig: safeJsonParse(decryptedConfig ?? "{}"),
     enabled: dbRecord.enabled ?? true,
     lastFetchedAt: dbRecord.lastFetchedAt ? new Date(dbRecord.lastFetchedAt) : null,
     createdAt: new Date(dbRecord.createdAt),

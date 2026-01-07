@@ -15,6 +15,7 @@ import type {
 import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { GitHubServiceError } from "@/lib/errors";
+import { decryptSafe } from "@/lib/encryption";
 
 // Re-export for backwards compatibility with API routes
 export { GitHubServiceError };
@@ -23,13 +24,15 @@ const GITHUB_API_BASE = "https://api.github.com";
 const REPOS_CACHE_DIR = ".remote-dev/repos";
 
 /**
- * Get the GitHub access token for a user
+ * Get the GitHub access token for a user.
+ * Decrypts the token if it was stored encrypted.
  */
 export async function getAccessToken(userId: string): Promise<string | null> {
   const account = await db.query.accounts.findFirst({
     where: and(eq(accounts.userId, userId), eq(accounts.provider, "github")),
   });
-  return account?.access_token ?? null;
+  // Decrypt token - handles both encrypted and legacy plaintext
+  return decryptSafe(account?.access_token ?? null);
 }
 
 /**
