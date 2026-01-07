@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   X, Plus, Terminal, Settings,
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
@@ -263,7 +263,8 @@ export function Sidebar({
   );
 
   // Build folder tree from flat list, sorted by sortOrder
-  const buildFolderTree = (folders: SessionFolder[]): FolderNode[] => {
+  // Memoized to prevent recalculation on every render
+  const folderTree = useMemo(() => {
     const folderMap = new Map<string, FolderNode>();
     const rootFolders: FolderNode[] = [];
 
@@ -295,9 +296,7 @@ export function Sidebar({
     setDepthsAndSort(rootFolders, 0);
 
     return rootFolders;
-  };
-
-  const folderTree = buildFolderTree(folders);
+  }, [folders]);
 
   // Check if a folder is a descendant of another
   const isDescendantOf = useCallback((folderId: string, ancestorId: string): boolean => {

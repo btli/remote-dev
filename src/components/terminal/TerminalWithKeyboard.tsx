@@ -4,6 +4,7 @@ import { useRef, useCallback, useState, forwardRef, useImperativeHandle } from "
 import { Terminal, type TerminalRef } from "./Terminal";
 import { MobileKeyboard } from "./MobileKeyboard";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
+import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { TerminalSession } from "@/types/session";
 
@@ -120,25 +121,27 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   return (
     <div className="flex flex-col h-full relative">
       <div className="flex-1 min-h-0">
-        <Terminal
-          ref={terminalRef}
-          sessionId={sessionId}
-          tmuxSessionName={tmuxSessionName}
-          sessionName={sessionName}
-          projectPath={projectPath}
-          wsUrl={wsUrl}
-          fontSize={fontSize}
-          fontFamily={fontFamily}
-          notificationsEnabled={notificationsEnabled}
-          isRecording={isRecording}
-          isActive={isActive}
-          environmentVars={environmentVars}
-          onStatusChange={onStatusChange}
-          onWebSocketReady={handleWebSocketReady}
-          onSessionExit={handleSessionExit}
-          onOutput={onOutput}
-          onDimensionsChange={onDimensionsChange}
-        />
+        <ErrorBoundary title="Terminal Error">
+          <Terminal
+            ref={terminalRef}
+            sessionId={sessionId}
+            tmuxSessionName={tmuxSessionName}
+            sessionName={sessionName}
+            projectPath={projectPath}
+            wsUrl={wsUrl}
+            fontSize={fontSize}
+            fontFamily={fontFamily}
+            notificationsEnabled={notificationsEnabled}
+            isRecording={isRecording}
+            isActive={isActive}
+            environmentVars={environmentVars}
+            onStatusChange={onStatusChange}
+            onWebSocketReady={handleWebSocketReady}
+            onSessionExit={handleSessionExit}
+            onOutput={onOutput}
+            onDimensionsChange={onDimensionsChange}
+          />
+        </ErrorBoundary>
       </div>
       <MobileKeyboard onKeyPress={handleMobileKeyPress} />
 
