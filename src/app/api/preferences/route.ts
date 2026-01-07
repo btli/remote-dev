@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import {
   getUserSettings,
   updateUserSettings,
@@ -54,7 +54,9 @@ export const GET = withAuth(async (_request, { userId }) => {
  * Updates user settings
  */
 export const PATCH = withAuth(async (request, { userId }) => {
-  const updates = await request.json();
+  const result = await parseJsonBody<Record<string, unknown>>(request);
+  if ("error" in result) return result.error;
+  const updates = result.data;
 
   // Validate updates
   const allowedFields = [

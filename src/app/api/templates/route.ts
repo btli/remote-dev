@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import {
   getTemplates,
   createTemplate,
@@ -12,7 +12,9 @@ export const GET = withAuth(async (_request, { userId }) => {
 });
 
 export const POST = withAuth(async (request, { userId }) => {
-  const body = (await request.json()) as CreateTemplateInput;
+  const result = await parseJsonBody<CreateTemplateInput>(request);
+  if ("error" in result) return result.error;
+  const body = result.data;
 
   if (!body.name?.trim()) {
     return errorResponse("Template name is required", 400);

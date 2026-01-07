@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import {
   updateFolderUseCase,
   moveFolderUseCase,
@@ -12,8 +12,14 @@ import { EntityNotFoundError, BusinessRuleViolationError } from "@/domain/errors
  * PATCH /api/folders/:id - Update a folder (or move to new parent)
  */
 export const PATCH = withAuth(async (request, { userId, params }) => {
-  const body = await request.json();
-  const { name, collapsed, sortOrder, parentId } = body;
+  const result = await parseJsonBody<{
+    name?: string;
+    collapsed?: boolean;
+    sortOrder?: number;
+    parentId?: string | null;
+  }>(request);
+  if ("error" in result) return result.error;
+  const { name, collapsed, sortOrder, parentId } = result.data;
   const folderId = params!.id;
 
   try {
