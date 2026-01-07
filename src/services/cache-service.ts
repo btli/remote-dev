@@ -8,7 +8,7 @@ import {
   githubRepositoryStats,
   githubChangeNotifications,
 } from "@/db/schema";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { eq, and, sql, inArray, or, gt } from "drizzle-orm";
 import { GITHUB_STATS_TTL_MINUTES, type CacheMetadata } from "@/types/github-stats";
 
 export class CacheServiceError extends Error {
@@ -261,12 +261,12 @@ export async function hasUnseenChanges(userId: string): Promise<boolean> {
     where: and(
       eq(githubChangeNotifications.userId, userId),
       // Check if either count is > 0
+      or(
+        gt(githubChangeNotifications.newPRCount, 0),
+        gt(githubChangeNotifications.newIssueCount, 0)
+      )
     ),
   });
 
-  if (!notification) {
-    return false;
-  }
-
-  return notification.newPRCount > 0 || notification.newIssueCount > 0;
+  return notification !== null && notification !== undefined;
 }

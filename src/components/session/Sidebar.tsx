@@ -1005,12 +1005,12 @@ export function Sidebar({
               )}
             >
             {/* Status indicator */}
-            <span
+            <Terminal
               className={cn(
-                "w-1.5 h-1.5 rounded-full shrink-0",
+                "w-3.5 h-3.5 shrink-0",
                 isActive
-                  ? "bg-primary animate-pulse"
-                  : "bg-muted-foreground"
+                  ? "text-primary"
+                  : "text-muted-foreground"
               )}
             />
 

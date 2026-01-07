@@ -1,0 +1,8 @@
+{
+  "active": true,
+  "iteration": 1,
+  "maxIterations": 50,
+  "completionPromise": "All beads from the code review have been closed",
+  "prompt": "You are working through a list of code review issues tracked as beads. Your goal is to fix ALL open beads until none remain.\n\n## Workflow for each bead:\n1. Run `bd ready` to see available work\n2. Pick the highest priority bead (P0 first, then P1, etc.)\n3. Run `bd update <id> --status in_progress` to claim it\n4. Read the relevant files to understand the issue\n5. Implement the fix with proper code changes\n6. Run tests if applicable (`bun test` or `bun run test`)\n7. Run `bd close <id>` when complete\n8. Commit your changes with a descriptive message\n9. Repeat until `bd ready` shows no more issues from this code review batch\n\n## Important rules:\n- Focus on security issues (P0) first\n- Make clean, targeted fixes\n- Test your changes when possible\n- Commit after each fix or logical group of fixes\n- If a fix is complex, break it into steps\n\n## Current beads to fix (22 total):\n- 5 P0 security issues\n- 7 P1 stability issues  \n- 6 P2 quality issues\n- 4 P3 improvements\n\nStart by running `bd ready` and picking up the first P0 issue.",
+  "startedAt": "2026-01-07T19:46:14.477Z"
+}

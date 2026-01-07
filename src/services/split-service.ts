@@ -3,7 +3,7 @@
  */
 import { db } from "@/db";
 import { splitGroups, terminalSessions } from "@/db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import type {
   SplitDirection,
   SplitGroup,
@@ -33,37 +33,48 @@ export async function listSplitGroups(
     orderBy: [asc(splitGroups.createdAt)],
   });
 
-  const result: SplitGroupWithSessions[] = [];
-
-  for (const group of groups) {
-    const sessions = await db.query.terminalSessions.findMany({
-      where: and(
-        eq(terminalSessions.splitGroupId, group.id),
-        eq(terminalSessions.userId, userId)
-      ),
-      orderBy: [asc(terminalSessions.splitOrder)],
-      columns: {
-        id: true,
-        splitOrder: true,
-        splitSize: true,
-      },
-    });
-
-    result.push({
-      id: group.id,
-      userId: group.userId,
-      direction: group.direction as SplitDirection,
-      createdAt: new Date(group.createdAt),
-      updatedAt: new Date(group.updatedAt),
-      sessions: sessions.map((s) => ({
-        sessionId: s.id,
-        splitOrder: s.splitOrder,
-        splitSize: s.splitSize ?? 0.5,
-      })),
-    });
+  if (groups.length === 0) {
+    return [];
   }
 
-  return result;
+  // Batch fetch all sessions for all groups (fixes N+1 query)
+  const groupIds = groups.map((g) => g.id);
+  const allSessions = await db.query.terminalSessions.findMany({
+    where: and(
+      inArray(terminalSessions.splitGroupId, groupIds),
+      eq(terminalSessions.userId, userId)
+    ),
+    orderBy: [asc(terminalSessions.splitOrder)],
+    columns: {
+      id: true,
+      splitGroupId: true,
+      splitOrder: true,
+      splitSize: true,
+    },
+  });
+
+  // Group sessions by splitGroupId
+  const sessionsByGroup = new Map<string, typeof allSessions>();
+  for (const session of allSessions) {
+    if (session.splitGroupId) {
+      const existing = sessionsByGroup.get(session.splitGroupId) || [];
+      existing.push(session);
+      sessionsByGroup.set(session.splitGroupId, existing);
+    }
+  }
+
+  return groups.map((group) => ({
+    id: group.id,
+    userId: group.userId,
+    direction: group.direction as SplitDirection,
+    createdAt: new Date(group.createdAt),
+    updatedAt: new Date(group.updatedAt),
+    sessions: (sessionsByGroup.get(group.id) || []).map((s) => ({
+      sessionId: s.id,
+      splitOrder: s.splitOrder,
+      splitSize: s.splitSize ?? 0.5,
+    })),
+  }));
 }
 
 /**
@@ -403,45 +414,49 @@ export async function updateSplitLayout(
   splitGroupId: string,
   layout: Array<{ sessionId: string; size: number }>
 ): Promise<void> {
-  // Verify split group exists
-  const group = await db.query.splitGroups.findFirst({
-    where: and(
-      eq(splitGroups.id, splitGroupId),
-      eq(splitGroups.userId, userId)
-    ),
-  });
+  await db.transaction(async (tx) => {
+    // Verify split group exists
+    const group = await tx.query.splitGroups.findFirst({
+      where: and(
+        eq(splitGroups.id, splitGroupId),
+        eq(splitGroups.userId, userId)
+      ),
+    });
 
-  if (!group) {
-    throw new SplitServiceError(
-      "Split group not found",
-      "SPLIT_NOT_FOUND",
-      splitGroupId
-    );
-  }
-
-  // Update each session's size
-  for (let i = 0; i < layout.length; i++) {
-    const { sessionId, size } = layout[i];
-    await db
-      .update(terminalSessions)
-      .set({
-        splitOrder: i,
-        splitSize: size,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(terminalSessions.id, sessionId),
-          eq(terminalSessions.splitGroupId, splitGroupId)
-        )
+    if (!group) {
+      throw new SplitServiceError(
+        "Split group not found",
+        "SPLIT_NOT_FOUND",
+        splitGroupId
       );
-  }
+    }
 
-  // Update split group timestamp
-  await db
-    .update(splitGroups)
-    .set({ updatedAt: new Date() })
-    .where(eq(splitGroups.id, splitGroupId));
+    const now = new Date();
+
+    // Update each session's size
+    for (let i = 0; i < layout.length; i++) {
+      const { sessionId, size } = layout[i];
+      await tx
+        .update(terminalSessions)
+        .set({
+          splitOrder: i,
+          splitSize: size,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(terminalSessions.id, sessionId),
+            eq(terminalSessions.splitGroupId, splitGroupId)
+          )
+        );
+    }
+
+    // Update split group timestamp
+    await tx
+      .update(splitGroups)
+      .set({ updatedAt: now })
+      .where(eq(splitGroups.id, splitGroupId));
+  });
 }
 
 /**

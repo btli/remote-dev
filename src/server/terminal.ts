@@ -39,11 +39,27 @@ function validatePath(path: string | undefined): string | undefined {
 }
 
 /**
+ * Get AUTH_SECRET with production guard.
+ * Throws an error if AUTH_SECRET is not set in production.
+ */
+function getAuthSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("AUTH_SECRET is required in production");
+    }
+    console.warn("AUTH_SECRET not set - using development secret (not safe for production)");
+    return "development-secret";
+  }
+  return secret;
+}
+
+/**
  * Generate a WebSocket authentication token for a session.
  * This should be called by the Next.js server and passed to the client.
  */
 export function generateWsToken(sessionId: string, userId: string): string {
-  const secret = process.env.AUTH_SECRET || "development-secret";
+  const secret = getAuthSecret();
   const timestamp = Date.now();
   const data = `${sessionId}:${userId}:${timestamp}`;
   const hmac = createHmac("sha256", secret).update(data).digest("hex");
@@ -56,7 +72,7 @@ export function generateWsToken(sessionId: string, userId: string): string {
  */
 function validateWsToken(token: string): { sessionId: string; userId: string } | null {
   try {
-    const secret = process.env.AUTH_SECRET || "development-secret";
+    const secret = getAuthSecret();
     const decoded = Buffer.from(token, "base64").toString("utf8");
     const parts = decoded.split(":");
     if (parts.length !== 4) return null;
@@ -206,7 +222,7 @@ async function handleInternalApi(
 
   // Internal scheduler API - requires internal secret
   if (pathname?.startsWith("/internal/scheduler/")) {
-    const internalSecret = process.env.AUTH_SECRET || "development-secret";
+    const internalSecret = getAuthSecret();
     const authHeader = req.headers.authorization;
 
     if (authHeader !== `Bearer ${internalSecret}`) {
