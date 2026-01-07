@@ -21,17 +21,10 @@ import type {
   CleanupResult,
 } from "@/types/trash";
 import * as WorktreeTrashService from "./worktree-trash-service";
+import { TrashServiceError } from "@/lib/errors";
 
-export class TrashServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly details?: string
-  ) {
-    super(message);
-    this.name = "TrashServiceError";
-  }
-}
+// Re-export for backwards compatibility
+export { TrashServiceError };
 
 /**
  * List all trash items for a user (basic info only)

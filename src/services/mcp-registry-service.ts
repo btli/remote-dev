@@ -295,13 +295,5 @@ function mapDbToServer(record: typeof mcpServers.$inferSelect): MCPServer {
   };
 }
 
-// Error class for service-specific errors
-export class MCPRegistryServiceError extends Error {
-  constructor(
-    message: string,
-    public code: string
-  ) {
-    super(message);
-    this.name = "MCPRegistryServiceError";
-  }
-}
+// Re-export error class from centralized location for backwards compatibility
+export { MCPRegistryServiceError } from "@/lib/errors";

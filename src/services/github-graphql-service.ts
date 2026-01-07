@@ -13,17 +13,10 @@ import type {
   CommitInfo,
   BranchProtection,
 } from "@/types/github-stats";
+import { GitHubGraphQLError } from "@/lib/errors";
 
-export class GitHubGraphQLError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly statusCode?: number
-  ) {
-    super(message);
-    this.name = "GitHubGraphQLError";
-  }
-}
+// Re-export for backwards compatibility
+export { GitHubGraphQLError };
 
 // GraphQL query for fetching repository stats (batched)
 const REPO_STATS_QUERY = `

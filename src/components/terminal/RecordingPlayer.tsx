@@ -354,6 +354,7 @@ export function RecordingPlayer({
             size="icon"
             onClick={handlePlayPause}
             className="w-8 h-8 text-foreground hover:bg-accent"
+            aria-label={isPlaying ? "Pause recording" : "Play recording"}
           >
             {isPlaying ? (
               <Pause className="w-4 h-4" />
@@ -368,6 +369,7 @@ export function RecordingPlayer({
             size="icon"
             onClick={handleRestart}
             className="w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-accent"
+            aria-label="Restart recording"
           >
             <RotateCcw className="w-4 h-4" />
           </Button>
@@ -399,6 +401,7 @@ export function RecordingPlayer({
             size="sm"
             onClick={handleSpeedChange}
             className="text-xs text-muted-foreground hover:text-foreground hover:bg-accent px-2"
+            aria-label={`Playback speed: ${speed}x. Click to change.`}
           >
             {speed}x
           </Button>

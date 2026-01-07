@@ -297,13 +297,5 @@ function mapDbToConfig(
   };
 }
 
-// Error class for service-specific errors
-export class AgentConfigServiceError extends Error {
-  constructor(
-    message: string,
-    public code: string
-  ) {
-    super(message);
-    this.name = "AgentConfigServiceError";
-  }
-}
+// Re-export error class from centralized location for backwards compatibility
+export { AgentConfigServiceError } from "@/lib/errors";

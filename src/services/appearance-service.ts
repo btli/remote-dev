@@ -18,25 +18,10 @@ import type {
 } from "@/types/appearance";
 import { isValidColorSchemeId, isValidAppearanceMode } from "@/types/appearance";
 import { COLOR_SCHEMES, getColorScheme } from "@/lib/color-schemes";
+import { AppearanceServiceError } from "@/lib/errors";
 
-// =============================================================================
-// Error Handling
-// =============================================================================
-
-export class AppearanceServiceError extends Error {
-  constructor(
-    message: string,
-    public code:
-      | "USER_NOT_FOUND"
-      | "SETTINGS_NOT_FOUND"
-      | "INVALID_SCHEME"
-      | "INVALID_MODE"
-      | "VALIDATION_ERROR"
-  ) {
-    super(message);
-    this.name = "AppearanceServiceError";
-  }
-}
+// Re-export for backwards compatibility
+export { AppearanceServiceError };
 
 // =============================================================================
 // Type Mappers

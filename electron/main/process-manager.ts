@@ -12,6 +12,50 @@ import { join } from "path";
 import { createServer } from "net";
 import Config, { Mode } from "./config";
 
+/**
+ * SECURITY: Build a sanitized environment for child processes.
+ * Only includes necessary variables to prevent leaking sensitive data.
+ */
+function buildSafeEnvironment(additionalVars: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const safeEnv: Record<string, string> = {};
+  
+  // Essential system variables
+  const allowedVars = [
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "COLORTERM",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    // Node.js specific
+    "NODE_ENV",
+    "NODE_OPTIONS",
+    // Development
+    "DEBUG",
+  ];
+  
+  for (const key of allowedVars) {
+    if (process.env[key]) {
+      safeEnv[key] = process.env[key]!;
+    }
+  }
+  
+  // Ensure NODE_ENV is always set (required by ProcessEnv type)
+  if (!safeEnv.NODE_ENV) {
+    safeEnv.NODE_ENV = "production";
+  }
+  
+  // Add additional variables and return as ProcessEnv
+  // Type assertion is safe because we ensure NODE_ENV is present above
+  return { ...safeEnv, ...additionalVars } as NodeJS.ProcessEnv;
+}
+
 export interface ServerStatus {
   nextjs: {
     running: boolean;
@@ -206,10 +250,9 @@ class ProcessManagerImpl extends EventEmitter {
 
     this.terminalProcess = spawn(cmd[0], cmd.slice(1), {
       cwd: Config.appPath,
-      env: {
-        ...process.env,
+      env: buildSafeEnvironment({
         TERMINAL_PORT: port.toString(),
-      },
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -248,11 +291,10 @@ class ProcessManagerImpl extends EventEmitter {
 
     this.nextjsProcess = spawn(cmd[0], cmd.slice(1), {
       cwd: Config.appPath,
-      env: {
-        ...process.env,
+      env: buildSafeEnvironment({
         PORT: port.toString(),
         NEXT_PUBLIC_TERMINAL_PORT: Config.getPortConfig(mode).terminal.toString(),
-      },
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     });
 

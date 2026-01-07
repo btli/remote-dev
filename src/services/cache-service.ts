@@ -10,16 +10,10 @@ import {
 } from "@/db/schema";
 import { eq, and, sql, inArray, or, gt } from "drizzle-orm";
 import { GITHUB_STATS_TTL_MINUTES, type CacheMetadata } from "@/types/github-stats";
+import { CacheServiceError } from "@/lib/errors";
 
-export class CacheServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string
-  ) {
-    super(message);
-    this.name = "CacheServiceError";
-  }
-}
+// Re-export for backwards compatibility
+export { CacheServiceError };
 
 /**
  * Check if a repository's stats cache has expired

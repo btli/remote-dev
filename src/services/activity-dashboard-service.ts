@@ -493,13 +493,5 @@ function mapDbToEvent(
   };
 }
 
-// Error class for service-specific errors
-export class ActivityDashboardError extends Error {
-  constructor(
-    message: string,
-    public code: string
-  ) {
-    super(message);
-    this.name = "ActivityDashboardError";
-  }
-}
+// Re-export error class from centralized location for backwards compatibility
+export { ActivityDashboardError } from "@/lib/errors";

@@ -10,17 +10,10 @@ import type {
   SplitGroupWithSessions,
 } from "@/types/split";
 import * as SessionService from "./session-service";
+import { SplitServiceError } from "@/lib/errors";
 
-export class SplitServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly splitGroupId?: string
-  ) {
-    super(message);
-    this.name = "SplitServiceError";
-  }
-}
+// Re-export for backwards compatibility
+export { SplitServiceError };
 
 /**
  * Get all split groups for a user with their sessions

@@ -20,17 +20,10 @@ import { join, dirname, basename } from "path";
 import type { TrashItem, RestoreResult } from "@/types/trash";
 import * as TmuxService from "./tmux-service";
 import { sanitizeBranchName, getRepoRoot } from "./worktree-service";
+import { WorktreeTrashServiceError } from "@/lib/errors";
 
-export class WorktreeTrashServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly details?: string
-  ) {
-    super(message);
-    this.name = "WorktreeTrashServiceError";
-  }
-}
+// Re-export for backwards compatibility
+export { WorktreeTrashServiceError };
 
 /**
  * Get the .trash directory path for a repository

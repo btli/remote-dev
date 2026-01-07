@@ -10,6 +10,7 @@ import type {
   AgentProvider,
 } from "@/types/agent";
 import * as AgentConfigService from "./agent-config-service";
+import { TemplateServiceError } from "@/lib/errors";
 
 // ============================================================================
 // Built-in Templates
@@ -547,13 +548,5 @@ export function getAllTags(): string[] {
   return Array.from(tags).sort();
 }
 
-// Error class for service-specific errors
-export class TemplateServiceError extends Error {
-  constructor(
-    message: string,
-    public code: string
-  ) {
-    super(message);
-    this.name = "TemplateServiceError";
-  }
-}
+// Re-export error class from centralized location for backwards compatibility
+export { TemplateServiceError } from "@/lib/errors";
