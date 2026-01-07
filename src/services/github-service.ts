@@ -436,7 +436,9 @@ export function getFolderStructure(
       }
 
       return nodes.sort((a, b) => a.name.localeCompare(b.name));
-    } catch {
+    } catch (error) {
+      // Log error for debugging but return empty array to not break UI
+      console.warn(`[GitHubService] Failed to read directory ${path}:`, error);
       return [];
     }
   }
