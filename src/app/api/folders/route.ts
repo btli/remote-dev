@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import {
   listFoldersUseCase,
   createFolderUseCase,
@@ -23,8 +23,9 @@ export const GET = withAuth(async (_request, { userId }) => {
  * POST /api/folders - Create a new folder (optionally nested)
  */
 export const POST = withAuth(async (request, { userId }) => {
-  const body = await request.json();
-  const { name, parentId } = body;
+  const result = await parseJsonBody<{ name: string; parentId?: string | null }>(request);
+  if ("error" in result) return result.error;
+  const { name, parentId } = result.data;
 
   if (!name || typeof name !== "string") {
     return errorResponse("Name is required", 400);
