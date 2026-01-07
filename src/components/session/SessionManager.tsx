@@ -1310,6 +1310,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     size="icon"
                     onClick={handleSplitVertical}
                     title="Split vertically (⌘D)"
+                    aria-label="Split terminal vertically"
                     className="w-7 h-7 bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground"
                   >
                     <Columns className="w-4 h-4" />
@@ -1319,6 +1320,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     size="icon"
                     onClick={handleSplitHorizontal}
                     title="Split horizontally (⌘⇧D)"
+                    aria-label="Split terminal horizontally"
                     className="w-7 h-7 bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground"
                   >
                     <Rows className="w-4 h-4" />
@@ -1329,6 +1331,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                       size="icon"
                       onClick={handleExitSplitMode}
                       title="Exit split mode"
+                      aria-label="Exit split mode"
                       className="w-7 h-7 bg-muted/80 hover:bg-destructive/50 text-muted-foreground hover:text-foreground"
                     >
                       <Maximize2 className="w-4 h-4" />

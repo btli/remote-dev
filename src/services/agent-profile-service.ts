@@ -22,6 +22,7 @@ import { join, resolve as pathResolve, isAbsolute } from "path";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
+import { AgentProfileServiceError } from "@/lib/errors";
 import type {
   AgentProfile,
   CreateAgentProfileInput,
@@ -816,13 +817,5 @@ function mapDbToSecretsConfig(
   };
 }
 
-// Export error class for service-specific errors
-export class AgentProfileServiceError extends Error {
-  constructor(
-    message: string,
-    public code: string
-  ) {
-    super(message);
-    this.name = "AgentProfileServiceError";
-  }
-}
+// Re-export error class from centralized location for backwards compatibility
+export { AgentProfileServiceError } from "@/lib/errors";

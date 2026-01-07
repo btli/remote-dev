@@ -25,16 +25,10 @@ import {
   type CommitInfo,
   type BranchProtection,
 } from "@/types/github-stats";
+import { GitHubStatsServiceError } from "@/lib/errors";
 
-export class GitHubStatsServiceError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string
-  ) {
-    super(message);
-    this.name = "GitHubStatsServiceError";
-  }
-}
+// Re-export for backwards compatibility
+export { GitHubStatsServiceError };
 
 // =============================================================================
 // Repository Stats Operations

@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { spawn, type ChildProcess } from "child_process";
 import type { MCPServer, MCPTool, MCPResource } from "@/types/agent";
 import * as MCPRegistryService from "./mcp-registry-service";
+import { MCPDiscoveryError } from "@/lib/errors";
 
 // MCP JSON-RPC types
 interface MCPRequest {
@@ -553,13 +554,5 @@ export async function getToolsByServer(
   return grouped;
 }
 
-// Error class for service-specific errors
-export class MCPDiscoveryError extends Error {
-  constructor(
-    message: string,
-    public code: string
-  ) {
-    super(message);
-    this.name = "MCPDiscoveryError";
-  }
-}
+// Re-export error class from centralized location for backwards compatibility
+export { MCPDiscoveryError } from "@/lib/errors";

@@ -5,7 +5,7 @@
  * the lifecycle of the Next.js and Terminal servers.
  */
 
-import { app, ipcMain, shell, Menu, dialog } from "electron";
+import { app, ipcMain, shell, Menu, dialog, IpcMainInvokeEvent } from "electron";
 import { platform, arch, homedir } from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -17,6 +17,19 @@ import AutoUpdater from "./auto-updater";
 import { CloudflaredService, CloudflaredInfo, TunnelInfo } from "./cloudflared";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * SECURITY: Validate that IPC requests come from our main window.
+ * This provides defense-in-depth against malicious scripts.
+ */
+function validateIpcSender(event: IpcMainInvokeEvent): boolean {
+  const mainWindow = getMainWindow();
+  if (!mainWindow) {
+    // No main window - allow request (could be during initialization)
+    return true;
+  }
+  return event.sender === mainWindow.webContents;
+}
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (electronSquirrelStartup) {
@@ -65,20 +78,32 @@ async function initialize(): Promise<void> {
 }
 
 function setupIpcHandlers(): void {
-  // Server management
-  ipcMain.handle("get-server-status", () => {
+  // Server management - validate sender for sensitive operations
+  ipcMain.handle("get-server-status", (event) => {
+    if (!validateIpcSender(event)) {
+      throw new Error("Unauthorized IPC sender");
+    }
     return ProcessManager.getStatus();
   });
 
-  ipcMain.handle("start-servers", async (_event, mode?: "dev" | "prod") => {
+  ipcMain.handle("start-servers", async (event, mode?: "dev" | "prod") => {
+    if (!validateIpcSender(event)) {
+      throw new Error("Unauthorized IPC sender");
+    }
     await ProcessManager.start(mode);
   });
 
-  ipcMain.handle("stop-servers", async () => {
+  ipcMain.handle("stop-servers", async (event) => {
+    if (!validateIpcSender(event)) {
+      throw new Error("Unauthorized IPC sender");
+    }
     await ProcessManager.stop();
   });
 
-  ipcMain.handle("restart-servers", async (_event, mode?: "dev" | "prod") => {
+  ipcMain.handle("restart-servers", async (event, mode?: "dev" | "prod") => {
+    if (!validateIpcSender(event)) {
+      throw new Error("Unauthorized IPC sender");
+    }
     await ProcessManager.restart(mode);
   });
 
