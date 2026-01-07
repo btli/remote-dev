@@ -107,6 +107,7 @@
     "drizzle-kit": "^0.31.8",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
+    "electron-devtools-installer": "^4.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.0",
     "happy-dom": "^20.0.11",

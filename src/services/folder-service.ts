@@ -269,20 +269,22 @@ export async function reorderFolders(
   userId: string,
   folderIds: string[]
 ): Promise<void> {
-  // Update each folder with its new sort order
-  await Promise.all(
-    folderIds.map((id, index) =>
-      db
+  // Use transaction for atomicity
+  await db.transaction(async (tx) => {
+    const now = new Date();
+    // Update each folder with its new sort order
+    for (let index = 0; index < folderIds.length; index++) {
+      await tx
         .update(sessionFolders)
-        .set({ sortOrder: index, updatedAt: new Date() })
+        .set({ sortOrder: index, updatedAt: now })
         .where(
           and(
-            eq(sessionFolders.id, id),
+            eq(sessionFolders.id, folderIds[index]),
             eq(sessionFolders.userId, userId)
           )
-        )
-    )
-  );
+        );
+    }
+  });
 }
 
 /**
