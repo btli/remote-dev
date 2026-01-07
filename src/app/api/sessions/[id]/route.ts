@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 import * as WorktreeService from "@/services/worktree-service";
 import * as GitHubService from "@/services/github-service";
@@ -7,7 +7,32 @@ import * as TrashService from "@/services/trash-service";
 import * as ScheduleService from "@/services/schedule-service";
 import { notifySessionJobsRemoved } from "@/lib/scheduler-client";
 import { getFolderPreferences } from "@/services/preferences-service";
-import type { UpdateSessionInput } from "@/types/session";
+import type { UpdateSessionInput, SessionStatus } from "@/types/session";
+import { resolve } from "path";
+
+/**
+ * Validate a project path to prevent path traversal attacks.
+ * SECURITY: Ensures paths are within allowed directories.
+ */
+function validateProjectPath(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+
+  // Must be absolute path
+  if (!path.startsWith("/")) {
+    return undefined;
+  }
+
+  // Resolve to canonical path (removes .., ., etc.)
+  const resolved = resolve(path);
+
+  // Must be within home directory or /tmp
+  const home = process.env.HOME || "/tmp";
+  if (!resolved.startsWith(home) && !resolved.startsWith("/tmp")) {
+    return undefined;
+  }
+
+  return resolved;
+}
 
 /**
  * GET /api/sessions/:id - Get a single session
@@ -29,13 +54,29 @@ export const GET = withAuth(async (_request, { userId, params }) => {
  * PATCH /api/sessions/:id - Update a session
  */
 export const PATCH = withAuth(async (request, { userId, params }) => {
-  const body = await request.json();
+  const result = await parseJsonBody<{
+    name?: string;
+    status?: string;
+    tabOrder?: number;
+    projectPath?: string;
+  }>(request);
+  if ("error" in result) return result.error;
+  const body = result.data;
+
   const updates: UpdateSessionInput = {};
 
   if (body.name !== undefined) updates.name = body.name;
-  if (body.status !== undefined) updates.status = body.status;
+  if (body.status !== undefined) updates.status = body.status as SessionStatus;
   if (body.tabOrder !== undefined) updates.tabOrder = body.tabOrder;
-  if (body.projectPath !== undefined) updates.projectPath = body.projectPath;
+  
+  // SECURITY: Validate projectPath to prevent path traversal
+  if (body.projectPath !== undefined) {
+    const validatedPath = validateProjectPath(body.projectPath);
+    if (body.projectPath && !validatedPath) {
+      return errorResponse("Invalid project path", 400, "INVALID_PATH");
+    }
+    updates.projectPath = validatedPath;
+  }
 
   try {
     const updated = await SessionService.updateSession(

@@ -6,6 +6,48 @@ import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { db } from "@/db";
 import { users, accounts, sessions, verificationTokens, authorizedUsers } from "@/db/schema";
+import { encrypt, decryptSafe } from "@/lib/encryption";
+import type { Adapter, AdapterAccount } from "next-auth/adapters";
+
+/**
+ * Check if the request is from localhost (127.0.0.1 or ::1)
+ * Used to restrict credentials auth to local development only
+ */
+/**
+ * Wrap the DrizzleAdapter to encrypt OAuth tokens before storage
+ * and decrypt them when reading.
+ */
+function createEncryptedAdapter(): Adapter {
+  const baseAdapter = DrizzleAdapter(db, {
+    usersTable: users,
+    accountsTable: accounts,
+    sessionsTable: sessions,
+    verificationTokensTable: verificationTokens,
+  });
+
+  return {
+    ...baseAdapter,
+    // Override linkAccount to encrypt tokens before storage
+    linkAccount: async (account: AdapterAccount): Promise<void> => {
+      const encryptedAccount = {
+        ...account,
+        access_token: account.access_token ? encrypt(account.access_token) : undefined,
+        refresh_token: account.refresh_token ? encrypt(account.refresh_token) : undefined,
+      };
+      await baseAdapter.linkAccount?.(encryptedAccount);
+    },
+    // Override getAccount to decrypt tokens after reading
+    getAccount: async (providerAccountId: string, provider: string): Promise<AdapterAccount | null> => {
+      const account = await baseAdapter.getAccount?.(providerAccountId, provider);
+      if (!account) return null;
+      return {
+        ...account,
+        access_token: decryptSafe(account.access_token ?? null) ?? undefined,
+        refresh_token: decryptSafe(account.refresh_token ?? null) ?? undefined,
+      };
+    },
+  };
+}
 
 /**
  * Check if the request is from localhost (127.0.0.1 or ::1)
@@ -34,12 +76,7 @@ async function isLocalhostRequest(): Promise<boolean> {
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  adapter: DrizzleAdapter(db, {
-    usersTable: users,
-    accountsTable: accounts,
-    sessionsTable: sessions,
-    verificationTokensTable: verificationTokens,
-  }),
+  adapter: createEncryptedAdapter(),
   session: { strategy: "jwt" },
   providers: [
     GitHub({
