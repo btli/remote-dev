@@ -332,6 +332,9 @@ export function updateTrayMenu(): void {
 }
 
 export function destroyTray(): void {
+  // Remove event listener to prevent memory leak
+  ProcessManager.removeListener("status-change", updateTrayMenu);
+  
   if (tray) {
     tray.destroy();
     tray = null;

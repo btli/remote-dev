@@ -82,9 +82,23 @@ function setupIpcHandlers(): void {
     await ProcessManager.restart(mode);
   });
 
-  // Navigation
+  // Navigation - with URL validation for security
   ipcMain.handle("open-external", async (_event, url: string) => {
-    await shell.openExternal(url);
+    // SECURITY: Validate URL to prevent opening arbitrary protocols
+    try {
+      const parsedUrl = new URL(url);
+      const allowedProtocols = ["https:", "http:"];
+      
+      if (!allowedProtocols.includes(parsedUrl.protocol)) {
+        console.warn(`[IPC] Blocked open-external with disallowed protocol: ${parsedUrl.protocol}`);
+        throw new Error(`Protocol ${parsedUrl.protocol} is not allowed`);
+      }
+      
+      await shell.openExternal(url);
+    } catch (error) {
+      console.error("[IPC] open-external failed:", error);
+      throw error;
+    }
   });
 
   ipcMain.handle("open-in-browser", async () => {
@@ -501,6 +515,15 @@ app.on("activate", () => {
 
 app.on("before-quit", async () => {
   console.log("[Main] Application quitting...");
+  
+  // Stop all Cloudflare tunnels first
+  try {
+    await CloudflaredService.stopAllTunnels();
+    console.log("[Main] All tunnels stopped");
+  } catch (error) {
+    console.error("[Main] Failed to stop tunnels:", error);
+  }
+  
   await ProcessManager.stop();
   destroyTray();
 });

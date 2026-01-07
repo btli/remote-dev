@@ -228,6 +228,16 @@ export function Sidebar({
     };
   }, [isResizing, onWidthChange]);
 
+  // Cleanup longPressTimer on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Split context for managing split groups
   const {
     createSplit,
