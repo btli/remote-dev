@@ -303,8 +303,9 @@ class SchedulerOrchestrator {
     if (job) {
       try {
         job.cronJob.stop();
-      } catch {
-        // Ignore errors during stop
+      } catch (error) {
+        // Log but don't propagate - we still want to clean up
+        console.warn(`[Scheduler] Error stopping cron job ${scheduleId}:`, error);
       }
       this.jobs.delete(scheduleId);
     }
