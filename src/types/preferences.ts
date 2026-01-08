@@ -57,6 +57,9 @@ export interface UserSettings {
   fontSize: number | null;
   fontFamily: string | null;
   startupCommand: string | null;
+  // Scrollback buffer settings (for performance tuning)
+  xtermScrollback: number | null;
+  tmuxHistoryLimit: number | null;
   activeFolderId: string | null;
   pinnedFolderId: string | null;
   autoFollowActiveSession: boolean;
@@ -137,6 +140,9 @@ export interface UpdateUserSettingsInput {
   fontSize?: number | null;
   fontFamily?: string | null;
   startupCommand?: string | null;
+  // Scrollback buffer settings (for performance tuning)
+  xtermScrollback?: number | null;
+  tmuxHistoryLimit?: number | null;
   activeFolderId?: string | null;
   pinnedFolderId?: string | null;
   autoFollowActiveSession?: boolean;

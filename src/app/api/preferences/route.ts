@@ -66,6 +66,8 @@ export const PATCH = withAuth(async (request, { userId }) => {
     "theme",
     "fontSize",
     "fontFamily",
+    "xtermScrollback",
+    "tmuxHistoryLimit",
     "activeFolderId",
     "pinnedFolderId",
     "autoFollowActiveSession",

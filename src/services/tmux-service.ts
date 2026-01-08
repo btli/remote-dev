@@ -72,13 +72,16 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
  * @param cwd - Working directory for the session
  * @param startupCommand - Optional command to run after session creation
  * @param env - Optional environment variables to set for the session
+ * @param shellEnv - Optional shell environment variables to export
+ * @param historyLimit - Optional tmux history-limit (scrollback buffer, default: 50000)
  */
 export async function createSession(
   sessionName: string,
   cwd?: string,
   startupCommand?: string,
   env?: Record<string, string>,
-  shellEnv?: Record<string, string>
+  shellEnv?: Record<string, string>,
+  historyLimit: number = 50000
 ): Promise<void> {
   // Check if session already exists
   if (await sessionExists(sessionName)) {
@@ -115,6 +118,16 @@ export async function createSession(
       sessionName,
       "mouse",
       "on",
+    ]);
+
+    // Set scrollback buffer (history-limit) for performance tuning
+    // Lower values reduce memory usage for long-running sessions
+    await execFile("tmux", [
+      "set-option",
+      "-t",
+      sessionName,
+      "history-limit",
+      String(historyLimit),
     ]);
 
     // Inject shell environment variables BEFORE startup command
