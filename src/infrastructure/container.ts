@@ -11,15 +11,25 @@
 import { DrizzleSessionRepository } from "./persistence/repositories/DrizzleSessionRepository";
 import { DrizzleFolderRepository } from "./persistence/repositories/DrizzleFolderRepository";
 import { DrizzleGitHubIssueRepository } from "./persistence/repositories/DrizzleGitHubIssueRepository";
+import { DrizzleOrchestratorRepository } from "./persistence/repositories/DrizzleOrchestratorRepository";
+import { DrizzleInsightRepository } from "./persistence/repositories/DrizzleInsightRepository";
+import { DrizzleAuditLogRepository } from "./persistence/repositories/DrizzleAuditLogRepository";
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
 import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
+import { TmuxScrollbackMonitor } from "./external/tmux/TmuxScrollbackMonitor";
+import { TmuxCommandInjector } from "./external/tmux/TmuxCommandInjector";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import type { WorktreeGateway } from "@/application/ports/WorktreeGateway";
 import type { GitHubIssueRepository } from "@/application/ports/GitHubIssueRepository";
 import type { GitHubIssueGateway } from "@/application/ports/GitHubIssueGateway";
+import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorRepository";
+import type { IInsightRepository } from "@/application/ports/IInsightRepository";
+import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
+import type { IScrollbackMonitor } from "@/application/ports/IScrollbackMonitor";
+import type { ICommandInjector } from "@/application/ports/ICommandInjector";
 
 // Session Use Cases
 import { CreateSessionUseCase } from "@/application/use-cases/session/CreateSessionUseCase";
@@ -52,6 +62,14 @@ import {
   MarkIssuesSeenUseCase,
 } from "@/application/use-cases/github";
 
+// Orchestrator Use Cases
+import { CreateMasterOrchestratorUseCase } from "@/application/use-cases/orchestrator/CreateMasterOrchestratorUseCase";
+import { CreateSubOrchestratorUseCase } from "@/application/use-cases/orchestrator/CreateSubOrchestratorUseCase";
+import { DetectStalledSessionsUseCase } from "@/application/use-cases/orchestrator/DetectStalledSessionsUseCase";
+import { InjectCommandUseCase } from "@/application/use-cases/orchestrator/InjectCommandUseCase";
+import { PauseOrchestratorUseCase } from "@/application/use-cases/orchestrator/PauseOrchestratorUseCase";
+import { ResumeOrchestratorUseCase } from "@/application/use-cases/orchestrator/ResumeOrchestratorUseCase";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,6 +92,24 @@ export const folderRepository: FolderRepository = new DrizzleFolderRepository();
  */
 export const githubIssueRepository: GitHubIssueRepository = new DrizzleGitHubIssueRepository();
 
+/**
+ * Orchestrator repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const orchestratorRepository: IOrchestratorRepository = new DrizzleOrchestratorRepository();
+
+/**
+ * Insight repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const insightRepository: IInsightRepository = new DrizzleInsightRepository();
+
+/**
+ * Audit log repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const auditLogRepository: IAuditLogRepository = new DrizzleAuditLogRepository();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Gateway Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +131,18 @@ export const worktreeGateway: WorktreeGateway = new WorktreeGatewayImpl();
  * Wraps the existing GitHubService issue functions.
  */
 export const githubIssueGateway: GitHubIssueGateway = new GitHubIssueGatewayImpl();
+
+/**
+ * Scrollback monitor gateway instance.
+ * Monitors terminal scrollback buffers for stall detection.
+ */
+export const scrollbackMonitor: IScrollbackMonitor = new TmuxScrollbackMonitor();
+
+/**
+ * Command injector gateway instance.
+ * Injects commands into running terminal sessions.
+ */
+export const commandInjector: ICommandInjector = new TmuxCommandInjector();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Use Case Instances
@@ -241,6 +289,61 @@ export const markIssuesSeenUseCase = new MarkIssuesSeenUseCase(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Orchestrator Use Case Instances
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create master orchestrator use case.
+ */
+export const createMasterOrchestratorUseCase = new CreateMasterOrchestratorUseCase(
+  orchestratorRepository,
+  auditLogRepository
+);
+
+/**
+ * Create sub-orchestrator use case.
+ */
+export const createSubOrchestratorUseCase = new CreateSubOrchestratorUseCase(
+  orchestratorRepository,
+  auditLogRepository
+);
+
+/**
+ * Detect stalled sessions use case.
+ */
+export const detectStalledSessionsUseCase = new DetectStalledSessionsUseCase(
+  orchestratorRepository,
+  insightRepository,
+  auditLogRepository,
+  scrollbackMonitor
+);
+
+/**
+ * Inject command use case.
+ */
+export const injectCommandUseCase = new InjectCommandUseCase(
+  orchestratorRepository,
+  auditLogRepository,
+  commandInjector
+);
+
+/**
+ * Pause orchestrator use case.
+ */
+export const pauseOrchestratorUseCase = new PauseOrchestratorUseCase(
+  orchestratorRepository,
+  auditLogRepository
+);
+
+/**
+ * Resume orchestrator use case.
+ */
+export const resumeOrchestratorUseCase = new ResumeOrchestratorUseCase(
+  orchestratorRepository,
+  auditLogRepository
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -252,9 +355,14 @@ export interface Container {
   sessionRepository: SessionRepository;
   folderRepository: FolderRepository;
   githubIssueRepository: GitHubIssueRepository;
+  orchestratorRepository: IOrchestratorRepository;
+  insightRepository: IInsightRepository;
+  auditLogRepository: IAuditLogRepository;
   tmuxGateway: TmuxGateway;
   worktreeGateway: WorktreeGateway;
   githubIssueGateway: GitHubIssueGateway;
+  scrollbackMonitor: IScrollbackMonitor;
+  commandInjector: ICommandInjector;
 }
 
 /**
@@ -264,9 +372,14 @@ export const defaultContainer: Container = {
   sessionRepository,
   folderRepository,
   githubIssueRepository,
+  orchestratorRepository,
+  insightRepository,
+  auditLogRepository,
   tmuxGateway,
   worktreeGateway,
   githubIssueGateway,
+  scrollbackMonitor,
+  commandInjector,
 };
 
 /**
