@@ -5,6 +5,7 @@ import {
   initializeMCPServer,
   shutdownMCPServer,
 } from "../mcp/index";
+import { initializeMonitoring, stopAllMonitoring } from "../services/monitoring-service";
 
 // Load .env.local to match Next.js environment
 config({ path: ".env.local" });
@@ -33,6 +34,15 @@ async function startServer() {
     // Don't fail server startup if scheduler fails - it can be restarted
   }
 
+  // Initialize orchestrator monitoring for all active orchestrators
+  try {
+    await initializeMonitoring();
+    console.log("[Server] Orchestrator monitoring initialized");
+  } catch (error) {
+    console.error("[Server] Failed to initialize orchestrator monitoring:", error);
+    // Don't fail server startup if monitoring fails
+  }
+
   // Start MCP server if enabled
   if (MCP_ENABLED) {
     try {
@@ -47,6 +57,14 @@ async function startServer() {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     console.log(`\n[Server] ${signal} received, shutting down gracefully...`);
+
+    // Stop all orchestrator monitoring
+    try {
+      stopAllMonitoring();
+      console.log("[Server] Orchestrator monitoring stopped");
+    } catch (error) {
+      console.error("[Server] Error stopping orchestrator monitoring:", error);
+    }
 
     // Shutdown MCP server if enabled
     if (MCP_ENABLED) {

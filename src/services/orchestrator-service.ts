@@ -421,3 +421,117 @@ export async function updateOrchestrator(
 
   return updated;
 }
+
+/**
+ * Ensure master orchestrator exists for a user
+ * Creates one if it doesn't exist yet
+ * Returns the existing or newly created orchestrator
+ */
+export async function ensureMasterOrchestrator(
+  userId: string
+): Promise<{
+  orchestrator: Orchestrator;
+  created: boolean;
+  sessionId?: string;
+}> {
+  // Check if master orchestrator already exists
+  const existing = await getMasterOrchestrator(userId);
+  if (existing) {
+    return { orchestrator: existing, created: false };
+  }
+
+  // Import SessionService to create orchestrator session
+  const SessionService = await import("./session-service");
+
+  // Create dedicated orchestrator session with isOrchestratorSession flag
+  const orchestratorSession = await SessionService.createSession(userId, {
+    name: "Master Orchestrator",
+    isOrchestratorSession: true,
+    agentProvider: "claude",
+  });
+
+  // Create master orchestrator
+  const result = await createMasterOrchestrator({
+    userId,
+    sessionId: orchestratorSession.id,
+    monitoringInterval: 30, // Default: check every 30 seconds
+    stallThreshold: 300, // Default: 5 minutes of inactivity
+    autoIntervention: false, // Default: manual intervention only
+  });
+
+  return {
+    orchestrator: result.orchestrator,
+    created: true,
+    sessionId: orchestratorSession.id,
+  };
+}
+
+/**
+ * Create or update folder sub-orchestrator with automatic session setup
+ * If an orchestrator already exists for this folder, returns it
+ * Otherwise creates a new dedicated session and sub-orchestrator
+ */
+export async function ensureFolderSubOrchestrator(
+  userId: string,
+  folderId: string,
+  config?: {
+    customInstructions?: string;
+    monitoringInterval?: number;
+    stallThreshold?: number;
+    autoIntervention?: boolean;
+  }
+): Promise<{
+  orchestrator: Orchestrator;
+  created: boolean;
+  sessionId?: string;
+}> {
+  // Check if sub-orchestrator already exists for this folder
+  const existing = await getSubOrchestratorForFolder(folderId, userId);
+  if (existing) {
+    return { orchestrator: existing, created: false };
+  }
+
+  // Import SessionService
+  const SessionService = await import("./session-service");
+  const { sessionFolders } = await import("@/db/schema");
+  const { eq, and } = await import("drizzle-orm");
+
+  // Get folder name for session naming
+  const folder = await db
+    .select()
+    .from(sessionFolders)
+    .where(
+      and(
+        eq(sessionFolders.id, folderId),
+        eq(sessionFolders.userId, userId)
+      )
+    )
+    .limit(1);
+
+  const folderName = folder.length > 0 ? folder[0].name : "Folder";
+
+  // Create dedicated orchestrator session for this folder
+  const orchestratorSession = await SessionService.createSession(userId, {
+    name: `${folderName} Orchestrator`,
+    folderId, // Associate session with the folder
+    isOrchestratorSession: true,
+    agentProvider: "claude",
+  });
+
+  // Create sub-orchestrator with defaults
+  const result = await createSubOrchestrator({
+    userId,
+    sessionId: orchestratorSession.id,
+    folderId,
+    customInstructions: config?.customInstructions,
+    monitoringInterval: config?.monitoringInterval ?? 30,
+    stallThreshold: config?.stallThreshold ?? 300,
+    autoIntervention: config?.autoIntervention ?? false,
+  });
+
+  return {
+    orchestrator: result.orchestrator,
+    created: true,
+    sessionId: orchestratorSession.id,
+  };
+}

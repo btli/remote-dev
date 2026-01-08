@@ -64,6 +64,8 @@ export const GET = withApiAuth(async (request, { userId }) => {
  *
  * Supports both session auth and API key auth for agent access.
  * Agents can create sessions with worktrees for issue workflows.
+ *
+ * Auto-initializes master orchestrator on first non-orchestrator session.
  */
 export const POST = withApiAuth(async (request, { userId }) => {
   try {
@@ -77,6 +79,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
+      isOrchestratorSession?: boolean;
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -93,6 +96,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
       folderId: body.folderId,
+      isOrchestratorSession: body.isOrchestratorSession,
       // Feature session fields
       startupCommand: body.startupCommand,
       featureDescription: body.featureDescription,
@@ -101,6 +105,25 @@ export const POST = withApiAuth(async (request, { userId }) => {
     };
 
     const newSession = await SessionService.createSession(userId, input);
+
+    // Auto-initialize master orchestrator for non-orchestrator sessions
+    if (!newSession.isOrchestratorSession) {
+      const OrchestratorService = await import("@/services/orchestrator-service");
+      const MonitoringService = await import("@/services/monitoring-service");
+
+      try {
+        const result = await OrchestratorService.ensureMasterOrchestrator(userId);
+
+        // Start monitoring if orchestrator was just created
+        if (result.created) {
+          MonitoringService.startMonitoring(result.orchestrator.id, userId);
+          console.log(`[API] Created and started master orchestrator for user ${userId}`);
+        }
+      } catch (error) {
+        // Log error but don't fail session creation
+        console.error("[API] Failed to initialize master orchestrator:", error);
+      }
+    }
 
     return NextResponse.json(newSession, { status: 201 });
   } catch (error) {

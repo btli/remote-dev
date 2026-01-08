@@ -40,8 +40,7 @@ export function SubOrchestratorConfigModal({
   folderId,
   folderName,
 }: SubOrchestratorConfigModalProps) {
-  const { createOrchestrator, getOrchestratorForFolder } = useOrchestratorContext();
-  const { sessions } = useSessionContext();
+  const { getOrchestratorForFolder, refreshOrchestrators } = useOrchestratorContext();
 
   const [monitoringInterval, setMonitoringInterval] = useState(30);
   const [stallThreshold, setStallThreshold] = useState(300);
@@ -52,10 +51,6 @@ export function SubOrchestratorConfigModal({
 
   // Check if orchestrator already exists for this folder
   const existingOrchestrator = getOrchestratorForFolder(folderId);
-
-  // Get sessions in this folder to determine orchestrator session
-  const folderSessions = sessions.filter((s) => s.folderId === folderId && s.status === "active");
-  const orchestratorSessionId = folderSessions[0]?.id;
 
   useEffect(() => {
     if (open) {
@@ -69,24 +64,30 @@ export function SubOrchestratorConfigModal({
   }, [open]);
 
   const handleCreate = async () => {
-    if (!orchestratorSessionId) {
-      setError("No active session in this folder. Create a session first.");
-      return;
-    }
-
     setIsCreating(true);
     setError(null);
 
     try {
-      await createOrchestrator({
-        sessionId: orchestratorSessionId,
-        type: "sub_orchestrator",
-        folderId,
-        customInstructions: customInstructions.trim() || undefined,
-        monitoringInterval,
-        stallThreshold,
-        autoIntervention,
+      // Use the new API endpoint that creates orchestrator session automatically
+      const response = await fetch(`/api/folders/${folderId}/orchestrator`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customInstructions: customInstructions.trim() || undefined,
+          monitoringInterval,
+          stallThreshold,
+          autoIntervention,
+          startMonitoring: true,
+        }),
       });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to create orchestrator");
+      }
+
+      // Refresh orchestrator list
+      await refreshOrchestrators();
 
       onClose();
     } catch (err) {
@@ -205,12 +206,6 @@ export function SubOrchestratorConfigModal({
               />
             </div>
 
-            {!orchestratorSessionId && (
-              <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-500">
-                No active sessions in this folder. Create a session first to host the orchestrator.
-              </div>
-            )}
-
             {error && (
               <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-500">
                 {error}
@@ -224,7 +219,7 @@ export function SubOrchestratorConfigModal({
             {existingOrchestrator ? "Close" : "Cancel"}
           </Button>
           {!existingOrchestrator && (
-            <Button onClick={handleCreate} disabled={isCreating || !orchestratorSessionId}>
+            <Button onClick={handleCreate} disabled={isCreating}>
               {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create Orchestrator
             </Button>
