@@ -1355,6 +1355,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     getEnvironmentForFolder={getEnvironmentWithSecrets}
                     sessionFolders={sessionFolders}
                     wsUrl={wsUrl}
+                    scrollback={userSettings?.xtermScrollback ?? 10000}
+                    tmuxHistoryLimit={userSettings?.tmuxHistoryLimit ?? 50000}
                   />
                 ) : (
                   /* Single terminal mode - only attach to the active session */
@@ -1382,6 +1384,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           wsUrl={wsUrl}
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
+                          scrollback={userSettings?.xtermScrollback ?? 10000}
+                          tmuxHistoryLimit={userSettings?.tmuxHistoryLimit ?? 50000}
                           notificationsEnabled={true}
                           isRecording={isRecording}
                           isActive={session.id === activeSessionId}

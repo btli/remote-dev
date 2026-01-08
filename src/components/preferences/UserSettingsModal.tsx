@@ -231,6 +231,57 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                 Command to run when a new session starts (e.g., claude, clauded)
               </p>
             </div>
+
+            {/* Scrollback Buffer Settings */}
+            <div className="pt-4 border-t border-border">
+              <Label className="text-foreground text-sm font-medium">Scrollback Buffer</Label>
+              <p className="text-xs text-muted-foreground mt-1 mb-4">
+                Reduce these values if you experience performance issues with long-running sessions.
+                Changes apply to new sessions only.
+              </p>
+
+              {/* xterm.js Scrollback */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-foreground text-sm">Terminal (xterm.js)</Label>
+                  <span className="text-sm text-muted-foreground">
+                    {(getValue("xtermScrollback") || 10000).toLocaleString()} lines
+                  </span>
+                </div>
+                <Slider
+                  value={[getValue("xtermScrollback") || 10000]}
+                  onValueChange={([value]) => setValue("xtermScrollback", value)}
+                  min={1000}
+                  max={50000}
+                  step={1000}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Client-side scrollback buffer for the terminal display
+                </p>
+              </div>
+
+              {/* tmux History Limit */}
+              <div className="space-y-2 mt-4">
+                <div className="flex items-center justify-between">
+                  <Label className="text-foreground text-sm">Server (tmux)</Label>
+                  <span className="text-sm text-muted-foreground">
+                    {(getValue("tmuxHistoryLimit") || 50000).toLocaleString()} lines
+                  </span>
+                </div>
+                <Slider
+                  value={[getValue("tmuxHistoryLimit") || 50000]}
+                  onValueChange={([value]) => setValue("tmuxHistoryLimit", value)}
+                  min={1000}
+                  max={100000}
+                  step={5000}
+                  className="w-full"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Server-side scrollback buffer stored in tmux (persistent)
+                </p>
+              </div>
+            </div>
           </TabsContent>
 
           <TabsContent value="appearance" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">

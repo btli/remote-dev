@@ -413,6 +413,8 @@ function mapDbUserSettings(
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
     startupCommand: db.startupCommand,
+    xtermScrollback: db.xtermScrollback,
+    tmuxHistoryLimit: db.tmuxHistoryLimit,
     theme: db.theme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,

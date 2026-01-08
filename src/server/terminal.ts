@@ -158,12 +158,14 @@ function tmuxSessionExists(sessionName: string): boolean {
 
 /**
  * Create a new tmux session with optimal settings
+ * @param historyLimit - Scrollback buffer size (default: 50000 lines)
  */
 function createTmuxSession(
   sessionName: string,
   cols: number,
   rows: number,
-  cwd?: string
+  cwd?: string,
+  historyLimit: number = 50000
 ): void {
   const args = ["new-session", "-d", "-s", sessionName, "-x", String(cols), "-y", String(rows)];
   if (cwd) {
@@ -175,8 +177,9 @@ function createTmuxSession(
   // Use Shift+click to bypass and select text with xterm.js
   execFileSync("tmux", ["set-option", "-t", sessionName, "mouse", "on"], { stdio: "pipe" });
 
-  // Increase scrollback buffer (default is 2000)
-  execFileSync("tmux", ["set-option", "-t", sessionName, "history-limit", "50000"], { stdio: "pipe" });
+  // Set scrollback buffer (history-limit) for performance tuning
+  // Lower values reduce memory usage for long-running sessions
+  execFileSync("tmux", ["set-option", "-t", sessionName, "history-limit", String(historyLimit)], { stdio: "pipe" });
 
   // Prevent tmux from resizing window to smallest attached client
   // This fixes the issue where switching tabs causes resize
@@ -379,6 +382,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     const cols = parseInt(query.cols as string) || 80;
     const rows = parseInt(query.rows as string) || 24;
     const rawCwd = query.cwd as string | undefined;
+    // tmux history-limit (scrollback buffer) - default 50000 lines
+    const tmuxHistoryLimit = parseInt(query.tmuxHistoryLimit as string) || 50000;
 
     // SECURITY: Validate tmux session name to prevent command injection
     if (!validateSessionName(tmuxSessionName)) {
@@ -410,8 +415,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         }));
       } else {
         // Create new tmux session
-        console.log(`Creating new tmux session: ${tmuxSessionName}`);
-        createTmuxSession(tmuxSessionName, cols, rows, cwd);
+        console.log(`Creating new tmux session: ${tmuxSessionName} (history-limit: ${tmuxHistoryLimit})`);
+        createTmuxSession(tmuxSessionName, cols, rows, cwd, tmuxHistoryLimit);
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
 
         ws.send(JSON.stringify({

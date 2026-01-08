@@ -33,6 +33,10 @@ interface SplitPaneLayoutProps {
   getEnvironmentForFolder: (folderId: string | null) => Record<string, string> | null;
   sessionFolders: Record<string, string>;
   wsUrl: string;
+  /** xterm.js client-side scrollback buffer size */
+  scrollback?: number;
+  /** tmux server-side history-limit / scrollback buffer */
+  tmuxHistoryLimit?: number;
 }
 
 export function SplitPaneLayout({
@@ -46,6 +50,8 @@ export function SplitPaneLayout({
   getEnvironmentForFolder,
   sessionFolders,
   wsUrl,
+  scrollback,
+  tmuxHistoryLimit,
 }: SplitPaneLayoutProps) {
   const isHorizontal = splitGroup.direction === "horizontal";
 
@@ -145,6 +151,8 @@ export function SplitPaneLayout({
                 tmuxSessionName={pane.session.tmuxSessionName}
                 fontSize={prefs.fontSize}
                 fontFamily={prefs.fontFamily}
+                scrollback={scrollback}
+                tmuxHistoryLimit={tmuxHistoryLimit}
                 wsUrl={wsUrl}
                 isActive={isActive}
                 environmentVars={getEnvironmentForFolder(folderId)}

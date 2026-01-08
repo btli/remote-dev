@@ -30,6 +30,10 @@ interface TerminalProps {
   wsUrl?: string;
   fontSize?: number;
   fontFamily?: string;
+  /** xterm.js client-side scrollback buffer size (default: 10000) */
+  scrollback?: number;
+  /** tmux server-side history-limit / scrollback buffer (default: 50000) */
+  tmuxHistoryLimit?: number;
   notificationsEnabled?: boolean;
   isRecording?: boolean;
   isActive?: boolean;
@@ -50,6 +54,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   wsUrl = "ws://localhost:3001",
   fontSize = 14,
   fontFamily = "'JetBrainsMono Nerd Font Mono', monospace",
+  scrollback = 10000,
+  tmuxHistoryLimit = 50000,
   notificationsEnabled = true,
   isRecording = false,
   isActive = false,
@@ -95,13 +101,15 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
 
-  // FIX: Use refs for font to avoid recreating terminal on changes.
+  // FIX: Use refs for font and scrollback to avoid recreating terminal on changes.
   // These refs are kept in sync with props so that:
   // 1. If terminal hasn't initialized yet, it will use the latest values
   // 2. If terminal already exists, the update effect applies changes directly
   // This prevents race conditions where preferences load after terminal mounts.
   const fontSizeRef = useRef(fontSize);
   const fontFamilyRef = useRef(fontFamily);
+  const scrollbackRef = useRef(scrollback);
+  const tmuxHistoryLimitRef = useRef(tmuxHistoryLimit);
 
   // FIX: Use ref for terminal theme to avoid recreating terminal on theme changes.
   // Theme updates are applied dynamically via terminal.options.theme
@@ -123,11 +131,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // Keep font refs in sync for pending terminal initialization
     fontSizeRef.current = fontSize;
     fontFamilyRef.current = fontFamily;
+    // Keep scrollback refs in sync for pending terminal initialization
+    scrollbackRef.current = scrollback;
+    tmuxHistoryLimitRef.current = tmuxHistoryLimit;
     // Keep environmentVars in sync (only used during initial connection)
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -221,7 +232,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         theme: xtermTheme,
         allowProposedApi: true,
         allowTransparency: true, // Required for opacity/glass effect
-        scrollback: 10000,
+        scrollback: scrollbackRef.current,
         // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
         // Shift+click also works by default to bypass mouse mode
         macOptionClickForcesSelection: true,
@@ -393,6 +404,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           tmuxSession: tmuxSessionName,
           cols: String(cols),
           rows: String(rows),
+          // Include tmux history-limit for new session creation
+          tmuxHistoryLimit: String(tmuxHistoryLimitRef.current),
         });
         // Include working directory if specified
         if (projectPath) {

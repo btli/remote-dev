@@ -21,6 +21,10 @@ interface TerminalWithKeyboardProps {
   wsUrl?: string;
   fontSize?: number;
   fontFamily?: string;
+  /** xterm.js client-side scrollback buffer size (default: 10000) */
+  scrollback?: number;
+  /** tmux server-side history-limit / scrollback buffer (default: 50000) */
+  tmuxHistoryLimit?: number;
   notificationsEnabled?: boolean;
   isRecording?: boolean;
   isActive?: boolean;
@@ -43,6 +47,8 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   wsUrl = "ws://localhost:3001",
   fontSize,
   fontFamily,
+  scrollback,
+  tmuxHistoryLimit,
   notificationsEnabled,
   isRecording,
   isActive,
@@ -131,6 +137,8 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
             wsUrl={wsUrl}
             fontSize={fontSize}
             fontFamily={fontFamily}
+            scrollback={scrollback}
+            tmuxHistoryLimit={tmuxHistoryLimit}
             notificationsEnabled={notificationsEnabled}
             isRecording={isRecording}
             isActive={isActive}

@@ -87,6 +87,11 @@ export const userSettings = sqliteTable("user_settings", {
   defaultWorkingDirectory: text("default_working_directory"),
   defaultShell: text("default_shell"),
   startupCommand: text("startup_command"),
+  // Scrollback buffer settings (for performance tuning)
+  // xterm.js client-side scrollback (default: 10000 lines)
+  xtermScrollback: integer("xterm_scrollback").default(10000),
+  // tmux server-side history-limit (default: 50000 lines)
+  tmuxHistoryLimit: integer("tmux_history_limit").default(50000),
   // Appearance preferences
   theme: text("theme").default("tokyo-night"),
   fontSize: integer("font_size").default(14),
