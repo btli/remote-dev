@@ -57,6 +57,13 @@
       "when": 1767881815096,
       "tag": "0008_add_scrollback_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1767890763511,
+      "tag": "0008_gorgeous_black_knight",
+      "breakpoints": true
     }
   ]
 }

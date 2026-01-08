@@ -144,6 +144,44 @@ export class Orchestrator {
   }
 
   /**
+   * Create a master orchestrator.
+   */
+  static createMaster(props: {
+    sessionId: string;
+    userId: string;
+    customInstructions?: string;
+    monitoringInterval?: number;
+    stallThreshold?: number;
+    autoIntervention?: boolean;
+  }): Orchestrator {
+    return Orchestrator.create({
+      ...props,
+      type: "master",
+      scopeType: null,
+      scopeId: null,
+    });
+  }
+
+  /**
+   * Create a sub-orchestrator.
+   */
+  static createSubOrchestrator(props: {
+    sessionId: string;
+    userId: string;
+    scopeId: string;
+    customInstructions?: string;
+    monitoringInterval?: number;
+    stallThreshold?: number;
+    autoIntervention?: boolean;
+  }): Orchestrator {
+    return Orchestrator.create({
+      ...props,
+      type: "sub_orchestrator",
+      scopeType: "folder",
+    });
+  }
+
+  /**
    * Reconstitute an Orchestrator from persistence.
    * Used by repositories when loading from database.
    */
@@ -241,6 +279,20 @@ export class Orchestrator {
    */
   isMonitoring(): boolean {
     return this.props.status === "idle" || this.props.status === "analyzing";
+  }
+
+  /**
+   * Check if orchestrator is paused.
+   */
+  isPaused(): boolean {
+    return this.props.status === "paused";
+  }
+
+  /**
+   * Check if orchestrator is idle.
+   */
+  isIdle(): boolean {
+    return this.props.status === "idle";
   }
 
   /**

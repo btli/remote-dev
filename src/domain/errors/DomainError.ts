@@ -77,3 +77,13 @@ export class BusinessRuleViolationError extends DomainError {
     );
   }
 }
+
+/**
+ * Thrown when an entity invariant is violated.
+ * Example: Master orchestrator with a scope, or sub-orchestrator without a scope.
+ */
+export class InvariantViolationError extends DomainError {
+  constructor(message: string, code: string) {
+    super(message, code);
+  }
+}

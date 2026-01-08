@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "71553f61-a807-48f9-9ae2-0a82d1dbe4d3",
-  "prevId": "de6211e0-1148-4b5f-a243-5226d0f6d77d",
+  "id": "8e7a53c8-2d7c-4960-adf0-ffdcf2d19789",
+  "prevId": "71553f61-a807-48f9-9ae2-0a82d1dbe4d3",
   "tables": {
     "account": {
       "name": "account",
@@ -2940,6 +2940,442 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "orchestrator_audit_log": {
+      "name": "orchestrator_audit_log",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "orchestrator_id": {
+          "name": "orchestrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action_type": {
+          "name": "action_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_session_id": {
+          "name": "target_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "details_json": {
+          "name": "details_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "orchestrator_audit_orchestrator_idx": {
+          "name": "orchestrator_audit_orchestrator_idx",
+          "columns": [
+            "orchestrator_id"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_audit_time_idx": {
+          "name": "orchestrator_audit_time_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_audit_action_idx": {
+          "name": "orchestrator_audit_action_idx",
+          "columns": [
+            "action_type"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_audit_target_idx": {
+          "name": "orchestrator_audit_target_idx",
+          "columns": [
+            "target_session_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "orchestrator_audit_log_orchestrator_id_orchestrator_session_id_fk": {
+          "name": "orchestrator_audit_log_orchestrator_id_orchestrator_session_id_fk",
+          "tableFrom": "orchestrator_audit_log",
+          "tableTo": "orchestrator_session",
+          "columnsFrom": [
+            "orchestrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "orchestrator_audit_log_target_session_id_terminal_session_id_fk": {
+          "name": "orchestrator_audit_log_target_session_id_terminal_session_id_fk",
+          "tableFrom": "orchestrator_audit_log",
+          "tableTo": "terminal_session",
+          "columnsFrom": [
+            "target_session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "orchestrator_insight": {
+      "name": "orchestrator_insight",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "orchestrator_id": {
+          "name": "orchestrator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "context_json": {
+          "name": "context_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "suggested_actions": {
+          "name": "suggested_actions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolved": {
+          "name": "resolved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "orchestrator_insight_orchestrator_idx": {
+          "name": "orchestrator_insight_orchestrator_idx",
+          "columns": [
+            "orchestrator_id"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_insight_session_idx": {
+          "name": "orchestrator_insight_session_idx",
+          "columns": [
+            "session_id"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_insight_resolved_idx": {
+          "name": "orchestrator_insight_resolved_idx",
+          "columns": [
+            "resolved"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_insight_severity_idx": {
+          "name": "orchestrator_insight_severity_idx",
+          "columns": [
+            "severity"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_insight_type_severity_idx": {
+          "name": "orchestrator_insight_type_severity_idx",
+          "columns": [
+            "type",
+            "severity"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "orchestrator_insight_orchestrator_id_orchestrator_session_id_fk": {
+          "name": "orchestrator_insight_orchestrator_id_orchestrator_session_id_fk",
+          "tableFrom": "orchestrator_insight",
+          "tableTo": "orchestrator_session",
+          "columnsFrom": [
+            "orchestrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "orchestrator_insight_session_id_terminal_session_id_fk": {
+          "name": "orchestrator_insight_session_id_terminal_session_id_fk",
+          "tableFrom": "orchestrator_insight",
+          "tableTo": "terminal_session",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "orchestrator_session": {
+      "name": "orchestrator_session",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'idle'"
+        },
+        "scope_type": {
+          "name": "scope_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "scope_id": {
+          "name": "scope_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "custom_instructions": {
+          "name": "custom_instructions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "monitoring_interval": {
+          "name": "monitoring_interval",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 30
+        },
+        "stall_threshold": {
+          "name": "stall_threshold",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 300
+        },
+        "auto_intervention": {
+          "name": "auto_intervention",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "last_activity_at": {
+          "name": "last_activity_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "orchestrator_session_session_id_unique": {
+          "name": "orchestrator_session_session_id_unique",
+          "columns": [
+            "session_id"
+          ],
+          "isUnique": true
+        },
+        "orchestrator_session_user_idx": {
+          "name": "orchestrator_session_user_idx",
+          "columns": [
+            "user_id"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_session_scope_idx": {
+          "name": "orchestrator_session_scope_idx",
+          "columns": [
+            "scope_type",
+            "scope_id"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_session_status_idx": {
+          "name": "orchestrator_session_status_idx",
+          "columns": [
+            "status"
+          ],
+          "isUnique": false
+        },
+        "orchestrator_session_type_idx": {
+          "name": "orchestrator_session_type_idx",
+          "columns": [
+            "type"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "orchestrator_session_session_id_terminal_session_id_fk": {
+          "name": "orchestrator_session_session_id_terminal_session_id_fk",
+          "tableFrom": "orchestrator_session",
+          "tableTo": "terminal_session",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "orchestrator_session_user_id_user_id_fk": {
+          "name": "orchestrator_session_user_id_user_id_fk",
+          "tableFrom": "orchestrator_session",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "port_registry": {
       "name": "port_registry",
       "columns": {
@@ -4602,6 +5038,14 @@
           "notNull": false,
           "autoincrement": false,
           "default": "'claude'"
+        },
+        "is_orchestrator_session": {
+          "name": "is_orchestrator_session",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "split_group_id": {
           "name": "split_group_id",

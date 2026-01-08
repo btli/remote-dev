@@ -33,8 +33,9 @@ The skill reads this PROMPT.md file and orchestrates the entire loop autonomousl
 11. [PR Creation and Merge](#pr-creation-and-merge)
 12. [Claude Code Integration](#claude-code-integration)
 13. [Agent Profile Configuration](#agent-profile-configuration)
-14. [Completion Criteria](#completion-criteria)
-15. [Completion Promise](#completion-promise)
+14. [Orchestrator Agent System](#orchestrator-agent-system)
+15. [Completion Criteria](#completion-criteria)
+16. [Completion Promise](#completion-promise)
 
 ---
 
@@ -1280,538 +1281,464 @@ The Agents tab is the third tab in UserSettingsModal:
 
 ---
 
-## Multi-Agent Configuration System Requirements
+##Multi-Agent Configuration System
 
-This section defines the COMPLETE requirements for implementing full configuration support for all AI coding agents. The current implementation only shows installation status - this must be expanded to provide comprehensive configuration management.
+> **Note**: This section provides a high-level overview. Detailed configuration specifications for each agent are available in separate documentation if needed for future implementation.
 
-### UI Architecture
+### Overview
 
-The Agents configuration UI must be organized as a **tabbed interface within the Agents tab**:
+Remote Dev supports comprehensive configuration management for multiple AI coding agents (Claude Code, Gemini CLI, OpenCode, Codex). The configuration system includes:
 
+**Current Implementation:**
+- CLI installation status detection
+- Version checking
+- Required environment variables display
+- Installation instructions
+
+**Future Work** (not required for orchestrator implementation):
+- Full UI for editing agent-specific settings (permissions, sandbox, hooks, MCP)
+- Profile management (create, clone, export/import profiles)
+- Per-agent configuration editors with validation
+- Folder-profile linking for automatic config inheritance
+
+### Key Configuration Areas
+
+Each agent supports configuration for:
+- **Model Settings**: Default models, context windows, reasoning modes
+- **Permissions**: Allowed/denied tools, file access, approval policies
+- **Sandbox**: Isolation modes, network access, writable roots
+- **Hooks**: Pre/post tool execution, session lifecycle events
+- **MCP Servers**: Server registration, tool allowlists, custom servers
+- **UI Settings**: Themes, status lines, output formatting
+
+### Profile System
+
+Agents use isolated profile directories for environment separation:
 ```
-UserSettingsModal
-└── Agents Tab
-    ├── Overview (CLI status, quick actions)
-    ├── Profiles (create, manage, switch profiles)
-    ├── Claude Code Config
-    ├── Gemini CLI Config
-    ├── OpenCode Config
-    └── Codex CLI Config
-```
-
-Each agent config tab should have sub-sections organized by category (Model, Permissions, UI, Tools, etc.).
-
-### Known UI Bugs to Fix
-
-Before implementing new features, fix these existing issues:
-
-1. **Settings boxes overlapping** - Tab content containers have z-index/overflow issues
-2. **Selection highlight not working** - Select components don't show proper background on hover/focus
-3. **Inconsistent spacing** - Gaps between form elements vary
-4. **Mobile responsiveness** - Settings modal breaks on small screens
-
----
-
-### Claude Code Configuration (Full Implementation)
-
-Reference: [code.claude.com/docs/en/settings](https://code.claude.com/docs/en/settings)
-
-#### Core Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `model` | string | Select dropdown | Default model (claude-sonnet-4, claude-opus-4, etc.) |
-| `cleanupPeriodDays` | number | Slider (1-90) | Session cleanup period |
-| `env` | object | Key-value editor | Environment variables for sessions |
-
-#### Attribution Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `attribution.commit` | string | Textarea | Git commit attribution text |
-| `attribution.pr` | string | Textarea | Pull request attribution text |
-| `includeCoAuthoredBy` | boolean | Toggle | Include co-author line |
-
-#### Permission Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `permissions.allow` | string[] | Tag input | Allowed tool patterns |
-| `permissions.ask` | string[] | Tag input | Tools requiring confirmation |
-| `permissions.deny` | string[] | Tag input | Blocked tools/files |
-| `permissions.additionalDirectories` | string[] | Path list | Extra accessible directories |
-| `permissions.defaultMode` | enum | Radio group | acceptEdits, askOnEdit, readOnly |
-| `permissions.disableBypassPermissionsMode` | string | Toggle | Prevent permission bypass |
-
-#### Sandbox Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `sandbox.enabled` | boolean | Toggle | Enable sandboxing |
-| `sandbox.autoAllowBashIfSandboxed` | boolean | Toggle | Auto-approve bash in sandbox |
-| `sandbox.excludedCommands` | string[] | Tag input | Commands outside sandbox |
-| `sandbox.allowUnsandboxedCommands` | boolean | Toggle | Allow unsandboxed via flag |
-| `sandbox.network.allowUnixSockets` | string[] | Path list | Allowed Unix sockets |
-| `sandbox.network.allowLocalBinding` | boolean | Toggle | Allow localhost binding |
-| `sandbox.network.httpProxyPort` | number | Number input | HTTP proxy port |
-| `sandbox.network.socksProxyPort` | number | Number input | SOCKS5 proxy port |
-
-#### Hook Configuration
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `hooks.PreToolUse` | object | Hook editor | Pre-tool execution hooks |
-| `hooks.PostToolUse` | object | Hook editor | Post-tool execution hooks |
-| `disableAllHooks` | boolean | Toggle | Disable all hooks |
-
-#### Status Line Configuration
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `statusLine.type` | enum | Radio | disabled, command |
-| `statusLine.command` | string | Path input | Status line script path |
-
-#### MCP Server Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `enableAllProjectMcpServers` | boolean | Toggle | Auto-approve project MCP servers |
-| `enabledMcpjsonServers` | string[] | Checkbox list | Enabled MCP servers |
-| `disabledMcpjsonServers` | string[] | Checkbox list | Disabled MCP servers |
-
-#### Output Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `outputStyle` | string | Select | Output style preset |
-| `alwaysThinkingEnabled` | boolean | Toggle | Enable extended thinking |
-
----
-
-### Gemini CLI Configuration (Full Implementation)
-
-Reference: [geminicli.com/docs/get-started/configuration](https://geminicli.com/docs/get-started/configuration/)
-
-#### General Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `previewFeatures` | boolean | Toggle | Enable preview models |
-| `preferredEditor` | string | Text input | Editor command |
-| `vimMode` | boolean | Toggle | Vim keybindings |
-| `disableAutoUpdate` | boolean | Toggle | Block auto-updates |
-| `checkpointing.enabled` | boolean | Toggle | Session recovery |
-| `enablePromptCompletion` | boolean | Toggle | AI completion suggestions |
-| `retryFetchErrors` | boolean | Toggle | Retry on fetch failures |
-
-#### Session Retention
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `sessionRetention.enabled` | boolean | Toggle | Enable auto-cleanup |
-| `sessionRetention.maxAge` | string | Text input | Keep period (e.g., "30d") |
-| `sessionRetention.maxCount` | number | Number input | Max sessions to retain |
-
-#### UI Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `theme` | string | Theme picker | Color theme |
-| `customThemes` | object | Theme editor | Custom theme definitions |
-| `hideWindowTitle` | boolean | Toggle | Remove title bar |
-| `showStatusInTitle` | boolean | Toggle | Status in window title |
-| `hideTips` | boolean | Toggle | Hide helpful tips |
-| `hideBanner` | boolean | Toggle | Hide application banner |
-| `hideContextSummary` | boolean | Toggle | Hide context summary |
-| `footer.hideCWD` | boolean | Toggle | Hide current directory |
-| `footer.hideModelInfo` | boolean | Toggle | Hide model name |
-| `footer.hideContextPercentage` | boolean | Toggle | Hide context percentage |
-| `hideFooter` | boolean | Toggle | Remove footer entirely |
-| `showMemoryUsage` | boolean | Toggle | Display memory info |
-| `showLineNumbers` | boolean | Toggle | Show line numbers |
-| `useFullWidth` | boolean | Toggle | Use entire terminal width |
-| `useAlternateBuffer` | boolean | Toggle | Preserve shell history |
-| `incrementalRendering` | boolean | Toggle | Reduce flickering |
-| `accessibility.screenReader` | boolean | Toggle | Screen reader mode |
-
-#### Model Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `model.name` | string | Select dropdown | Default Gemini model |
-| `model.maxSessionTurns` | number | Slider | Max turns (-1 unlimited) |
-| `model.compressionThreshold` | number | Slider (0-1) | Context compression trigger |
-
-#### Context Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `context.fileName` | string/array | Tag input | Context file(s) |
-| `context.discoveryMaxDirs` | number | Number input | Directory search limit |
-| `context.includeDirectories` | array | Path list | Additional workspace dirs |
-| `fileFiltering.respectGitIgnore` | boolean | Toggle | Honor .gitignore |
-| `fileFiltering.respectGeminiIgnore` | boolean | Toggle | Honor .geminiignore |
-
-#### Tool Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `tools.sandbox` | boolean/string | Toggle + input | Sandbox mode |
-| `tools.shell.enableInteractiveShell` | boolean | Toggle | node-pty support |
-| `tools.shell.inactivityTimeout` | number | Number input | Timeout seconds |
-| `tools.autoAccept` | boolean | Toggle | Auto-approve safe ops |
-| `tools.core` | array | Checkbox list | Enabled built-in tools |
-| `tools.allowed` | array | Tag input | Tools bypassing confirmation |
-| `tools.exclude` | array | Tag input | Disabled tools |
-| `tools.useRipgrep` | boolean | Toggle | Use ripgrep for search |
-| `tools.enableHooks` | boolean | Toggle | Enable hook system |
-
-#### Security Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `security.disableYoloMode` | boolean | Toggle | Block auto-approval |
-| `security.enablePermanentToolApproval` | boolean | Toggle | Allow permanent approvals |
-| `security.blockGitExtensions` | boolean | Toggle | Prevent Git extensions |
-| `security.folderTrust.enabled` | boolean | Toggle | Track folder trust |
-| `environmentVariableRedaction.enabled` | boolean | Toggle | Enable redaction |
-| `environmentVariableRedaction.allowed` | array | Tag input | Never redact these |
-| `environmentVariableRedaction.blocked` | array | Tag input | Always redact these |
-
-#### Hook Configuration
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `hooks.disabled` | array | Checkbox list | Disabled hook names |
-| `hooks.BeforeTool` | array | Hook editor | Pre-execution hooks |
-| `hooks.AfterTool` | array | Hook editor | Post-execution hooks |
-| `hooks.SessionStart` | array | Hook editor | Session init hooks |
-| `hooks.SessionEnd` | array | Hook editor | Session cleanup hooks |
-| `hooks.Notification` | array | Hook editor | Event notification hooks |
-
-#### MCP Servers
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `mcpServers` | object | Server editor | Per-server configuration |
-| `mcp.allowed` | array | Tag input | Allowed MCP servers |
-| `mcp.excluded` | array | Tag input | Blocked MCP servers |
-
-#### Experimental Features
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `experimental.enableAgents` | boolean | Toggle | Local/remote subagents |
-| `experimental.skills` | boolean | Toggle | Agent Skills feature |
-| `experimental.jitContext` | boolean | Toggle | Just-In-Time context |
-
----
-
-### OpenCode Configuration (Full Implementation)
-
-Reference: [opencode.ai/docs/config](https://opencode.ai/docs/config/)
-
-#### Models & Providers
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `model` | string | Select dropdown | Primary model ID |
-| `small_model` | string | Select dropdown | Lightweight model |
-| `disabled_providers` | array | Checkbox list | Disabled providers |
-| `enabled_providers` | array | Checkbox list | Enabled providers |
-
-#### Interface Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `theme` | string | Theme picker | Visual theme |
-| `tui.scroll_speed` | number | Slider | Scroll multiplier |
-| `tui.scroll_acceleration.enabled` | boolean | Toggle | macOS-style acceleration |
-| `tui.diff_style` | enum | Radio | auto, stacked |
-
-#### Server Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `server.port` | number | Number input | Listen port |
-| `server.hostname` | string | Text input | Listen hostname |
-| `server.mdns` | boolean | Toggle | Service discovery |
-
-#### Tools & Permissions
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `tools.write` | boolean | Toggle | Enable write tool |
-| `tools.bash` | boolean | Toggle | Enable bash tool |
-| `permission` | enum | Select | ask, auto, never |
-
-#### Agents & Commands
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `agent` | object | Agent editor | Custom agents |
-| `default_agent` | string | Select dropdown | Default agent |
-| `command` | object | Command editor | Custom commands |
-
-#### Code Quality
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `formatter` | object | Formatter editor | Code formatters |
-| `instructions` | array | Path list | Instruction files |
-| `keybinds` | object | Keybind editor | Custom shortcuts |
-
-#### Context Management
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `compaction.auto` | boolean | Toggle | Auto-compact |
-| `compaction.prune` | boolean | Toggle | Prune old outputs |
-| `watcher.ignore` | array | Tag input | File watch exclusions |
-
-#### Advanced
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `share` | enum | Radio | manual, auto, disabled |
-| `autoupdate` | boolean/string | Toggle + select | Update settings |
-| `mcp` | object | MCP editor | MCP servers config |
-| `plugin` | array | Plugin manager | Loaded plugins |
-
----
-
-### Codex CLI Configuration (Full Implementation)
-
-Reference: [github.com/openai/codex/blob/main/docs/config.md](https://github.com/openai/codex/blob/main/docs/config.md)
-
-#### Model Settings
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `model` | string | Select dropdown | Default model |
-| `model_provider` | string | Select dropdown | Provider ID |
-| `model_reasoning_effort` | enum | Select | minimal, low, medium, high, xhigh |
-| `model_reasoning_summary` | enum | Select | auto, concise, detailed, none |
-| `model_verbosity` | enum | Select | low, medium, high |
-| `model_context_window` | number | Number input | Context window tokens |
-| `oss_provider` | enum | Select | lmstudio, ollama (for local) |
-
-#### Execution Environment
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `approval_policy` | enum | Radio | untrusted, on-failure, on-request, never |
-| `sandbox_mode` | enum | Radio | read-only, workspace-write, danger-full-access |
-
-#### Sandbox Workspace-Write
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `sandbox_workspace_write.exclude_tmpdir_env_var` | boolean | Toggle | Exclude tmpdir |
-| `sandbox_workspace_write.exclude_slash_tmp` | boolean | Toggle | Exclude /tmp |
-| `sandbox_workspace_write.writable_roots` | array | Path list | Additional writable paths |
-| `sandbox_workspace_write.network_access` | boolean | Toggle | Allow network |
-
-#### Feature Flags
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `features.unified_exec` | boolean | Toggle | PTY-backed execution |
-| `features.apply_patch_freeform` | boolean | Toggle | Freeform patch |
-| `features.view_image_tool` | boolean | Toggle | Image viewing |
-| `features.web_search_request` | boolean | Toggle | Web search |
-| `features.skills` | boolean | Toggle | Skill discovery |
-| `features.tui2` | boolean | Toggle | New TUI v2 |
-
-#### Model Providers
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `model_providers` | object | Provider editor | Custom providers |
-| Provider: `name` | string | Text input | Display name |
-| Provider: `base_url` | string | URL input | API endpoint |
-| Provider: `env_key` | string | Text input | Auth env var |
-| Provider: `wire_api` | enum | Select | chat, responses |
-
-#### MCP Servers
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `mcp_servers` | object | MCP editor | Server configurations |
-| Server: `command` | string | Text input | Executable |
-| Server: `args` | array | Tag input | Command arguments |
-| Server: `env` | object | Key-value editor | Environment variables |
-
-#### Observability
-| Setting | Type | UI Component | Description |
-|---------|------|--------------|-------------|
-| `hide_agent_reasoning` | boolean | Toggle | Suppress reasoning |
-| `show_raw_agent_reasoning` | boolean | Toggle | Raw reasoning output |
-| `otel` | object | OTEL config editor | OpenTelemetry config |
-
----
-
-### Profile Management UI
-
-#### Profile CRUD Operations
-```
-GET    /api/agent-profiles              # List profiles
-POST   /api/agent-profiles              # Create profile
-GET    /api/agent-profiles/:id          # Get profile
-PATCH  /api/agent-profiles/:id          # Update profile
-DELETE /api/agent-profiles/:id          # Delete profile
-POST   /api/agent-profiles/:id/clone    # Clone profile
+~/.remote-dev/profiles/{profile-id}/
+├── .claude/           # Claude Code config
+├── .codex/            # Codex CLI config
+├── .gemini/           # Gemini CLI config
+├── .config/opencode/  # OpenCode config
+├── .gitconfig         # Isolated git identity
+└── .env               # Secrets from provider
 ```
 
-#### Profile Properties
-```typescript
-interface AgentProfile {
-  id: string;
-  userId: string;
-  name: string;
-  description?: string;
-  icon?: string;  // emoji or icon name
-  color?: string; // hex color
-  agents: {
-    claude?: ClaudeCodeConfig;
-    gemini?: GeminiCLIConfig;
-    opencode?: OpenCodeConfig;
-    codex?: CodexCLIConfig;
-  };
-  secrets: {
-    provider: 'phase' | 'vault' | 'aws' | '1password' | 'env';
-    config: Record<string, unknown>;
-  };
-  gitIdentity?: {
-    name: string;
-    email: string;
-    signingKey?: string;
-  };
-  createdAt: Date;
-  updatedAt: Date;
-}
+### Agent Status API
+
+**Implemented Endpoint:**
+```
+GET /api/agent-cli/status  # Get all CLI installation statuses
 ```
 
-#### Profile Switching
-- Quick switcher in header (dropdown or command palette)
-- Folder → Profile linking (inherit agent config from profile)
-- Session → Profile association
-- Profile comparison view
+Returns installation status, versions, paths, and install instructions for all supported agents.
+
+### Future Implementation Phases
+
+If implementing full agent configuration UI:
+1. **Foundation**: Fix UI bugs, database schema, profile CRUD API
+2. **Claude Code**: Full config editor, permissions, sandbox, hooks
+3. **Gemini CLI**: UI settings, tools, security, experimental features
+4. **OpenCode & Codex**: Config editors, provider management, MCP integration
+5. **Integration**: Profile switching, folder linking, import/export
+
+**References:**
+- Claude Code: [code.claude.com/docs/en/settings](https://code.claude.com/docs/en/settings)
+- Gemini CLI: [geminicli.com/docs/get-started/configuration](https://geminicli.com/docs/get-started/configuration/)
+- OpenCode: [opencode.ai/docs/config](https://opencode.ai/docs/config/)
+- Codex CLI: [github.com/openai/codex/blob/main/docs/config.md](https://github.com/openai/codex/blob/main/docs/config.md)
 
 ---
 
-### Configuration Editor Components
+## Orchestrator Agent System
 
-#### Required UI Components
+The Orchestrator Agent System is a meta-layer that provides autonomous monitoring, insight generation, and intervention capabilities for terminal sessions running AI coding agents.
 
-1. **Tag Input** - For array of strings (permissions, exclusions)
-2. **Path List** - Directory/file path editor with browse
-3. **Key-Value Editor** - For env vars, headers, etc.
-4. **Hook Editor** - Command + trigger configuration
-5. **MCP Server Editor** - Full server config with test button
-6. **Theme Picker** - Visual theme selection with preview
-7. **Provider Editor** - Model provider configuration
-8. **Agent Editor** - Custom agent definition
-9. **Command Editor** - Custom command templates
-10. **Keybind Editor** - Keyboard shortcut customization
+### Overview
 
-#### Component Requirements
+Remote Dev includes an orchestrator system where AI coding agents (Claude Code, Codex, Gemini CLI, OpenCode) can monitor and manage other terminal sessions.
+
+**Key Insight**: Orchestrators ARE the AI agent CLIs themselves running in special terminal sessions. They use MCP tools to monitor scrollback buffers, detect stalls, generate insights, and inject commands into other sessions.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     ORCHESTRATOR HIERARCHY                          │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────┐        │
+│  │  Master Orchestrator (Root Level)                       │        │
+│  │  - Monitors ALL terminal sessions globally              │        │
+│  │  - Brain icon in sidebar                                │        │
+│  │  - Agent-agnostic view                                  │        │
+│  │  - Maintains system-wide state                          │        │
+│  └────────────────┬────────────────────────────────────────┘        │
+│                   │                                                 │
+│                   ↓                                                 │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  Project Sub-Orchestrators (Per Folder)                    │    │
+│  │  - Scoped to project folder and subfolders                 │    │
+│  │  - Higher priority than master                            │    │
+│  │  - Custom instructions per project                        │    │
+│  │  - Track project-specific metadata                        │    │
+│  └────────────────┬────────────────────────────────────────────┘    │
+│                   │                                                 │
+│                   ↓                                                 │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │  Monitored Sessions (Regular Terminal Sessions)            │    │
+│  │  - Claude Code, Codex, Gemini CLI, OpenCode               │    │
+│  │  - Scrollback buffer monitored for stalls                 │    │
+│  │  - Receive insights and interventions from orchestrators  │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Stall Detection
+
+Orchestrators monitor scrollback buffers to detect when sessions are stuck:
+
+**Detection Logic:**
+1. Periodically capture scrollback via `TmuxService.captureOutput()`
+2. Compare current buffer with previous snapshot
+3. If unchanged for threshold period → session is stalled
+4. Generate insight with severity and recommended action
+
+**Stall Indicators:**
+- Scrollback buffer unchanged for configurable timeout (default: 5 minutes)
+- Agent waiting for user input
+- Agent stuck in infinite loop
+- Agent blocked by permission prompt
+- Agent waiting for long-running command
+
+**Intervention Options:**
+- Notify user via notification inbox
+- Log to audit trail
+- Inject command via MCP `session_send_input` tool
+- Suggest specific actions
+
+### MCP Integration
+
+Orchestrators interact with sessions via MCP tools:
+
+#### Core MCP Tools
+
+| Tool | Purpose | Usage |
+|------|---------|-------|
+| `session_list` | List all sessions | Discover sessions to monitor |
+| `session_get` | Get session details | Check status, metadata |
+| `session_read_output` | Capture scrollback | Read terminal history |
+| `session_send_input` | Inject command | Send keys to session |
+| `orchestrator_create` | Create orchestrator | Initialize new orchestrator |
+| `orchestrator_insights` | Get insights | Retrieve generated insights |
+| `orchestrator_audit_log` | View audit log | Track orchestrator actions |
+
+#### Example Workflow
 
 ```typescript
-// Example: Tag Input Component
-interface TagInputProps {
-  value: string[];
-  onChange: (value: string[]) => void;
-  placeholder?: string;
-  suggestions?: string[];  // Autocomplete
-  validation?: (tag: string) => boolean;
-  maxTags?: number;
-}
+// 1. Orchestrator lists sessions
+const { sessions } = await mcp.call('session_list', { status: 'active' });
 
-// Example: Hook Editor Component
-interface HookEditorProps {
-  hooks: Record<string, HookConfig>;
-  onChange: (hooks: Record<string, HookConfig>) => void;
-  availableHooks: string[];  // PreToolUse, PostToolUse, etc.
-}
+// 2. For each session, read scrollback
+for (const session of sessions) {
+  const { output } = await mcp.call('session_read_output', {
+    sessionId: session.id,
+    lines: 100
+  });
 
-interface HookConfig {
-  command: string;
-  timeout?: number;
-  env?: Record<string, string>;
+  // 3. Compare with previous snapshot
+  const isStalled = detectStall(output, previousSnapshot);
+
+  // 4. If stalled, create insight
+  if (isStalled) {
+    await mcp.call('orchestrator_create_insight', {
+      sessionId: session.id,
+      type: 'stall_detected',
+      severity: 'warning',
+      message: 'Session appears stalled - no activity for 5 minutes',
+      suggestedActions: ['Check for blocked input', 'Review last command']
+    });
+
+    // 5. Optionally inject recovery command
+    await mcp.call('session_send_input', {
+      sessionId: session.id,
+      command: 'Ctrl-C', // Cancel current operation
+      pressEnter: false
+    });
+  }
 }
 ```
 
----
+### Database Schema
 
-### Database Schema Additions
+#### orchestrator_sessions
 
 ```sql
--- Agent profiles table
-CREATE TABLE agent_profile (
+CREATE TABLE orchestrator_sessions (
   id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES terminal_session(id),
   user_id TEXT NOT NULL REFERENCES user(id),
-  name TEXT NOT NULL,
-  description TEXT,
-  icon TEXT,
-  color TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  type TEXT NOT NULL,  -- 'master' | 'sub_orchestrator'
+  status TEXT NOT NULL,  -- 'idle' | 'analyzing' | 'acting' | 'paused'
+  scope_type TEXT,  -- 'folder' | NULL
+  scope_id TEXT,  -- folder_id | NULL
+  custom_instructions TEXT,
+  last_activity_at INTEGER,
+  created_at INTEGER,
+  updated_at INTEGER
 );
+```
 
--- Agent-specific config (one per agent per profile)
-CREATE TABLE agent_config (
+#### orchestrator_insights
+
+```sql
+CREATE TABLE orchestrator_insights (
   id TEXT PRIMARY KEY,
-  profile_id TEXT NOT NULL REFERENCES agent_profile(id),
-  agent_type TEXT NOT NULL,  -- claude, gemini, opencode, codex
-  config_json TEXT NOT NULL, -- Full JSON config
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(profile_id, agent_type)
-);
-
--- Folder → Profile linking
-CREATE TABLE folder_profile_link (
-  folder_id TEXT PRIMARY KEY REFERENCES session_folder(id),
-  profile_id TEXT NOT NULL REFERENCES agent_profile(id),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  orchestrator_id TEXT NOT NULL REFERENCES orchestrator_sessions(id),
+  session_id TEXT REFERENCES terminal_session(id),  -- Target session
+  type TEXT NOT NULL,  -- 'stall_detected' | 'performance' | 'error' | 'suggestion'
+  severity TEXT NOT NULL,  -- 'info' | 'warning' | 'error' | 'critical'
+  message TEXT NOT NULL,
+  context_json TEXT,  -- Additional context
+  suggested_actions TEXT,  -- JSON array
+  resolved BOOLEAN DEFAULT FALSE,
+  created_at INTEGER
 );
 ```
 
----
+#### orchestrator_audit_log
 
-### API Routes to Implement
-
-```
-# Profiles
-GET    /api/agent-profiles
-POST   /api/agent-profiles
-GET    /api/agent-profiles/:id
-PATCH  /api/agent-profiles/:id
-DELETE /api/agent-profiles/:id
-POST   /api/agent-profiles/:id/clone
-POST   /api/agent-profiles/:id/export
-POST   /api/agent-profiles/import
-
-# Agent Configs (per profile)
-GET    /api/agent-profiles/:id/config/:agent
-PUT    /api/agent-profiles/:id/config/:agent
-DELETE /api/agent-profiles/:id/config/:agent
-POST   /api/agent-profiles/:id/config/:agent/validate
-POST   /api/agent-profiles/:id/config/:agent/reset
-
-# Folder Linking
-GET    /api/folders/:id/profile
-PUT    /api/folders/:id/profile
-DELETE /api/folders/:id/profile
-
-# Config Templates
-GET    /api/agent-config-templates
-GET    /api/agent-config-templates/:agent
-POST   /api/agent-config-templates/:agent/apply
+```sql
+CREATE TABLE orchestrator_audit_log (
+  id TEXT PRIMARY KEY,
+  orchestrator_id TEXT NOT NULL REFERENCES orchestrator_sessions(id),
+  action_type TEXT NOT NULL,  -- 'insight_generated' | 'command_injected' | 'session_monitored'
+  target_session_id TEXT REFERENCES terminal_session(id),
+  details_json TEXT,
+  created_at INTEGER
+);
 ```
 
----
+### UI Components
 
-### Implementation Priority
+#### Notification Inbox
 
-**Phase 1: Foundation**
-1. Fix UI bugs (overlapping, selection)
-2. Database schema for profiles and configs
-3. Profile CRUD API
-4. Basic profile management UI
+Header component showing orchestrator insights:
+- Bell icon with badge count
+- Dropdown with insight cards
+- Severity-based color coding
+- Quick actions per insight
 
-**Phase 2: Claude Code**
-5. Full Claude Code config editor
-6. Permissions editor
-7. Sandbox settings
-8. Hook configuration
+**Location**: `src/components/orchestrator/NotificationInbox.tsx`
 
-**Phase 3: Gemini CLI**
-9. Full Gemini CLI config editor
-10. UI settings
-11. Tool configuration
-12. Security settings
+#### Sidebar Item
 
-**Phase 4: OpenCode & Codex**
-13. OpenCode config editor
-14. Codex config editor
-15. Provider management
-16. MCP server editor
+Master orchestrator shown at root of sidebar:
+- Brain icon (purple)
+- "Master Orchestrator" label
+- Click to open orchestrator modal
 
-**Phase 5: Integration**
-17. Profile switching UI
-18. Folder-profile linking
-19. Export/import profiles
-20. Config validation
+**Location**: `src/components/session/Sidebar.tsx` (modified)
+
+#### Orchestrator Modal
+
+Full orchestrator management UI:
+- Create/configure sub-orchestrators
+- View all insights
+- Configure custom instructions
+- Pause/resume monitoring
+- View audit log
+
+**Location**: `src/components/orchestrator/OrchestratorModal.tsx`
+
+#### Audit Log Sidebar
+
+Collapsible sidebar showing orchestrator actions:
+- Chronological action log
+- Filter by orchestrator, session, action type
+- Expandable details per entry
+- Export to JSON
+
+**Location**: `src/components/orchestrator/AuditLogSidebar.tsx`
+
+### Collision Handling
+
+Multiple orchestrators may target the same session. Resolution:
+
+**Priority Hierarchy:**
+1. **Sub-orchestrators** (highest priority)
+   - Folder-scoped orchestrators take precedence
+   - Exclusive ownership within scope
+2. **Master orchestrator** (lower priority)
+   - Only acts if no sub-orchestrator claims session
+   - Global fallback
+
+**Collision Protocol:**
+```typescript
+function shouldActOnSession(
+  orchestrator: Orchestrator,
+  session: Session
+): boolean {
+  // Sub-orchestrator has exclusive scope
+  if (orchestrator.type === 'sub_orchestrator') {
+    return isWithinScope(session, orchestrator.scopeId);
+  }
+
+  // Master only acts if no sub-orchestrator claims session
+  if (orchestrator.type === 'master') {
+    const subOrchestrators = findSubOrchestratorsForSession(session);
+    return subOrchestrators.length === 0;
+  }
+
+  return false;
+}
+```
+
+### Configuration
+
+#### Master Orchestrator
+
+Created automatically on first use:
+- One per user
+- Lives at application root
+- Configurable monitoring interval
+- Default instructions for all sessions
+
+#### Sub-Orchestrators
+
+User-created per folder:
+- Custom instructions per project
+- Folder-scoped monitoring
+- Inherited from parent folders
+- Can be disabled/paused
+
+**Configuration Modal Fields:**
+- **Name**: Display name for orchestrator
+- **Custom Instructions**: Project-specific guidance
+- **Monitoring Interval**: How often to check (seconds)
+- **Stall Threshold**: Inactivity timeout before alerting
+- **Auto-Intervention**: Enable/disable automatic command injection
+- **Insight Types**: Which insights to generate (stalls, performance, errors, suggestions)
+
+### API Endpoints
+
+```
+# Orchestrator CRUD
+GET    /api/orchestrators               # List user's orchestrators
+POST   /api/orchestrators               # Create orchestrator
+GET    /api/orchestrators/:id           # Get orchestrator details
+PATCH  /api/orchestrators/:id           # Update configuration
+DELETE /api/orchestrators/:id           # Delete orchestrator
+POST   /api/orchestrators/:id/pause     # Pause monitoring
+POST   /api/orchestrators/:id/resume    # Resume monitoring
+
+# Insights
+GET    /api/orchestrators/:id/insights  # List insights
+POST   /api/orchestrators/:id/insights  # Create insight (internal)
+PATCH  /api/insights/:id                # Resolve insight
+DELETE /api/insights/:id                # Dismiss insight
+
+# Audit Log
+GET    /api/orchestrators/:id/audit-log # Get audit log
+GET    /api/orchestrators/audit-log     # Global audit log
+```
+
+### Clean Architecture Implementation
+
+Following the existing codebase pattern:
+
+```
+src/
+├── domain/
+│   ├── entities/
+│   │   ├── Orchestrator.ts           # Orchestrator entity
+│   │   ├── OrchestratorInsight.ts    # Insight entity
+│   │   └── OrchestratorAuditLog.ts   # Audit log entity
+│   ├── value-objects/
+│   │   ├── OrchestratorType.ts       # master | sub_orchestrator
+│   │   ├── OrchestratorStatus.ts     # idle | analyzing | acting | paused
+│   │   ├── OrchestratorScope.ts      # folder | null
+│   │   ├── InsightType.ts            # stall_detected | performance | etc.
+│   │   └── InsightSeverity.ts        # info | warning | error | critical
+│   └── errors/
+│       └── OrchestratorErrors.ts     # Domain exceptions
+│
+├── application/
+│   ├── use-cases/
+│   │   └── orchestrator/
+│   │       ├── CreateMasterOrchestratorUseCase.ts
+│   │       ├── CreateSubOrchestratorUseCase.ts
+│   │       ├── DetectStalledSessionsUseCase.ts
+│   │       ├── InjectCommandUseCase.ts
+│   │       └── ...
+│   └── ports/
+│       ├── IOrchestratorRepository.ts
+│       ├── IScrollbackMonitor.ts
+│       └── ICommandInjector.ts
+│
+├── infrastructure/
+│   ├── persistence/
+│   │   ├── repositories/
+│   │   │   └── DrizzleOrchestratorRepository.ts
+│   │   └── mappers/
+│   │       └── OrchestratorMapper.ts
+│   └── external/
+│       ├── ScrollbackMonitorGateway.ts
+│       └── TmuxCommandInjector.ts
+│
+└── interface/
+    └── presenters/
+        └── OrchestratorPresenter.ts
+```
+
+### Integration with Ralph Loop
+
+When implementing orchestrator features in a Ralph Loop:
+
+1. **Discovery Phase**: Use code-explorer to understand existing session/MCP architecture
+2. **Architecture Phase**: Use code-architect for Clean Architecture design
+3. **Implementation**: Follow layer-by-layer (Domain → Application → Infrastructure → Interface)
+4. **Testing**: 80%+ coverage requirement applies to all layers
+5. **Review**: Run code-reviewer after each component
+
+### Security Considerations
+
+**Command Injection Safety:**
+- Validate all commands before injection
+- User confirmation for destructive operations
+- Audit log of all injected commands
+- Rate limiting on injection frequency
+- Permissions check before injection
+
+**Privacy:**
+- Scrollback buffers may contain sensitive data
+- User consent required before monitoring
+- Option to disable per-session
+- No external transmission of session data
+
+### Performance
+
+**Monitoring Overhead:**
+- Configurable polling interval (default: 30s)
+- Lightweight scrollback capture via tmux
+- Async processing of insights
+- Background service with minimal impact
+
+**Scalability:**
+- One master orchestrator per user
+- Sub-orchestrators only for folders with explicit configuration
+- Stale session cleanup (auto-close after configurable timeout)
+
+### Future Enhancements
+
+**Potential Future Work** (create beads if discovered during implementation):
+- Machine learning for stall prediction
+- Custom insight types via plugins
+- Orchestrator-to-orchestrator communication
+- Integration with external monitoring (Sentry, DataDog)
+- Replay mode for debugging past stalls
+- Performance benchmarking and recommendations
 
 ---
 

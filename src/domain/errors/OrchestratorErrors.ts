@@ -10,11 +10,10 @@ import { DomainError } from "./DomainError";
  * OrchestratorNotFoundError - Thrown when an orchestrator cannot be found.
  */
 export class OrchestratorNotFoundError extends DomainError {
-  constructor(orchestratorId: string, context?: Record<string, unknown>) {
+  constructor(orchestratorId: string) {
     super(
       `Orchestrator not found: ${orchestratorId}`,
-      "ORCHESTRATOR_NOT_FOUND",
-      context
+      "ORCHESTRATOR_NOT_FOUND"
     );
     this.name = "OrchestratorNotFoundError";
   }
@@ -24,8 +23,8 @@ export class OrchestratorNotFoundError extends DomainError {
  * InvalidScopeError - Thrown when orchestrator scope is invalid.
  */
 export class InvalidScopeError extends DomainError {
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, "INVALID_SCOPE", context);
+  constructor(message: string) {
+    super(message, "INVALID_SCOPE");
     this.name = "InvalidScopeError";
   }
 }
@@ -36,13 +35,11 @@ export class InvalidScopeError extends DomainError {
 export class CollisionError extends DomainError {
   constructor(
     sessionId: string,
-    orchestratorIds: string[],
-    context?: Record<string, unknown>
+    orchestratorIds: string[]
   ) {
     super(
       `Multiple orchestrators attempting to act on session ${sessionId}: ${orchestratorIds.join(", ")}`,
-      "ORCHESTRATOR_COLLISION",
-      { ...context, sessionId, orchestratorIds }
+      "ORCHESTRATOR_COLLISION"
     );
     this.name = "CollisionError";
   }
@@ -52,8 +49,8 @@ export class CollisionError extends DomainError {
  * StallDetectionError - Thrown when stall detection fails.
  */
 export class StallDetectionError extends DomainError {
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, "STALL_DETECTION_ERROR", context);
+  constructor(message: string) {
+    super(message, "STALL_DETECTION_ERROR");
     this.name = "StallDetectionError";
   }
 }
@@ -62,8 +59,8 @@ export class StallDetectionError extends DomainError {
  * CommandInjectionError - Thrown when command injection fails or is rejected.
  */
 export class CommandInjectionError extends DomainError {
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, "COMMAND_INJECTION_ERROR", context);
+  constructor(message: string) {
+    super(message, "COMMAND_INJECTION_ERROR");
     this.name = "CommandInjectionError";
   }
 }
@@ -72,11 +69,10 @@ export class CommandInjectionError extends DomainError {
  * InsightNotFoundError - Thrown when an insight cannot be found.
  */
 export class InsightNotFoundError extends DomainError {
-  constructor(insightId: string, context?: Record<string, unknown>) {
+  constructor(insightId: string) {
     super(
       `Insight not found: ${insightId}`,
-      "INSIGHT_NOT_FOUND",
-      context
+      "INSIGHT_NOT_FOUND"
     );
     this.name = "InsightNotFoundError";
   }
@@ -86,11 +82,10 @@ export class InsightNotFoundError extends DomainError {
  * AuditLogNotFoundError - Thrown when an audit log entry cannot be found.
  */
 export class AuditLogNotFoundError extends DomainError {
-  constructor(auditLogId: string, context?: Record<string, unknown>) {
+  constructor(auditLogId: string) {
     super(
       `Audit log entry not found: ${auditLogId}`,
-      "AUDIT_LOG_NOT_FOUND",
-      context
+      "AUDIT_LOG_NOT_FOUND"
     );
     this.name = "AuditLogNotFoundError";
   }
@@ -100,8 +95,8 @@ export class AuditLogNotFoundError extends DomainError {
  * OrchestratorAlreadyExistsError - Thrown when trying to create a duplicate orchestrator.
  */
 export class OrchestratorAlreadyExistsError extends DomainError {
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, "ORCHESTRATOR_ALREADY_EXISTS", context);
+  constructor(message: string) {
+    super(message, "ORCHESTRATOR_ALREADY_EXISTS");
     this.name = "OrchestratorAlreadyExistsError";
   }
 }
@@ -110,11 +105,10 @@ export class OrchestratorAlreadyExistsError extends DomainError {
  * MasterOrchestratorAlreadyExistsError - Thrown when trying to create a second master orchestrator.
  */
 export class MasterOrchestratorAlreadyExistsError extends DomainError {
-  constructor(userId: string, existingId: string, context?: Record<string, unknown>) {
+  constructor(userId: string, existingId: string) {
     super(
       `User ${userId} already has a master orchestrator: ${existingId}`,
-      "MASTER_ORCHESTRATOR_ALREADY_EXISTS",
-      { ...context, userId, existingId }
+      "MASTER_ORCHESTRATOR_ALREADY_EXISTS"
     );
     this.name = "MasterOrchestratorAlreadyExistsError";
   }
@@ -124,11 +118,10 @@ export class MasterOrchestratorAlreadyExistsError extends DomainError {
  * OrchestratorPausedError - Thrown when attempting operations on a paused orchestrator.
  */
 export class OrchestratorPausedError extends DomainError {
-  constructor(orchestratorId: string, operation: string, context?: Record<string, unknown>) {
+  constructor(orchestratorId: string) {
     super(
-      `Cannot ${operation} on paused orchestrator: ${orchestratorId}`,
-      "ORCHESTRATOR_PAUSED",
-      { ...context, orchestratorId, operation }
+      `Cannot perform operation on paused orchestrator: ${orchestratorId}`,
+      "ORCHESTRATOR_PAUSED"
     );
     this.name = "OrchestratorPausedError";
   }
@@ -138,8 +131,8 @@ export class OrchestratorPausedError extends DomainError {
  * InvalidMonitoringConfigError - Thrown when monitoring configuration is invalid.
  */
 export class InvalidMonitoringConfigError extends DomainError {
-  constructor(message: string, context?: Record<string, unknown>) {
-    super(message, "INVALID_MONITORING_CONFIG", context);
+  constructor(message: string) {
+    super(message, "INVALID_MONITORING_CONFIG");
     this.name = "InvalidMonitoringConfigError";
   }
 }
@@ -150,14 +143,38 @@ export class InvalidMonitoringConfigError extends DomainError {
 export class SessionNotInScopeError extends DomainError {
   constructor(
     orchestratorId: string,
-    sessionId: string,
-    context?: Record<string, unknown>
+    sessionId: string
   ) {
     super(
       `Session ${sessionId} is not in scope for orchestrator ${orchestratorId}`,
-      "SESSION_NOT_IN_SCOPE",
-      { ...context, orchestratorId, sessionId }
+      "SESSION_NOT_IN_SCOPE"
     );
     this.name = "SessionNotInScopeError";
+  }
+}
+
+/**
+ * SubOrchestratorAlreadyExistsError - Thrown when trying to create a duplicate sub-orchestrator for a folder.
+ */
+export class SubOrchestratorAlreadyExistsError extends DomainError {
+  constructor(folderId: string, existingId: string) {
+    super(
+      `Folder ${folderId} already has a sub-orchestrator: ${existingId}`,
+      "SUB_ORCHESTRATOR_ALREADY_EXISTS"
+    );
+    this.name = "SubOrchestratorAlreadyExistsError";
+  }
+}
+
+/**
+ * InvalidCommandError - Thrown when a command fails validation before injection.
+ */
+export class InvalidCommandError extends DomainError {
+  constructor(command: string, reason: string) {
+    super(
+      `Invalid command "${command}": ${reason}`,
+      "INVALID_COMMAND"
+    );
+    this.name = "InvalidCommandError";
   }
 }

@@ -183,6 +183,27 @@ export class OrchestratorAuditLog {
     });
   }
 
+  /**
+   * Create an audit log entry for orchestrator creation.
+   */
+  static forOrchestratorCreated(
+    orchestratorId: string,
+    type: string,
+    targetSessionId: string | null,
+    details?: Record<string, unknown>
+  ): OrchestratorAuditLog {
+    return OrchestratorAuditLog.create({
+      orchestratorId,
+      actionType: "status_changed",
+      targetSessionId,
+      details: {
+        event: "created",
+        type,
+        ...details,
+      },
+    });
+  }
+
   // ============================================================================
   // Getters
   // ============================================================================
