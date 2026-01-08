@@ -6,6 +6,7 @@
 import { sessionTools } from "./session-tools";
 import { gitTools } from "./git-tools";
 import { folderTools } from "./folder-tools";
+import { orchestratorTools } from "./orchestrator-tools";
 import type { RegisteredTool } from "../types";
 
 /**
@@ -24,11 +25,15 @@ import type { RegisteredTool } from "../types";
  * Folder Tools:
  * - folder_list, folder_create, folder_update, folder_delete
  * - preferences_get, preferences_set
+ *
+ * Orchestrator Tools:
+ * - session_send_input, session_get_insights, orchestrator_status
  */
 export const allTools: RegisteredTool[] = [
   ...sessionTools,
   ...gitTools,
   ...folderTools,
+  ...orchestratorTools,
 ];
 
 /**
