@@ -414,6 +414,10 @@ export const terminalSessions = sqliteTable(
     }),
     // Agent-aware session: which AI agent is associated
     agentProvider: text("agent_provider").$type<AgentProviderType>().default("claude"),
+    // Orchestrator flag: marks sessions running orchestrator agents
+    isOrchestratorSession: integer("is_orchestrator_session", { mode: "boolean" })
+      .notNull()
+      .default(false),
     // Split group membership (independent from folder)
     splitGroupId: text("split_group_id").references(() => splitGroups.id, {
       onDelete: "set null",
@@ -1420,5 +1424,138 @@ export const profileAppearanceSettings = sqliteTable(
   (table) => [
     index("profile_appearance_profile_idx").on(table.profileId),
     index("profile_appearance_user_idx").on(table.userId),
+  ]
+);
+
+// Orchestrator sessions - special terminal sessions that monitor other sessions
+export const orchestratorSessions = sqliteTable(
+  "orchestrator_session",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Link to the underlying terminal session
+    sessionId: text("session_id")
+      .notNull()
+      .unique()
+      .references(() => terminalSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Orchestrator type: master (root-level) or sub_orchestrator (folder-scoped)
+    type: text("type").notNull(), // 'master' | 'sub_orchestrator'
+    // Orchestrator status
+    status: text("status").notNull().default("idle"), // 'idle' | 'analyzing' | 'acting' | 'paused'
+    // Scope for sub-orchestrators
+    scopeType: text("scope_type"), // 'folder' | null (null for master)
+    scopeId: text("scope_id"), // folder_id for sub-orchestrators, null for master
+    // Custom instructions for this orchestrator
+    customInstructions: text("custom_instructions"),
+    // Monitoring configuration
+    monitoringInterval: integer("monitoring_interval").notNull().default(30), // seconds
+    stallThreshold: integer("stall_threshold").notNull().default(300), // seconds (5 minutes)
+    autoIntervention: integer("auto_intervention", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    // Timestamps
+    lastActivityAt: integer("last_activity_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Index for user's orchestrators
+    index("orchestrator_session_user_idx").on(table.userId),
+    // Index for scope lookup
+    index("orchestrator_session_scope_idx").on(table.scopeType, table.scopeId),
+    // Index for status filtering
+    index("orchestrator_session_status_idx").on(table.status),
+    // Index for type filtering
+    index("orchestrator_session_type_idx").on(table.type),
+  ]
+);
+
+// Orchestrator insights - generated observations about sessions
+export const orchestratorInsights = sqliteTable(
+  "orchestrator_insight",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Which orchestrator generated this insight
+    orchestratorId: text("orchestrator_id")
+      .notNull()
+      .references(() => orchestratorSessions.id, { onDelete: "cascade" }),
+    // Target session (if insight is session-specific)
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "cascade",
+    }),
+    // Insight classification
+    type: text("type").notNull(), // 'stall_detected' | 'performance' | 'error' | 'suggestion'
+    severity: text("severity").notNull(), // 'info' | 'warning' | 'error' | 'critical'
+    // Insight content
+    message: text("message").notNull(),
+    contextJson: text("context_json"), // Additional structured context
+    suggestedActions: text("suggested_actions"), // JSON array of action suggestions
+    // Resolution tracking
+    resolved: integer("resolved", { mode: "boolean" }).notNull().default(false),
+    resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Index for orchestrator's insights
+    index("orchestrator_insight_orchestrator_idx").on(table.orchestratorId),
+    // Index for session's insights
+    index("orchestrator_insight_session_idx").on(table.sessionId),
+    // Index for unresolved insights
+    index("orchestrator_insight_resolved_idx").on(table.resolved),
+    // Index for severity filtering
+    index("orchestrator_insight_severity_idx").on(table.severity),
+    // Composite index for querying by type and severity
+    index("orchestrator_insight_type_severity_idx").on(table.type, table.severity),
+  ]
+);
+
+// Orchestrator audit log - immutable record of all orchestrator actions
+export const orchestratorAuditLog = sqliteTable(
+  "orchestrator_audit_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Which orchestrator performed the action
+    orchestratorId: text("orchestrator_id")
+      .notNull()
+      .references(() => orchestratorSessions.id, { onDelete: "cascade" }),
+    // Action classification
+    actionType: text("action_type").notNull(), // 'insight_generated' | 'command_injected' | 'session_monitored' | 'status_changed'
+    // Target session (if action is session-specific)
+    targetSessionId: text("target_session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    // Action details (JSON)
+    detailsJson: text("details_json"),
+    // Immutable timestamp
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Index for orchestrator's log entries
+    index("orchestrator_audit_orchestrator_idx").on(table.orchestratorId),
+    // Index for time-ordered queries
+    index("orchestrator_audit_time_idx").on(table.createdAt),
+    // Index for action type filtering
+    index("orchestrator_audit_action_idx").on(table.actionType),
+    // Index for target session lookup
+    index("orchestrator_audit_target_idx").on(table.targetSessionId),
   ]
 );
