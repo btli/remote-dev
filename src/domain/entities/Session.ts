@@ -28,6 +28,7 @@ export interface SessionProps {
   folderId: string | null;
   profileId: string | null;
   agentProvider: AgentProviderType | null;
+  isOrchestratorSession: boolean;
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
@@ -47,6 +48,7 @@ export interface CreateSessionProps {
   folderId?: string | null;
   profileId?: string | null;
   agentProvider?: AgentProviderType | null;
+  isOrchestratorSession?: boolean;
   tabOrder?: number;
 }
 
@@ -86,6 +88,7 @@ export class Session {
       folderId: props.folderId ?? null,
       profileId: props.profileId ?? null,
       agentProvider: props.agentProvider ?? null,
+      isOrchestratorSession: props.isOrchestratorSession ?? false,
       splitGroupId: null,
       splitOrder: 0,
       splitSize: 100,
@@ -150,6 +153,10 @@ export class Session {
 
   get agentProvider(): AgentProviderType | null {
     return this.props.agentProvider;
+  }
+
+  get isOrchestratorSession(): boolean {
+    return this.props.isOrchestratorSession;
   }
 
   get splitGroupId(): string | null {

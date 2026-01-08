@@ -57,6 +57,7 @@ export default async function Home() {
     folderId: s.folderId,
     profileId: s.profileId,
     agentProvider: s.agentProvider as "claude" | "codex" | "gemini" | "opencode" | "none" | null,
+    isOrchestratorSession: s.isOrchestratorSession,
     splitGroupId: s.splitGroupId,
     splitOrder: s.splitOrder,
     splitSize: s.splitSize ?? 0.5,

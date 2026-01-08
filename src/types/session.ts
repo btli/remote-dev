@@ -22,6 +22,8 @@ export interface TerminalSession {
   profileId: string | null;
   // Agent-aware session fields
   agentProvider: AgentProviderType | null;
+  // Orchestrator flag: marks sessions running orchestrator agents
+  isOrchestratorSession: boolean;
   // Split group membership (independent from folder)
   splitGroupId: string | null;
   splitOrder: number;
@@ -45,6 +47,8 @@ export interface CreateSessionInput {
   agentProvider?: AgentProviderType;  // Which AI agent to use
   autoLaunchAgent?: boolean;          // Whether to auto-launch the agent CLI
   agentFlags?: string[];              // Additional flags for the agent CLI
+  // Orchestrator flag
+  isOrchestratorSession?: boolean;    // Marks orchestrator sessions
   // Feature session fields
   startupCommand?: string;      // Override resolved preferences
   featureDescription?: string;  // Original feature description

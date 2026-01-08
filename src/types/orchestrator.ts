@@ -42,7 +42,7 @@ export const OrchestratorStatusSchema = z.enum([
  */
 export type OrchestratorScopeType = "folder" | null;
 
-export const OrchestratorScopeTypeSchema = z.enum(["folder"]).nullable();
+export const OrchestratorScopeTypeSchema = z.literal("folder").nullable();
 
 /**
  * Insight Type
@@ -270,7 +270,7 @@ export const CreateInsightRequestSchema = z.object({
   type: InsightTypeSchema,
   severity: InsightSeveritySchema,
   message: z.string().min(1),
-  context: z.record(z.unknown()).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
   suggestedActions: z.array(z.string()).optional(),
 });
 

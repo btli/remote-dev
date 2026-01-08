@@ -26,6 +26,7 @@ export interface SessionDbRecord {
   folderId: string | null;
   profileId: string | null;
   agentProvider: string | null;
+  isOrchestratorSession: boolean;
   splitGroupId: string | null;
   splitOrder: number | null;
   splitSize: number | null;
@@ -51,6 +52,7 @@ export interface SessionDbInsert {
   folderId: string | null;
   profileId: string | null;
   agentProvider: AgentProviderType | null;
+  isOrchestratorSession: boolean;
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
@@ -78,6 +80,7 @@ export class SessionMapper {
       folderId: record.folderId,
       profileId: record.profileId,
       agentProvider: (record.agentProvider as AgentProviderType) ?? null,
+      isOrchestratorSession: record.isOrchestratorSession,
       splitGroupId: record.splitGroupId,
       splitOrder: record.splitOrder ?? 0,
       splitSize: record.splitSize ?? 100,
@@ -112,6 +115,7 @@ export class SessionMapper {
       folderId: session.folderId,
       profileId: session.profileId,
       agentProvider: session.agentProvider,
+      isOrchestratorSession: session.isOrchestratorSession,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
@@ -139,6 +143,7 @@ export class SessionMapper {
     folderId: string | null;
     profileId: string | null;
     agentProvider: AgentProviderType | null;
+    isOrchestratorSession: boolean;
     splitGroupId: string | null;
     splitOrder: number;
     splitSize: number;
@@ -159,6 +164,7 @@ export class SessionMapper {
       folderId: session.folderId,
       profileId: session.profileId,
       agentProvider: session.agentProvider,
+      isOrchestratorSession: session.isOrchestratorSession,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,

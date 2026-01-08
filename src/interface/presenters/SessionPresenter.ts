@@ -24,6 +24,7 @@ export class SessionPresenter {
       folderId: session.folderId,
       profileId: session.profileId,
       agentProvider: session.agentProvider,
+      isOrchestratorSession: session.isOrchestratorSession,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
