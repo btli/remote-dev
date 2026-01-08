@@ -71,6 +71,69 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 6. **Resume**: `POST /api/sessions/:id/resume` reattaches to existing tmux session
 7. **Close**: `DELETE /api/sessions/:id` kills tmux and marks session closed
 
+### Orchestrator Agent System
+
+**Autonomous monitoring and intervention system** that detects stalled terminal sessions and suggests recovery actions.
+
+**Architecture:**
+- **Master Orchestrator**: Monitors ALL terminal sessions for a user
+- **Sub-Orchestrators**: Monitor sessions within specific folders (higher priority than master)
+- **Clean Architecture**: Domain → Application → Infrastructure → Interface layers
+- **Stall Detection**: MD5 hash comparison of tmux scrollback buffer
+- **Auto-initialization**: Master orchestrator created automatically on first session
+- **Persistent Monitoring**: Survives server restarts
+
+**Key Components:**
+| Component | Purpose |
+|-----------|---------|
+| **Domain Layer** | Immutable entities (Orchestrator, OrchestratorInsight, OrchestratorAuditLog) |
+| **Use Cases** | Business logic (CreateOrchestrator, DetectStalledSessions, InjectCommand) |
+| **Repositories** | Persistence interfaces (IOrchestratorRepository, IInsightRepository) |
+| **Gateways** | External operations (IScrollbackMonitor, ICommandInjector) |
+| **Monitoring Service** | Automated cycles (runs every 30s by default) |
+| **MCP Integration** | 3 tools for AI agent access (send_input, get_insights, status) |
+
+**Stall Detection Logic:**
+- Captures tmux scrollback buffer via `tmux capture-pane`
+- Compares MD5 hash with previous snapshot
+- Calculates confidence score: `0.7 + (0.05 × extra_minutes_beyond_threshold)`
+- Reduces confidence by 50% if buffer has < 5 lines
+- Default threshold: 5 minutes (300 seconds)
+
+**Command Injection Safety:**
+- Validates against 8 dangerous patterns (rm -rf /, fork bombs, disk operations)
+- 7 caution patterns allowed with warnings (rm -rf, sudo rm, chmod, chown)
+- Max command length: 10,000 characters
+- Null byte detection
+- Audit log for all injections
+
+**Lifecycle Flow:**
+```
+User creates first session
+  → Master orchestrator auto-created with dedicated session
+  → Monitoring starts automatically (30s interval)
+  → Captures scrollback snapshots every cycle
+  → Compares with previous snapshot via MD5 hash
+  → If stalled > threshold: Generate OrchestratorInsight
+  → Insight includes severity, context, suggested actions
+  → User can execute actions via UI or auto-intervention
+  → Audit log tracks all actions
+```
+
+**Database Tables:**
+- `orchestrator_sessions` - Orchestrator metadata and configuration
+- `orchestrator_insights` - Generated insights with severity and suggested actions
+- `orchestrator_audit_logs` - Complete audit trail of all orchestrator actions
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/domain/entities/Orchestrator.ts` | Orchestrator domain entity with state machine |
+| `src/application/use-cases/orchestrator/*.ts` | 6 use cases for orchestrator operations |
+| `src/infrastructure/external/tmux/*.ts` | Scrollback monitor and command injector |
+| `src/services/monitoring-service.ts` | Automated monitoring cycles |
+| `src/components/orchestrator/*.ts` | 8 UI components for orchestrator management |
+
 ### Authentication Flow
 
 - **Dual auth model**:
@@ -189,6 +252,9 @@ src/
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
 | `folder_secrets_config` | Per-folder secrets provider configuration |
+| `orchestrator_sessions` | Orchestrator agents with monitoring configuration |
+| `orchestrator_insights` | Generated insights with severity and suggested actions |
+| `orchestrator_audit_logs` | Complete audit trail of orchestrator actions |
 
 ### Service Layer
 
@@ -214,6 +280,9 @@ Located in `src/services/`:
 | `AgentProfileService` | Agent profile CRUD, config file management |
 | `AgentProfileAppearanceService` | Per-profile appearance settings |
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
+| `OrchestratorService` | Orchestrator CRUD, master/sub-orchestrator management |
+| `InsightService` | Insight generation, resolution, retrieval |
+| `MonitoringService` | Automated monitoring cycles, stall detection |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -281,6 +350,14 @@ Remote Dev supports multiple AI coding agents with unified management:
 | `PathInput.tsx` | Text input with browse button for directory selection |
 | `AgentCLIStatusPanel.tsx` | CLI installation status for all supported agents |
 | `AgentProfileAppearanceSettings.tsx` | Per-profile theming with mode toggle and color schemes |
+| `OrchestratorStatusIndicator.tsx` | Header brain icon showing master orchestrator status |
+| `InsightNotificationInbox.tsx` | Bell icon notification center for insights |
+| `StalledSessionBadge.tsx` | Session tab indicator for stall detection |
+| `SubOrchestratorConfigModal.tsx` | Create/configure folder sub-orchestrator |
+| `InsightDetailView.tsx` | Full insight card with context and actions |
+| `CommandInjectionDialog.tsx` | Confirm command injection dialog |
+| `AuditLogSidebar.tsx` | View orchestrator audit trail |
+| `SidebarOrchestratorStatus.tsx` | Folder sidebar orchestrator status widget |
 
 ### State Management
 
@@ -297,6 +374,7 @@ React Contexts in `src/contexts/`:
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
 | `PortContext` | Port allocations, framework detection, monitoring |
+| `OrchestratorContext` | Orchestrator state, insights, monitoring status |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -319,6 +397,12 @@ React Contexts in `src/contexts/`:
 | `src/components/split/SplitPaneLayout.tsx` | Split layout component |
 | `src/mcp/index.ts` | MCP server initialization |
 | `src/mcp/registry.ts` | MCP tool/resource registration |
+| `src/domain/entities/Orchestrator.ts` | Orchestrator domain entity with state machine |
+| `src/application/use-cases/orchestrator/*.ts` | 6 orchestrator use cases |
+| `src/infrastructure/external/tmux/*.ts` | Scrollback monitor and command injector |
+| `src/services/monitoring-service.ts` | Automated monitoring cycles |
+| `src/contexts/OrchestratorContext.tsx` | Orchestrator state management |
+| `src/components/orchestrator/*.tsx` | 8 orchestrator UI components |
 
 ## API Routes
 
@@ -340,6 +424,22 @@ React Contexts in `src/contexts/`:
 - `POST /api/folders` - Create folder
 - `PATCH /api/folders/:id` - Update folder
 - `DELETE /api/folders/:id` - Delete folder
+- `GET /api/folders/:id/orchestrator` - Get folder's sub-orchestrator
+- `POST /api/folders/:id/orchestrator` - Create/get folder sub-orchestrator
+- `DELETE /api/folders/:id/orchestrator` - Delete folder's sub-orchestrator
+
+### Orchestrators
+- `GET /api/orchestrators` - List user's orchestrators (master + sub)
+- `POST /api/orchestrators` - Create orchestrator
+- `GET /api/orchestrators/:id` - Get orchestrator details
+- `PATCH /api/orchestrators/:id` - Update orchestrator config
+- `DELETE /api/orchestrators/:id` - Delete orchestrator
+- `POST /api/orchestrators/:id/pause` - Pause orchestrator monitoring
+- `POST /api/orchestrators/:id/resume` - Resume orchestrator monitoring
+- `GET /api/orchestrators/:id/insights` - Get orchestrator insights
+- `POST /api/orchestrators/:id/insights/:insightId/resolve` - Resolve insight
+- `POST /api/orchestrators/:id/commands` - Inject command into session
+- `GET /api/orchestrators/:id/audit` - Get audit log entries
 
 ### Preferences
 - `GET /api/preferences` - Get user settings + all folder preferences
