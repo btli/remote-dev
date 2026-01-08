@@ -14,6 +14,7 @@ import { DrizzleGitHubIssueRepository } from "./persistence/repositories/Drizzle
 import { DrizzleOrchestratorRepository } from "./persistence/repositories/DrizzleOrchestratorRepository";
 import { DrizzleInsightRepository } from "./persistence/repositories/DrizzleInsightRepository";
 import { DrizzleAuditLogRepository } from "./persistence/repositories/DrizzleAuditLogRepository";
+import { transactionManager } from "./persistence/TransactionManager";
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
 import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
@@ -297,7 +298,8 @@ export const markIssuesSeenUseCase = new MarkIssuesSeenUseCase(
  */
 export const createMasterOrchestratorUseCase = new CreateMasterOrchestratorUseCase(
   orchestratorRepository,
-  auditLogRepository
+  auditLogRepository,
+  transactionManager
 );
 
 /**
@@ -305,7 +307,8 @@ export const createMasterOrchestratorUseCase = new CreateMasterOrchestratorUseCa
  */
 export const createSubOrchestratorUseCase = new CreateSubOrchestratorUseCase(
   orchestratorRepository,
-  auditLogRepository
+  auditLogRepository,
+  transactionManager
 );
 
 /**
@@ -315,7 +318,8 @@ export const detectStalledSessionsUseCase = new DetectStalledSessionsUseCase(
   orchestratorRepository,
   insightRepository,
   auditLogRepository,
-  scrollbackMonitor
+  scrollbackMonitor,
+  transactionManager
 );
 
 /**
@@ -324,7 +328,8 @@ export const detectStalledSessionsUseCase = new DetectStalledSessionsUseCase(
 export const injectCommandUseCase = new InjectCommandUseCase(
   orchestratorRepository,
   auditLogRepository,
-  commandInjector
+  commandInjector,
+  transactionManager
 );
 
 /**
@@ -332,7 +337,8 @@ export const injectCommandUseCase = new InjectCommandUseCase(
  */
 export const pauseOrchestratorUseCase = new PauseOrchestratorUseCase(
   orchestratorRepository,
-  auditLogRepository
+  auditLogRepository,
+  transactionManager
 );
 
 /**
@@ -340,7 +346,8 @@ export const pauseOrchestratorUseCase = new PauseOrchestratorUseCase(
  */
 export const resumeOrchestratorUseCase = new ResumeOrchestratorUseCase(
   orchestratorRepository,
-  auditLogRepository
+  auditLogRepository,
+  transactionManager
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorR
 import type { IInsightRepository } from "@/application/ports/IInsightRepository";
 import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
 import type { IScrollbackMonitor } from "@/application/ports/IScrollbackMonitor";
+import { TransactionManager } from "@/infrastructure/persistence/TransactionManager";
 import type { ScrollbackSnapshot, StallDetectionResult, SuggestedAction } from "@/types/orchestrator";
 import { OrchestratorNotFoundError, OrchestratorPausedError } from "@/domain/errors/OrchestratorErrors";
 
@@ -41,6 +42,12 @@ export interface DetectStalledSessionsOutput {
   insights: OrchestratorInsight[];
   auditLogs: OrchestratorAuditLog[];
   stallDetectionResults: Map<string, StallDetectionResult>; // sessionId -> result
+  errors: Array<{
+    sessionId: string;
+    sessionName: string;
+    error: string;
+    timestamp: Date;
+  }>; // Errors encountered during detection
 }
 
 export class DetectStalledSessionsUseCase {
@@ -48,7 +55,8 @@ export class DetectStalledSessionsUseCase {
     private readonly orchestratorRepository: IOrchestratorRepository,
     private readonly insightRepository: IInsightRepository,
     private readonly auditLogRepository: IAuditLogRepository,
-    private readonly scrollbackMonitor: IScrollbackMonitor
+    private readonly scrollbackMonitor: IScrollbackMonitor,
+    private readonly transactionManager: TransactionManager
   ) {}
 
   async execute(input: DetectStalledSessionsInput): Promise<DetectStalledSessionsOutput> {
@@ -65,6 +73,12 @@ export class DetectStalledSessionsUseCase {
     const insights: OrchestratorInsight[] = [];
     const auditLogs: OrchestratorAuditLog[] = [];
     const stallDetectionResults = new Map<string, StallDetectionResult>();
+    const errors: Array<{
+      sessionId: string;
+      sessionName: string;
+      error: string;
+      timestamp: Date;
+    }> = [];
 
     // Step 2: Detect stalls for each session
     for (const session of input.sessionsToMonitor) {
@@ -105,11 +119,7 @@ export class DetectStalledSessionsUseCase {
             suggestedActions,
           });
 
-          // Save the insight
-          await this.insightRepository.save(insight);
-          insights.push(insight);
-
-          // Step 4: Create audit log for insight generation
+          // Create audit log for insight generation
           const auditLog = OrchestratorAuditLog.forInsightGenerated(
             input.orchestratorId,
             insight.id,
@@ -117,19 +127,56 @@ export class DetectStalledSessionsUseCase {
             "stall_detected",
             insight.severity
           );
-          await this.auditLogRepository.save(auditLog);
+
+          // Add to arrays for batch persistence
+          insights.push(insight);
           auditLogs.push(auditLog);
         }
       } catch (error) {
+        // Collect error details for caller to handle
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorDetail = {
+          sessionId: session.sessionId,
+          sessionName: session.name,
+          error: errorMessage,
+          timestamp: new Date(),
+        };
+
+        errors.push(errorDetail);
+
         // Log error but continue monitoring other sessions
-        console.error(`Failed to monitor session ${session.sessionId}:`, error);
+        console.error(
+          `[DetectStalledSessions] Failed to monitor session ${session.sessionId} (${session.name}):`,
+          errorMessage
+        );
       }
+    }
+
+    // Log summary if there were errors
+    if (errors.length > 0) {
+      console.warn(
+        `[DetectStalledSessions] Encountered ${errors.length} errors during stall detection for orchestrator ${input.orchestratorId}`
+      );
+    }
+
+    // Step 3: Persist all insights and audit logs atomically within a transaction
+    // This ensures that either all stall detections are recorded or none are
+    if (insights.length > 0) {
+      await this.transactionManager.execute(async (tx) => {
+        for (const insight of insights) {
+          await this.insightRepository.save(insight, tx);
+        }
+        for (const auditLog of auditLogs) {
+          await this.auditLogRepository.save(auditLog, tx);
+        }
+      });
     }
 
     return {
       insights,
       auditLogs,
       stallDetectionResults,
+      errors,
     };
   }
 

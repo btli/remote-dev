@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { checkRateLimit, createRateLimitHeaders } from "@/lib/rate-limit";
 import * as OrchestratorService from "@/services/orchestrator-service";
 import * as MonitoringService from "@/services/monitoring-service";
 
@@ -7,8 +8,24 @@ import * as MonitoringService from "@/services/monitoring-service";
  * GET /api/orchestrators - List user's orchestrators
  *
  * Returns all orchestrators (master + sub-orchestrators) for the authenticated user.
+ * Rate limit: 60 requests per minute
  */
 export const GET = withAuth(async (request, { userId }) => {
+  // Rate limit: 60 requests per minute
+  const rateLimit = checkRateLimit(`orchestrators:list:${userId}`, {
+    limit: 60,
+    windowMs: 60 * 1000,
+  });
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please try again later." },
+      {
+        status: 429,
+        headers: createRateLimitHeaders(rateLimit),
+      }
+    );
+  }
   try {
     const orchestrators = await OrchestratorService.listOrchestrators(userId);
 
@@ -30,7 +47,10 @@ export const GET = withAuth(async (request, { userId }) => {
       isMonitoringActive: MonitoringService.isMonitoringActive(orc.id),
     }));
 
-    return NextResponse.json({ orchestrators: orchestratorsWithStatus });
+    return NextResponse.json(
+      { orchestrators: orchestratorsWithStatus },
+      { headers: createRateLimitHeaders(rateLimit) }
+    );
   } catch (error) {
     console.error("Error listing orchestrators:", error);
     return errorResponse("Failed to list orchestrators", 500);
@@ -42,8 +62,24 @@ export const GET = withAuth(async (request, { userId }) => {
  *
  * Creates either a master orchestrator (monitors all sessions) or
  * a sub-orchestrator (monitors sessions in a specific folder).
+ * Rate limit: 10 requests per minute (creation is more expensive)
  */
 export const POST = withAuth(async (request, { userId }) => {
+  // Rate limit: 10 requests per minute (stricter for mutations)
+  const rateLimit = checkRateLimit(`orchestrators:create:${userId}`, {
+    limit: 10,
+    windowMs: 60 * 1000,
+  });
+
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please try again later." },
+      {
+        status: 429,
+        headers: createRateLimitHeaders(rateLimit),
+      }
+    );
+  }
   try {
     const result = await parseJsonBody<{
       sessionId: string;

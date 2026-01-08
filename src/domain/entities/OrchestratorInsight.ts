@@ -162,7 +162,13 @@ export class OrchestratorInsight {
   }
 
   get suggestedActions(): SuggestedAction[] {
-    return [...this.props.suggestedActions]; // Return copy for immutability
+    // Deep clone to prevent nested object mutation
+    return this.props.suggestedActions.map((action) => ({
+      label: action.label,
+      description: action.description,
+      command: action.command,
+      dangerous: action.dangerous,
+    }));
   }
 
   get resolved(): boolean {
@@ -170,11 +176,11 @@ export class OrchestratorInsight {
   }
 
   get resolvedAt(): Date | null {
-    return this.props.resolvedAt;
+    return this.props.resolvedAt ? new Date(this.props.resolvedAt.getTime()) : null;
   }
 
   get createdAt(): Date {
-    return this.props.createdAt;
+    return new Date(this.props.createdAt.getTime());
   }
 
   // ============================================================================

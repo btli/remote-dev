@@ -230,7 +230,7 @@ export class OrchestratorAuditLog {
   }
 
   get createdAt(): Date {
-    return this.props.createdAt;
+    return new Date(this.props.createdAt.getTime());
   }
 
   // ============================================================================

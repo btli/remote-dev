@@ -148,6 +148,7 @@ export function SidebarOrchestratorStatus({
                 size="sm"
                 className="h-6 w-6 p-0"
                 onClick={handleToggle}
+                aria-label={isPaused ? "Resume monitoring" : "Pause monitoring"}
               >
                 {isPaused ? (
                   <Play className="h-3 w-3" />
@@ -175,6 +176,7 @@ export function SidebarOrchestratorStatus({
                     e.stopPropagation();
                     onConfigure();
                   }}
+                  aria-label="Configure orchestrator"
                 >
                   <Settings className="h-3 w-3" />
                 </Button>

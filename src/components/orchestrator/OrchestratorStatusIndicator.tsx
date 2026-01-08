@@ -2,6 +2,7 @@
 
 import { Brain, Pause, Play, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { withErrorBoundary } from "@/components/ui/error-boundary";
 import {
   Tooltip,
   TooltipContent,
@@ -21,7 +22,7 @@ import { cn } from "@/lib/utils";
  * - Red when has critical insights
  * - Click to toggle pause/resume
  */
-export function OrchestratorStatusIndicator() {
+function OrchestratorStatusIndicatorComponent() {
   const {
     getMasterOrchestrator,
     pauseOrchestrator,
@@ -72,6 +73,11 @@ export function OrchestratorStatusIndicator() {
               isActive && !hasCriticalInsights && "text-green-500"
             )}
             onClick={handleToggle}
+            aria-label={
+              isPaused
+                ? "Resume master orchestrator"
+                : "Pause master orchestrator"
+            }
           >
             <Brain className="h-5 w-5" />
 
@@ -114,3 +120,11 @@ export function OrchestratorStatusIndicator() {
     </TooltipProvider>
   );
 }
+
+// Wrap with error boundary for fault isolation
+export const OrchestratorStatusIndicator = withErrorBoundary(
+  OrchestratorStatusIndicatorComponent,
+  {
+    name: "OrchestratorStatusIndicator",
+  }
+);

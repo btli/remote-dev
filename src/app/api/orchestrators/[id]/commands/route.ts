@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { checkRateLimit, createRateLimitHeaders } from "@/lib/rate-limit";
 import * as OrchestratorService from "@/services/orchestrator-service";
 import * as SessionService from "@/services/session-service";
 import { injectCommandUseCase } from "@/infrastructure/container";
@@ -9,8 +10,24 @@ import { injectCommandUseCase } from "@/infrastructure/container";
  *
  * Allows the orchestrator to send commands to monitored sessions.
  * Includes safety validation and audit logging.
+ * Rate limit: 20 requests per minute (strict limit for command execution)
  */
 export const POST = withAuth(async (request, { userId, params }) => {
+    // Strict rate limit for command injection (20 per minute)
+    const rateLimit = checkRateLimit(`orchestrators:commands:${userId}`, {
+      limit: 20,
+      windowMs: 60 * 1000,
+    });
+
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Too many command injections." },
+        {
+          status: 429,
+          headers: createRateLimitHeaders(rateLimit),
+        }
+      );
+    }
     try {
       // Verify orchestrator exists and belongs to user
       const orchestrator = await OrchestratorService.getOrchestrator(

@@ -295,6 +295,7 @@ export async function pauseOrchestrator(
   try {
     const result = await pauseOrchestratorUseCase.execute({
       orchestratorId,
+      userId, // Pass userId for authorization validation
     });
 
     return {
@@ -322,6 +323,7 @@ export async function resumeOrchestrator(
   try {
     const result = await resumeOrchestratorUseCase.execute({
       orchestratorId,
+      userId, // Pass userId for authorization validation
     });
 
     return {
@@ -496,7 +498,7 @@ export async function ensureFolderSubOrchestrator(
   const { sessionFolders } = await import("@/db/schema");
   const { eq, and } = await import("drizzle-orm");
 
-  // Get folder name for session naming
+  // Validate folder ownership (IDOR protection)
   const folder = await db
     .select()
     .from(sessionFolders)
@@ -508,7 +510,14 @@ export async function ensureFolderSubOrchestrator(
     )
     .limit(1);
 
-  const folderName = folder.length > 0 ? folder[0].name : "Folder";
+  if (folder.length === 0) {
+    throw new OrchestratorServiceError(
+      "Folder not found or access denied",
+      "FOLDER_NOT_FOUND"
+    );
+  }
+
+  const folderName = folder[0].name;
 
   // Create dedicated orchestrator session for this folder
   const orchestratorSession = await SessionService.createSession(userId, {

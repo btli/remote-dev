@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,6 +44,23 @@ export function CommandInjectionDialog({
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset form when dialog opens or initialCommand changes
+  useEffect(() => {
+    if (open) {
+      setCommand(initialCommand);
+      setReason("");
+      setError(null);
+    }
+  }, [open, initialCommand]);
+
+  // Clear error when user modifies input (allows retry after error)
+  useEffect(() => {
+    if (error) {
+      setError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command, reason]);
+
   const handleConfirm = async () => {
     if (!command.trim()) {
       setError("Command cannot be empty");
@@ -55,11 +72,13 @@ export function CommandInjectionDialog({
 
     try {
       await onConfirm(command.trim(), reason.trim());
-      onClose();
-      // Reset form
-      setCommand("");
+      // Reset form and close on success
+      setCommand(initialCommand);
       setReason("");
+      setError(null);
+      onClose();
     } catch (err) {
+      // Show error but keep form state so user can retry
       setError(err instanceof Error ? err.message : "Failed to inject command");
     } finally {
       setIsExecuting(false);

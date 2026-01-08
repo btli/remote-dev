@@ -5,12 +5,13 @@
  * It converts between domain entities and database records using mappers.
  */
 
-import { eq, and, desc, gte } from "drizzle-orm";
+import { eq, and, desc, gte, count } from "drizzle-orm";
 import { db } from "@/db";
 import { orchestratorInsights } from "@/db/schema";
 import { OrchestratorInsight } from "@/domain/entities/OrchestratorInsight";
 import type { IInsightRepository } from "@/application/ports/IInsightRepository";
 import type { InsightType, InsightSeverity, SuggestedAction } from "@/types/orchestrator";
+import type { TransactionContext } from "@/infrastructure/persistence/TransactionManager";
 
 export class DrizzleInsightRepository implements IInsightRepository {
   async findById(insightId: string): Promise<OrchestratorInsight | null> {
@@ -141,14 +142,16 @@ export class DrizzleInsightRepository implements IInsightRepository {
     return results.map((row) => this.toDomain(row));
   }
 
-  async save(insight: OrchestratorInsight): Promise<void> {
+  async save(insight: OrchestratorInsight, tx?: TransactionContext): Promise<void> {
+    const dbContext = tx ?? db;
     const record = this.toDatabase(insight);
-    await db.insert(orchestratorInsights).values(record);
+    await dbContext.insert(orchestratorInsights).values(record);
   }
 
-  async update(insight: OrchestratorInsight): Promise<void> {
+  async update(insight: OrchestratorInsight, tx?: TransactionContext): Promise<void> {
+    const dbContext = tx ?? db;
     const record = this.toDatabase(insight);
-    await db
+    await dbContext
       .update(orchestratorInsights)
       .set({
         resolved: record.resolved,
@@ -157,8 +160,9 @@ export class DrizzleInsightRepository implements IInsightRepository {
       .where(eq(orchestratorInsights.id, insight.id));
   }
 
-  async delete(insightId: string): Promise<boolean> {
-    const result = await db
+  async delete(insightId: string, tx?: TransactionContext): Promise<boolean> {
+    const dbContext = tx ?? db;
+    const result = await dbContext
       .delete(orchestratorInsights)
       .where(eq(orchestratorInsights.id, insightId))
       .returning({ id: orchestratorInsights.id });
@@ -168,7 +172,7 @@ export class DrizzleInsightRepository implements IInsightRepository {
 
   async countUnresolvedByOrchestratorId(orchestratorId: string): Promise<number> {
     const result = await db
-      .select({ count: orchestratorInsights.id })
+      .select({ count: count() })
       .from(orchestratorInsights)
       .where(
         and(
@@ -177,7 +181,7 @@ export class DrizzleInsightRepository implements IInsightRepository {
         )
       );
 
-    return result.length;
+    return result[0]?.count ?? 0;
   }
 
   async countBySeverity(
@@ -185,7 +189,7 @@ export class DrizzleInsightRepository implements IInsightRepository {
     severity: InsightSeverity
   ): Promise<number> {
     const result = await db
-      .select({ count: orchestratorInsights.id })
+      .select({ count: count() })
       .from(orchestratorInsights)
       .where(
         and(
@@ -194,7 +198,7 @@ export class DrizzleInsightRepository implements IInsightRepository {
         )
       );
 
-    return result.length;
+    return result[0]?.count ?? 0;
   }
 
   // ============================================================================
@@ -202,11 +206,32 @@ export class DrizzleInsightRepository implements IInsightRepository {
   // ============================================================================
 
   private toDomain(row: typeof orchestratorInsights.$inferSelect): OrchestratorInsight {
-    // Parse JSON fields
-    const context = row.contextJson ? JSON.parse(row.contextJson) : null;
-    const suggestedActions: SuggestedAction[] = row.suggestedActions
-      ? JSON.parse(row.suggestedActions)
-      : [];
+    // Parse JSON fields with error handling
+    let context = null;
+    if (row.contextJson) {
+      try {
+        context = JSON.parse(row.contextJson);
+      } catch (error) {
+        console.error(
+          `Failed to parse contextJson for insight ${row.id}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+        // Continue with null context rather than failing
+      }
+    }
+
+    let suggestedActions: SuggestedAction[] = [];
+    if (row.suggestedActions) {
+      try {
+        suggestedActions = JSON.parse(row.suggestedActions);
+      } catch (error) {
+        console.error(
+          `Failed to parse suggestedActions for insight ${row.id}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+        // Continue with empty array rather than failing
+      }
+    }
 
     return OrchestratorInsight.reconstitute({
       id: row.id,

@@ -19,6 +19,7 @@ import { detectStalledSessionsUseCase, scrollbackMonitor } from "@/infrastructur
 import type { Orchestrator } from "@/domain/entities/Orchestrator";
 import type { ScrollbackSnapshot } from "@/types/orchestrator";
 import * as TmuxService from "./tmux-service";
+import pLimit from "p-limit";
 
 /**
  * Error class for monitoring service operations
@@ -68,6 +69,32 @@ const snapshotStore = new Map<string, Map<string, ScrollbackSnapshot>>();
  * Maps orchestratorId -> NodeJS.Timeout
  */
 const activeIntervals = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Failure tracking for monitoring health
+ * Maps orchestratorId -> failure count
+ */
+const failureTracker = new Map<
+  string,
+  {
+    consecutiveFailures: number;
+    totalFailures: number;
+    lastFailureAt: Date | null;
+    lastSuccessAt: Date | null;
+  }
+>();
+
+/**
+ * Maximum consecutive failures before auto-pausing
+ */
+const MAX_CONSECUTIVE_FAILURES = 5;
+
+/**
+ * Concurrency limiter for subprocess spawning
+ * Prevents resource exhaustion from spawning too many tmux processes
+ */
+const CONCURRENCY_LIMIT = 10; // Max 10 concurrent tmux captures
+const captureLimit = pLimit(CONCURRENCY_LIMIT);
 
 /**
  * Get sessions to monitor for an orchestrator
@@ -148,6 +175,67 @@ function clearSnapshots(orchestratorId: string): void {
 }
 
 /**
+ * Clear snapshots for specific sessions
+ */
+function clearSessionSnapshots(orchestratorId: string, sessionIds: string[]): void {
+  const orchestratorSnapshots = snapshotStore.get(orchestratorId);
+  if (!orchestratorSnapshots) {
+    return;
+  }
+
+  for (const sessionId of sessionIds) {
+    orchestratorSnapshots.delete(sessionId);
+  }
+
+  // If no snapshots left, remove the orchestrator entry
+  if (orchestratorSnapshots.size === 0) {
+    snapshotStore.delete(orchestratorId);
+  }
+}
+
+/**
+ * Clean up snapshots for closed/deleted sessions
+ * Should be called periodically or when sessions are closed
+ */
+export async function cleanupOrphanedSnapshots(orchestratorId: string): Promise<number> {
+  const orchestratorSnapshots = snapshotStore.get(orchestratorId);
+  if (!orchestratorSnapshots) {
+    return 0;
+  }
+
+  const sessionIds = Array.from(orchestratorSnapshots.keys());
+  if (sessionIds.length === 0) {
+    return 0;
+  }
+
+  // Query database for active sessions
+  const activeSessions = await db
+    .select({ id: terminalSessions.id })
+    .from(terminalSessions)
+    .where(
+      and(
+        inArray(terminalSessions.id, sessionIds),
+        eq(terminalSessions.status, "active")
+      )
+    );
+
+  const activeSessionIds = new Set(activeSessions.map((s) => s.id));
+
+  // Find orphaned snapshots
+  const orphanedSessionIds = sessionIds.filter((id) => !activeSessionIds.has(id));
+
+  // Remove orphaned snapshots
+  if (orphanedSessionIds.length > 0) {
+    clearSessionSnapshots(orchestratorId, orphanedSessionIds);
+    console.log(
+      `[MonitoringService] Cleaned up ${orphanedSessionIds.length} orphaned snapshots for orchestrator ${orchestratorId}`
+    );
+  }
+
+  return orphanedSessionIds.length;
+}
+
+/**
  * Run a single monitoring cycle for an orchestrator
  */
 export async function runMonitoringCycle(
@@ -212,37 +300,42 @@ export async function runMonitoringCycle(
     // Step 2: Get sessions to monitor
     const sessionsToMonitor = await getSessionsToMonitor(orchestrator, userId);
 
-    // Step 3: Capture current snapshots for all sessions
-    const capturePromises = sessionsToMonitor.map(async (session) => {
-      try {
-        // Check if tmux session exists
-        const exists = await TmuxService.sessionExists(session.tmuxSessionName);
-        if (!exists) {
+    // Step 3: Capture current snapshots for all sessions (with concurrency limiting)
+    const capturePromises = sessionsToMonitor.map((session) =>
+      captureLimit(async () => {
+        try {
+          // Check if tmux session exists
+          const exists = await TmuxService.sessionExists(session.tmuxSessionName);
+          if (!exists) {
+            return null;
+          }
+
+          // Capture scrollback
+          const snapshot = await scrollbackMonitor.captureScrollback(
+            session.tmuxSessionName
+          );
+
+          // Store snapshot for next cycle
+          storeSnapshot(orchestratorId, session.sessionId, snapshot);
+
+          return { session, snapshot };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          errors.push({
+            sessionId: session.sessionId,
+            error: `Failed to capture scrollback: ${message}`,
+          });
           return null;
         }
-
-        // Capture scrollback
-        const snapshot = await scrollbackMonitor.captureScrollback(
-          session.tmuxSessionName
-        );
-
-        // Store snapshot for next cycle
-        storeSnapshot(orchestratorId, session.sessionId, snapshot);
-
-        return { session, snapshot };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push({
-          sessionId: session.sessionId,
-          error: `Failed to capture scrollback: ${message}`,
-        });
-        return null;
-      }
-    });
+      })
+    );
 
     const captured = (await Promise.all(capturePromises)).filter(
       (result) => result !== null
     ) as Array<{ session: SessionToMonitor; snapshot: ScrollbackSnapshot }>;
+
+    // Step 3.5: Clean up orphaned snapshots (prevent memory leaks)
+    await cleanupOrphanedSnapshots(orchestratorId);
 
     // Step 4: Run stall detection
     const result = await detectStalledSessionsUseCase.execute({
@@ -300,41 +393,166 @@ export function startMonitoring(orchestratorId: string, userId: string): void {
       const orchestrator = result[0];
       const intervalMs = orchestrator.monitoringInterval * 1000;
 
-      // Start interval
-      const interval = setInterval(async () => {
-        try {
-          const cycleResult = await runMonitoringCycle(orchestratorId, userId);
+      // Run first cycle immediately and await it to prevent TOCTOU race condition
+      console.log(
+        `[MonitoringService] Starting monitoring for ${orchestratorId} (interval: ${orchestrator.monitoringInterval}s)`
+      );
 
-          // Log monitoring cycle
-          console.log(`[MonitoringService] Cycle complete for ${orchestratorId}:`, {
+      runMonitoringCycle(orchestratorId, userId)
+        .then((cycleResult) => {
+          console.log(`[MonitoringService] Initial cycle complete for ${orchestratorId}:`, {
             sessionsChecked: cycleResult.sessionsChecked,
             stallsDetected: cycleResult.stallsDetected,
             insightsGenerated: cycleResult.insightsGenerated,
             errors: cycleResult.errors.length,
           });
 
-          // Log errors if any
-          if (cycleResult.errors.length > 0) {
-            console.error(`[MonitoringService] Errors in cycle:`, cycleResult.errors);
-          }
-        } catch (error) {
-          console.error(`[MonitoringService] Monitoring cycle failed:`, error);
-        }
-      }, intervalMs);
+          // Reset failure tracking on successful initial cycle
+          recordSuccess(orchestratorId);
 
-      activeIntervals.set(orchestratorId, interval);
-      console.log(
-        `[MonitoringService] Started monitoring for ${orchestratorId} (interval: ${orchestrator.monitoringInterval}s)`
-      );
+          // Only start interval after initial cycle completes successfully
+          const interval = setInterval(async () => {
+            try {
+              const result = await runMonitoringCycle(orchestratorId, userId);
 
-      // Run first cycle immediately
-      runMonitoringCycle(orchestratorId, userId).catch((error) => {
-        console.error(`[MonitoringService] Initial cycle failed:`, error);
-      });
+              // Log monitoring cycle
+              console.log(`[MonitoringService] Cycle complete for ${orchestratorId}:`, {
+                sessionsChecked: result.sessionsChecked,
+                stallsDetected: result.stallsDetected,
+                insightsGenerated: result.insightsGenerated,
+                errors: result.errors.length,
+              });
+
+              // Log errors if any
+              if (result.errors.length > 0) {
+                console.error(`[MonitoringService] Errors in cycle:`, result.errors);
+              }
+
+              // Record successful cycle
+              recordSuccess(orchestratorId);
+            } catch (error) {
+              console.error(`[MonitoringService] Monitoring cycle failed:`, error);
+
+              // Record failure and check if we should pause monitoring
+              recordFailure(orchestratorId);
+
+              const failureMetrics = getFailureMetrics(orchestratorId);
+              if (
+                failureMetrics &&
+                failureMetrics.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES
+              ) {
+                console.error(
+                  `[MonitoringService] Orchestrator ${orchestratorId} has ${failureMetrics.consecutiveFailures} consecutive failures. Auto-pausing...`
+                );
+
+                // Stop monitoring
+                stopMonitoring(orchestratorId);
+
+                // Pause orchestrator in database
+                try {
+                  await db
+                    .update(orchestratorSessions)
+                    .set({ status: "paused", updatedAt: new Date() })
+                    .where(eq(orchestratorSessions.id, orchestratorId));
+
+                  console.log(
+                    `[MonitoringService] Orchestrator ${orchestratorId} auto-paused due to repeated failures`
+                  );
+                } catch (pauseError) {
+                  console.error(
+                    `[MonitoringService] Failed to pause orchestrator ${orchestratorId}:`,
+                    pauseError
+                  );
+                }
+              }
+            }
+          }, intervalMs);
+
+          activeIntervals.set(orchestratorId, interval);
+          console.log(`[MonitoringService] Monitoring interval started for ${orchestratorId}`);
+        })
+        .catch((error) => {
+          console.error(`[MonitoringService] Initial cycle failed:`, error);
+          console.error(`[MonitoringService] Monitoring NOT started for ${orchestratorId}`);
+        });
     })
     .catch((error) => {
       console.error(`[MonitoringService] Failed to start monitoring:`, error);
     });
+}
+
+/**
+ * Record a successful monitoring cycle
+ */
+function recordSuccess(orchestratorId: string): void {
+  let metrics = failureTracker.get(orchestratorId);
+  if (!metrics) {
+    metrics = {
+      consecutiveFailures: 0,
+      totalFailures: 0,
+      lastFailureAt: null,
+      lastSuccessAt: null,
+    };
+    failureTracker.set(orchestratorId, metrics);
+  }
+
+  // Reset consecutive failures on success
+  metrics.consecutiveFailures = 0;
+  metrics.lastSuccessAt = new Date();
+}
+
+/**
+ * Record a failed monitoring cycle
+ */
+function recordFailure(orchestratorId: string): void {
+  let metrics = failureTracker.get(orchestratorId);
+  if (!metrics) {
+    metrics = {
+      consecutiveFailures: 0,
+      totalFailures: 0,
+      lastFailureAt: null,
+      lastSuccessAt: null,
+    };
+    failureTracker.set(orchestratorId, metrics);
+  }
+
+  metrics.consecutiveFailures += 1;
+  metrics.totalFailures += 1;
+  metrics.lastFailureAt = new Date();
+}
+
+/**
+ * Get failure metrics for an orchestrator
+ */
+export function getFailureMetrics(orchestratorId: string): {
+  consecutiveFailures: number;
+  totalFailures: number;
+  lastFailureAt: Date | null;
+  lastSuccessAt: Date | null;
+} | null {
+  return failureTracker.get(orchestratorId) || null;
+}
+
+/**
+ * Get failure metrics for all orchestrators
+ */
+export function getAllFailureMetrics(): Map<
+  string,
+  {
+    consecutiveFailures: number;
+    totalFailures: number;
+    lastFailureAt: Date | null;
+    lastSuccessAt: Date | null;
+  }
+> {
+  return new Map(failureTracker);
+}
+
+/**
+ * Clear failure tracking for an orchestrator
+ */
+export function clearFailureTracking(orchestratorId: string): void {
+  failureTracker.delete(orchestratorId);
 }
 
 /**
@@ -350,6 +568,9 @@ export function stopMonitoring(orchestratorId: string): void {
 
   // Clear snapshots
   clearSnapshots(orchestratorId);
+
+  // Clear failure tracking
+  clearFailureTracking(orchestratorId);
 }
 
 /**
@@ -376,6 +597,37 @@ export function stopAllMonitoring(): void {
 }
 
 /**
+ * Clean up orphaned snapshots for ALL orchestrators
+ * This should be called periodically (e.g., every hour) to prevent memory leaks
+ */
+export async function cleanupAllOrphanedSnapshots(): Promise<number> {
+  const orchestratorIds = Array.from(snapshotStore.keys());
+  let totalCleaned = 0;
+
+  console.log(
+    `[MonitoringService] Running global snapshot cleanup for ${orchestratorIds.length} orchestrators...`
+  );
+
+  for (const orchestratorId of orchestratorIds) {
+    try {
+      const cleaned = await cleanupOrphanedSnapshots(orchestratorId);
+      totalCleaned += cleaned;
+    } catch (error) {
+      console.error(
+        `[MonitoringService] Failed to cleanup snapshots for ${orchestratorId}:`,
+        error
+      );
+    }
+  }
+
+  if (totalCleaned > 0) {
+    console.log(`[MonitoringService] Global cleanup: removed ${totalCleaned} orphaned snapshots`);
+  }
+
+  return totalCleaned;
+}
+
+/**
  * Initialize monitoring for all active orchestrators
  * Call this on server startup
  */
@@ -394,4 +646,13 @@ export async function initializeMonitoring(): Promise<void> {
   for (const orchestrator of orchestrators) {
     startMonitoring(orchestrator.id, orchestrator.userId);
   }
+
+  // Set up periodic global snapshot cleanup (every hour)
+  setInterval(async () => {
+    try {
+      await cleanupAllOrphanedSnapshots();
+    } catch (error) {
+      console.error("[MonitoringService] Global snapshot cleanup failed:", error);
+    }
+  }, 60 * 60 * 1000); // 1 hour
 }

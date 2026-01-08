@@ -5,10 +5,12 @@
  * The infrastructure layer will provide the concrete implementation.
  *
  * Note: Audit logs are immutable - only save and query operations are supported.
+ * The save method accepts an optional transaction context for atomic operations.
  */
 
 import type { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { AuditLogActionType } from "@/types/orchestrator";
+import type { TransactionContext } from "@/infrastructure/persistence/TransactionManager";
 
 export interface IAuditLogRepository {
   /**
@@ -67,8 +69,11 @@ export interface IAuditLogRepository {
    * Throws if an entry with the same ID already exists.
    *
    * Note: Audit logs are immutable - no update operation is provided.
+   *
+   * @param auditLog - The audit log entry to save
+   * @param tx - Optional transaction context for atomic operations
    */
-  save(auditLog: OrchestratorAuditLog): Promise<void>;
+  save(auditLog: OrchestratorAuditLog, tx?: TransactionContext): Promise<void>;
 
   /**
    * Count audit log entries for an orchestrator.

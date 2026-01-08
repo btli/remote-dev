@@ -24,6 +24,17 @@ export class TmuxCommandInjector implements ICommandInjector {
     /wget.*\|\s*(?:bash|sh)/i,                 // Wget pipe to shell
     /chmod\s+777\s+\//i,                       // Chmod 777 on root
     /chown\s+.*\s+\//i,                        // Chown on root
+    // Additional bypass techniques
+    /eval\s+.*[|;&$`]/i,                       // eval with shell metacharacters
+    /exec\s+.*[|;&$`]/i,                       // exec with shell metacharacters
+    /\$\(.*rm.*-rf.*\)/i,                      // Command substitution with rm -rf
+    /`.*rm.*-rf.*`/i,                          // Backtick command substitution
+    /nc\s+-[el].*\s+.*\|\s*(?:bash|sh)/i,     // Netcat reverse shell
+    /\/dev\/tcp\/.*\/.*[<>]/i,                 // /dev/tcp backdoor
+    /base64\s+-d.*\|\s*(?:bash|sh)/i,         // Base64 decode to shell
+    /python.*-c.*exec\(/i,                     // Python exec injection
+    /perl.*-e.*exec\(/i,                       // Perl exec injection
+    /ruby.*-e.*exec\(/i,                       // Ruby exec injection
   ];
 
   // Patterns for potentially dangerous commands that require extra caution
@@ -138,6 +149,42 @@ export class TmuxCommandInjector implements ICommandInjector {
       return {
         valid: false,
         reason: "Command contains null bytes",
+        dangerous: true,
+      };
+    }
+
+    // Check for suspicious encoding that could bypass filters
+    if (/\\x[0-9a-f]{2}/i.test(command) || /\\u[0-9a-f]{4}/i.test(command)) {
+      return {
+        valid: false,
+        reason: "Command contains hex/unicode escape sequences",
+        dangerous: true,
+      };
+    }
+
+    // Check for multiple shell metacharacters in sequence (potential injection)
+    if (/[;&|]{2,}/.test(command) || /[;&|]\s*[;&|]/.test(command)) {
+      return {
+        valid: false,
+        reason: "Command contains suspicious shell metacharacter sequences",
+        dangerous: true,
+      };
+    }
+
+    // Check for command substitution combined with pipes (common injection pattern)
+    if (/\$\([^)]*\).*[|;]/.test(command) || /`[^`]*`.*[|;]/.test(command)) {
+      return {
+        valid: false,
+        reason: "Command contains command substitution with pipes/semicolons",
+        dangerous: true,
+      };
+    }
+
+    // Check for suspicious environment variable manipulation
+    if (/(?:LD_PRELOAD|LD_LIBRARY_PATH)\s*=.*[|;&]/.test(command)) {
+      return {
+        valid: false,
+        reason: "Command contains suspicious environment variable manipulation",
         dangerous: true,
       };
     }

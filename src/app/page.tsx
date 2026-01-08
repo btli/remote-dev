@@ -16,6 +16,8 @@ import { ProfileProvider } from "@/contexts/ProfileContext";
 import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
+import { OrchestratorProvider } from "@/contexts/OrchestratorContext";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
 import type { TerminalSession } from "@/types/session";
@@ -82,6 +84,8 @@ export default async function Home() {
                       <TrashProvider>
                         <PortProvider>
                           <ScheduleProvider>
+                          <ErrorBoundary name="OrchestratorProvider">
+                            <OrchestratorProvider>
                           <div className="flex h-screen flex-col bg-background">
                           {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
                           <Header
@@ -96,6 +100,8 @@ export default async function Home() {
                           {/* Main content */}
                           <SessionManager isGitHubConnected={isGitHubConnected} />
                         </div>
+                            </OrchestratorProvider>
+                          </ErrorBoundary>
                           </ScheduleProvider>
                         </PortProvider>
                       </TrashProvider>

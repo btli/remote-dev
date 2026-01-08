@@ -7,12 +7,13 @@
  * Note: Audit logs are immutable - only save and query operations are supported.
  */
 
-import { eq, and, desc, lte, gte, lt } from "drizzle-orm";
+import { eq, and, desc, lte, gte, lt, count } from "drizzle-orm";
 import { db } from "@/db";
 import { orchestratorAuditLog } from "@/db/schema";
 import { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
 import type { AuditLogActionType } from "@/types/orchestrator";
+import type { TransactionContext } from "@/infrastructure/persistence/TransactionManager";
 
 export class DrizzleAuditLogRepository implements IAuditLogRepository {
   async findById(auditLogId: string): Promise<OrchestratorAuditLog | null> {
@@ -124,18 +125,19 @@ export class DrizzleAuditLogRepository implements IAuditLogRepository {
     return this.toDomain(result[0]);
   }
 
-  async save(auditLog: OrchestratorAuditLog): Promise<void> {
+  async save(auditLog: OrchestratorAuditLog, tx?: TransactionContext): Promise<void> {
+    const dbContext = tx ?? db;
     const record = this.toDatabase(auditLog);
-    await db.insert(orchestratorAuditLog).values(record);
+    await dbContext.insert(orchestratorAuditLog).values(record);
   }
 
   async countByOrchestratorId(orchestratorId: string): Promise<number> {
     const result = await db
-      .select({ count: orchestratorAuditLog.id })
+      .select({ count: count() })
       .from(orchestratorAuditLog)
       .where(eq(orchestratorAuditLog.orchestratorId, orchestratorId));
 
-    return result.length;
+    return result[0]?.count ?? 0;
   }
 
   async countByActionType(
@@ -143,7 +145,7 @@ export class DrizzleAuditLogRepository implements IAuditLogRepository {
     actionType: AuditLogActionType
   ): Promise<number> {
     const result = await db
-      .select({ count: orchestratorAuditLog.id })
+      .select({ count: count() })
       .from(orchestratorAuditLog)
       .where(
         and(
@@ -152,7 +154,7 @@ export class DrizzleAuditLogRepository implements IAuditLogRepository {
         )
       );
 
-    return result.length;
+    return result[0]?.count ?? 0;
   }
 
   async deleteOlderThan(date: Date): Promise<number> {
@@ -171,8 +173,19 @@ export class DrizzleAuditLogRepository implements IAuditLogRepository {
   private toDomain(
     row: typeof orchestratorAuditLog.$inferSelect
   ): OrchestratorAuditLog {
-    // Parse JSON details field
-    const details = row.detailsJson ? JSON.parse(row.detailsJson) : null;
+    // Parse JSON details field with error handling
+    let details = null;
+    if (row.detailsJson) {
+      try {
+        details = JSON.parse(row.detailsJson);
+      } catch (error) {
+        console.error(
+          `Failed to parse detailsJson for audit log ${row.id}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+        // Continue with null details rather than failing
+      }
+    }
 
     return OrchestratorAuditLog.reconstitute({
       id: row.id,

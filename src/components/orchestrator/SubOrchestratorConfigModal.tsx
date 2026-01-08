@@ -52,6 +52,32 @@ export function SubOrchestratorConfigModal({
   // Check if orchestrator already exists for this folder
   const existingOrchestrator = getOrchestratorForFolder(folderId);
 
+  /**
+   * Clamp a number value between min and max, with fallback
+   */
+  const clampValue = (value: number, min: number, max: number, fallback: number): number => {
+    if (isNaN(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+  };
+
+  /**
+   * Handle monitoring interval change with clamping
+   */
+  const handleMonitoringIntervalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseInt(e.target.value);
+    const clamped = clampValue(value, 10, 300, 30);
+    setMonitoringInterval(clamped);
+  };
+
+  /**
+   * Handle stall threshold change with clamping
+   */
+  const handleStallThresholdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseInt(e.target.value);
+    const clamped = clampValue(value, 60, 3600, 300);
+    setStallThreshold(clamped);
+  };
+
   useEffect(() => {
     if (open) {
       // Reset form
@@ -153,8 +179,17 @@ export function SubOrchestratorConfigModal({
                 type="number"
                 min={10}
                 max={300}
+                step={1}
                 value={monitoringInterval}
-                onChange={(e) => setMonitoringInterval(parseInt(e.target.value) || 30)}
+                onChange={handleMonitoringIntervalChange}
+                onBlur={(e) => {
+                  // Ensure value is clamped on blur
+                  const value = parseInt(e.target.value);
+                  const clamped = clampValue(value, 10, 300, 30);
+                  if (value !== clamped) {
+                    setMonitoringInterval(clamped);
+                  }
+                }}
                 placeholder="30"
               />
               <p className="text-xs text-muted-foreground">
@@ -169,8 +204,17 @@ export function SubOrchestratorConfigModal({
                 type="number"
                 min={60}
                 max={3600}
+                step={1}
                 value={stallThreshold}
-                onChange={(e) => setStallThreshold(parseInt(e.target.value) || 300)}
+                onChange={handleStallThresholdChange}
+                onBlur={(e) => {
+                  // Ensure value is clamped on blur
+                  const value = parseInt(e.target.value);
+                  const clamped = clampValue(value, 60, 3600, 300);
+                  if (value !== clamped) {
+                    setStallThreshold(clamped);
+                  }
+                }}
                 placeholder="300"
               />
               <p className="text-xs text-muted-foreground">

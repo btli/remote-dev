@@ -1477,6 +1477,14 @@ export const orchestratorSessions = sqliteTable(
     index("orchestrator_session_status_idx").on(table.status),
     // Index for type filtering
     index("orchestrator_session_type_idx").on(table.type),
+    // COMPOSITE INDEX for active orchestrator queries (userId, status)
+    // Optimizes: SELECT * FROM orchestrator_sessions WHERE userId = ? AND status = 'idle'
+    index("orchestrator_session_user_status_idx").on(table.userId, table.status),
+    // UNIQUE CONSTRAINTS to prevent duplicate orchestrators (prevents race conditions)
+    // Ensure only one master orchestrator per user
+    uniqueIndex("orchestrator_session_user_type_unique").on(table.userId, table.type),
+    // Ensure only one sub-orchestrator per folder (scopeId is folder_id for sub-orchestrators)
+    uniqueIndex("orchestrator_session_scope_unique").on(table.userId, table.scopeId),
   ]
 );
 
@@ -1557,5 +1565,8 @@ export const orchestratorAuditLog = sqliteTable(
     index("orchestrator_audit_action_idx").on(table.actionType),
     // Index for target session lookup
     index("orchestrator_audit_target_idx").on(table.targetSessionId),
+    // COMPOSITE INDEX for time-range queries (orchestratorId, createdAt)
+    // Optimizes: SELECT * FROM audit_log WHERE orchestratorId = ? AND createdAt >= ? AND createdAt <= ?
+    index("orchestrator_audit_orchestrator_time_idx").on(table.orchestratorId, table.createdAt),
   ]
 );

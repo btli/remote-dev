@@ -6,6 +6,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   type ReactNode,
 } from "react";
 import type { Orchestrator } from "@/domain/entities/Orchestrator";
@@ -55,6 +56,10 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
     error: null,
   });
 
+  // Use ref to track orchestrators for the polling interval
+  // This prevents the interval from being recreated on every orchestrator change
+  const orchestratorsRef = useRef<Orchestrator[]>([]);
+
   // Fetch orchestrators
   const refreshOrchestrators = useCallback(async () => {
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
@@ -66,9 +71,14 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
       }
 
       const data = await response.json();
+      const orchestrators = data.orchestrators || [];
+
+      // Update ref for polling interval
+      orchestratorsRef.current = orchestrators;
+
       setState((prev) => ({
         ...prev,
-        orchestrators: data.orchestrators || [],
+        orchestrators,
         isLoading: false,
       }));
     } catch (error) {
@@ -212,15 +222,18 @@ export function OrchestratorProvider({ children }: { children: ReactNode }) {
   }, [refreshOrchestrators]);
 
   // Poll for insights every 30 seconds
+  // Use ref to avoid recreating interval when orchestrators change
   useEffect(() => {
     const interval = setInterval(() => {
-      state.orchestrators.forEach((orc) => {
+      // Use ref to get current orchestrators without causing interval recreation
+      orchestratorsRef.current.forEach((orc) => {
         fetchInsights(orc.id).catch(console.error);
       });
     }, 30000);
 
+    // Cleanup function runs only on unmount
     return () => clearInterval(interval);
-  }, [state.orchestrators, fetchInsights]);
+  }, [fetchInsights]); // Only depend on fetchInsights (stable)
 
   return (
     <OrchestratorContext.Provider

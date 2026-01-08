@@ -2,10 +2,12 @@
 
 import { AlertCircle, AlertTriangle, Info, CheckCircle, Clock, Terminal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { withErrorBoundary } from "@/components/ui/error-boundary";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import DOMPurify from "dompurify";
 import type { OrchestratorInsight } from "@/domain/entities/OrchestratorInsight";
 import type { InsightSeverity } from "@/types/orchestrator";
 
@@ -25,7 +27,7 @@ interface InsightDetailViewProps {
  * - Suggested actions with execute buttons
  * - Related session information
  */
-export function InsightDetailView({
+function InsightDetailViewComponent({
   insight,
   sessionName,
   onResolve,
@@ -132,24 +134,30 @@ export function InsightDetailView({
           <div className="space-y-2">
             <h4 className="text-sm font-medium">Context</h4>
             <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1 text-sm">
-              {Object.entries(insight.context).map(([key, value]) => (
-                <div key={key} className="flex justify-between">
-                  <span className="text-muted-foreground capitalize">
-                    {key.replace(/([A-Z])/g, " $1").trim()}:
-                  </span>
-                  <span className="font-medium">
-                    {typeof value === "boolean"
-                      ? value
-                        ? "Yes"
-                        : "No"
-                      : typeof value === "number"
-                        ? value.toString()
-                        : value !== null && value !== undefined
-                          ? String(value)
-                          : "N/A"}
-                  </span>
-                </div>
-              ))}
+              {Object.entries(insight.context).map(([key, value]) => {
+                let displayValue: string;
+                if (typeof value === "boolean") {
+                  displayValue = value ? "Yes" : "No";
+                } else if (typeof value === "number") {
+                  displayValue = value.toString();
+                } else if (value !== null && value !== undefined) {
+                  displayValue = DOMPurify.sanitize(String(value), {
+                    ALLOWED_TAGS: [],
+                    KEEP_CONTENT: true
+                  });
+                } else {
+                  displayValue = "N/A";
+                }
+
+                return (
+                  <div key={key} className="flex justify-between">
+                    <span className="text-muted-foreground capitalize">
+                      {key.replace(/([A-Z])/g, " $1").trim()}:
+                    </span>
+                    <span className="font-medium">{displayValue}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -171,11 +179,25 @@ export function InsightDetailView({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1">
-                      <p className="text-sm font-medium">{action.label}</p>
+                      <p
+                        className="text-sm font-medium"
+                        dangerouslySetInnerHTML={{
+                          __html: DOMPurify.sanitize(action.label, {
+                            ALLOWED_TAGS: [],
+                            KEEP_CONTENT: true
+                          })
+                        }}
+                      />
                       {action.description && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {action.description}
-                        </p>
+                        <p
+                          className="text-xs text-muted-foreground mt-1"
+                          dangerouslySetInnerHTML={{
+                            __html: DOMPurify.sanitize(action.description, {
+                              ALLOWED_TAGS: [],
+                              KEEP_CONTENT: true
+                            })
+                          }}
+                        />
                       )}
                     </div>
                     {action.command && onExecuteAction && (
@@ -191,9 +213,15 @@ export function InsightDetailView({
                     )}
                   </div>
                   {action.command && (
-                    <code className="block text-xs font-mono bg-background/50 rounded px-2 py-1 border border-border">
-                      {action.command}
-                    </code>
+                    <code
+                      className="block text-xs font-mono bg-background/50 rounded px-2 py-1 border border-border"
+                      dangerouslySetInnerHTML={{
+                        __html: DOMPurify.sanitize(action.command, {
+                          ALLOWED_TAGS: [],
+                          KEEP_CONTENT: true
+                        })
+                      }}
+                    />
                   )}
                   {action.dangerous && (
                     <p className="text-xs text-red-500 font-medium">
@@ -219,3 +247,11 @@ export function InsightDetailView({
     </Card>
   );
 }
+
+// Wrap with error boundary for fault isolation
+export const InsightDetailView = withErrorBoundary(
+  InsightDetailViewComponent,
+  {
+    name: "InsightDetailView",
+  }
+);

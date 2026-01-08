@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Bell, CheckCheck, AlertTriangle, AlertCircle, Info, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { withErrorBoundary } from "@/components/ui/error-boundary";
 import {
   Popover,
   PopoverContent,
@@ -13,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useOrchestratorContext } from "@/contexts/OrchestratorContext";
 import { cn } from "@/lib/utils";
+import DOMPurify from "dompurify";
 import type { OrchestratorInsight } from "@/domain/entities/OrchestratorInsight";
 import type { InsightSeverity } from "@/types/orchestrator";
 
@@ -25,7 +27,7 @@ import type { InsightSeverity } from "@/types/orchestrator";
  * - Suggested actions
  * - Mark as resolved action
  */
-export function InsightNotificationInbox() {
+function InsightNotificationInboxComponent() {
   const {
     insights,
     unresolvedInsightCount,
@@ -96,7 +98,12 @@ export function InsightNotificationInbox() {
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative"
+          aria-label={`Orchestrator insights (${unresolvedInsightCount} unresolved)`}
+        >
           <Bell className="h-5 w-5" />
           {unresolvedInsightCount > 0 && (
             <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
@@ -144,12 +151,21 @@ export function InsightNotificationInbox() {
                       size="sm"
                       className="h-6 w-6 p-0"
                       onClick={(e) => handleResolve(insight.id, e)}
+                      aria-label="Resolve insight"
                     >
                       <X className="h-4 w-4" />
                     </Button>
                   </div>
 
-                  <p className="text-sm font-medium mb-1">{insight.message}</p>
+                  <p
+                    className="text-sm font-medium mb-1"
+                    dangerouslySetInnerHTML={{
+                      __html: DOMPurify.sanitize(insight.message, {
+                        ALLOWED_TAGS: [], // Strip all HTML tags
+                        KEEP_CONTENT: true
+                      })
+                    }}
+                  />
 
                   <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
                     <span>{insight.orchestratorName}</span>
@@ -181,3 +197,11 @@ export function InsightNotificationInbox() {
     </Popover>
   );
 }
+
+// Wrap with error boundary for fault isolation
+export const InsightNotificationInbox = withErrorBoundary(
+  InsightNotificationInboxComponent,
+  {
+    name: "InsightNotificationInbox",
+  }
+);

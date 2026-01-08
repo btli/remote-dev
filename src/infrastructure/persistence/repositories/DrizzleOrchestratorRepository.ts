@@ -11,10 +11,12 @@ import { orchestratorSessions } from "@/db/schema";
 import { Orchestrator } from "@/domain/entities/Orchestrator";
 import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorRepository";
 import type { OrchestratorType, OrchestratorStatus } from "@/types/orchestrator";
+import type { TransactionContext } from "@/infrastructure/persistence/TransactionManager";
 
 export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
-  async findById(orchestratorId: string): Promise<Orchestrator | null> {
-    const result = await db
+  async findById(orchestratorId: string, tx?: TransactionContext): Promise<Orchestrator | null> {
+    const dbContext = tx ?? db;
+    const result = await dbContext
       .select()
       .from(orchestratorSessions)
       .where(eq(orchestratorSessions.id, orchestratorId))
@@ -27,8 +29,9 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
     return this.toDomain(result[0]);
   }
 
-  async findByUserId(userId: string): Promise<Orchestrator[]> {
-    const results = await db
+  async findByUserId(userId: string, tx?: TransactionContext): Promise<Orchestrator[]> {
+    const dbContext = tx ?? db;
+    const results = await dbContext
       .select()
       .from(orchestratorSessions)
       .where(eq(orchestratorSessions.userId, userId))
@@ -39,9 +42,11 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
 
   async findByUserIdAndType(
     userId: string,
-    type: OrchestratorType
+    type: OrchestratorType,
+    tx?: TransactionContext
   ): Promise<Orchestrator[]> {
-    const results = await db
+    const dbContext = tx ?? db;
+    const results = await dbContext
       .select()
       .from(orchestratorSessions)
       .where(
@@ -55,8 +60,9 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
     return results.map((row) => this.toDomain(row));
   }
 
-  async findMasterByUserId(userId: string): Promise<Orchestrator | null> {
-    const result = await db
+  async findMasterByUserId(userId: string, tx?: TransactionContext): Promise<Orchestrator | null> {
+    const dbContext = tx ?? db;
+    const result = await dbContext
       .select()
       .from(orchestratorSessions)
       .where(
@@ -74,8 +80,9 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
     return this.toDomain(result[0]);
   }
 
-  async findByScope(userId: string, scopeId: string): Promise<Orchestrator[]> {
-    const results = await db
+  async findByScope(userId: string, scopeId: string, tx?: TransactionContext): Promise<Orchestrator[]> {
+    const dbContext = tx ?? db;
+    const results = await dbContext
       .select()
       .from(orchestratorSessions)
       .where(
@@ -89,8 +96,9 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
     return results.map((row) => this.toDomain(row));
   }
 
-  async findActiveByUserId(userId: string): Promise<Orchestrator[]> {
-    const results = await db
+  async findActiveByUserId(userId: string, tx?: TransactionContext): Promise<Orchestrator[]> {
+    const dbContext = tx ?? db;
+    const results = await dbContext
       .select()
       .from(orchestratorSessions)
       .where(eq(orchestratorSessions.userId, userId))
@@ -104,9 +112,11 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
 
   async findByStatus(
     userId: string,
-    status: OrchestratorStatus
+    status: OrchestratorStatus,
+    tx?: TransactionContext
   ): Promise<Orchestrator[]> {
-    const results = await db
+    const dbContext = tx ?? db;
+    const results = await dbContext
       .select()
       .from(orchestratorSessions)
       .where(
@@ -120,8 +130,9 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
     return results.map((row) => this.toDomain(row));
   }
 
-  async hasMaster(userId: string): Promise<boolean> {
-    const result = await db
+  async hasMaster(userId: string, tx?: TransactionContext): Promise<boolean> {
+    const dbContext = tx ?? db;
+    const result = await dbContext
       .select({ id: orchestratorSessions.id })
       .from(orchestratorSessions)
       .where(
@@ -135,14 +146,16 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
     return result.length > 0;
   }
 
-  async save(orchestrator: Orchestrator): Promise<void> {
+  async save(orchestrator: Orchestrator, tx?: TransactionContext): Promise<void> {
+    const dbContext = tx ?? db;
     const record = this.toDatabase(orchestrator);
-    await db.insert(orchestratorSessions).values(record);
+    await dbContext.insert(orchestratorSessions).values(record);
   }
 
-  async update(orchestrator: Orchestrator): Promise<void> {
+  async update(orchestrator: Orchestrator, tx?: TransactionContext): Promise<void> {
+    const dbContext = tx ?? db;
     const record = this.toDatabase(orchestrator);
-    await db
+    await dbContext
       .update(orchestratorSessions)
       .set({
         status: record.status,
@@ -156,8 +169,9 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
       .where(eq(orchestratorSessions.id, orchestrator.id));
   }
 
-  async delete(orchestratorId: string): Promise<boolean> {
-    const result = await db
+  async delete(orchestratorId: string, tx?: TransactionContext): Promise<boolean> {
+    const dbContext = tx ?? db;
+    const result = await dbContext
       .delete(orchestratorSessions)
       .where(eq(orchestratorSessions.id, orchestratorId))
       .returning({ id: orchestratorSessions.id });

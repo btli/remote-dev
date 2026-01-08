@@ -3,10 +3,14 @@
  *
  * This interface defines the contract for insight repository implementations.
  * The infrastructure layer will provide the concrete implementation.
+ *
+ * All mutation methods (save, update, delete) accept an optional transaction context
+ * to support transactional operations across multiple repositories.
  */
 
 import type { OrchestratorInsight } from "@/domain/entities/OrchestratorInsight";
 import type { InsightType, InsightSeverity } from "@/types/orchestrator";
+import type { TransactionContext } from "@/infrastructure/persistence/TransactionManager";
 
 export interface IInsightRepository {
   /**
@@ -64,20 +68,29 @@ export interface IInsightRepository {
   /**
    * Save a new insight.
    * Throws if an insight with the same ID already exists.
+   *
+   * @param insight - The insight to save
+   * @param tx - Optional transaction context for atomic operations
    */
-  save(insight: OrchestratorInsight): Promise<void>;
+  save(insight: OrchestratorInsight, tx?: TransactionContext): Promise<void>;
 
   /**
    * Update an existing insight.
    * Throws if the insight does not exist.
+   *
+   * @param insight - The insight to update
+   * @param tx - Optional transaction context for atomic operations
    */
-  update(insight: OrchestratorInsight): Promise<void>;
+  update(insight: OrchestratorInsight, tx?: TransactionContext): Promise<void>;
 
   /**
    * Delete an insight by ID.
    * Returns true if deleted, false if not found.
+   *
+   * @param insightId - The insight ID to delete
+   * @param tx - Optional transaction context for atomic operations
    */
-  delete(insightId: string): Promise<boolean>;
+  delete(insightId: string, tx?: TransactionContext): Promise<boolean>;
 
   /**
    * Count unresolved insights for an orchestrator.

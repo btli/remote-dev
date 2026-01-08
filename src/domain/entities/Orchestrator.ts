@@ -238,15 +238,15 @@ export class Orchestrator {
   }
 
   get lastActivityAt(): Date {
-    return this.props.lastActivityAt;
+    return new Date(this.props.lastActivityAt.getTime());
   }
 
   get createdAt(): Date {
-    return this.props.createdAt;
+    return new Date(this.props.createdAt.getTime());
   }
 
   get updatedAt(): Date {
-    return this.props.updatedAt;
+    return new Date(this.props.updatedAt.getTime());
   }
 
   // ============================================================================

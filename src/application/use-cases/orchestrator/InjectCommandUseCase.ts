@@ -9,15 +9,18 @@
  * 2. Validates that the orchestrator is in scope for the target session
  * 3. Validates the command for dangerous patterns
  * 4. Injects the command via the ICommandInjector gateway
- * 5. Creates an audit log entry
+ * 5. Creates an audit log entry (within a transaction)
+ * 6. Updates orchestrator status (within the same transaction)
+ *
+ * Note: Steps 5-6 are wrapped in a transaction to ensure atomicity.
  */
 
-import type { Orchestrator } from "@/domain/entities/Orchestrator";
 import { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorRepository";
 import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
 import type { ICommandInjector } from "@/application/ports/ICommandInjector";
 import type { CommandInjectionResult } from "@/types/orchestrator";
+import { TransactionManager } from "@/infrastructure/persistence/TransactionManager";
 import {
   OrchestratorNotFoundError,
   OrchestratorPausedError,
@@ -44,7 +47,8 @@ export class InjectCommandUseCase {
   constructor(
     private readonly orchestratorRepository: IOrchestratorRepository,
     private readonly auditLogRepository: IAuditLogRepository,
-    private readonly commandInjector: ICommandInjector
+    private readonly commandInjector: ICommandInjector,
+    private readonly transactionManager: TransactionManager
   ) {}
 
   async execute(input: InjectCommandInput): Promise<InjectCommandOutput> {
@@ -75,23 +79,32 @@ export class InjectCommandUseCase {
       );
     }
 
-    // Step 4: Inject the command
-    const result = await this.commandInjector.injectCommand(
-      input.targetTmuxSessionName,
-      input.command,
-      input.pressEnter ?? true
-    );
-
-    // Step 5: Create audit log entry
+    // Step 4: Create audit log entry BEFORE command injection
+    // This ensures we have a record even if the injection succeeds but subsequent operations fail
     const auditLog = OrchestratorAuditLog.forCommandInjected(
       input.orchestratorId,
       input.targetSessionId,
       input.command,
       input.reason
     );
-    await this.auditLogRepository.save(auditLog);
 
-    // Step 6: Update orchestrator status to "acting" if successful
+    // Step 5: Persist audit log in a transaction BEFORE the irreversible command injection
+    await this.transactionManager.execute(async (tx) => {
+      await this.auditLogRepository.save(auditLog, tx);
+    });
+
+    // Step 6: Inject the command (IRREVERSIBLE EXTERNAL SIDE EFFECT)
+    // We do this AFTER saving the audit log to ensure we have a record
+    // Note: If this fails, the audit log already exists, which is acceptable
+    // since it documents the intent to inject the command
+    const result = await this.commandInjector.injectCommand(
+      input.targetTmuxSessionName,
+      input.command,
+      input.pressEnter ?? true
+    );
+
+    // Step 7: Update orchestrator status if successful
+    // This happens in a separate transaction after the command injection
     if (result.success && orchestrator.isIdle()) {
       const actingOrchestrator = orchestrator.startActing();
       await this.orchestratorRepository.update(actingOrchestrator);

@@ -16,10 +16,12 @@ import type { Orchestrator } from "@/domain/entities/Orchestrator";
 import { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorRepository";
 import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
+import { TransactionManager } from "@/infrastructure/persistence/TransactionManager";
 import { OrchestratorNotFoundError } from "@/domain/errors/OrchestratorErrors";
 
 export interface ResumeOrchestratorInput {
   orchestratorId: string;
+  userId: string; // Required for authorization validation
   reason?: string; // Optional reason for resuming (for audit log)
 }
 
@@ -31,7 +33,8 @@ export interface ResumeOrchestratorOutput {
 export class ResumeOrchestratorUseCase {
   constructor(
     private readonly orchestratorRepository: IOrchestratorRepository,
-    private readonly auditLogRepository: IAuditLogRepository
+    private readonly auditLogRepository: IAuditLogRepository,
+    private readonly transactionManager: TransactionManager
   ) {}
 
   async execute(input: ResumeOrchestratorInput): Promise<ResumeOrchestratorOutput> {
@@ -41,21 +44,29 @@ export class ResumeOrchestratorUseCase {
       throw new OrchestratorNotFoundError(input.orchestratorId);
     }
 
+    // Step 1.5: Validate userId ownership (TOCTOU protection)
+    if (orchestrator.userId !== input.userId) {
+      throw new OrchestratorNotFoundError(input.orchestratorId); // Return same error to avoid leaking existence
+    }
+
     // Step 2: Resume the orchestrator
     const resumedOrchestrator = orchestrator.resume();
 
-    // Step 3: Persist the updated orchestrator (only if status changed)
-    if (resumedOrchestrator !== orchestrator) {
-      await this.orchestratorRepository.update(resumedOrchestrator);
-    }
-
-    // Step 4: Create audit log entry
+    // Step 3: Create audit log entry
     const auditLog = OrchestratorAuditLog.forStatusChanged(
       input.orchestratorId,
       orchestrator.status,
       "idle"
     );
-    await this.auditLogRepository.save(auditLog);
+
+    // Step 4: Persist orchestrator update and audit log atomically within a transaction
+    await this.transactionManager.execute(async (tx) => {
+      // Only update if status changed
+      if (resumedOrchestrator !== orchestrator) {
+        await this.orchestratorRepository.update(resumedOrchestrator, tx);
+      }
+      await this.auditLogRepository.save(auditLog, tx);
+    });
 
     return {
       orchestrator: resumedOrchestrator,

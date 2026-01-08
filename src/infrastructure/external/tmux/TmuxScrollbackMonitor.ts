@@ -12,6 +12,10 @@ import type { IScrollbackMonitor } from "@/application/ports/IScrollbackMonitor"
 import type { ScrollbackSnapshot, StallDetectionResult } from "@/types/orchestrator";
 
 export class TmuxScrollbackMonitor implements IScrollbackMonitor {
+  // Hard limit for scrollback capture to prevent memory exhaustion
+  private readonly MAX_CAPTURE_LINES = 100000; // 100k lines max
+  private readonly DEFAULT_CAPTURE_LINES = 10000; // 10k lines default
+
   /**
    * Capture the current scrollback buffer for a session.
    * Returns a snapshot with content hash for quick comparison.
@@ -20,8 +24,19 @@ export class TmuxScrollbackMonitor implements IScrollbackMonitor {
     tmuxSessionName: string,
     lines?: number
   ): Promise<ScrollbackSnapshot> {
+    // Validate and clamp lines parameter to prevent memory exhaustion
+    let captureLines = lines ?? this.DEFAULT_CAPTURE_LINES;
+    if (captureLines < 1) {
+      captureLines = this.DEFAULT_CAPTURE_LINES;
+    } else if (captureLines > this.MAX_CAPTURE_LINES) {
+      console.warn(
+        `[TmuxScrollbackMonitor] Requested ${captureLines} lines exceeds maximum ${this.MAX_CAPTURE_LINES}, clamping to max`
+      );
+      captureLines = this.MAX_CAPTURE_LINES;
+    }
+
     // Use tmux service to capture output
-    const content = await TmuxService.captureOutput(tmuxSessionName, lines ?? 10000);
+    const content = await TmuxService.captureOutput(tmuxSessionName, captureLines);
 
     // Calculate hash for quick comparison
     const hash = this.hashContent(content);
