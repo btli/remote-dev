@@ -18,11 +18,10 @@ import { Orchestrator } from "@/domain/entities/Orchestrator";
 import { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorRepository";
 import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
+import type { SessionRepository } from "@/application/ports/SessionRepository";
+import type { FolderRepository } from "@/application/ports/FolderRepository";
 import { SubOrchestratorAlreadyExistsError } from "@/domain/errors/OrchestratorErrors";
 import { TransactionManager } from "@/infrastructure/persistence/TransactionManager";
-import { db } from "@/db";
-import { terminalSessions, sessionFolders } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
 
 export interface CreateSubOrchestratorInput {
   userId: string;
@@ -43,6 +42,8 @@ export class CreateSubOrchestratorUseCase {
   constructor(
     private readonly orchestratorRepository: IOrchestratorRepository,
     private readonly auditLogRepository: IAuditLogRepository,
+    private readonly sessionRepository: SessionRepository,
+    private readonly folderRepository: FolderRepository,
     private readonly transactionManager: TransactionManager
   ) {}
 
@@ -50,34 +51,16 @@ export class CreateSubOrchestratorUseCase {
     // Step 0a: Validate that session exists and belongs to user (authorization check)
     // NOTE: These validations are done OUTSIDE the transaction because they're authorization
     // checks and don't require consistency with the orchestrator creation
-    const session = await db
-      .select()
-      .from(terminalSessions)
-      .where(
-        and(
-          eq(terminalSessions.id, input.sessionId),
-          eq(terminalSessions.userId, input.userId)
-        )
-      )
-      .limit(1);
+    const sessionExists = await this.sessionRepository.exists(input.sessionId, input.userId);
 
-    if (session.length === 0) {
+    if (!sessionExists) {
       throw new Error(`Session ${input.sessionId} not found or does not belong to user ${input.userId}`);
     }
 
     // Step 0b: Validate that folder exists and belongs to user (authorization check)
-    const folder = await db
-      .select()
-      .from(sessionFolders)
-      .where(
-        and(
-          eq(sessionFolders.id, input.folderId),
-          eq(sessionFolders.userId, input.userId)
-        )
-      )
-      .limit(1);
+    const folderExists = await this.folderRepository.exists(input.folderId, input.userId);
 
-    if (folder.length === 0) {
+    if (!folderExists) {
       throw new Error(`Folder ${input.folderId} not found or does not belong to user ${input.userId}`);
     }
 

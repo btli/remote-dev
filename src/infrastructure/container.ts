@@ -299,6 +299,7 @@ export const markIssuesSeenUseCase = new MarkIssuesSeenUseCase(
 export const createMasterOrchestratorUseCase = new CreateMasterOrchestratorUseCase(
   orchestratorRepository,
   auditLogRepository,
+  sessionRepository,
   transactionManager
 );
 
@@ -308,6 +309,8 @@ export const createMasterOrchestratorUseCase = new CreateMasterOrchestratorUseCa
 export const createSubOrchestratorUseCase = new CreateSubOrchestratorUseCase(
   orchestratorRepository,
   auditLogRepository,
+  sessionRepository,
+  folderRepository,
   transactionManager
 );
 

@@ -18,11 +18,9 @@ import { Orchestrator } from "@/domain/entities/Orchestrator";
 import { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorRepository";
 import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
+import type { SessionRepository } from "@/application/ports/SessionRepository";
 import { MasterOrchestratorAlreadyExistsError } from "@/domain/errors/OrchestratorErrors";
 import { TransactionManager } from "@/infrastructure/persistence/TransactionManager";
-import { db } from "@/db";
-import { terminalSessions } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
 
 export interface CreateMasterOrchestratorInput {
   userId: string;
@@ -42,6 +40,7 @@ export class CreateMasterOrchestratorUseCase {
   constructor(
     private readonly orchestratorRepository: IOrchestratorRepository,
     private readonly auditLogRepository: IAuditLogRepository,
+    private readonly sessionRepository: SessionRepository,
     private readonly transactionManager: TransactionManager
   ) {}
 
@@ -49,18 +48,9 @@ export class CreateMasterOrchestratorUseCase {
     // Step 0: Validate that session exists and belongs to user (authorization check)
     // NOTE: This validation is done OUTSIDE the transaction because it's an authorization
     // check and doesn't require consistency with the orchestrator creation
-    const session = await db
-      .select()
-      .from(terminalSessions)
-      .where(
-        and(
-          eq(terminalSessions.id, input.sessionId),
-          eq(terminalSessions.userId, input.userId)
-        )
-      )
-      .limit(1);
+    const sessionExists = await this.sessionRepository.exists(input.sessionId, input.userId);
 
-    if (session.length === 0) {
+    if (!sessionExists) {
       throw new Error(`Session ${input.sessionId} not found or does not belong to user ${input.userId}`);
     }
 

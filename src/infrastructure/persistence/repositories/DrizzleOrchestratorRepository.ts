@@ -5,7 +5,7 @@
  * It converts between domain entities and database records using mappers.
  */
 
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orchestratorSessions } from "@/db/schema";
 import { Orchestrator } from "@/domain/entities/Orchestrator";
@@ -181,11 +181,11 @@ export class DrizzleOrchestratorRepository implements IOrchestratorRepository {
 
   async countByUserId(userId: string): Promise<number> {
     const result = await db
-      .select({ count: orchestratorSessions.id })
+      .select({ count: sql<number>`count(*)` })
       .from(orchestratorSessions)
       .where(eq(orchestratorSessions.userId, userId));
 
-    return result.length;
+    return result[0]?.count ?? 0;
   }
 
   // ============================================================================

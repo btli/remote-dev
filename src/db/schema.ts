@@ -1481,9 +1481,11 @@ export const orchestratorSessions = sqliteTable(
     // Optimizes: SELECT * FROM orchestrator_sessions WHERE userId = ? AND status = 'idle'
     index("orchestrator_session_user_status_idx").on(table.userId, table.status),
     // UNIQUE CONSTRAINTS to prevent duplicate orchestrators (prevents race conditions)
-    // Ensure only one master orchestrator per user
-    uniqueIndex("orchestrator_session_user_type_unique").on(table.userId, table.type),
+    // NOTE: The master uniqueness constraint is created via raw SQL partial index in migration
+    // because drizzle-orm doesn't support partial indexes natively.
+    // The partial index: CREATE UNIQUE INDEX orchestrator_session_master_unique ON orchestrator_session (user_id) WHERE type = 'master'
     // Ensure only one sub-orchestrator per folder (scopeId is folder_id for sub-orchestrators)
+    // For masters (scopeId=null), SQLite treats null as distinct so this doesn't affect them
     uniqueIndex("orchestrator_session_scope_unique").on(table.userId, table.scopeId),
   ]
 );
