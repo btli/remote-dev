@@ -71,6 +71,13 @@
       "when": 1767974767768,
       "tag": "0009_puzzling_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1767996112514,
+      "tag": "0010_quiet_exodus",
+      "breakpoints": true
     }
   ]
 }

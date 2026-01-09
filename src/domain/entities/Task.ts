@@ -345,6 +345,11 @@ export class Task {
     return this.props.status.isQueued();
   }
 
+  /** Check if task is in planning state */
+  isPlanning(): boolean {
+    return this.props.status.isPlanning();
+  }
+
   /** Check if task can be cancelled */
   canCancel(): boolean {
     return this.props.status.canCancel();

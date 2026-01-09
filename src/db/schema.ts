@@ -1672,3 +1672,272 @@ export const projectMetadata = sqliteTable(
     index("project_metadata_path_idx").on(table.projectPath),
   ]
 );
+
+// =============================================================================
+// Orchestrator Task Management Tables
+// =============================================================================
+
+/**
+ * Task status values.
+ * queued → planning → executing → monitoring → completed/failed/cancelled
+ */
+export type TaskStatusType =
+  | "queued"
+  | "planning"
+  | "executing"
+  | "monitoring"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/**
+ * Task type values - determines agent selection and context injection.
+ */
+export type TaskTypeType =
+  | "feature"
+  | "bug"
+  | "refactor"
+  | "test"
+  | "documentation"
+  | "research"
+  | "review"
+  | "maintenance";
+
+/**
+ * Delegation status values.
+ * spawning → injecting_context → running → monitoring → completed/failed
+ */
+export type DelegationStatusType =
+  | "spawning"
+  | "injecting_context"
+  | "running"
+  | "monitoring"
+  | "completed"
+  | "failed";
+
+/**
+ * Tasks - Orchestrator task queue and lifecycle tracking.
+ * A task is a unit of work delegated by an orchestrator to an agent session.
+ * Integrates with beads for issue tracking.
+ */
+export const tasks = sqliteTable(
+  "tasks",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Link to orchestrator that owns this task
+    orchestratorId: text("orchestrator_id")
+      .notNull()
+      .references(() => orchestratorSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Optional folder scope (null = orchestrator-wide)
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+
+    // Task description (natural language)
+    description: text("description").notNull(),
+    // Task type for agent selection
+    type: text("type").$type<TaskTypeType>().notNull().default("feature"),
+    // Task lifecycle status
+    status: text("status").$type<TaskStatusType>().notNull().default("queued"),
+
+    // Confidence score from parsing (0-1)
+    confidence: real("confidence").notNull().default(1.0),
+    // Estimated duration in seconds
+    estimatedDuration: integer("estimated_duration"),
+
+    // Assigned agent provider (claude, codex, gemini, opencode)
+    assignedAgent: text("assigned_agent").$type<AgentProviderType>(),
+    // Link to active delegation
+    delegationId: text("delegation_id"),
+    // Link to beads issue (e.g., "beads-abc123")
+    beadsIssueId: text("beads_issue_id"),
+
+    // Context injected into the agent session
+    contextInjected: text("context_injected"),
+
+    // Task result (JSON: { success, summary, filesModified, learnings })
+    resultJson: text("result_json"),
+    // Task error (JSON: { code, message, stack?, recoverable })
+    errorJson: text("error_json"),
+
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    // Index for orchestrator's tasks
+    index("tasks_orchestrator_idx").on(table.orchestratorId),
+    // Index for user's tasks
+    index("tasks_user_idx").on(table.userId),
+    // Index for folder's tasks
+    index("tasks_folder_idx").on(table.folderId),
+    // Index for status filtering
+    index("tasks_status_idx").on(table.status),
+    // Index for beads issue lookup
+    index("tasks_beads_idx").on(table.beadsIssueId),
+    // COMPOSITE INDEX for orchestrator + status (fetch active tasks)
+    index("tasks_orchestrator_status_idx").on(table.orchestratorId, table.status),
+    // COMPOSITE INDEX for user + status (fetch user's active tasks)
+    index("tasks_user_status_idx").on(table.userId, table.status),
+  ]
+);
+
+/**
+ * Delegations - Links tasks to sessions for execution.
+ * Tracks the execution lifecycle including context injection, logs, and results.
+ */
+export const delegations = sqliteTable(
+  "delegations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Link to parent task
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    // Link to terminal session executing the task
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => terminalSessions.id, { onDelete: "cascade" }),
+    // Optional worktree for isolation
+    worktreeId: text("worktree_id"),
+
+    // Agent provider running the task
+    agentProvider: text("agent_provider").$type<AgentProviderType>().notNull(),
+    // Delegation lifecycle status
+    status: text("status")
+      .$type<DelegationStatusType>()
+      .notNull()
+      .default("spawning"),
+
+    // Context injected into the session
+    contextInjected: text("context_injected"),
+    // Execution logs (JSON array: [{ timestamp, level, message, metadata? }])
+    executionLogsJson: text("execution_logs_json").notNull().default("[]"),
+
+    // Delegation result (JSON: { success, summary, exitCode, filesModified, duration, tokenUsage })
+    resultJson: text("result_json"),
+    // Delegation error (JSON: { code, message, exitCode, recoverable })
+    errorJson: text("error_json"),
+
+    // Path to session transcript file
+    transcriptPath: text("transcript_path"),
+
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    // Index for task's delegations
+    index("delegations_task_idx").on(table.taskId),
+    // Index for session's delegations
+    index("delegations_session_idx").on(table.sessionId),
+    // Index for status filtering
+    index("delegations_status_idx").on(table.status),
+    // Index for agent filtering
+    index("delegations_agent_idx").on(table.agentProvider),
+    // COMPOSITE INDEX for task + status
+    index("delegations_task_status_idx").on(table.taskId, table.status),
+  ]
+);
+
+// =============================================================================
+// Project Knowledge Tables (Self-Improvement)
+// =============================================================================
+
+/**
+ * Convention category values for project knowledge.
+ */
+export type ConventionCategoryType =
+  | "code_style"
+  | "naming"
+  | "architecture"
+  | "testing"
+  | "git"
+  | "other";
+
+/**
+ * Learned pattern type values.
+ */
+export type PatternTypeType = "success" | "failure" | "gotcha" | "optimization";
+
+/**
+ * Skill scope values.
+ */
+export type SkillScopeType = "project" | "global";
+
+/**
+ * ProjectKnowledge - Stores learned knowledge about a project/folder.
+ * Used by orchestrators for intelligent agent selection and context injection.
+ * Enables self-improvement through pattern learning.
+ */
+export const projectKnowledge = sqliteTable(
+  "project_knowledge",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Link to folder (one knowledge entry per folder)
+    folderId: text("folder_id")
+      .notNull()
+      .unique()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    // Tech stack (JSON array of technology names)
+    techStackJson: text("tech_stack_json").notNull().default("[]"),
+
+    // Conventions (JSON array: [{ id, category, description, examples, confidence, source, createdAt }])
+    conventionsJson: text("conventions_json").notNull().default("[]"),
+
+    // Agent performance metrics (JSON: { [taskType]: { [agent]: { successRate, avgDuration, totalTasks } } })
+    agentPerformanceJson: text("agent_performance_json").notNull().default("{}"),
+
+    // Learned patterns (JSON array: [{ id, type, description, context, confidence, usageCount, lastUsedAt, createdAt }])
+    patternsJson: text("patterns_json").notNull().default("[]"),
+
+    // Skills (JSON array: [{ id, name, description, command, steps, triggers, scope, verified, usageCount, createdAt }])
+    skillsJson: text("skills_json").notNull().default("[]"),
+
+    // Tools (JSON array: [{ id, name, description, inputSchema, implementation, triggers, confidence, verified, createdAt }])
+    toolsJson: text("tools_json").notNull().default("[]"),
+
+    // Project metadata (JSON: { projectName, projectPath, framework, packageManager, testRunner, linter, buildTool })
+    metadataJson: text("metadata_json").notNull().default("{}"),
+
+    // Last time the project was scanned for metadata
+    lastScannedAt: integer("last_scanned_at", { mode: "timestamp_ms" }),
+
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Index for user's knowledge entries
+    index("project_knowledge_user_idx").on(table.userId),
+    // Index for staleness checks
+    index("project_knowledge_scanned_idx").on(table.lastScannedAt),
+  ]
+);
