@@ -10,6 +10,7 @@
  */
 
 import { useState, useMemo } from "react";
+import Image from "next/image";
 import {
   Github,
   RefreshCw,
@@ -309,10 +310,12 @@ export function GitHubMaintenanceModal({
                       Connected Account
                     </h3>
                     <div className="flex items-center gap-3">
-                      <img
+                      <Image
                         src={accountInfo.avatarUrl}
                         alt={accountInfo.login}
-                        className="w-12 h-12 rounded-full"
+                        width={48}
+                        height={48}
+                        className="rounded-full"
                       />
                       <div>
                         <p className="font-medium text-foreground">

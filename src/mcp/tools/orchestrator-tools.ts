@@ -282,18 +282,11 @@ const orchestratorStatus = createTool({
           (i) => i.severity === "critical"
         );
 
-        // Get recent audit log count (last 24 hours)
-        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        // Get recent audit log count for this orchestrator
         const recentAuditLogs = await db
           .select()
           .from(orchestratorAuditLog)
-          .where(
-            and(
-              eq(orchestratorAuditLog.orchestratorId, orc.id),
-              // Note: Drizzle doesn't have gte/lte, we use gt/lt
-              // This is a simplification - in production we'd use proper comparison
-            )
-          );
+          .where(eq(orchestratorAuditLog.orchestratorId, orc.id));
 
         return {
           ...baseData,

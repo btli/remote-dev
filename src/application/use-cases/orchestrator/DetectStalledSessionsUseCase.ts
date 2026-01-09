@@ -14,7 +14,6 @@
  * - Passing the previous snapshots for comparison
  */
 
-import type { Orchestrator } from "@/domain/entities/Orchestrator";
 import { OrchestratorInsight } from "@/domain/entities/OrchestratorInsight";
 import { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { IOrchestratorRepository } from "@/application/ports/IOrchestratorRepository";
@@ -206,7 +205,7 @@ export class DetectStalledSessionsUseCase {
     // Basic troubleshooting steps
     actions.push({
       label: "Check session output",
-      description: "Review the terminal to see if a command is waiting for input or has completed",
+      description: `Review "${session.name}" terminal to see if a command is waiting for input or has completed`,
     });
 
     actions.push({

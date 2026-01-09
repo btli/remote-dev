@@ -1,6 +1,6 @@
 "use client";
 
-import { Brain, Pause, Play, AlertCircle } from "lucide-react";
+import { Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { withErrorBoundary } from "@/components/ui/error-boundary";
 import {

@@ -351,7 +351,7 @@ export async function runMonitoringCycle(
 
     return {
       orchestratorId,
-      sessionsChecked: sessionsToMonitor.length,
+      sessionsChecked: captured.length, // Use actual captured count for accuracy
       stallsDetected: result.stallDetectionResults.size,
       insightsGenerated: result.insights.length,
       errors,

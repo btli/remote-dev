@@ -22,7 +22,6 @@ import {
 import type {
   GitHubAccountInfo,
   CachedRepositoryWithStats,
-  GitHubAccountStats,
 } from "@/services/github-account-service";
 
 /**
@@ -319,9 +318,9 @@ export function GitHubProvider({
       setError(null);
 
       try {
-        // Clear via account API with clearCache flag
+        // Clear via account API with clearCache flag and optional file removal
         const response = await fetch(
-          `/api/github/account?clearCache=true`,
+          `/api/github/account?clearCache=true&removeFiles=${removeFiles}`,
           { method: "DELETE" }
         );
 

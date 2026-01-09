@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,14 +56,7 @@ export function AuditLogSidebar({
   const [filterType, setFilterType] = useState<AuditLogActionType | "all">("all");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Fetch audit logs when opening sidebar
-  useEffect(() => {
-    if (open) {
-      fetchLogs();
-    }
-  }, [open, orchestratorId, filterType]);
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setIsLoading(true);
     try {
       const params = new URLSearchParams({ limit: "50" });
@@ -84,7 +77,14 @@ export function AuditLogSidebar({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [orchestratorId, filterType]);
+
+  // Fetch audit logs when opening sidebar
+  useEffect(() => {
+    if (open) {
+      fetchLogs();
+    }
+  }, [open, fetchLogs]);
 
   const getActionIcon = (actionType: AuditLogActionType) => {
     switch (actionType) {
@@ -171,7 +171,7 @@ export function AuditLogSidebar({
               </div>
             ) : (
               <div className="space-y-3">
-                {logs.map((log, idx) => (
+                {logs.map((log) => (
                   <div
                     key={log.id}
                     className="rounded-lg border border-border bg-card p-3 space-y-2"

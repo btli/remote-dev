@@ -16,7 +16,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Loader2, Brain } from "lucide-react";
 import { useOrchestratorContext } from "@/contexts/OrchestratorContext";
-import { useSessionContext } from "@/contexts/SessionContext";
 
 interface SubOrchestratorConfigModalProps {
   open: boolean;

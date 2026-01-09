@@ -18,7 +18,7 @@
 
 import { spawn, spawnSync } from "bun";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { join } from "path";
 
 const PROJECT_ROOT = join(import.meta.dir, "..");
 const PID_DIR = join(PROJECT_ROOT, ".pids");
@@ -27,20 +27,6 @@ const TERMINAL_PID_FILE = join(PID_DIR, "terminal.pid");
 const MODE_FILE = join(PID_DIR, "mode");
 const STANDALONE_DIR = join(PROJECT_ROOT, ".next", "standalone");
 const SOCKET_DIR = "/tmp/rdv";
-
-interface DevConfig {
-  type: "port";
-  nextPort: number;
-  terminalPort: number;
-  nextCmd: string[];
-}
-
-interface ProdConfig {
-  type: "socket";
-  nextSocket: string;
-  terminalSocket: string;
-  nextCmd: string[];
-}
 
 const CONFIG = {
   dev: {
@@ -71,7 +57,7 @@ function ensureSocketDir(): void {
     console.log(`Creating socket directory: ${SOCKET_DIR}`);
     try {
       mkdirSync(SOCKET_DIR, { recursive: true, mode: 0o755 });
-    } catch (err) {
+    } catch {
       console.error(`Failed to create socket directory. Try: sudo mkdir -p ${SOCKET_DIR} && sudo chown $(whoami) ${SOCKET_DIR}`);
       process.exit(1);
     }
