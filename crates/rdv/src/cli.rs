@@ -59,6 +59,13 @@ pub enum Commands {
     /// Run diagnostics
     Doctor,
 
+    /// Show system status (dashboard view)
+    Status {
+        /// Output as JSON
+        #[arg(short, long)]
+        json: bool,
+    },
+
     /// Show version
     Version,
 }

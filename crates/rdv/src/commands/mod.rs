@@ -12,4 +12,5 @@ pub mod monitor;
 pub mod nudge;
 pub mod peek;
 pub mod session;
+pub mod status;
 pub mod task;
