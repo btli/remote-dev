@@ -11,8 +11,7 @@ import { NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth-utils";
 import { checkRateLimit, createRateLimitHeaders } from "@/lib/rate-limit";
 import {
-  getAllFailureMetrics,
-  isMonitoringActive,
+  isStallCheckingActive,
 } from "@/services/monitoring-service";
 import { db } from "@/db";
 import { orchestratorSessions } from "@/db/schema";
@@ -49,26 +48,29 @@ export async function GET() {
       .from(orchestratorSessions)
       .where(eq(orchestratorSessions.userId, userId));
 
-    // Get all failure metrics
-    const allFailureMetrics = getAllFailureMetrics();
-
     // Build health metrics for each orchestrator
+    // Event-driven monitoring is simpler - health is based on activity timestamps
     const healthMetrics = orchestrators.map((orchestrator) => {
-      const isActive = isMonitoringActive(orchestrator.id);
-      const failureMetrics = allFailureMetrics.get(orchestrator.id);
+      const isActive = isStallCheckingActive(orchestrator.id);
+
+      // Calculate time since last activity
+      const lastActivityMs = orchestrator.lastActivityAt.getTime();
+      const minutesSinceActivity = Math.floor((Date.now() - lastActivityMs) / 60000);
+      const stallThresholdMinutes = Math.floor(orchestrator.stallThreshold / 60);
+
+      // Orchestrator is healthy if it received activity within 2x stall threshold
+      const isHealthy = minutesSinceActivity < stallThresholdMinutes * 2;
 
       return {
         orchestratorId: orchestrator.id,
         type: orchestrator.type,
         status: orchestrator.status,
-        monitoringActive: isActive,
+        stallCheckingActive: isActive,
         health: {
-          consecutiveFailures: failureMetrics?.consecutiveFailures ?? 0,
-          totalFailures: failureMetrics?.totalFailures ?? 0,
-          lastFailureAt: failureMetrics?.lastFailureAt?.toISOString() ?? null,
-          lastSuccessAt: failureMetrics?.lastSuccessAt?.toISOString() ?? null,
-          isHealthy:
-            !failureMetrics || failureMetrics.consecutiveFailures < 3,
+          minutesSinceActivity,
+          stallThresholdMinutes,
+          isHealthy,
+          receivingHeartbeats: minutesSinceActivity < stallThresholdMinutes,
         },
         config: {
           monitoringInterval: orchestrator.monitoringInterval,
@@ -86,13 +88,13 @@ export async function GET() {
     // Calculate aggregate health stats
     const totalOrchestrators = orchestrators.length;
     const activeOrchestrators = healthMetrics.filter(
-      (m) => m.monitoringActive
+      (m) => m.stallCheckingActive
     ).length;
     const healthyOrchestrators = healthMetrics.filter(
       (m) => m.health.isHealthy
     ).length;
-    const failingOrchestrators = healthMetrics.filter(
-      (m) => m.health.consecutiveFailures > 0
+    const receivingHeartbeats = healthMetrics.filter(
+      (m) => m.health.receivingHeartbeats
     ).length;
 
     return NextResponse.json(
@@ -101,7 +103,7 @@ export async function GET() {
           totalOrchestrators,
           activeOrchestrators,
           healthyOrchestrators,
-          failingOrchestrators,
+          receivingHeartbeats,
           overallHealth:
             totalOrchestrators > 0
               ? Math.round((healthyOrchestrators / totalOrchestrators) * 100)
