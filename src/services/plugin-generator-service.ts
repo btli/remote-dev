@@ -1,0 +1,435 @@
+/**
+ * PluginGeneratorService - Generates agent hooks and plugins.
+ *
+ * Creates:
+ * - Claude Code hooks (.claude/settings.local.json)
+ * - Codex hooks (.codex/config.toml)
+ * - OpenCode plugins (.opencode/plugin/)
+ * - Event handlers for lifecycle events
+ *
+ * Hooks enable automated behavior at key lifecycle points:
+ * - Stop: Notify orchestrator when agent completes
+ * - PreToolUse: Validate tools before execution
+ * - PostToolUse: Track tool outcomes
+ * - Error: Handle and report errors
+ */
+
+import type { AgentProvider } from "@/types/agent";
+
+export interface HookDefinition {
+  event: "Stop" | "PreToolUse" | "PostToolUse" | "Error" | "UserPromptSubmit";
+  type: "command" | "url";
+  command?: string[];
+  url?: string;
+  timeout?: number;
+  description?: string;
+}
+
+export interface PluginDefinition {
+  name: string;
+  description: string;
+  provider: AgentProvider;
+  hooks: HookDefinition[];
+  config?: Record<string, unknown>;
+}
+
+export interface GeneratedPlugin {
+  provider: AgentProvider;
+  type: "hooks" | "plugin";
+  content: string;
+  path: string;
+  isGlobal: boolean;
+}
+
+/**
+ * Service for generating agent plugins and hooks.
+ */
+export class PluginGeneratorService {
+  /**
+   * Generate orchestrator notification hooks for an agent.
+   */
+  generateOrchestratorHooks(
+    provider: AgentProvider,
+    projectPath: string,
+    orchestratorUrl?: string
+  ): GeneratedPlugin {
+    const baseUrl = orchestratorUrl ?? "http://localhost:3001";
+
+    const hooks: HookDefinition[] = [
+      {
+        event: "Stop",
+        type: "url",
+        url: `${baseUrl}/api/orchestrators/agent-event`,
+        timeout: 5000,
+        description: "Notify orchestrator when task completes",
+      },
+      {
+        event: "Error",
+        type: "url",
+        url: `${baseUrl}/api/orchestrators/agent-event`,
+        timeout: 5000,
+        description: "Report errors to orchestrator",
+      },
+    ];
+
+    return this.generateHooksConfig(provider, projectPath, hooks);
+  }
+
+  /**
+   * Generate validation hooks for tool usage.
+   */
+  generateValidationHooks(
+    provider: AgentProvider,
+    projectPath: string,
+    validatorScript?: string
+  ): GeneratedPlugin {
+    const script = validatorScript ?? "validate-tool.mjs";
+
+    const hooks: HookDefinition[] = [
+      {
+        event: "PreToolUse",
+        type: "command",
+        command: ["node", script],
+        timeout: 5000,
+        description: "Validate tool inputs before execution",
+      },
+    ];
+
+    return this.generateHooksConfig(provider, projectPath, hooks);
+  }
+
+  /**
+   * Generate hooks configuration for an agent.
+   */
+  generateHooksConfig(
+    provider: AgentProvider,
+    projectPath: string,
+    hooks: HookDefinition[]
+  ): GeneratedPlugin {
+    switch (provider) {
+      case "claude":
+        return this.generateClaudeHooks(projectPath, hooks);
+      case "codex":
+        return this.generateCodexHooks(projectPath, hooks);
+      case "opencode":
+        return this.generateOpenCodePlugin(projectPath, hooks);
+      case "gemini":
+        return this.generateGeminiHooks(projectPath, hooks);
+      default:
+        return this.generateClaudeHooks(projectPath, hooks);
+    }
+  }
+
+  /**
+   * Generate Claude Code hooks (.claude/settings.local.json).
+   */
+  private generateClaudeHooks(
+    projectPath: string,
+    hooks: HookDefinition[]
+  ): GeneratedPlugin {
+    const hooksConfig: Record<string, unknown[]> = {};
+
+    for (const hook of hooks) {
+      const eventHooks = hooksConfig[hook.event] ?? [];
+
+      if (hook.type === "command" && hook.command) {
+        eventHooks.push({
+          type: "command",
+          command: hook.command,
+          timeout: hook.timeout,
+        });
+      } else if (hook.type === "url" && hook.url) {
+        // Claude Code uses command hooks that can call curl
+        eventHooks.push({
+          type: "command",
+          command: [
+            "curl",
+            "-s",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            JSON.stringify({
+              event: hook.event.toLowerCase(),
+              projectPath,
+              timestamp: "$(date -Iseconds)",
+            }),
+            hook.url,
+          ],
+          timeout: hook.timeout,
+        });
+      }
+
+      hooksConfig[hook.event] = eventHooks;
+    }
+
+    const config = {
+      hooks: hooksConfig,
+    };
+
+    return {
+      provider: "claude",
+      type: "hooks",
+      content: JSON.stringify(config, null, 2),
+      path: `${projectPath}/.claude/settings.local.json`,
+      isGlobal: false,
+    };
+  }
+
+  /**
+   * Generate Codex hooks (.codex/config.toml).
+   */
+  private generateCodexHooks(
+    projectPath: string,
+    hooks: HookDefinition[]
+  ): GeneratedPlugin {
+    const lines: string[] = [
+      "# Codex CLI Configuration",
+      "# Generated by Remote Dev Orchestrator",
+      "",
+    ];
+
+    for (const hook of hooks) {
+      lines.push(`[hooks.${hook.event.toLowerCase()}]`);
+      if (hook.description) {
+        lines.push(`# ${hook.description}`);
+      }
+      if (hook.type === "command" && hook.command) {
+        lines.push(`command = ${JSON.stringify(hook.command)}`);
+      } else if (hook.type === "url" && hook.url) {
+        lines.push(`url = "${hook.url}"`);
+      }
+      if (hook.timeout) {
+        lines.push(`timeout = ${hook.timeout}`);
+      }
+      lines.push("");
+    }
+
+    return {
+      provider: "codex",
+      type: "hooks",
+      content: lines.join("\n"),
+      path: `${projectPath}/.codex/config.toml`,
+      isGlobal: false,
+    };
+  }
+
+  /**
+   * Generate OpenCode plugin.
+   */
+  private generateOpenCodePlugin(
+    projectPath: string,
+    hooks: HookDefinition[]
+  ): GeneratedPlugin {
+    const hookFunctions = hooks.map((hook) => {
+      const body = hook.type === "url" && hook.url
+        ? `  try {
+    await fetch("${hook.url}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "${hook.event.toLowerCase()}",
+        projectPath: context.projectPath,
+        timestamp: new Date().toISOString(),
+        ...context,
+      }),
+    });
+  } catch (error) {
+    console.error("Hook failed:", error);
+  }`
+        : hook.command
+          ? `  const { spawnSync } = await import("child_process");
+  spawnSync("${hook.command[0]}", ${JSON.stringify(hook.command.slice(1))}, {
+    cwd: context.projectPath,
+    timeout: ${hook.timeout ?? 5000},
+  });`
+          : "";
+
+      return `export async function on${hook.event}(context) {
+${body}
+}`;
+    });
+
+    const pluginCode = `/**
+ * OpenCode Plugin - Generated by Remote Dev Orchestrator
+ *
+ * Provides lifecycle hooks for orchestrator integration.
+ */
+
+export const name = "remote-dev-orchestrator";
+export const version = "1.0.0";
+
+${hookFunctions.join("\n\n")}
+`;
+
+    return {
+      provider: "opencode",
+      type: "plugin",
+      content: pluginCode,
+      path: `${projectPath}/.opencode/plugin/remote-dev.ts`,
+      isGlobal: false,
+    };
+  }
+
+  /**
+   * Generate Gemini CLI hooks.
+   */
+  private generateGeminiHooks(
+    projectPath: string,
+    hooks: HookDefinition[]
+  ): GeneratedPlugin {
+    // Gemini CLI uses JSON config similar to Claude
+    const hooksConfig: Record<string, unknown[]> = {};
+
+    for (const hook of hooks) {
+      const eventHooks = hooksConfig[hook.event] ?? [];
+
+      if (hook.type === "command" && hook.command) {
+        eventHooks.push({
+          type: "shell",
+          command: hook.command.join(" "),
+          timeout: hook.timeout,
+        });
+      } else if (hook.type === "url" && hook.url) {
+        eventHooks.push({
+          type: "http",
+          url: hook.url,
+          method: "POST",
+          timeout: hook.timeout,
+        });
+      }
+
+      hooksConfig[hook.event.toLowerCase()] = eventHooks;
+    }
+
+    const config = {
+      hooks: hooksConfig,
+    };
+
+    return {
+      provider: "gemini",
+      type: "hooks",
+      content: JSON.stringify(config, null, 2),
+      path: `${projectPath}/.gemini/config.json`,
+      isGlobal: false,
+    };
+  }
+
+  /**
+   * Generate a notification script for shell-based hooks.
+   */
+  generateNotificationScript(
+    orchestratorUrl: string,
+    projectPath: string
+  ): { content: string; path: string } {
+    const script = `#!/usr/bin/env node
+/**
+ * Orchestrator Notification Script
+ * Generated by Remote Dev Orchestrator
+ *
+ * Notifies the orchestrator of agent lifecycle events.
+ */
+
+const event = process.env.CLAUDE_EVENT ?? process.argv[2] ?? 'unknown';
+const data = process.env.CLAUDE_EVENT_DATA ?? '{}';
+
+async function notify() {
+  try {
+    const response = await fetch("${orchestratorUrl}/api/orchestrators/agent-event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        projectPath: "${projectPath}",
+        timestamp: new Date().toISOString(),
+        data: JSON.parse(data),
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Notification failed:", response.status);
+    }
+  } catch (error) {
+    console.error("Notification error:", error.message);
+  }
+}
+
+notify();
+`;
+
+    return {
+      content: script,
+      path: `${projectPath}/.claude/orchestrator-notify.mjs`,
+    };
+  }
+
+  /**
+   * Generate tool validator script.
+   */
+  generateToolValidatorScript(
+    dangerousPatterns: string[],
+    projectPath: string
+  ): { content: string; path: string } {
+    const script = `#!/usr/bin/env node
+/**
+ * Tool Validator Script
+ * Generated by Remote Dev Orchestrator
+ *
+ * Validates tool inputs before execution.
+ */
+
+const DANGEROUS_PATTERNS = ${JSON.stringify(dangerousPatterns, null, 2)};
+
+function validateTool(toolName, input) {
+  const inputStr = JSON.stringify(input);
+
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (inputStr.includes(pattern)) {
+      return {
+        valid: false,
+        reason: \`Input contains dangerous pattern: \${pattern}\`,
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+// Read tool info from environment or stdin
+const toolName = process.env.TOOL_NAME ?? '';
+const toolInput = process.env.TOOL_INPUT ?? '{}';
+
+const result = validateTool(toolName, JSON.parse(toolInput));
+
+if (!result.valid) {
+  console.error("Validation failed:", result.reason);
+  process.exit(1);
+}
+
+process.exit(0);
+`;
+
+    return {
+      content: script,
+      path: `${projectPath}/.claude/validate-tool.mjs`,
+    };
+  }
+
+  /**
+   * Get default dangerous patterns for tool validation.
+   */
+  getDefaultDangerousPatterns(): string[] {
+    return [
+      "rm -rf /",
+      ":(){ :|:& };:",
+      "> /dev/sda",
+      "dd if=/dev/zero",
+      "mkfs.",
+      "chmod -R 777",
+      "> /dev/null 2>&1 &",
+      "wget http",
+      "curl http",
+    ];
+  }
+}
