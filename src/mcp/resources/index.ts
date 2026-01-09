@@ -5,6 +5,7 @@
  */
 import { sessionResources } from "./session-resources";
 import { folderResources } from "./folder-resources";
+import { taskResources } from "./task-resources";
 import { matchUri } from "../registry";
 import type { RegisteredResource } from "../types";
 
@@ -20,10 +21,15 @@ import type { RegisteredResource } from "../types";
  * - rdv://folders - List all folders
  * - rdv://folders/{id} - Folder details with preferences
  * - rdv://preferences - User settings
+ *
+ * Task Resources:
+ * - rdv://tasks/{id} - Task details with delegations
+ * - rdv://orchestrators/{id}/knowledge - Project knowledge for orchestrator
  */
 export const allResources: RegisteredResource[] = [
   ...sessionResources,
   ...folderResources,
+  ...taskResources,
 ];
 
 /**

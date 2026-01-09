@@ -8,6 +8,7 @@ import { gitTools } from "./git-tools";
 import { folderTools } from "./folder-tools";
 import { orchestratorTools } from "./orchestrator-tools";
 import { metadataTools } from "./metadata-tools";
+import { taskTools } from "./task-tools";
 import type { RegisteredTool } from "../types";
 
 /**
@@ -29,6 +30,11 @@ import type { RegisteredTool } from "../types";
  *
  * Orchestrator Tools:
  * - session_send_input, session_get_insights, orchestrator_status
+ * - session_analyze, session_agent_info, project_metadata_detect
+ *
+ * Task Tools:
+ * - task_submit, task_status, task_cancel, task_list
+ * - project_knowledge_query
  *
  * Metadata Tools:
  * - project_metadata_get, project_metadata_enrich, project_metadata_detect
@@ -39,6 +45,7 @@ export const allTools: RegisteredTool[] = [
   ...gitTools,
   ...folderTools,
   ...orchestratorTools,
+  ...taskTools,
   ...metadataTools,
 ];
 

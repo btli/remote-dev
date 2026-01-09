@@ -291,6 +291,254 @@ I'll be careful not to remove worktrees with uncommitted changes unless you expl
 });
 
 /**
+ * submit_feature - Submit a feature task to orchestrator
+ */
+const submitFeature = createPrompt({
+  name: "submit_feature",
+  description:
+    "Guide for submitting a new feature task to the orchestrator. " +
+    "The orchestrator will plan and execute the implementation.",
+  arguments: [
+    {
+      name: "orchestratorId",
+      description: "The orchestrator UUID to submit the task to",
+      required: true,
+    },
+    {
+      name: "featureName",
+      description: "Name or title of the feature",
+      required: true,
+    },
+    {
+      name: "description",
+      description: "Detailed description of the feature requirements",
+      required: true,
+    },
+    {
+      name: "folderId",
+      description: "Optional folder context for the task",
+      required: false,
+    },
+  ],
+  handler: async (args) => {
+    const orchestratorId = args.orchestratorId || "[orchestrator-id]";
+    const featureName = args.featureName || "[feature name]";
+    const description = args.description || "[feature description]";
+    const folderId = args.folderId;
+
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `I want to implement a new feature: "${featureName}"\n\n${description}`,
+          },
+        },
+        {
+          role: "assistant",
+          content: {
+            type: "text",
+            text: `I'll help you submit this feature to the orchestrator for implementation.
+
+Here's my approach:
+
+1. **Submit the task** - Use \`task_submit\` with the feature description
+2. **Monitor planning** - Watch as the orchestrator analyzes the task
+3. **Track execution** - Follow progress as the agent implements the feature
+
+I'll use these tools:
+- \`task_submit\` to create the task with orchestratorId: ${orchestratorId}${folderId ? `\n- Folder context: ${folderId}` : ""}
+- \`task_status\` to monitor progress
+- \`task_list\` to see all active tasks
+
+The orchestrator will:
+1. Parse the natural language description
+2. Determine the task type and complexity
+3. Select the appropriate agent
+4. Plan the execution strategy
+5. Execute and verify the implementation
+
+Let me submit the feature task now...`,
+          },
+        },
+      ],
+    };
+  },
+});
+
+/**
+ * fix_bug - Submit a bug fix task to orchestrator
+ */
+const fixBug = createPrompt({
+  name: "fix_bug",
+  description:
+    "Guide for submitting a bug fix task to the orchestrator. " +
+    "Includes steps for describing the bug, reproduction steps, and expected behavior.",
+  arguments: [
+    {
+      name: "orchestratorId",
+      description: "The orchestrator UUID to submit the task to",
+      required: true,
+    },
+    {
+      name: "bugTitle",
+      description: "Brief title describing the bug",
+      required: true,
+    },
+    {
+      name: "description",
+      description: "Detailed description of the bug",
+      required: true,
+    },
+    {
+      name: "stepsToReproduce",
+      description: "Steps to reproduce the bug",
+      required: false,
+    },
+    {
+      name: "expectedBehavior",
+      description: "What should happen instead",
+      required: false,
+    },
+  ],
+  handler: async (args) => {
+    const orchestratorId = args.orchestratorId || "[orchestrator-id]";
+    const bugTitle = args.bugTitle || "[bug title]";
+    const description = args.description || "[bug description]";
+    const stepsToReproduce = args.stepsToReproduce || "";
+    const expectedBehavior = args.expectedBehavior || "";
+
+    const fullDescription = [
+      description,
+      stepsToReproduce ? `\nSteps to reproduce:\n${stepsToReproduce}` : "",
+      expectedBehavior ? `\nExpected behavior:\n${expectedBehavior}` : "",
+    ].join("");
+
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `I need to fix a bug: "${bugTitle}"\n\n${fullDescription}`,
+          },
+        },
+        {
+          role: "assistant",
+          content: {
+            type: "text",
+            text: `I'll help you submit this bug fix to the orchestrator.
+
+Here's my debugging workflow:
+
+1. **Submit the bug report** - Create a task with the bug details
+2. **Orchestrator analysis** - Let it identify the root cause
+3. **Fix implementation** - Agent will implement and test the fix
+
+I'll use these tools:
+- \`task_submit\` with priority "high" for bug fixes
+- \`task_status\` to monitor the fix progress
+- \`project_knowledge_query\` to understand project conventions
+
+The orchestrator will:
+1. Analyze the bug description
+2. Search the codebase for the affected area
+3. Identify the root cause
+4. Implement a fix following project conventions
+5. Run tests to verify the fix
+
+Let me submit the bug fix task now with high priority...`,
+          },
+        },
+      ],
+    };
+  },
+});
+
+/**
+ * refactor_code - Submit a refactoring task to orchestrator
+ */
+const refactorCode = createPrompt({
+  name: "refactor_code",
+  description:
+    "Guide for submitting a code refactoring task to the orchestrator. " +
+    "Includes options for specifying the scope and type of refactoring.",
+  arguments: [
+    {
+      name: "orchestratorId",
+      description: "The orchestrator UUID to submit the task to",
+      required: true,
+    },
+    {
+      name: "targetArea",
+      description: "The code area to refactor (file, module, function)",
+      required: true,
+    },
+    {
+      name: "refactoringGoal",
+      description: "What you want to achieve (e.g., 'improve readability', 'reduce duplication')",
+      required: true,
+    },
+    {
+      name: "constraints",
+      description: "Any constraints or things to preserve",
+      required: false,
+    },
+  ],
+  handler: async (args) => {
+    const orchestratorId = args.orchestratorId || "[orchestrator-id]";
+    const targetArea = args.targetArea || "[target area]";
+    const refactoringGoal = args.refactoringGoal || "[refactoring goal]";
+    const constraints = args.constraints || "";
+
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `I want to refactor ${targetArea} to ${refactoringGoal}${constraints ? `\n\nConstraints: ${constraints}` : ""}`,
+          },
+        },
+        {
+          role: "assistant",
+          content: {
+            type: "text",
+            text: `I'll help you submit this refactoring task to the orchestrator.
+
+Here's my refactoring approach:
+
+1. **Submit the refactoring task** - Describe the target and goals
+2. **Orchestrator planning** - It will analyze the current code structure
+3. **Safe refactoring** - Agent will refactor while preserving behavior
+
+Key considerations:
+- \`project_knowledge_query\` to understand existing patterns
+- Tests will be run to ensure no regressions
+- Git worktree may be used for isolation
+
+The orchestrator will:
+1. Analyze the current implementation
+2. Identify refactoring opportunities
+3. Plan incremental changes
+4. Implement changes with tests
+5. Verify behavior is preserved
+
+I'll use:
+- \`task_submit\` with type hints for refactoring
+- \`task_status\` to monitor progress
+- The orchestrator will automatically verify tests pass
+
+Let me submit the refactoring task...`,
+          },
+        },
+      ],
+    };
+  },
+});
+
+/**
  * Export all workflow prompts
  */
 export const workflowPrompts: RegisteredPrompt[] = [
@@ -299,4 +547,7 @@ export const workflowPrompts: RegisteredPrompt[] = [
   runAndCheck,
   setupProject,
   cleanupWorktrees,
+  submitFeature,
+  fixBug,
+  refactorCode,
 ];
