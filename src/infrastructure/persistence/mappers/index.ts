@@ -19,3 +19,9 @@ export {
   type GitHubIssueDbRecord,
   type GitHubIssueDbInsert,
 } from "./GitHubIssueMapper";
+
+export {
+  ProjectMetadataMapper,
+  type ProjectMetadataDbRecord,
+  type ProjectMetadataDbInsert,
+} from "./ProjectMetadataMapper";

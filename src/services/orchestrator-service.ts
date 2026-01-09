@@ -13,9 +13,11 @@ import {
   createSubOrchestratorUseCase,
   pauseOrchestratorUseCase,
   resumeOrchestratorUseCase,
+  projectMetadataRepository,
 } from "@/infrastructure/container";
 import type { Orchestrator } from "@/domain/entities/Orchestrator";
 import type { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
+import type { ProjectMetadata } from "@/domain/entities/ProjectMetadata";
 
 /**
  * Error class for orchestrator service operations
@@ -545,4 +547,149 @@ export async function ensureFolderSubOrchestrator(
     created: true,
     sessionId: orchestratorSession.id,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project Metadata Integration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Get project metadata for a folder
+ *
+ * Returns the enriched project metadata if available, null otherwise.
+ */
+export async function getProjectMetadataForFolder(
+  folderId: string,
+  userId: string
+): Promise<ProjectMetadata | null> {
+  return projectMetadataRepository.findByFolderId(folderId, userId);
+}
+
+/**
+ * Project context summary for orchestrator use
+ */
+export interface ProjectContext {
+  framework: string | null;
+  category: string;
+  primaryLanguage: string | null;
+  languages: string[];
+  packageManager: string | null;
+  hasTypeScript: boolean;
+  hasDocker: boolean;
+  hasCI: boolean;
+  testFramework: string | null;
+  ciProvider: string | null;
+  gitBranch: string | null;
+  isDirty: boolean;
+  suggestedCommands: string[];
+  agentInstructions: string | null;
+}
+
+/**
+ * Get project context for orchestrator decision making
+ *
+ * Returns a summarized project context suitable for inclusion
+ * in orchestrator prompts or decision logic.
+ */
+export async function getProjectContextForFolder(
+  folderId: string,
+  userId: string
+): Promise<ProjectContext | null> {
+  const metadata = await getProjectMetadataForFolder(folderId, userId);
+
+  if (!metadata || !metadata.hasData()) {
+    return null;
+  }
+
+  return {
+    framework: metadata.framework,
+    category: metadata.category,
+    primaryLanguage: metadata.primaryLanguage,
+    languages: metadata.languages,
+    packageManager: metadata.packageManager,
+    hasTypeScript: metadata.hasTypeScript,
+    hasDocker: metadata.hasDocker,
+    hasCI: metadata.hasCI,
+    testFramework: metadata.testFramework?.framework ?? null,
+    ciProvider: metadata.cicd?.provider ?? null,
+    gitBranch: metadata.git?.currentBranch ?? null,
+    isDirty: metadata.git?.isDirty ?? false,
+    suggestedCommands: metadata.suggestedStartupCommands,
+    agentInstructions: metadata.suggestedAgentInstructions,
+  };
+}
+
+/**
+ * Format project context as text for orchestrator prompts
+ *
+ * Generates human-readable context that can be included in
+ * orchestrator custom instructions or system prompts.
+ */
+export function formatProjectContextAsText(context: ProjectContext): string {
+  const lines: string[] = [];
+
+  // Project type
+  if (context.framework) {
+    lines.push(`Project: ${context.framework} (${context.category})`);
+  } else {
+    lines.push(`Project: ${context.category}`);
+  }
+
+  // Languages
+  if (context.primaryLanguage) {
+    const allLanguages = context.languages.length > 1
+      ? ` (also: ${context.languages.filter(l => l !== context.primaryLanguage).join(", ")})`
+      : "";
+    lines.push(`Primary Language: ${context.primaryLanguage}${allLanguages}`);
+  }
+
+  // Build tools
+  if (context.packageManager) {
+    lines.push(`Package Manager: ${context.packageManager}`);
+  }
+
+  // Features
+  const features: string[] = [];
+  if (context.hasTypeScript) features.push("TypeScript");
+  if (context.hasDocker) features.push("Docker");
+  if (context.hasCI) features.push("CI/CD");
+  if (context.testFramework) features.push(`Tests (${context.testFramework})`);
+  if (features.length > 0) {
+    lines.push(`Features: ${features.join(", ")}`);
+  }
+
+  // Git state
+  if (context.gitBranch) {
+    const dirty = context.isDirty ? " (uncommitted changes)" : "";
+    lines.push(`Branch: ${context.gitBranch}${dirty}`);
+  }
+
+  // Suggested commands
+  if (context.suggestedCommands.length > 0) {
+    lines.push(`Startup Commands: ${context.suggestedCommands.join(", ")}`);
+  }
+
+  // Agent instructions
+  if (context.agentInstructions) {
+    lines.push("", "Agent Instructions:", context.agentInstructions);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Get formatted project context for a folder
+ *
+ * Convenience function that retrieves metadata and formats it for use
+ * in orchestrator prompts. Returns null if no metadata is available.
+ */
+export async function getFormattedProjectContext(
+  folderId: string,
+  userId: string
+): Promise<string | null> {
+  const context = await getProjectContextForFolder(folderId, userId);
+  if (!context) {
+    return null;
+  }
+  return formatProjectContextAsText(context);
 }

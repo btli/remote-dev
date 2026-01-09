@@ -125,6 +125,30 @@ export const POST = withApiAuth(async (request, { userId }) => {
       }
     }
 
+    // Auto-enrich project metadata for folder sessions with a project path
+    // This runs async (fire-and-forget) to not block session creation
+    if (body.folderId && validatedPath) {
+      import("@/infrastructure/container").then(({ container }) => {
+        container.enrichProjectMetadataUseCase
+          .execute({
+            userId,
+            folderId: body.folderId!,
+            projectPath: validatedPath!,
+          })
+          .then((result) => {
+            if (result.success) {
+              console.log(
+                `[API] Auto-enriched metadata for folder ${body.folderId}: ${result.metadata?.framework ?? result.metadata?.category ?? "unknown"}`
+              );
+            }
+          })
+          .catch((error) => {
+            // Log error but don't fail - enrichment is best-effort
+            console.error("[API] Failed to auto-enrich project metadata:", error);
+          });
+      });
+    }
+
     return NextResponse.json(newSession, { status: 201 });
   } catch (error) {
     console.error("Error creating session:", error);

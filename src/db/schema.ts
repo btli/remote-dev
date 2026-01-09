@@ -7,6 +7,7 @@ import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/sche
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
 import type { AgentProviderType } from "@/types/session";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
+import type { EnrichmentStatusType, ProjectCategoryType, ProgrammingLanguageType } from "@/types/project-metadata";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -1570,5 +1571,104 @@ export const orchestratorAuditLog = sqliteTable(
     // COMPOSITE INDEX for time-range queries (orchestratorId, createdAt)
     // Optimizes: SELECT * FROM audit_log WHERE orchestratorId = ? AND createdAt >= ? AND createdAt <= ?
     index("orchestrator_audit_orchestrator_time_idx").on(table.orchestratorId, table.createdAt),
+  ]
+);
+
+// =============================================================================
+// Project Metadata Tables
+// =============================================================================
+
+/**
+ * Project metadata - enriched information about projects/folders.
+ * Stores detected tech stack, dependencies, build config, and agent hints.
+ * Used by orchestrators for intelligent monitoring and suggestions.
+ */
+export const projectMetadata = sqliteTable(
+  "project_metadata",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Link to folder (one metadata per folder)
+    folderId: text("folder_id")
+      .notNull()
+      .unique()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Project root path (may differ from folder preferences)
+    projectPath: text("project_path").notNull(),
+
+    // Enrichment status tracking
+    enrichmentStatus: text("enrichment_status")
+      .$type<EnrichmentStatusType>()
+      .notNull()
+      .default("pending"),
+    enrichedAt: integer("enriched_at", { mode: "timestamp_ms" }),
+    lastEnrichmentError: text("last_enrichment_error"),
+
+    // Project classification
+    category: text("category")
+      .$type<ProjectCategoryType>()
+      .notNull()
+      .default("unknown"),
+    primaryLanguage: text("primary_language").$type<ProgrammingLanguageType>(),
+    // JSON array of detected languages
+    languages: text("languages").notNull().default("[]"),
+    framework: text("framework"),
+
+    // Project structure flags
+    isMonorepo: integer("is_monorepo", { mode: "boolean" }).notNull().default(false),
+    hasTypeScript: integer("has_typescript", { mode: "boolean" }).notNull().default(false),
+    hasDocker: integer("has_docker", { mode: "boolean" }).notNull().default(false),
+    hasCI: integer("has_ci", { mode: "boolean" }).notNull().default(false),
+
+    // Dependency information (JSON arrays)
+    dependencies: text("dependencies").notNull().default("[]"),
+    devDependencies: text("dev_dependencies").notNull().default("[]"),
+    dependencyCount: integer("dependency_count").notNull().default(0),
+    devDependencyCount: integer("dev_dependency_count").notNull().default(0),
+
+    // Build configuration
+    packageManager: text("package_manager"), // npm, yarn, pnpm, bun, pip, uv, cargo, go
+    // JSON: { tool, configFile, scripts }
+    buildTool: text("build_tool"),
+    // JSON: { framework, configFile, hasUnitTests, hasIntegrationTests, hasE2ETests }
+    testFramework: text("test_framework"),
+    // JSON: { provider, hasTests, hasLinting, hasBuild, hasDeploy, workflows }
+    cicd: text("cicd"),
+
+    // Git information (JSON)
+    git: text("git"),
+
+    // File statistics
+    totalFiles: integer("total_files").notNull().default(0),
+    sourceFiles: integer("source_files").notNull().default(0),
+    testFiles: integer("test_files").notNull().default(0),
+    configFiles: integer("config_files").notNull().default(0),
+
+    // Agent hints
+    // JSON array of suggested startup commands
+    suggestedStartupCommands: text("suggested_startup_commands").notNull().default("[]"),
+    suggestedAgentInstructions: text("suggested_agent_instructions"),
+
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Index for user's metadata
+    index("project_metadata_user_idx").on(table.userId),
+    // Index for enrichment status (for batch refresh queries)
+    index("project_metadata_status_idx").on(table.enrichmentStatus),
+    // Composite index for user + status (refresh stale metadata for user)
+    index("project_metadata_user_status_idx").on(table.userId, table.enrichmentStatus),
+    // Index for path lookups
+    index("project_metadata_path_idx").on(table.projectPath),
   ]
 );

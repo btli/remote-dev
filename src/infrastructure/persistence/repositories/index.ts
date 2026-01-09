@@ -6,3 +6,4 @@
 
 export { DrizzleSessionRepository } from "./DrizzleSessionRepository";
 export { DrizzleFolderRepository } from "./DrizzleFolderRepository";
+export { DrizzleProjectMetadataRepository } from "./DrizzleProjectMetadataRepository";

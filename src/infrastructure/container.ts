@@ -14,6 +14,7 @@ import { DrizzleGitHubIssueRepository } from "./persistence/repositories/Drizzle
 import { DrizzleOrchestratorRepository } from "./persistence/repositories/DrizzleOrchestratorRepository";
 import { DrizzleInsightRepository } from "./persistence/repositories/DrizzleInsightRepository";
 import { DrizzleAuditLogRepository } from "./persistence/repositories/DrizzleAuditLogRepository";
+import { DrizzleProjectMetadataRepository } from "./persistence/repositories/DrizzleProjectMetadataRepository";
 import { transactionManager } from "./persistence/TransactionManager";
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
@@ -31,6 +32,7 @@ import type { IInsightRepository } from "@/application/ports/IInsightRepository"
 import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepository";
 import type { IScrollbackMonitor } from "@/application/ports/IScrollbackMonitor";
 import type { ICommandInjector } from "@/application/ports/ICommandInjector";
+import type { IProjectMetadataRepository } from "@/application/ports/IProjectMetadataRepository";
 
 // Session Use Cases
 import { CreateSessionUseCase } from "@/application/use-cases/session/CreateSessionUseCase";
@@ -71,6 +73,11 @@ import { InjectCommandUseCase } from "@/application/use-cases/orchestrator/Injec
 import { PauseOrchestratorUseCase } from "@/application/use-cases/orchestrator/PauseOrchestratorUseCase";
 import { ResumeOrchestratorUseCase } from "@/application/use-cases/orchestrator/ResumeOrchestratorUseCase";
 
+// Metadata Use Cases
+import { EnrichProjectMetadataUseCase } from "@/application/use-cases/metadata/EnrichProjectMetadataUseCase";
+import { GetProjectMetadataUseCase } from "@/application/use-cases/metadata/GetProjectMetadataUseCase";
+import { ProjectMetadataService } from "@/services/project-metadata-service";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,6 +117,12 @@ export const insightRepository: IInsightRepository = new DrizzleInsightRepositor
  * Uses Drizzle ORM for SQLite persistence.
  */
 export const auditLogRepository: IAuditLogRepository = new DrizzleAuditLogRepository();
+
+/**
+ * Project metadata repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const projectMetadataRepository: IProjectMetadataRepository = new DrizzleProjectMetadataRepository();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gateway Instances
@@ -354,6 +367,31 @@ export const resumeOrchestratorUseCase = new ResumeOrchestratorUseCase(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Metadata Use Case Instances
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Project metadata detection service.
+ */
+const projectMetadataService = new ProjectMetadataService();
+
+/**
+ * Enrich project metadata use case.
+ */
+export const enrichProjectMetadataUseCase = new EnrichProjectMetadataUseCase(
+  projectMetadataRepository,
+  projectMetadataService
+);
+
+/**
+ * Get project metadata use case.
+ */
+export const getProjectMetadataUseCase = new GetProjectMetadataUseCase(
+  projectMetadataRepository,
+  enrichProjectMetadataUseCase
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -368,29 +406,41 @@ export interface Container {
   orchestratorRepository: IOrchestratorRepository;
   insightRepository: IInsightRepository;
   auditLogRepository: IAuditLogRepository;
+  projectMetadataRepository: IProjectMetadataRepository;
   tmuxGateway: TmuxGateway;
   worktreeGateway: WorktreeGateway;
   githubIssueGateway: GitHubIssueGateway;
   scrollbackMonitor: IScrollbackMonitor;
   commandInjector: ICommandInjector;
+  // Use cases for external access
+  enrichProjectMetadataUseCase: EnrichProjectMetadataUseCase;
+  getProjectMetadataUseCase: GetProjectMetadataUseCase;
 }
 
 /**
  * Default container with production implementations.
  */
-export const defaultContainer: Container = {
+export const container: Container = {
   sessionRepository,
   folderRepository,
   githubIssueRepository,
   orchestratorRepository,
   insightRepository,
   auditLogRepository,
+  projectMetadataRepository,
   tmuxGateway,
   worktreeGateway,
   githubIssueGateway,
   scrollbackMonitor,
   commandInjector,
+  enrichProjectMetadataUseCase,
+  getProjectMetadataUseCase,
 };
+
+/**
+ * @deprecated Use `container` instead
+ */
+export const defaultContainer = container;
 
 /**
  * Create a container with overrides for testing.

@@ -42,3 +42,9 @@ export type {
   FetchIssuesParams,
   FetchIssueParams,
 } from "./GitHubIssueGateway";
+
+export type {
+  IProjectMetadataRepository,
+  ProjectMetadataFilters,
+  ProjectMetadataOrderBy,
+} from "./IProjectMetadataRepository";
