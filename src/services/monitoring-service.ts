@@ -85,6 +85,12 @@ const failureTracker = new Map<
 >();
 
 /**
+ * Guard against concurrent startMonitoring calls (TOCTOU race condition)
+ * Tracks orchestrators that are currently being started
+ */
+const startingGuard = new Set<string>();
+
+/**
  * Maximum consecutive failures before auto-pausing
  */
 const MAX_CONSECUTIVE_FAILURES = 5;
@@ -371,6 +377,17 @@ export async function runMonitoringCycle(
  * Start automated monitoring for an orchestrator
  */
 export function startMonitoring(orchestratorId: string, userId: string): void {
+  // Guard against concurrent startMonitoring calls (TOCTOU race condition)
+  if (startingGuard.has(orchestratorId)) {
+    console.log(
+      `[MonitoringService] Already starting monitoring for ${orchestratorId}, skipping duplicate call`
+    );
+    return;
+  }
+
+  // Set guard before async operations
+  startingGuard.add(orchestratorId);
+
   // Stop existing monitoring if any
   stopMonitoring(orchestratorId);
 
@@ -387,6 +404,7 @@ export function startMonitoring(orchestratorId: string, userId: string): void {
     .then((result) => {
       if (result.length === 0) {
         console.error(`[MonitoringService] Orchestrator ${orchestratorId} not found`);
+        startingGuard.delete(orchestratorId); // Clear guard on error
         return;
       }
 
@@ -469,15 +487,18 @@ export function startMonitoring(orchestratorId: string, userId: string): void {
           }, intervalMs);
 
           activeIntervals.set(orchestratorId, interval);
+          startingGuard.delete(orchestratorId); // Clear guard on success
           console.log(`[MonitoringService] Monitoring interval started for ${orchestratorId}`);
         })
         .catch((error) => {
           console.error(`[MonitoringService] Initial cycle failed:`, error);
           console.error(`[MonitoringService] Monitoring NOT started for ${orchestratorId}`);
+          startingGuard.delete(orchestratorId); // Clear guard on error
         });
     })
     .catch((error) => {
       console.error(`[MonitoringService] Failed to start monitoring:`, error);
+      startingGuard.delete(orchestratorId); // Clear guard on error
     });
 }
 
@@ -565,6 +586,9 @@ export function stopMonitoring(orchestratorId: string): void {
     activeIntervals.delete(orchestratorId);
     console.log(`[MonitoringService] Stopped monitoring for ${orchestratorId}`);
   }
+
+  // Clear starting guard (allows restart after explicit stop)
+  startingGuard.delete(orchestratorId);
 
   // Clear snapshots
   clearSnapshots(orchestratorId);

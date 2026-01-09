@@ -77,6 +77,7 @@ export const POST = withAuth(async (request, { userId, params }) => {
       try {
         const commandResult = await injectCommandUseCase.execute({
           orchestratorId: params!.id,
+          userId, // Authorization check
           targetSessionId: body.sessionId,
           targetTmuxSessionName: session.tmuxSessionName,
           targetSessionFolderId: session.folderId,

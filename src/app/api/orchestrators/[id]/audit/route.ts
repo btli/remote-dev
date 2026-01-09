@@ -3,8 +3,20 @@ import { withAuth, errorResponse } from "@/lib/api";
 import * as OrchestratorService from "@/services/orchestrator-service";
 import { db } from "@/db";
 import { orchestratorAuditLog } from "@/db/schema";
-import { eq, and, desc, gte, lte } from "drizzle-orm";
+import { eq, and, desc, gte, lte, count } from "drizzle-orm";
 import type { AuditLogActionType } from "@/types/orchestrator";
+
+/**
+ * Safely parse JSON, returning null on error.
+ */
+function safeJsonParse(json: string | null): unknown {
+  if (!json) return null;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * GET /api/orchestrators/[id]/audit - Get audit logs for orchestrator
@@ -71,22 +83,22 @@ export const GET = withAuth(async (request, { userId, params }) => {
         .orderBy(desc(orchestratorAuditLog.createdAt))
         .limit(Math.min(limit, 500)); // Cap at 500 to prevent abuse
 
-      // Get total count for pagination
-      const totalResult = await db
-        .select()
+      // Get total count for pagination using count() aggregate (efficient)
+      const [{ total }] = await db
+        .select({ total: count() })
         .from(orchestratorAuditLog)
         .where(conditions.length > 1 ? and(...conditions) : conditions[0]);
 
       return NextResponse.json({
         orchestratorId: params!.id,
         count: logs.length,
-        total: totalResult.length,
+        total,
         logs: logs.map((log) => ({
           id: log.id,
           orchestratorId: log.orchestratorId,
           actionType: log.actionType,
           targetSessionId: log.targetSessionId,
-          details: log.detailsJson ? JSON.parse(log.detailsJson) : null,
+          details: safeJsonParse(log.detailsJson),
           createdAt: log.createdAt,
         })),
       });

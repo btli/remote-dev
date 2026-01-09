@@ -30,6 +30,7 @@ import {
 
 export interface InjectCommandInput {
   orchestratorId: string;
+  userId: string; // For authorization validation
   targetSessionId: string;
   targetTmuxSessionName: string;
   targetSessionFolderId: string | null; // For scope validation
@@ -52,10 +53,15 @@ export class InjectCommandUseCase {
   ) {}
 
   async execute(input: InjectCommandInput): Promise<InjectCommandOutput> {
-    // Step 1: Get the orchestrator and validate
+    // Step 1: Get the orchestrator and validate ownership (IDOR protection)
     const orchestrator = await this.orchestratorRepository.findById(input.orchestratorId);
     if (!orchestrator) {
       throw new OrchestratorNotFoundError(input.orchestratorId);
+    }
+
+    // Authorization check: verify orchestrator belongs to requesting user
+    if (orchestrator.userId !== input.userId) {
+      throw new OrchestratorNotFoundError(input.orchestratorId); // Don't reveal existence
     }
 
     if (orchestrator.isPaused()) {

@@ -53,6 +53,7 @@ const sessionSendInput = createTool({
     try {
       const result = await injectCommandUseCase.execute({
         orchestratorId: input.orchestratorId,
+        userId: context.userId, // Authorization check
         targetSessionId: input.sessionId,
         targetTmuxSessionName: session.tmuxSessionName,
         targetSessionFolderId: session.folderId,
