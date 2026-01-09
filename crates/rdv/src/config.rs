@@ -1,0 +1,282 @@
+//! Configuration management for rdv.
+//!
+//! Configuration is loaded from multiple sources with precedence:
+//! 1. Environment variables (RDV_*)
+//! 2. Config file (~/.remote-dev/config.toml)
+//! 3. Default values
+
+use anyhow::{Context, Result};
+use directories::ProjectDirs;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Main configuration structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    /// Remote Dev API settings
+    pub api: ApiConfig,
+
+    /// Master Control settings
+    pub master: MasterConfig,
+
+    /// Monitoring settings
+    pub monitoring: MonitoringConfig,
+
+    /// Agent settings
+    pub agents: AgentsConfig,
+
+    /// Paths
+    pub paths: PathsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiConfig {
+    /// Base URL for Remote Dev API
+    #[serde(default = "default_api_url")]
+    pub url: String,
+
+    /// API key for authentication
+    pub api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MasterConfig {
+    /// tmux session name prefix for Master Control
+    #[serde(default = "default_master_prefix")]
+    pub session_prefix: String,
+
+    /// Enable auto-start on first command
+    #[serde(default = "default_true")]
+    pub auto_start: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringConfig {
+    /// Monitoring interval in seconds
+    #[serde(default = "default_monitoring_interval")]
+    pub interval_secs: u64,
+
+    /// Stall detection threshold in seconds
+    #[serde(default = "default_stall_threshold")]
+    pub stall_threshold_secs: u64,
+
+    /// Maximum scrollback lines to capture
+    #[serde(default = "default_scrollback_lines")]
+    pub scrollback_lines: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentsConfig {
+    /// Default agent to use
+    #[serde(default = "default_agent")]
+    pub default: String,
+
+    /// Available agents and their CLI commands
+    #[serde(default = "default_agent_commands")]
+    pub commands: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathsConfig {
+    /// Base directory for rdv data
+    #[serde(default = "default_data_dir")]
+    pub data_dir: PathBuf,
+
+    /// Master Control state directory
+    #[serde(default = "default_master_dir")]
+    pub master_dir: PathBuf,
+
+    /// Transcripts directory
+    #[serde(default = "default_transcripts_dir")]
+    pub transcripts_dir: PathBuf,
+}
+
+// Default value functions
+fn default_api_url() -> String {
+    std::env::var("RDV_API_URL").unwrap_or_else(|_| "http://localhost:3000".to_string())
+}
+
+fn default_master_prefix() -> String {
+    "rdv-master".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_monitoring_interval() -> u64 {
+    30
+}
+
+fn default_stall_threshold() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_scrollback_lines() -> u32 {
+    200
+}
+
+fn default_agent() -> String {
+    "claude".to_string()
+}
+
+fn default_agent_commands() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    map.insert("claude".to_string(), "claude".to_string());
+    map.insert("codex".to_string(), "codex".to_string());
+    map.insert("gemini".to_string(), "gemini".to_string());
+    map.insert("opencode".to_string(), "opencode".to_string());
+    map
+}
+
+fn default_data_dir() -> PathBuf {
+    if let Some(proj_dirs) = ProjectDirs::from("dev", "remote-dev", "rdv") {
+        proj_dirs.data_dir().to_path_buf()
+    } else {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".remote-dev")
+    }
+}
+
+fn default_master_dir() -> PathBuf {
+    default_data_dir().join("master-control")
+}
+
+fn default_transcripts_dir() -> PathBuf {
+    default_data_dir().join("transcripts")
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            api: ApiConfig {
+                url: default_api_url(),
+                api_key: std::env::var("RDV_API_KEY").ok(),
+            },
+            master: MasterConfig {
+                session_prefix: default_master_prefix(),
+                auto_start: default_true(),
+            },
+            monitoring: MonitoringConfig {
+                interval_secs: default_monitoring_interval(),
+                stall_threshold_secs: default_stall_threshold(),
+                scrollback_lines: default_scrollback_lines(),
+            },
+            agents: AgentsConfig {
+                default: default_agent(),
+                commands: default_agent_commands(),
+            },
+            paths: PathsConfig {
+                data_dir: default_data_dir(),
+                master_dir: default_master_dir(),
+                transcripts_dir: default_transcripts_dir(),
+            },
+        }
+    }
+}
+
+impl Config {
+    /// Load configuration from file and environment.
+    pub fn load() -> Result<Self> {
+        let config_path = Self::config_path();
+
+        let config = if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path)
+                .context("Failed to read config file")?;
+            toml::from_str(&content).context("Failed to parse config file")?
+        } else {
+            Config::default()
+        };
+
+        Ok(config)
+    }
+
+    /// Save configuration to file.
+    pub fn save(&self) -> Result<()> {
+        let config_path = Self::config_path();
+
+        // Ensure parent directory exists
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).context("Failed to create config directory")?;
+        }
+
+        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        std::fs::write(&config_path, content).context("Failed to write config file")?;
+
+        Ok(())
+    }
+
+    /// Get the config file path.
+    pub fn config_path() -> PathBuf {
+        if let Ok(path) = std::env::var("RDV_CONFIG") {
+            PathBuf::from(path)
+        } else {
+            default_data_dir().join("config.toml")
+        }
+    }
+
+    /// Get the agent CLI command for a given agent type.
+    pub fn agent_command(&self, agent: &str) -> Option<&str> {
+        self.agents.commands.get(agent).map(|s| s.as_str())
+    }
+
+    /// Ensure all required directories exist.
+    pub fn ensure_dirs(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.paths.data_dir)
+            .context("Failed to create data directory")?;
+        std::fs::create_dir_all(&self.paths.master_dir)
+            .context("Failed to create master directory")?;
+        std::fs::create_dir_all(&self.paths.transcripts_dir)
+            .context("Failed to create transcripts directory")?;
+        Ok(())
+    }
+}
+
+/// Configuration for a specific folder orchestrator.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FolderConfig {
+    /// Orchestrator ID
+    pub orchestrator_id: Option<String>,
+
+    /// Preferred agent for this folder
+    pub preferred_agent: Option<String>,
+
+    /// Custom monitoring interval
+    pub monitoring_interval_secs: Option<u64>,
+
+    /// Custom stall threshold
+    pub stall_threshold_secs: Option<u64>,
+
+    /// Auto-start orchestrator when entering folder
+    pub auto_start: bool,
+}
+
+impl FolderConfig {
+    /// Load folder config from .remote-dev/orchestrator/config.toml
+    pub fn load(folder_path: &std::path::Path) -> Result<Self> {
+        let config_path = folder_path
+            .join(".remote-dev")
+            .join("orchestrator")
+            .join("config.toml");
+
+        if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path)?;
+            Ok(toml::from_str(&content)?)
+        } else {
+            Ok(Self::default())
+        }
+    }
+
+    /// Save folder config.
+    pub fn save(&self, folder_path: &std::path::Path) -> Result<()> {
+        let config_dir = folder_path.join(".remote-dev").join("orchestrator");
+        std::fs::create_dir_all(&config_dir)?;
+
+        let config_path = config_dir.join("config.toml");
+        let content = toml::to_string_pretty(self)?;
+        std::fs::write(config_path, content)?;
+
+        Ok(())
+    }
+}
