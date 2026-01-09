@@ -15,6 +15,9 @@ import { DrizzleOrchestratorRepository } from "./persistence/repositories/Drizzl
 import { DrizzleInsightRepository } from "./persistence/repositories/DrizzleInsightRepository";
 import { DrizzleAuditLogRepository } from "./persistence/repositories/DrizzleAuditLogRepository";
 import { DrizzleProjectMetadataRepository } from "./persistence/repositories/DrizzleProjectMetadataRepository";
+import { DrizzleTaskRepository } from "./persistence/repositories/DrizzleTaskRepository";
+import { DrizzleDelegationRepository } from "./persistence/repositories/DrizzleDelegationRepository";
+import { DrizzleProjectKnowledgeRepository } from "./persistence/repositories/DrizzleProjectKnowledgeRepository";
 import { transactionManager } from "./persistence/TransactionManager";
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
@@ -33,6 +36,11 @@ import type { IAuditLogRepository } from "@/application/ports/IAuditLogRepositor
 import type { IScrollbackMonitor } from "@/application/ports/IScrollbackMonitor";
 import type { ICommandInjector } from "@/application/ports/ICommandInjector";
 import type { IProjectMetadataRepository } from "@/application/ports/IProjectMetadataRepository";
+import type {
+  ITaskRepository,
+  IDelegationRepository,
+  IProjectKnowledgeRepository,
+} from "@/application/ports/task-ports";
 
 // Session Use Cases
 import { CreateSessionUseCase } from "@/application/use-cases/session/CreateSessionUseCase";
@@ -123,6 +131,24 @@ export const auditLogRepository: IAuditLogRepository = new DrizzleAuditLogReposi
  * Uses Drizzle ORM for SQLite persistence.
  */
 export const projectMetadataRepository: IProjectMetadataRepository = new DrizzleProjectMetadataRepository();
+
+/**
+ * Task repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const taskRepository: ITaskRepository = new DrizzleTaskRepository();
+
+/**
+ * Delegation repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const delegationRepository: IDelegationRepository = new DrizzleDelegationRepository();
+
+/**
+ * Project knowledge repository instance.
+ * Uses Drizzle ORM for SQLite persistence.
+ */
+export const projectKnowledgeRepository: IProjectKnowledgeRepository = new DrizzleProjectKnowledgeRepository();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gateway Instances
@@ -407,6 +433,9 @@ export interface Container {
   insightRepository: IInsightRepository;
   auditLogRepository: IAuditLogRepository;
   projectMetadataRepository: IProjectMetadataRepository;
+  taskRepository: ITaskRepository;
+  delegationRepository: IDelegationRepository;
+  projectKnowledgeRepository: IProjectKnowledgeRepository;
   tmuxGateway: TmuxGateway;
   worktreeGateway: WorktreeGateway;
   githubIssueGateway: GitHubIssueGateway;
@@ -428,6 +457,9 @@ export const container: Container = {
   insightRepository,
   auditLogRepository,
   projectMetadataRepository,
+  taskRepository,
+  delegationRepository,
+  projectKnowledgeRepository,
   tmuxGateway,
   worktreeGateway,
   githubIssueGateway,

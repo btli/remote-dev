@@ -7,3 +7,6 @@
 export { DrizzleSessionRepository } from "./DrizzleSessionRepository";
 export { DrizzleFolderRepository } from "./DrizzleFolderRepository";
 export { DrizzleProjectMetadataRepository } from "./DrizzleProjectMetadataRepository";
+export { DrizzleTaskRepository } from "./DrizzleTaskRepository";
+export { DrizzleDelegationRepository } from "./DrizzleDelegationRepository";
+export { DrizzleProjectKnowledgeRepository } from "./DrizzleProjectKnowledgeRepository";

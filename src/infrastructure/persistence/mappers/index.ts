@@ -25,3 +25,21 @@ export {
   type ProjectMetadataDbRecord,
   type ProjectMetadataDbInsert,
 } from "./ProjectMetadataMapper";
+
+export {
+  TaskMapper,
+  type TaskDbRecord,
+  type TaskDbInsert,
+} from "./TaskMapper";
+
+export {
+  DelegationMapper,
+  type DelegationDbRecord,
+  type DelegationDbInsert,
+} from "./DelegationMapper";
+
+export {
+  ProjectKnowledgeMapper,
+  type ProjectKnowledgeDbRecord,
+  type ProjectKnowledgeDbInsert,
+} from "./ProjectKnowledgeMapper";
