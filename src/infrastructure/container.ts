@@ -24,6 +24,8 @@ import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
 import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
 import { TmuxScrollbackMonitor } from "./external/tmux/TmuxScrollbackMonitor";
 import { TmuxCommandInjector } from "./external/tmux/TmuxCommandInjector";
+import { OrchestratorLLMService } from "./external/llm/OrchestratorLLMService";
+import { ProjectKnowledgeService } from "@/services/project-knowledge-service";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
@@ -40,6 +42,7 @@ import type {
   ITaskRepository,
   IDelegationRepository,
   IProjectKnowledgeRepository,
+  IOrchestratorLLMGateway,
 } from "@/application/ports/task-ports";
 
 // Session Use Cases
@@ -183,6 +186,18 @@ export const scrollbackMonitor: IScrollbackMonitor = new TmuxScrollbackMonitor()
  * Injects commands into running terminal sessions.
  */
 export const commandInjector: ICommandInjector = new TmuxCommandInjector();
+
+/**
+ * Orchestrator LLM gateway instance.
+ * Uses heuristics for task parsing and planning.
+ */
+export const orchestratorLLMGateway: IOrchestratorLLMGateway = new OrchestratorLLMService();
+
+/**
+ * Project knowledge service instance.
+ * Manages learned knowledge with semantic search.
+ */
+export const projectKnowledgeService = new ProjectKnowledgeService(projectKnowledgeRepository);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Use Case Instances
@@ -441,6 +456,8 @@ export interface Container {
   githubIssueGateway: GitHubIssueGateway;
   scrollbackMonitor: IScrollbackMonitor;
   commandInjector: ICommandInjector;
+  orchestratorLLMGateway: IOrchestratorLLMGateway;
+  projectKnowledgeService: ProjectKnowledgeService;
   // Use cases for external access
   enrichProjectMetadataUseCase: EnrichProjectMetadataUseCase;
   getProjectMetadataUseCase: GetProjectMetadataUseCase;
@@ -465,6 +482,8 @@ export const container: Container = {
   githubIssueGateway,
   scrollbackMonitor,
   commandInjector,
+  orchestratorLLMGateway,
+  projectKnowledgeService,
   enrichProjectMetadataUseCase,
   getProjectMetadataUseCase,
 };
