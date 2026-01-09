@@ -7,6 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
+  Brain,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -947,14 +948,25 @@ export function Sidebar({
               {showDropBefore && (
                 <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
               )}
-              <span
-                className={cn(
-                  "w-2 h-2 rounded-full",
-                  isActive
-                    ? "bg-primary animate-pulse"
-                    : "bg-muted-foreground"
-                )}
-              />
+              {session.isOrchestratorSession ? (
+                <Brain
+                  className={cn(
+                    "w-4 h-4",
+                    isActive
+                      ? "text-purple-500 animate-pulse"
+                      : "text-purple-400/70"
+                  )}
+                />
+              ) : (
+                <span
+                  className={cn(
+                    "w-2 h-2 rounded-full",
+                    isActive
+                      ? "bg-primary animate-pulse"
+                      : "bg-muted-foreground"
+                  )}
+                />
+              )}
               {/* Drop indicator - after */}
               {showDropAfter && (
                 <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
@@ -1013,15 +1025,26 @@ export function Sidebar({
                 isDragOverSession && "bg-primary/20 border-primary/30"
               )}
             >
-            {/* Status indicator */}
-            <Terminal
-              className={cn(
-                "w-3.5 h-3.5 shrink-0",
-                isActive
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              )}
-            />
+            {/* Status indicator - Brain for orchestrator sessions, Terminal for regular */}
+            {session.isOrchestratorSession ? (
+              <Brain
+                className={cn(
+                  "w-3.5 h-3.5 shrink-0",
+                  isActive
+                    ? "text-purple-500"
+                    : "text-purple-400/70"
+                )}
+              />
+            ) : (
+              <Terminal
+                className={cn(
+                  "w-3.5 h-3.5 shrink-0",
+                  isActive
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                )}
+              />
+            )}
 
             {/* Session name - editable */}
             <div className="flex-1 min-w-0">
