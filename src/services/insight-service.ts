@@ -7,7 +7,7 @@
  */
 import { db } from "@/db";
 import { orchestratorInsights } from "@/db/schema";
-import { eq, and, desc, gte, lte } from "drizzle-orm";
+import { eq, and, desc, gte, sql } from "drizzle-orm";
 import type { OrchestratorInsight } from "@/domain/entities/OrchestratorInsight";
 import type { InsightType, InsightSeverity } from "@/types/orchestrator";
 
@@ -296,7 +296,7 @@ export async function cleanupOldInsights(
     .where(
       and(
         eq(orchestratorInsights.resolved, true),
-        lte(orchestratorInsights.resolvedAt as any, cutoffDate)
+        sql`${orchestratorInsights.resolvedAt} IS NOT NULL AND ${orchestratorInsights.resolvedAt} <= ${cutoffDate.getTime()}`
       )
     )
     .returning({ id: orchestratorInsights.id });

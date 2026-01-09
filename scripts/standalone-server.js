@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Custom Next.js Standalone Server with Unix Socket Support
  *
