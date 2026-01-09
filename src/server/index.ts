@@ -9,6 +9,7 @@ import { initializeMonitoring, stopAllMonitoring } from "../services/monitoring-
 import { workerManager } from "../services/workers/worker-manager";
 import { createTaskMonitorWorker } from "../services/workers/task-monitor-worker";
 import { createKnowledgeRefreshWorker } from "../services/workers/knowledge-refresh-worker";
+import { createOversightWorker } from "../services/workers/oversight-worker";
 
 // Load .env.local to match Next.js environment
 config({ path: ".env.local" });
@@ -50,6 +51,7 @@ async function startServer() {
   try {
     workerManager.register(createTaskMonitorWorker());
     workerManager.register(createKnowledgeRefreshWorker());
+    workerManager.register(createOversightWorker());
     await workerManager.startAll();
     console.log("[Server] Background workers started:", workerManager.getStatus());
   } catch (error) {
