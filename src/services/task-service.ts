@@ -12,10 +12,8 @@
  * - Cancel tasks
  */
 
-import { Task, type CreateTaskProps, type TaskResult, type TaskError } from "@/domain/entities/Task";
+import { Task, type TaskResult, type TaskError } from "@/domain/entities/Task";
 import { TaskType } from "@/domain/value-objects/TaskType";
-import { TaskStatus } from "@/domain/value-objects/TaskStatus";
-import { EntityNotFoundError } from "@/domain/errors/DomainError";
 import { TaskParsingError } from "@/domain/errors/TaskErrors";
 import {
   taskRepository,

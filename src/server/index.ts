@@ -6,6 +6,9 @@ import {
   shutdownMCPServer,
 } from "../mcp/index";
 import { initializeMonitoring, stopAllMonitoring } from "../services/monitoring-service";
+import { workerManager } from "../services/workers/worker-manager";
+import { createTaskMonitorWorker } from "../services/workers/task-monitor-worker";
+import { createKnowledgeRefreshWorker } from "../services/workers/knowledge-refresh-worker";
 
 // Load .env.local to match Next.js environment
 config({ path: ".env.local" });
@@ -43,6 +46,17 @@ async function startServer() {
     // Don't fail server startup if monitoring fails
   }
 
+  // Register and start background workers
+  try {
+    workerManager.register(createTaskMonitorWorker());
+    workerManager.register(createKnowledgeRefreshWorker());
+    await workerManager.startAll();
+    console.log("[Server] Background workers started:", workerManager.getStatus());
+  } catch (error) {
+    console.error("[Server] Failed to start background workers:", error);
+    // Don't fail server startup if workers fail
+  }
+
   // Start MCP server if enabled
   if (MCP_ENABLED) {
     try {
@@ -64,6 +78,14 @@ async function startServer() {
       console.log("[Server] Orchestrator monitoring stopped");
     } catch (error) {
       console.error("[Server] Error stopping orchestrator monitoring:", error);
+    }
+
+    // Stop background workers
+    try {
+      await workerManager.stopAll();
+      console.log("[Server] Background workers stopped");
+    } catch (error) {
+      console.error("[Server] Error stopping background workers:", error);
     }
 
     // Shutdown MCP server if enabled
