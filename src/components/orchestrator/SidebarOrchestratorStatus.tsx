@@ -18,11 +18,11 @@ interface SidebarOrchestratorStatusProps {
 }
 
 /**
- * SidebarOrchestratorStatus - Shows orchestrator status in folder sidebar
+ * SidebarOrchestratorStatus - Shows control agent status in folder sidebar
  *
  * Displays:
- * - Master orchestrator status (if no folderId)
- * - Sub-orchestrator status for specific folder (if folderId provided)
+ * - Master Control status (if no folderId)
+ * - Folder Control status for specific folder (if folderId provided)
  * - Quick pause/resume controls
  * - Configuration button
  */
@@ -110,7 +110,7 @@ export function SidebarOrchestratorStatus({
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium truncate">
-                  {folderId ? "Sub-Orchestrator" : "Master Orchestrator"}
+                  {folderId ? "Folder Control" : "Master Control"}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
                   {isPaused ? "Paused" : "Monitoring"}
@@ -122,7 +122,7 @@ export function SidebarOrchestratorStatus({
           <TooltipContent side="right">
             <div className="space-y-1">
               <p className="font-medium">
-                {folderId ? "Folder Orchestrator" : "Master Orchestrator"}
+                {folderId ? "Folder Control" : "Master Control"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {isPaused && "Paused - monitoring disabled"}

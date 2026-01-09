@@ -13,10 +13,10 @@ import { useOrchestratorContext } from "@/contexts/OrchestratorContext";
 import { cn } from "@/lib/utils";
 
 /**
- * OrchestratorStatusIndicator - Shows master orchestrator status in header
+ * OrchestratorStatusIndicator - Shows Master Control status in header
  *
  * Displays:
- * - Brain icon when master orchestrator exists
+ * - Brain icon when Master Control exists
  * - Green pulse when active
  * - Yellow when paused
  * - Red when has critical insights
@@ -75,8 +75,8 @@ function OrchestratorStatusIndicatorComponent() {
             onClick={handleToggle}
             aria-label={
               isPaused
-                ? "Resume master orchestrator"
-                : "Pause master orchestrator"
+                ? "Resume Master Control"
+                : "Pause Master Control"
             }
           >
             <Brain className="h-5 w-5" />
@@ -103,7 +103,7 @@ function OrchestratorStatusIndicatorComponent() {
         <TooltipContent side="bottom" className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <Brain className="h-4 w-4" />
-            <span className="font-medium">Master Orchestrator</span>
+            <span className="font-medium">Master Control</span>
           </div>
           <div className="text-sm text-muted-foreground">
             {isPaused && "Paused - Click to resume"}

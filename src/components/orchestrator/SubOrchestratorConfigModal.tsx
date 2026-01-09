@@ -129,13 +129,13 @@ export function SubOrchestratorConfigModal({
           <div className="flex items-center gap-2">
             <Brain className="h-5 w-5 text-primary" />
             <DialogTitle>
-              {existingOrchestrator ? "Sub-Orchestrator Config" : "Create Sub-Orchestrator"}
+              {existingOrchestrator ? "Folder Control Config" : "Create Folder Control"}
             </DialogTitle>
           </div>
           <DialogDescription>
             {existingOrchestrator
-              ? "This folder already has a sub-orchestrator configured."
-              : `Create an orchestrator to monitor sessions in "${folderName}"`}
+              ? "This folder already has a Folder Control agent configured."
+              : `Create a control agent to monitor sessions in "${folderName}"`}
           </DialogDescription>
         </DialogHeader>
 

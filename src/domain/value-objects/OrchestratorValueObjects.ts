@@ -214,11 +214,12 @@ export function getSeverityColor(severity: InsightSeverity): string {
 
 /**
  * Get display label for orchestrator type.
+ * Uses "Master Control" and "Folder Control" terminology for user-facing display.
  */
 export function getOrchestratorTypeLabel(type: OrchestratorType): string {
   const labels: Record<OrchestratorType, string> = {
-    master: "Master Orchestrator",
-    sub_orchestrator: "Project Orchestrator",
+    master: "Master Control",
+    sub_orchestrator: "Folder Control",
   };
   return labels[type];
 }

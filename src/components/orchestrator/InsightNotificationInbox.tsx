@@ -45,7 +45,7 @@ function InsightNotificationInboxComponent() {
       .forEach((insight) => {
         allInsights.push(
           Object.assign({}, insight, {
-            orchestratorName: orchestrator?.type === "master" ? "Master" : "Sub-Orchestrator",
+            orchestratorName: orchestrator?.type === "master" ? "Master Control" : "Folder Control",
           })
         );
       });

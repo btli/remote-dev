@@ -71,16 +71,16 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 6. **Resume**: `POST /api/sessions/:id/resume` reattaches to existing tmux session
 7. **Close**: `DELETE /api/sessions/:id` kills tmux and marks session closed
 
-### Orchestrator Agent System
+### Master Control System
 
-**Autonomous monitoring and intervention system** that detects stalled terminal sessions and suggests recovery actions.
+**Agent-agnostic autonomous monitoring and intervention system** that detects stalled terminal sessions and suggests recovery actions. Supports all coding agents (Claude Code, Codex, Gemini, OpenCode).
 
 **Architecture:**
-- **Master Orchestrator**: Monitors ALL terminal sessions for a user
-- **Sub-Orchestrators**: Monitor sessions within specific folders (higher priority than master)
+- **Master Control**: Monitors ALL terminal sessions for a user (agent-agnostic)
+- **Folder Control**: Monitor sessions within specific folders (higher priority than Master Control)
 - **Clean Architecture**: Domain → Application → Infrastructure → Interface layers
 - **Stall Detection**: MD5 hash comparison of tmux scrollback buffer
-- **Auto-initialization**: Master orchestrator created automatically on first session
+- **Auto-initialization**: Master Control created automatically on first session
 - **Persistent Monitoring**: Survives server restarts
 
 **Key Components:**
@@ -91,7 +91,17 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 | **Repositories** | Persistence interfaces (IOrchestratorRepository, IInsightRepository) |
 | **Gateways** | External operations (IScrollbackMonitor, ICommandInjector) |
 | **Monitoring Service** | Automated cycles (runs every 30s by default) |
-| **MCP Integration** | 3 tools for AI agent access (send_input, get_insights, status) |
+| **MCP Integration** | 6 tools for AI agent access (see MCP Tools below) |
+
+**MCP Tools:**
+| Tool | Purpose |
+|------|---------|
+| `session_send_input` | Inject command into session via orchestrator |
+| `session_get_insights` | Get insights for a session |
+| `orchestrator_status` | Get orchestrator status and stats |
+| `session_analyze` | Analyze session scrollback to understand agent activity |
+| `session_agent_info` | Get agent provider info (claude, codex, gemini, opencode) |
+| `project_metadata_detect` | Detect project stack, framework, dependencies |
 
 **Stall Detection Logic:**
 - Captures tmux scrollback buffer via `tmux capture-pane`
@@ -110,7 +120,7 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 **Lifecycle Flow:**
 ```
 User creates first session
-  → Master orchestrator auto-created with dedicated session
+  → Master Control auto-created with dedicated session
   → Monitoring starts automatically (30s interval)
   → Captures scrollback snapshots every cycle
   → Compares with previous snapshot via MD5 hash
@@ -280,7 +290,7 @@ Located in `src/services/`:
 | `AgentProfileService` | Agent profile CRUD, config file management |
 | `AgentProfileAppearanceService` | Per-profile appearance settings |
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
-| `OrchestratorService` | Orchestrator CRUD, master/sub-orchestrator management |
+| `OrchestratorService` | Master Control and Folder Control management |
 | `InsightService` | Insight generation, resolution, retrieval |
 | `MonitoringService` | Automated monitoring cycles, stall detection |
 
@@ -350,10 +360,10 @@ Remote Dev supports multiple AI coding agents with unified management:
 | `PathInput.tsx` | Text input with browse button for directory selection |
 | `AgentCLIStatusPanel.tsx` | CLI installation status for all supported agents |
 | `AgentProfileAppearanceSettings.tsx` | Per-profile theming with mode toggle and color schemes |
-| `OrchestratorStatusIndicator.tsx` | Header brain icon showing master orchestrator status |
+| `OrchestratorStatusIndicator.tsx` | Header brain icon showing Master Control status |
 | `InsightNotificationInbox.tsx` | Bell icon notification center for insights |
 | `StalledSessionBadge.tsx` | Session tab indicator for stall detection |
-| `SubOrchestratorConfigModal.tsx` | Create/configure folder sub-orchestrator |
+| `SubOrchestratorConfigModal.tsx` | Create/configure Folder Control |
 | `InsightDetailView.tsx` | Full insight card with context and actions |
 | `CommandInjectionDialog.tsx` | Confirm command injection dialog |
 | `AuditLogSidebar.tsx` | View orchestrator audit trail |
@@ -424,9 +434,9 @@ React Contexts in `src/contexts/`:
 - `POST /api/folders` - Create folder
 - `PATCH /api/folders/:id` - Update folder
 - `DELETE /api/folders/:id` - Delete folder
-- `GET /api/folders/:id/orchestrator` - Get folder's sub-orchestrator
-- `POST /api/folders/:id/orchestrator` - Create/get folder sub-orchestrator
-- `DELETE /api/folders/:id/orchestrator` - Delete folder's sub-orchestrator
+- `GET /api/folders/:id/orchestrator` - Get Folder Control agent
+- `POST /api/folders/:id/orchestrator` - Create/get Folder Control agent
+- `DELETE /api/folders/:id/orchestrator` - Delete Folder Control agent
 
 ### Orchestrators
 - `GET /api/orchestrators` - List user's orchestrators (master + sub)

@@ -445,11 +445,12 @@ export async function ensureMasterOrchestrator(
   // Import SessionService to create orchestrator session
   const SessionService = await import("./session-service");
 
-  // Create dedicated orchestrator session with isOrchestratorSession flag
+  // Create dedicated control session with isOrchestratorSession flag
+  // Master Control uses the default agent (can be any provider)
   const orchestratorSession = await SessionService.createSession(userId, {
-    name: "Master Orchestrator",
+    name: "Master Control",
     isOrchestratorSession: true,
-    agentProvider: "claude",
+    // Note: agentProvider intentionally omitted - Master Control is agent-agnostic
   });
 
   // Create master orchestrator
@@ -519,12 +520,13 @@ export async function ensureFolderSubOrchestrator(
 
   const folderName = folder[0].name;
 
-  // Create dedicated orchestrator session for this folder
+  // Create dedicated control session for this folder
+  // Folder Control is agent-agnostic and monitors all agent types
   const orchestratorSession = await SessionService.createSession(userId, {
-    name: `${folderName} Orchestrator`,
+    name: `${folderName} Control`,
     folderId, // Associate session with the folder
     isOrchestratorSession: true,
-    agentProvider: "claude",
+    // Note: agentProvider intentionally omitted - Folder Control is agent-agnostic
   });
 
   // Create sub-orchestrator with defaults
