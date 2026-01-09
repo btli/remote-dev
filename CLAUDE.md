@@ -480,3 +480,38 @@ See the `docs/` directory for detailed documentation:
 - `docs/SETUP.md` - Installation and configuration guide
 - `docs/API.md` - Complete API reference
 - `docs/openapi.yaml` - OpenAPI 3.0 specification (53 endpoints)
+
+## Changelog and Releases
+
+**All notable changes must be tracked in `CHANGELOG.md`** following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
+### When to Update CHANGELOG.md
+
+Update the changelog when making changes that are:
+- **Added**: New features or capabilities
+- **Changed**: Changes to existing functionality
+- **Deprecated**: Features marked for removal
+- **Removed**: Features that have been removed
+- **Fixed**: Bug fixes
+- **Security**: Security-related fixes
+
+### Changelog Format
+
+```markdown
+## [Unreleased]
+
+### Added
+- Description of new feature
+
+### Fixed
+- Description of bug fix
+```
+
+### Release Process
+
+1. Update `CHANGELOG.md` with all changes under `[Unreleased]`
+2. Change `[Unreleased]` to version number with date: `[X.Y.Z] - YYYY-MM-DD`
+3. Update `package.json` version
+4. Create git tag: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
+5. Push tag: `git push origin vX.Y.Z`
+6. Add new `[Unreleased]` section at top for future changes
