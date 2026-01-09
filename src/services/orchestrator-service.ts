@@ -549,6 +549,143 @@ export async function ensureFolderSubOrchestrator(
   };
 }
 
+/**
+ * Reinitialize master orchestrator for a user
+ *
+ * This will:
+ * 1. Stop any active monitoring
+ * 2. Delete the existing master orchestrator (if any)
+ * 3. Close the existing orchestrator session (if any)
+ * 4. Create a new master orchestrator with a new session
+ *
+ * Use this when the orchestrator is in a bad state or needs to be reset.
+ */
+export async function reinitializeMasterOrchestrator(
+  userId: string
+): Promise<{
+  orchestrator: Orchestrator;
+  sessionId: string;
+  previousOrchestrator?: { id: string; sessionId: string };
+}> {
+  const MonitoringService = await import("./monitoring-service");
+  const SessionService = await import("./session-service");
+
+  // Find existing master orchestrator
+  const existing = await getMasterOrchestrator(userId);
+  let previousOrchestrator: { id: string; sessionId: string } | undefined;
+
+  if (existing) {
+    previousOrchestrator = {
+      id: existing.id,
+      sessionId: existing.sessionId,
+    };
+
+    // Stop monitoring
+    MonitoringService.stopMonitoring(existing.id);
+
+    // Delete orchestrator record
+    await db
+      .delete(orchestratorSessions)
+      .where(eq(orchestratorSessions.id, existing.id));
+
+    // Close the orchestrator session
+    try {
+      await SessionService.closeSession(userId, existing.sessionId);
+    } catch (error) {
+      // Session might already be closed, ignore
+      console.log(`[OrchestratorService] Previous session already closed: ${existing.sessionId}`);
+    }
+
+    console.log(`[OrchestratorService] Deleted previous master orchestrator: ${existing.id}`);
+  }
+
+  // Create new master orchestrator
+  const result = await ensureMasterOrchestrator(userId);
+
+  // Start monitoring for new orchestrator
+  MonitoringService.startMonitoring(result.orchestrator.id, userId);
+
+  console.log(`[OrchestratorService] Created new master orchestrator: ${result.orchestrator.id}`);
+
+  return {
+    orchestrator: result.orchestrator,
+    sessionId: result.sessionId!,
+    previousOrchestrator,
+  };
+}
+
+/**
+ * Reinitialize folder orchestrator
+ *
+ * This will:
+ * 1. Stop any active monitoring
+ * 2. Delete the existing folder orchestrator (if any)
+ * 3. Close the existing orchestrator session (if any)
+ * 4. Create a new folder orchestrator with a new session
+ *
+ * Use this when the folder orchestrator is in a bad state or needs to be reset.
+ */
+export async function reinitializeFolderOrchestrator(
+  userId: string,
+  folderId: string,
+  config?: {
+    customInstructions?: string;
+    monitoringInterval?: number;
+    stallThreshold?: number;
+    autoIntervention?: boolean;
+  }
+): Promise<{
+  orchestrator: Orchestrator;
+  sessionId: string;
+  previousOrchestrator?: { id: string; sessionId: string };
+}> {
+  const MonitoringService = await import("./monitoring-service");
+  const SessionService = await import("./session-service");
+
+  // Find existing folder orchestrator
+  const existing = await getSubOrchestratorForFolder(folderId, userId);
+  let previousOrchestrator: { id: string; sessionId: string } | undefined;
+
+  if (existing) {
+    previousOrchestrator = {
+      id: existing.id,
+      sessionId: existing.sessionId,
+    };
+
+    // Stop monitoring
+    MonitoringService.stopMonitoring(existing.id);
+
+    // Delete orchestrator record
+    await db
+      .delete(orchestratorSessions)
+      .where(eq(orchestratorSessions.id, existing.id));
+
+    // Close the orchestrator session
+    try {
+      await SessionService.closeSession(userId, existing.sessionId);
+    } catch (error) {
+      // Session might already be closed, ignore
+      console.log(`[OrchestratorService] Previous session already closed: ${existing.sessionId}`);
+    }
+
+    console.log(`[OrchestratorService] Deleted previous folder orchestrator: ${existing.id}`);
+  }
+
+  // Create new folder orchestrator
+  const result = await ensureFolderSubOrchestrator(userId, folderId, config);
+
+  // Start monitoring for new orchestrator
+  MonitoringService.startMonitoring(result.orchestrator.id, userId);
+
+  console.log(`[OrchestratorService] Created new folder orchestrator: ${result.orchestrator.id}`);
+
+  return {
+    orchestrator: result.orchestrator,
+    sessionId: result.sessionId!,
+    previousOrchestrator,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Project Metadata Integration
 // ─────────────────────────────────────────────────────────────────────────────
