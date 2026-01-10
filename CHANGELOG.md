@@ -5,6 +5,8 @@ All notable changes to Remote Dev will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [0.2.0] - 2026-01-09
 
 ### Added
@@ -28,7 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Per-profile theming and appearance
 - **GitHub Issues Viewer**: View and create issues directly from the sidebar
 - **Enhanced GitHub Features**: Filtering, search, PR counts, and issue creation
-- **Test Infrastructure**: Vitest setup with domain layer and use case tests
+- **Comprehensive Test Suite**: 373 tests with 1087 assertions across:
+  - Unit tests for domain entities (Episode, Orchestrator, OrchestratorInsight, OrchestratorAuditLog)
+  - Unit tests for services (TaskDecomposition, AgentAssignment, DependencyResolver)
+  - Unit tests for heuristics (classifyTask, selectAgent, compareAgentsForTask)
+  - Integration tests for Orchestrator workflow, Episodic Memory, and Multi-Agent Coordination
+  - E2E tests for complete orchestrator lifecycle, episode recording, and session-agent workflows
+- **Multi-Agent Coordination Services**:
+  - TaskDecompositionService for breaking down complex tasks into subtasks
+  - AgentAssignmentService for intelligent agent selection and load balancing
+  - DependencyResolverService for task dependency graphs and execution ordering
+  - Agent heuristics with category-based classification (research, complex_code, quick_fix, etc.)
+- **Episodic Memory System**:
+  - Episode entity for recording agent task execution history
+  - EpisodeBuilder for fluent construction of episodes with actions, decisions, pivots
+  - Quality scoring and user feedback integration
+  - Context generation for similar future tasks
+- **LanceDB Vector Storage**: Embedding service and knowledge store for episodic memory retrieval
 - **Tmux Session Management**: UI in settings modal to view and manage orphaned tmux sessions
 - **GitHub Maintenance Modal**: Repository management with local repo operations
 - **Init Script**: Guided setup experience (`./scripts/init.sh`)
