@@ -190,6 +190,14 @@ pub async fn create_session(
             // Log error but don't fail session creation
             warn!("Failed to ensure Master Control for user {}: {}", user_id, e);
         }
+
+        // Auto-spin Folder Control for sessions created in a folder
+        if let Some(ref folder_id) = req.folder_id {
+            if let Err(e) = auto_spin_folder_control(&state, user_id, folder_id).await {
+                // Log error but don't fail session creation
+                warn!("Failed to auto-spin Folder Control for folder {}: {}", folder_id, e);
+            }
+        }
     }
 
     // Fetch the created session
@@ -240,6 +248,63 @@ async fn ensure_master_control(state: &AppState, user_id: &str) -> Result<(), St
         }
         Err(e) => Err(format!("Failed to check Master Control: {}", e)),
     }
+}
+
+/// Auto-spin Folder Control on first session creation in a folder.
+///
+/// Creates a "pending_bootstrap" Folder Control orchestrator if one doesn't exist.
+/// TypeScript's initializeOrchestrators() will detect this and complete bootstrap.
+async fn auto_spin_folder_control(
+    state: &AppState,
+    user_id: &str,
+    folder_id: &str,
+) -> Result<(), String> {
+    // Check if Folder Control already exists for this folder (including pending bootstrap)
+    let exists = state
+        .db
+        .folder_orchestrator_exists(user_id, folder_id)
+        .map_err(|e| e.to_string())?;
+
+    if exists {
+        // Folder Control already exists (active or pending)
+        info!("Folder Control already exists for folder {}", folder_id);
+        return Ok(());
+    }
+
+    // No Folder Control - create a pending orchestrator record
+    info!(
+        "Creating pending Folder Control for folder {} (user {})",
+        folder_id, user_id
+    );
+
+    let orchestrator_id = uuid::Uuid::new_v4().to_string();
+
+    // Create orchestrator with session_id = None and status = "pending_bootstrap"
+    // TypeScript's initializeOrchestrators() will detect this and complete bootstrap
+    state
+        .db
+        .create_orchestrator_simple(
+            &orchestrator_id,
+            user_id,
+            Some(folder_id), // scope_id for sub-orchestrators
+            None,            // session_id (None - will be linked after bootstrap)
+            "sub_orchestrator",
+            30,  // monitoring_interval
+            300, // stall_threshold
+        )
+        .map_err(|e| e.to_string())?;
+
+    // Update status to pending_bootstrap
+    state
+        .db
+        .update_orchestrator_status(&orchestrator_id, "pending_bootstrap")
+        .map_err(|e| e.to_string())?;
+
+    info!(
+        "Created pending Folder Control orchestrator: {}",
+        &orchestrator_id[..8]
+    );
+    Ok(())
 }
 
 /// Get a session by ID

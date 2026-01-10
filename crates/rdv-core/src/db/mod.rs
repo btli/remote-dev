@@ -578,6 +578,20 @@ impl Database {
             .optional()?)
     }
 
+    /// Check if a folder orchestrator exists (including pending bootstrap).
+    ///
+    /// Unlike get_folder_orchestrator, this doesn't require a session to exist.
+    pub fn folder_orchestrator_exists(&self, user_id: &str, folder_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_session
+             WHERE user_id = ?1 AND scope_id = ?2",
+            params![user_id, folder_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     /// List all orchestrators for user (returns OrchestratorSimple for REST API)
     pub fn list_orchestrators(&self, user_id: &str) -> Result<Vec<OrchestratorSimple>> {
         let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
