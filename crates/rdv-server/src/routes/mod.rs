@@ -6,6 +6,7 @@ pub mod hooks;
 pub mod knowledge;
 pub mod orchestrators;
 pub mod sessions;
+pub mod tokens;
 pub mod worktrees;
 
 use axum::{middleware, routing::get, Router};
@@ -27,6 +28,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(orchestrators::router())
         .merge(knowledge::router())
         .merge(hooks::router())
+        .merge(tokens::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

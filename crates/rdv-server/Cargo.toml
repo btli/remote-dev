@@ -12,8 +12,8 @@ name = "rdv-server"
 path = "src/main.rs"
 
 [dependencies]
-# Core library
-rdv-core = { path = "../rdv-core" }
+# Core library (with database support)
+rdv-core = { path = "../rdv-core", features = ["db"] }
 
 # Async runtime
 tokio.workspace = true
@@ -39,6 +39,9 @@ tracing-subscriber.workspace = true
 
 # Auth
 base64.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
 
 # Utilities
 uuid.workspace = true

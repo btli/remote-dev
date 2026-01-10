@@ -44,10 +44,22 @@ impl CLITokenRegistry {
         None
     }
 
-    #[allow(dead_code)]
     pub async fn add(&self, entry: CLITokenEntry) {
         let mut tokens = self.tokens.write().await;
         tokens.insert(entry.token_id.clone(), entry);
+    }
+
+    pub async fn remove(&self, token_id: &str) {
+        let mut tokens = self.tokens.write().await;
+        tokens.remove(token_id);
+    }
+
+    /// Load tokens from database entries
+    pub async fn load_from_db(&self, entries: Vec<CLITokenEntry>) {
+        let mut tokens = self.tokens.write().await;
+        for entry in entries {
+            tokens.insert(entry.token_id.clone(), entry);
+        }
     }
 }
 

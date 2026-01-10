@@ -332,3 +332,57 @@ pub struct NewProjectKnowledge {
     pub folder_id: String,
     pub user_id: String,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLI Token Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CLI token for programmatic API access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CLIToken {
+    pub id: String,
+    pub user_id: String,
+    /// User-friendly name (e.g., "CI Pipeline", "Orchestrator Agent")
+    pub name: String,
+    /// First 8 chars for identification (e.g., "rdv_abc1")
+    pub key_prefix: String,
+    /// SHA-256 hash of the full key (not the raw key)
+    pub key_hash: String,
+    pub last_used_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    pub created_at: i64,
+}
+
+/// Input for creating a new CLI token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewCLIToken {
+    pub user_id: String,
+    pub name: String,
+    /// Optional expiration timestamp (milliseconds since epoch)
+    pub expires_at: Option<i64>,
+}
+
+/// Response when creating a CLI token (includes the raw key, shown only once)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CLITokenCreateResponse {
+    pub id: String,
+    pub name: String,
+    pub key_prefix: String,
+    /// The full raw key - ONLY returned on creation, never stored
+    pub raw_key: String,
+    pub expires_at: Option<i64>,
+    pub created_at: i64,
+}
+
+/// CLI token for validation (includes hash for comparison)
+#[derive(Debug, Clone)]
+pub struct CLITokenValidation {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub key_hash: String,
+    pub expires_at: Option<i64>,
+}

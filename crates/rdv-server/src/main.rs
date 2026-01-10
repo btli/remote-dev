@@ -62,6 +62,9 @@ async fn main() -> anyhow::Result<()> {
     // Create application state
     let state = AppState::new(config.clone(), db, service_token);
 
+    // Load CLI tokens from database
+    load_cli_tokens(&state).await?;
+
     // Create router
     let app = routes::create_router(state.clone());
 
@@ -178,6 +181,37 @@ fn cleanup(config: &Config) {
     let _ = fs::remove_file(&config.api_socket);
     let _ = fs::remove_file(&config.terminal_socket);
     info!("Cleaned up server files");
+}
+
+/// Load CLI tokens from database into memory for fast validation
+async fn load_cli_tokens(state: &std::sync::Arc<AppState>) -> anyhow::Result<()> {
+    let tokens = state
+        .db
+        .get_all_cli_tokens_for_validation()
+        .context("Failed to load CLI tokens")?;
+
+    let count = tokens.len();
+    let entries: Vec<state::CLITokenEntry> = tokens
+        .into_iter()
+        .map(|t| {
+            // Decode hex hash to bytes for in-memory comparison
+            let hash_bytes = hex::decode(&t.key_hash).unwrap_or_else(|_| vec![0u8; 32]);
+            let mut token_hash = [0u8; 32];
+            if hash_bytes.len() >= 32 {
+                token_hash.copy_from_slice(&hash_bytes[..32]);
+            }
+            state::CLITokenEntry {
+                token_hash,
+                user_id: t.user_id,
+                token_id: t.id,
+                name: t.name,
+            }
+        })
+        .collect();
+
+    state.cli_tokens.load_from_db(entries).await;
+    info!("Loaded {} CLI tokens from database", count);
+    Ok(())
 }
 
 /// Wait for shutdown signal

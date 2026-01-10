@@ -1464,4 +1464,180 @@ impl Database {
         conn.execute("DELETE FROM project_knowledge WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CLI Token Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// List all CLI tokens for a user (excludes the key_hash for security)
+    pub fn list_cli_tokens(&self, user_id: &str) -> Result<Vec<CLIToken>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, key_prefix, key_hash, last_used_at, expires_at, created_at
+             FROM api_key
+             WHERE user_id = ?1
+             ORDER BY created_at DESC",
+        )?;
+
+        let tokens = stmt
+            .query_map(params![user_id], |row| {
+                Ok(CLIToken {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    name: row.get(2)?,
+                    key_prefix: row.get(3)?,
+                    key_hash: row.get(4)?,
+                    last_used_at: row.get(5)?,
+                    expires_at: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(tokens)
+    }
+
+    /// Get a CLI token by ID
+    pub fn get_cli_token(&self, id: &str, user_id: &str) -> Result<Option<CLIToken>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let token = conn
+            .query_row(
+                "SELECT id, user_id, name, key_prefix, key_hash, last_used_at, expires_at, created_at
+                 FROM api_key
+                 WHERE id = ?1 AND user_id = ?2",
+                params![id, user_id],
+                |row| {
+                    Ok(CLIToken {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        name: row.get(2)?,
+                        key_prefix: row.get(3)?,
+                        key_hash: row.get(4)?,
+                        last_used_at: row.get(5)?,
+                        expires_at: row.get(6)?,
+                        created_at: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(token)
+    }
+
+    /// Get a CLI token by prefix (for display/identification)
+    pub fn get_cli_token_by_prefix(&self, prefix: &str, user_id: &str) -> Result<Option<CLIToken>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let token = conn
+            .query_row(
+                "SELECT id, user_id, name, key_prefix, key_hash, last_used_at, expires_at, created_at
+                 FROM api_key
+                 WHERE key_prefix = ?1 AND user_id = ?2",
+                params![prefix, user_id],
+                |row| {
+                    Ok(CLIToken {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        name: row.get(2)?,
+                        key_prefix: row.get(3)?,
+                        key_hash: row.get(4)?,
+                        last_used_at: row.get(5)?,
+                        expires_at: row.get(6)?,
+                        created_at: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(token)
+    }
+
+    /// Create a new CLI token (stores the hash, not the raw key)
+    pub fn create_cli_token(
+        &self,
+        id: &str,
+        user_id: &str,
+        name: &str,
+        key_prefix: &str,
+        key_hash: &str,
+        expires_at: Option<i64>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        conn.execute(
+            "INSERT INTO api_key (id, user_id, name, key_prefix, key_hash, expires_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, user_id, name, key_prefix, key_hash, expires_at, now],
+        )?;
+
+        Ok(())
+    }
+
+    /// Revoke (delete) a CLI token
+    pub fn revoke_cli_token(&self, id: &str, user_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute(
+            "DELETE FROM api_key WHERE id = ?1 AND user_id = ?2",
+            params![id, user_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Update last_used_at timestamp for a token
+    pub fn update_cli_token_last_used(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "UPDATE api_key SET last_used_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(())
+    }
+
+    /// Get all CLI tokens for validation (used by auth middleware on startup)
+    pub fn get_all_cli_tokens_for_validation(&self) -> Result<Vec<CLITokenValidation>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, key_hash, expires_at
+             FROM api_key",
+        )?;
+
+        let tokens = stmt
+            .query_map([], |row| {
+                Ok(CLITokenValidation {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    name: row.get(2)?,
+                    key_hash: row.get(3)?,
+                    expires_at: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(tokens)
+    }
+
+    /// Validate a CLI token hash and return token info if valid
+    pub fn validate_cli_token_hash(&self, key_hash: &str) -> Result<Option<CLITokenValidation>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let token = conn
+            .query_row(
+                "SELECT id, user_id, name, key_hash, expires_at
+                 FROM api_key
+                 WHERE key_hash = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+                params![key_hash, now],
+                |row| {
+                    Ok(CLITokenValidation {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        name: row.get(2)?,
+                        key_hash: row.get(3)?,
+                        expires_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        Ok(token)
+    }
 }

@@ -10,12 +10,14 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use crate::state::AppState;
 
 /// Authentication context extracted from request
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AuthContext {
     /// Authenticated via service token (from Next.js)
     Service { user_id: String },
@@ -35,6 +37,7 @@ impl AuthContext {
 
 /// Authentication error
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum AuthError {
     MissingToken,
     InvalidToken,
@@ -102,12 +105,12 @@ pub async fn auth_middleware(
     // Remove "Bearer " prefix if present
     let token_str = token_str.trim_start_matches("Bearer ").trim();
 
-    // Decode token
+    // Decode token (base64)
     let token_bytes = STANDARD
         .decode(token_str)
         .map_err(|_| AuthError::InvalidToken)?;
 
-    // Check against service token first
+    // Check against service token first (raw bytes comparison)
     let auth_context = if state.service_token.verify(&token_bytes) {
         // Service token - extract user from header
         let user_id = request
@@ -118,14 +121,19 @@ pub async fn auth_middleware(
             .ok_or(AuthError::MissingUserId)?;
 
         AuthContext::Service { user_id }
-    } else if let Some(cli_token) = state.cli_tokens.validate(&token_bytes).await {
-        // CLI token - user is embedded in token
-        AuthContext::CLI {
-            user_id: cli_token.user_id,
-            token_id: cli_token.token_id,
-        }
     } else {
-        return Err(AuthError::InvalidToken);
+        // CLI token - hash the token and validate
+        // The stored hash is SHA-256 of the raw key string (not the bytes)
+        let token_hash = hash_token(token_str);
+
+        if let Some(cli_token) = state.cli_tokens.validate(&token_hash).await {
+            AuthContext::CLI {
+                user_id: cli_token.user_id,
+                token_id: cli_token.token_id,
+            }
+        } else {
+            return Err(AuthError::InvalidToken);
+        }
     };
 
     // Add auth context to request extensions
@@ -134,7 +142,18 @@ pub async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
+/// Hash a CLI token using SHA-256
+fn hash_token(token_str: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(token_str.as_bytes());
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    hash
+}
+
 /// Extract auth context from request extensions
+#[allow(dead_code)]
 pub fn extract_auth(request: &Request<Body>) -> Option<&AuthContext> {
     request.extensions().get::<AuthContext>()
 }
