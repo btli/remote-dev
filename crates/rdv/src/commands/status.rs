@@ -16,8 +16,8 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
-use crate::api::ApiClient;
 use crate::config::Config;
+use crate::db::Database;
 use crate::tmux;
 
 /// Full system status for JSON output.
@@ -110,7 +110,7 @@ pub async fn execute(json: bool, config: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn gather_status(config: &Config) -> Result<SystemStatus> {
+async fn gather_status(_config: &Config) -> Result<SystemStatus> {
     // Get tmux sessions
     let tmux_sessions = tmux::list_sessions().unwrap_or_default();
 
@@ -184,10 +184,10 @@ async fn gather_status(config: &Config) -> Result<SystemStatus> {
         issues.push("tmux not installed".to_string());
     }
 
-    let api = ApiClient::new(config)?;
-    let api_ok = api.health_check().await.unwrap_or(false);
-    if !api_ok {
-        issues.push("API not reachable".to_string());
+    // Check database connectivity (replaces API health check)
+    let db_ok = Database::open().is_ok();
+    if !db_ok {
+        issues.push("Database not accessible".to_string());
     }
 
     let beads_ok = beads_available();
@@ -197,7 +197,7 @@ async fn gather_status(config: &Config) -> Result<SystemStatus> {
 
     let health = HealthStatus {
         tmux: tmux_ok,
-        api: api_ok,
+        api: db_ok, // Now represents database connectivity
         beads: beads_ok,
         issues,
     };
@@ -286,10 +286,10 @@ fn print_dashboard(status: &SystemStatus, _config: &Config) {
     println!("  {}", "System Health:".cyan().bold());
 
     let tmux_status = if status.health.tmux { "✓".green() } else { "✗".red() };
-    let api_status = if status.health.api { "✓".green() } else { "✗".red() };
+    let db_status = if status.health.api { "✓".green() } else { "✗".red() };
     let beads_status = if status.health.beads { "✓".green() } else { "✗".red() };
 
-    println!("    {} tmux   {} API   {} beads", tmux_status, api_status, beads_status);
+    println!("    {} tmux   {} DB   {} beads", tmux_status, db_status, beads_status);
 
     if !status.health.issues.is_empty() {
         println!();

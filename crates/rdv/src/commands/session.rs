@@ -7,7 +7,7 @@
 //! - Uses tmux directly for session control
 //! - No HTTP API needed for most operations
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::Colorize;
 use std::path::PathBuf;
 

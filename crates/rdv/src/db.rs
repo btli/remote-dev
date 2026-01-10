@@ -338,6 +338,57 @@ impl Database {
         Ok(insights)
     }
 
+    /// Create a new insight
+    pub fn create_insight(&self, insight: &NewInsight) -> Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        self.conn.execute(
+            "INSERT INTO orchestrator_insight
+             (id, orchestrator_id, session_id, type, severity, title, description,
+              context, suggested_actions, resolved, confidence, triggered_by, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12)",
+            params![
+                id,
+                insight.orchestrator_id,
+                insight.session_id,
+                insight.insight_type,
+                insight.severity,
+                insight.title,
+                insight.description,
+                insight.context,
+                insight.suggested_actions,
+                insight.confidence,
+                insight.triggered_by,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Resolve an insight
+    pub fn resolve_insight(&self, insight_id: &str, resolved_by: &str, notes: Option<&str>) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.conn.execute(
+            "UPDATE orchestrator_insight SET resolved = 1, resolved_at = ?1, resolved_by = ?2, resolution_notes = ?3
+             WHERE id = ?4",
+            params![now, resolved_by, notes, insight_id],
+        )?;
+        Ok(())
+    }
+
+    /// Check if there's an unresolved stall insight for this session
+    pub fn has_unresolved_stall_insight(&self, session_id: &str) -> Result<bool> {
+        let count: u32 = self.conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_insight
+             WHERE session_id = ?1 AND type = 'stall' AND resolved = 0",
+            params![session_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // User Operations
     // ─────────────────────────────────────────────────────────────────────────
@@ -374,6 +425,172 @@ impl Database {
         })
         .optional()
         .context("Failed to get user by email")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Task Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// List tasks for a user
+    pub fn list_tasks(&self, user_id: &str, status: Option<&str>) -> Result<Vec<Task>> {
+        let sql = match status {
+            Some(_) => {
+                "SELECT id, orchestrator_id, user_id, folder_id, description, type, status,
+                        confidence, estimated_duration, assigned_agent, delegation_id,
+                        beads_issue_id, context_injected, result_json, error_json,
+                        created_at, updated_at, completed_at
+                 FROM tasks WHERE user_id = ?1 AND status = ?2
+                 ORDER BY created_at DESC"
+            }
+            None => {
+                "SELECT id, orchestrator_id, user_id, folder_id, description, type, status,
+                        confidence, estimated_duration, assigned_agent, delegation_id,
+                        beads_issue_id, context_injected, result_json, error_json,
+                        created_at, updated_at, completed_at
+                 FROM tasks WHERE user_id = ?1
+                 ORDER BY created_at DESC"
+            }
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let tasks = if let Some(s) = status {
+            stmt.query_map(params![user_id, s], Self::map_task)?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![user_id], Self::map_task)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        Ok(tasks)
+    }
+
+    /// Get task by ID
+    pub fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, orchestrator_id, user_id, folder_id, description, type, status,
+                    confidence, estimated_duration, assigned_agent, delegation_id,
+                    beads_issue_id, context_injected, result_json, error_json,
+                    created_at, updated_at, completed_at
+             FROM tasks WHERE id = ?1"
+        )?;
+
+        stmt.query_row(params![task_id], Self::map_task)
+            .optional()
+            .context("Failed to get task")
+    }
+
+    /// Get task by beads issue ID
+    pub fn get_task_by_beads_id(&self, beads_id: &str) -> Result<Option<Task>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, orchestrator_id, user_id, folder_id, description, type, status,
+                    confidence, estimated_duration, assigned_agent, delegation_id,
+                    beads_issue_id, context_injected, result_json, error_json,
+                    created_at, updated_at, completed_at
+             FROM tasks WHERE beads_issue_id = ?1"
+        )?;
+
+        stmt.query_row(params![beads_id], Self::map_task)
+            .optional()
+            .context("Failed to get task by beads ID")
+    }
+
+    /// Update task status
+    pub fn update_task_status(&self, task_id: &str, status: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        if status == "completed" || status == "failed" {
+            self.conn.execute(
+                "UPDATE tasks SET status = ?1, updated_at = ?2, completed_at = ?2 WHERE id = ?3",
+                params![status, now, task_id],
+            )?;
+        } else {
+            self.conn.execute(
+                "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![status, now, task_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn map_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
+        Ok(Task {
+            id: row.get(0)?,
+            orchestrator_id: row.get(1)?,
+            user_id: row.get(2)?,
+            folder_id: row.get(3)?,
+            description: row.get(4)?,
+            task_type: row.get(5)?,
+            status: row.get(6)?,
+            confidence: row.get(7)?,
+            estimated_duration: row.get(8)?,
+            assigned_agent: row.get(9)?,
+            delegation_id: row.get(10)?,
+            beads_issue_id: row.get(11)?,
+            context_injected: row.get(12)?,
+            result_json: row.get(13)?,
+            error_json: row.get(14)?,
+            created_at: row.get(15)?,
+            updated_at: row.get(16)?,
+            completed_at: row.get(17)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Monitoring Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get sessions that may be stalled (no activity for threshold_secs)
+    pub fn get_stalled_sessions(&self, user_id: &str, threshold_secs: i64) -> Result<Vec<StalledSession>> {
+        let threshold_ms = chrono::Utc::now().timestamp_millis() - (threshold_secs * 1000);
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, tmux_session_name, folder_id, last_activity_at
+             FROM terminal_session
+             WHERE user_id = ?1
+               AND status = 'active'
+               AND (last_activity_at IS NULL OR last_activity_at < ?2)
+             ORDER BY last_activity_at ASC"
+        )?;
+
+        let sessions = stmt.query_map(params![user_id, threshold_ms], |row| {
+            let last_activity: Option<i64> = row.get(4)?;
+            let stalled_minutes = if let Some(last) = last_activity {
+                let now = chrono::Utc::now().timestamp_millis();
+                ((now - last) / 60000) as i32
+            } else {
+                -1 // Unknown, never had activity
+            };
+            Ok(StalledSession {
+                session_id: row.get(0)?,
+                session_name: row.get(1)?,
+                tmux_session_name: row.get(2)?,
+                folder_id: row.get(3)?,
+                last_activity_at: last_activity,
+                stalled_minutes,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(sessions)
+    }
+
+    /// Update session last activity timestamp
+    pub fn update_session_activity(&self, session_id: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.conn.execute(
+            "UPDATE terminal_session SET last_activity_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![now, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Get active session count for user
+    pub fn get_active_session_count(&self, user_id: &str) -> Result<u32> {
+        let count: u32 = self.conn.query_row(
+            "SELECT COUNT(*) FROM terminal_session WHERE user_id = ?1 AND status = 'active'",
+            params![user_id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
     }
 }
 
@@ -451,4 +668,51 @@ pub struct Insight {
     pub confidence: f64,
     pub triggered_by: String,
     pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub orchestrator_id: Option<String>,
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub description: String,
+    pub task_type: String,
+    pub status: String,
+    pub confidence: Option<f64>,
+    pub estimated_duration: Option<i32>,
+    pub assigned_agent: Option<String>,
+    pub delegation_id: Option<String>,
+    pub beads_issue_id: Option<String>,
+    pub context_injected: bool,
+    pub result_json: Option<String>,
+    pub error_json: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub completed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StalledSession {
+    pub session_id: String,
+    pub session_name: String,
+    pub tmux_session_name: String,
+    pub folder_id: Option<String>,
+    pub last_activity_at: Option<i64>,
+    pub stalled_minutes: i32,
+}
+
+/// Input struct for creating a new insight
+#[derive(Debug, Clone)]
+pub struct NewInsight {
+    pub orchestrator_id: String,
+    pub session_id: Option<String>,
+    pub insight_type: String,
+    pub severity: String,
+    pub title: String,
+    pub description: String,
+    pub context: Option<String>,
+    pub suggested_actions: Option<String>,
+    pub confidence: f64,
+    pub triggered_by: String,
 }

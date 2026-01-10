@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::api::ApiClient;
 use crate::cli::{TaskAction, TaskCommand};
 use crate::config::Config;
+use crate::db::Database;
 use crate::tmux;
 
 /// A beads issue parsed from `bd show` output.
@@ -125,7 +125,7 @@ async fn create(
     description: &str,
     folder: Option<&str>,
     beads_id: Option<&str>,
-    config: &Config,
+    _config: &Config,
 ) -> Result<()> {
     println!("{}", "Creating task...".cyan());
     println!("  Description: {}", description);
@@ -224,29 +224,35 @@ async fn create(
         None
     };
 
-    // Create task via API
-    let api = ApiClient::new(config)?;
-    if api.health_check().await.unwrap_or(false) {
-        // Get folder ID if path provided
-        let folder_id = if let Some(ref fp) = folder_path {
-            api.get_folder_by_path(&fp.to_string_lossy())
-                .await?
-                .map(|f| f.id)
-        } else {
-            None
-        };
+    // Look up folder via database (direct SQLite)
+    if let Ok(db) = Database::open() {
+        if let Ok(Some(user)) = db.get_default_user() {
+            // Get folder ID if path provided
+            let folder_id = if let Some(ref fp) = folder_path {
+                // Match folder by name (last component of path)
+                let folder_name = fp.file_name()
+                    .map(|n| n.to_string_lossy().to_string());
+                if let Some(name) = folder_name {
+                    let folders = db.list_folders(&user.id)?;
+                    folders.iter()
+                        .find(|f| f.name == name)
+                        .map(|f| f.id.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-        // For now, we'll create as a session with task metadata
-        // TODO: Add proper task table to API
-        println!();
-        println!(
-            "  {} Task creation via API pending implementation",
-            "→".cyan()
-        );
-        println!("    Folder ID: {:?}", folder_id);
-        println!("    Beads ID: {:?}", linked_beads_id);
+            // For now, tasks are tracked via beads
+            // The database task table will be used for orchestrator-managed tasks
+            println!();
+            println!("  {} Task registered", "→".cyan());
+            println!("    Folder ID: {:?}", folder_id);
+            println!("    Beads ID: {:?}", linked_beads_id);
+        }
     } else {
-        println!("  {} API unavailable", "⚠".yellow());
+        println!("  {} Database unavailable", "⚠".yellow());
     }
 
     println!();

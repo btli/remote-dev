@@ -329,6 +329,76 @@ Remote Dev supports multiple AI coding agents with unified management:
 └── .env               # Secrets from provider
 ```
 
+### rdv CLI (Rust Orchestration Tool)
+
+The `rdv` CLI is a Rust-based tool for multi-agent orchestration. It uses **direct SQLite database access** (no HTTP API) and **tmux** for session management.
+
+**Location:** `crates/rdv/`
+
+**Build and Install:**
+```bash
+cd crates/rdv
+cargo build --release
+# Binary at target/release/rdv
+```
+
+**Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `rdv master init` | Initialize Master Control |
+| `rdv master start [--foreground]` | Start Master Control |
+| `rdv master stop` | Stop Master Control |
+| `rdv master status` | Show Master Control status |
+| `rdv master attach` | Attach to Master Control session |
+| `rdv folder init [path]` | Initialize folder orchestrator |
+| `rdv folder start [path]` | Start folder orchestrator |
+| `rdv folder stop [path]` | Stop folder orchestrator |
+| `rdv folder status [path]` | Show folder orchestrator status |
+| `rdv folder list` | List all folder orchestrators |
+| `rdv session spawn <folder> [-a agent]` | Spawn task session |
+| `rdv session list [-f folder]` | List sessions |
+| `rdv session attach <id>` | Attach to session |
+| `rdv session inject <id> <context>` | Inject context |
+| `rdv session scrollback <id>` | Get scrollback content |
+| `rdv task create <desc> [-f folder]` | Create task (with beads) |
+| `rdv task list [--status]` | List tasks |
+| `rdv task execute <id>` | Execute planned task |
+| `rdv monitor start [--foreground]` | Start monitoring service |
+| `rdv monitor status` | Show monitoring status |
+| `rdv monitor check <session>` | Check session health |
+| `rdv status [--json]` | System status dashboard |
+| `rdv doctor` | Run diagnostics |
+
+**Database Integration:**
+- Direct SQLite access via `rusqlite` (no HTTP API)
+- Reads/writes same `sqlite.db` as Next.js
+- Uses `RDV_DATABASE_PATH` env or auto-discovers `sqlite.db`
+
+**Monitoring Integration:**
+- Captures tmux scrollback and computes MD5 hash
+- Detects stalls via hash comparison (threshold: 5 minutes)
+- Creates insights directly in `orchestrator_insight` table
+- Updates `terminal_session.last_activity_at` for heartbeats
+- Confidence scoring: `0.7 + (0.05 × extra_minutes)`, reduced 50% if < 5 lines
+
+**Beads Integration:**
+- Tasks can link to beads issues (`bd` CLI)
+- Auto-creates beads issues on task creation
+- Updates beads status on task completion
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `crates/rdv/src/db.rs` | Direct SQLite database operations |
+| `crates/rdv/src/tmux.rs` | tmux session management |
+| `crates/rdv/src/commands/monitor.rs` | Monitoring service with DB integration |
+| `crates/rdv/src/commands/master.rs` | Master Control commands |
+| `crates/rdv/src/commands/folder.rs` | Folder orchestrator commands |
+| `crates/rdv/src/commands/session.rs` | Session management commands |
+| `crates/rdv/src/commands/task.rs` | Task lifecycle commands |
+| `crates/rdv/src/config.rs` | Configuration management |
+
 ### UI Components
 
 - **shadcn/ui** components in `src/components/ui/`

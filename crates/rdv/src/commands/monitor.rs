@@ -5,6 +5,12 @@
 //! - Computes MD5 hash
 //! - Compares with previous hash to detect stalls
 //! - Generates insights for stalled sessions
+//! - Updates session activity in database (heartbeats)
+//!
+//! Integration with Next.js MonitoringService:
+//! - Uses direct SQLite database access for state persistence
+//! - Creates insights directly in orchestrator_insight table
+//! - Updates terminal_session.last_activity_at for heartbeat tracking
 //!
 //! Stall detection logic:
 //! - If hash unchanged for > stall_threshold_secs, session is considered stalled
@@ -19,6 +25,7 @@ use std::collections::HashMap;
 
 use crate::cli::{MonitorAction, MonitorCommand};
 use crate::config::Config;
+use crate::db::{Database, NewInsight};
 use crate::tmux;
 
 /// Monitoring state persisted to disk.
@@ -124,6 +131,26 @@ async fn run_monitoring_loop(interval: u64, config: &Config) -> Result<()> {
     let mut state = MonitorState::load(config).unwrap_or_default();
     let mut cycle = 0u64;
 
+    // Open database connection for session activity updates and insights
+    let db = Database::open().ok();
+    let (_user_id, orchestrator_id) = if let Some(ref db) = db {
+        let uid = db.get_default_user().ok().flatten().map(|u| u.id);
+        let oid = if let Some(ref u) = uid {
+            db.get_master_orchestrator(u).ok().flatten().map(|o| o.id)
+        } else {
+            None
+        };
+        (uid, oid)
+    } else {
+        (None, None)
+    };
+
+    if db.is_some() {
+        println!("  {} Database connected for activity tracking", "✓".green());
+    } else {
+        println!("  {} Database unavailable, using local state only", "⚠".yellow());
+    }
+
     loop {
         cycle += 1;
         let now = Utc::now();
@@ -156,6 +183,63 @@ async fn run_monitoring_loop(interval: u64, config: &Config) -> Result<()> {
             for session in task_sessions {
                 match check_and_update_session(&session.name, &mut state, config).await {
                     Ok(health) => {
+                        // Update session activity in database (heartbeat)
+                        if let Some(ref db) = db {
+                            // Look up session ID from tmux name
+                            if let Ok(Some(db_session)) = db.get_session_by_tmux_name(&session.name) {
+                                if health.hash_changed {
+                                    // Session is active - update activity timestamp
+                                    let _ = db.update_session_activity(&db_session.id);
+                                }
+
+                                // Create insight if stalled and no existing unresolved stall insight
+                                if health.is_stalled {
+                                    if let (Some(ref oid), false) = (
+                                        &orchestrator_id,
+                                        db.has_unresolved_stall_insight(&db_session.id).unwrap_or(true),
+                                    ) {
+                                        let stall_mins = health.stall_duration_secs / 60;
+                                        let severity = if health.confidence > 0.85 {
+                                            "high"
+                                        } else if health.confidence > 0.75 {
+                                            "medium"
+                                        } else {
+                                            "low"
+                                        };
+
+                                        let insight = NewInsight {
+                                            orchestrator_id: oid.clone(),
+                                            session_id: Some(db_session.id.clone()),
+                                            insight_type: "stall".to_string(),
+                                            severity: severity.to_string(),
+                                            title: format!("Session stalled for {}m", stall_mins),
+                                            description: format!(
+                                                "Session '{}' has had no activity for {} minutes. Scrollback hash unchanged.",
+                                                session.name, stall_mins
+                                            ),
+                                            context: Some(format!(
+                                                "{{\"tmux_session\":\"{}\",\"line_count\":{},\"hash\":\"{}\"}}",
+                                                session.name, health.line_count, health.hash
+                                            )),
+                                            suggested_actions: Some(
+                                                "[\"Send nudge\",\"Check agent status\",\"Review scrollback\"]".to_string()
+                                            ),
+                                            confidence: health.confidence,
+                                            triggered_by: "rdv_monitor".to_string(),
+                                        };
+
+                                        if let Ok(insight_id) = db.create_insight(&insight) {
+                                            println!(
+                                                "  {} Created insight {} for stall",
+                                                "→".cyan(),
+                                                &insight_id[..8]
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if health.is_stalled {
                             let stall_mins = health.stall_duration_secs / 60;
                             println!(
