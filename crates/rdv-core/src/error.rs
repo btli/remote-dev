@@ -68,6 +68,10 @@ pub enum Error {
     #[error("Command failed: {cmd}\n{stderr}")]
     CommandFailed { cmd: String, stderr: String },
 
+    // Serialization errors
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
     // Generic errors
     #[error("{0}")]
     Other(String),

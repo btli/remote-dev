@@ -198,3 +198,135 @@ pub struct GitHubRepository {
     pub added_at: i64,
     pub updated_at: i64,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project Knowledge Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Project knowledge metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectKnowledgeMetadata {
+    pub project_name: Option<String>,
+    pub project_path: Option<String>,
+    pub framework: Option<String>,
+    pub package_manager: Option<String>,
+    pub test_runner: Option<String>,
+    pub linter: Option<String>,
+    pub build_tool: Option<String>,
+}
+
+/// Convention entry in project knowledge
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Convention {
+    pub id: String,
+    pub category: String,
+    pub description: String,
+    pub examples: Vec<String>,
+    pub confidence: f64,
+    pub source: String,
+    pub created_at: i64,
+}
+
+/// Learned pattern in project knowledge
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnedPattern {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub pattern_type: String,
+    pub description: String,
+    pub context: String,
+    pub confidence: f64,
+    pub usage_count: i32,
+    pub last_used_at: Option<i64>,
+    pub created_at: i64,
+}
+
+/// Skill definition in project knowledge
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDefinition {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub command: String,
+    pub steps: Vec<SkillStep>,
+    pub triggers: Vec<String>,
+    pub scope: String,
+    pub verified: bool,
+    pub usage_count: i32,
+    pub created_at: i64,
+}
+
+/// Step within a skill
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillStep {
+    pub description: String,
+    pub command: Option<String>,
+}
+
+/// Tool definition in project knowledge
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDefinition {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub implementation: ToolImplementation,
+    pub triggers: Vec<String>,
+    pub confidence: f64,
+    pub verified: bool,
+    pub created_at: i64,
+}
+
+/// Tool implementation details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolImplementation {
+    #[serde(rename = "type")]
+    pub impl_type: String,
+    pub code: String,
+}
+
+/// Agent performance metrics
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentPerformance(pub std::collections::HashMap<String, std::collections::HashMap<String, TaskMetrics>>);
+
+/// Task metrics for an agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskMetrics {
+    pub success_rate: f64,
+    pub avg_duration: f64,
+    pub total_tasks: i32,
+}
+
+/// Project knowledge for a folder
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectKnowledge {
+    pub id: String,
+    pub folder_id: String,
+    pub user_id: String,
+    pub tech_stack: Vec<String>,
+    pub conventions: Vec<Convention>,
+    pub patterns: Vec<LearnedPattern>,
+    pub skills: Vec<SkillDefinition>,
+    pub tools: Vec<ToolDefinition>,
+    pub agent_performance: AgentPerformance,
+    pub metadata: ProjectKnowledgeMetadata,
+    pub last_scanned_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for creating new project knowledge
+#[derive(Debug, Clone)]
+pub struct NewProjectKnowledge {
+    pub folder_id: String,
+    pub user_id: String,
+}

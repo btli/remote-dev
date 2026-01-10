@@ -1266,4 +1266,188 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(repos)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Project Knowledge Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get project knowledge by folder ID
+    pub fn get_project_knowledge_by_folder(&self, folder_id: &str, user_id: &str) -> Result<Option<ProjectKnowledge>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let result = conn
+            .query_row(
+                "SELECT id, folder_id, user_id, tech_stack_json, conventions_json, patterns_json,
+                        skills_json, tools_json, agent_performance_json, metadata_json,
+                        last_scanned_at, created_at, updated_at
+                 FROM project_knowledge
+                 WHERE folder_id = ?1 AND user_id = ?2",
+                params![folder_id, user_id],
+                |row| {
+                    let tech_stack_json: String = row.get(3)?;
+                    let conventions_json: String = row.get(4)?;
+                    let patterns_json: String = row.get(5)?;
+                    let skills_json: String = row.get(6)?;
+                    let tools_json: String = row.get(7)?;
+                    let agent_performance_json: String = row.get(8)?;
+                    let metadata_json: String = row.get(9)?;
+
+                    Ok((
+                        row.get::<_, String>(0)?,  // id
+                        row.get::<_, String>(1)?,  // folder_id
+                        row.get::<_, String>(2)?,  // user_id
+                        tech_stack_json,
+                        conventions_json,
+                        patterns_json,
+                        skills_json,
+                        tools_json,
+                        agent_performance_json,
+                        metadata_json,
+                        row.get::<_, Option<i64>>(10)?, // last_scanned_at
+                        row.get::<_, i64>(11)?,         // created_at
+                        row.get::<_, i64>(12)?,         // updated_at
+                    ))
+                },
+            )
+            .optional()?;
+
+        match result {
+            Some((id, folder_id, user_id, tech_stack_json, conventions_json, patterns_json,
+                  skills_json, tools_json, agent_performance_json, metadata_json,
+                  last_scanned_at, created_at, updated_at)) => {
+                let tech_stack: Vec<String> = serde_json::from_str(&tech_stack_json)
+                    .unwrap_or_default();
+                let conventions: Vec<Convention> = serde_json::from_str(&conventions_json)
+                    .unwrap_or_default();
+                let patterns: Vec<LearnedPattern> = serde_json::from_str(&patterns_json)
+                    .unwrap_or_default();
+                let skills: Vec<SkillDefinition> = serde_json::from_str(&skills_json)
+                    .unwrap_or_default();
+                let tools: Vec<ToolDefinition> = serde_json::from_str(&tools_json)
+                    .unwrap_or_default();
+                let agent_performance: AgentPerformance = serde_json::from_str(&agent_performance_json)
+                    .unwrap_or_default();
+                let metadata: ProjectKnowledgeMetadata = serde_json::from_str(&metadata_json)
+                    .unwrap_or(ProjectKnowledgeMetadata {
+                        project_name: None,
+                        project_path: None,
+                        framework: None,
+                        package_manager: None,
+                        test_runner: None,
+                        linter: None,
+                        build_tool: None,
+                    });
+
+                Ok(Some(ProjectKnowledge {
+                    id,
+                    folder_id,
+                    user_id,
+                    tech_stack,
+                    conventions,
+                    patterns,
+                    skills,
+                    tools,
+                    agent_performance,
+                    metadata,
+                    last_scanned_at,
+                    created_at,
+                    updated_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Create project knowledge for a folder
+    pub fn create_project_knowledge(&self, input: &NewProjectKnowledge) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let empty_array = "[]";
+        let empty_object = "{}";
+        let default_metadata = serde_json::json!({
+            "projectName": null,
+            "projectPath": null,
+            "framework": null,
+            "packageManager": null,
+            "testRunner": null,
+            "linter": null,
+            "buildTool": null
+        }).to_string();
+
+        conn.execute(
+            "INSERT INTO project_knowledge
+             (id, folder_id, user_id, tech_stack_json, conventions_json, patterns_json,
+              skills_json, tools_json, agent_performance_json, metadata_json,
+              last_scanned_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                id,
+                input.folder_id,
+                input.user_id,
+                empty_array,
+                empty_array,
+                empty_array,
+                empty_array,
+                empty_array,
+                empty_object,
+                default_metadata,
+                Option::<i64>::None,
+                now,
+                now
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Update project knowledge
+    pub fn update_project_knowledge(&self, knowledge: &ProjectKnowledge) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let tech_stack_json = serde_json::to_string(&knowledge.tech_stack)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let conventions_json = serde_json::to_string(&knowledge.conventions)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let patterns_json = serde_json::to_string(&knowledge.patterns)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let skills_json = serde_json::to_string(&knowledge.skills)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let tools_json = serde_json::to_string(&knowledge.tools)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let agent_performance_json = serde_json::to_string(&knowledge.agent_performance)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let metadata_json = serde_json::to_string(&knowledge.metadata)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "UPDATE project_knowledge SET
+             tech_stack_json = ?1, conventions_json = ?2, patterns_json = ?3,
+             skills_json = ?4, tools_json = ?5, agent_performance_json = ?6,
+             metadata_json = ?7, last_scanned_at = ?8, updated_at = ?9
+             WHERE id = ?10",
+            params![
+                tech_stack_json,
+                conventions_json,
+                patterns_json,
+                skills_json,
+                tools_json,
+                agent_performance_json,
+                metadata_json,
+                knowledge.last_scanned_at,
+                now,
+                knowledge.id
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    /// Delete project knowledge
+    pub fn delete_project_knowledge(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        conn.execute("DELETE FROM project_knowledge WHERE id = ?1", params![id])?;
+        Ok(())
+    }
 }

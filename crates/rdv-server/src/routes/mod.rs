@@ -2,6 +2,7 @@
 
 pub mod folders;
 pub mod health;
+pub mod knowledge;
 pub mod orchestrators;
 pub mod sessions;
 pub mod worktrees;
@@ -23,6 +24,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(folders::router())
         .merge(worktrees::router())
         .merge(orchestrators::router())
+        .merge(knowledge::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
