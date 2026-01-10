@@ -7,7 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
-  Brain, RefreshCw, BookOpen,
+  Brain, RefreshCw, BookOpen, Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -969,13 +969,22 @@ export function Sidebar({
                       : "text-purple-400/70"
                   )}
                 />
-              ) : (
-                <span
+              ) : session.agentProvider && session.agentProvider !== "none" ? (
+                <Bot
                   className={cn(
-                    "w-2 h-2 rounded-full",
+                    "w-4 h-4",
                     isActive
-                      ? "bg-primary animate-pulse"
-                      : "bg-muted-foreground"
+                      ? "text-blue-500 animate-pulse"
+                      : "text-blue-400/70"
+                  )}
+                />
+              ) : (
+                <Terminal
+                  className={cn(
+                    "w-4 h-4",
+                    isActive
+                      ? "text-primary animate-pulse"
+                      : "text-muted-foreground"
                   )}
                 />
               )}
@@ -1037,7 +1046,7 @@ export function Sidebar({
                 isDragOverSession && "bg-primary/20 border-primary/30"
               )}
             >
-            {/* Status indicator - Brain for orchestrator sessions, Terminal for regular */}
+            {/* Status indicator - Brain for orchestrator, Bot for agent, Terminal for shell */}
             {session.isOrchestratorSession ? (
               <Brain
                 className={cn(
@@ -1045,6 +1054,15 @@ export function Sidebar({
                   isActive
                     ? "text-purple-500"
                     : "text-purple-400/70"
+                )}
+              />
+            ) : session.agentProvider && session.agentProvider !== "none" ? (
+              <Bot
+                className={cn(
+                  "w-3.5 h-3.5 shrink-0",
+                  isActive
+                    ? "text-blue-500"
+                    : "text-blue-400/70"
                 )}
               />
             ) : (

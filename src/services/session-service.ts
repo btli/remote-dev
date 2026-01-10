@@ -258,7 +258,7 @@ export async function createSession(
         worktreeBranch: branchName ?? null,
         folderId: input.folderId ?? null,
         profileId: input.profileId ?? null,
-        agentProvider: input.agentProvider ?? "claude",
+        agentProvider: input.agentProvider ?? "none",
         isOrchestratorSession: input.isOrchestratorSession ?? false,
         status: "active",
         tabOrder: nextTabOrder,

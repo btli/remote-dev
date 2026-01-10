@@ -21,7 +21,7 @@ import { cn } from "@/lib/utils";
 import { RepositoryPicker } from "@/components/github/RepositoryPicker";
 import { BranchPicker } from "@/components/github/BranchPicker";
 import type { GitHubRepository, GitHubBranch } from "@/types/github";
-import { AGENT_PRESETS, type AgentPreset } from "@/types/session";
+import { AGENT_PRESETS, type AgentPreset, type AgentProviderType } from "@/types/session";
 
 interface NewSessionWizardProps {
   open: boolean;
@@ -37,6 +37,7 @@ interface NewSessionWizardProps {
     createWorktree?: boolean;
     baseBranch?: string;
     profileId?: string;
+    agentProvider?: AgentProviderType;
   }) => Promise<void>;
   isGitHubConnected: boolean;
 }
@@ -329,6 +330,14 @@ export function NewSessionWizard({
           ? customAgentCommand
           : AGENT_PRESETS.find((a) => a.id === selectedAgent)?.command;
 
+      // Map agent preset to provider type for icon display
+      const agentProvider: AgentProviderType =
+        selectedAgent === "claude" || selectedAgent === "clauded"
+          ? "claude"
+          : selectedAgent === "gemini" || selectedAgent === "geminy"
+            ? "gemini"
+            : "none";
+
       await onCreate({
         name: sessionName || featureDescription || "Feature Session",
         projectPath: featureProjectPath || undefined,
@@ -338,6 +347,7 @@ export function NewSessionWizard({
         baseBranch: featureBaseBranch,
         worktreeBranch: featureCreateWorktree ? generatedBranchName : undefined,
         profileId: selectedProfileId || undefined,
+        agentProvider,
       });
       handleClose();
     } catch (err) {

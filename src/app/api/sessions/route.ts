@@ -80,6 +80,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
       createWorktree?: boolean;
       baseBranch?: string;
       isOrchestratorSession?: boolean;
+      agentProvider?: string;
+      profileId?: string;
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -97,6 +99,9 @@ export const POST = withApiAuth(async (request, { userId }) => {
       worktreeBranch: body.worktreeBranch,
       folderId: body.folderId,
       isOrchestratorSession: body.isOrchestratorSession,
+      // Agent-aware session fields
+      agentProvider: body.agentProvider as CreateSessionInput["agentProvider"],
+      profileId: body.profileId,
       // Feature session fields
       startupCommand: body.startupCommand,
       featureDescription: body.featureDescription,

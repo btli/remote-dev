@@ -60,7 +60,7 @@ const knowledgeAdd = createTool({
     }
 
     // Get existing knowledge or create new
-    let existing = await db
+    const existing = await db
       .select()
       .from(projectKnowledge)
       .where(eq(projectKnowledge.folderId, input.folderId))
