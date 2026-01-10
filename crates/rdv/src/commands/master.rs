@@ -3,18 +3,16 @@
 //! Master Control is the system-wide orchestrator that coordinates
 //! across all projects and manages the agent pool.
 //!
-//! Direct database integration:
-//! - Reads orchestrator records from SQLite
-//! - Uses tmux directly for session control
-//! - No HTTP API needed for most operations
+//! Uses rdv-server API for all database operations via ApiClient.
 
 use anyhow::Result;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 
+use rdv_core::client::{ApiClient, CreateOrchestratorRequest, CreateSessionRequest};
+
 use crate::cli::{MasterAction, MasterCommand};
 use crate::config::Config;
-use crate::db::{Database, NewOrchestrator, NewSession};
 use crate::tmux;
 
 /// Local state file for Master Control.
@@ -68,15 +66,26 @@ async fn init(config: &Config) -> Result<()> {
     // Check tmux
     tmux::check_tmux()?;
 
-    // Check database connectivity (direct SQLite)
-    match Database::open() {
-        Ok(_) => {
-            println!("  {}", "✓ Database connection verified".green());
+    // Check rdv-server connectivity
+    match ApiClient::new() {
+        Ok(client) => {
+            match client.health().await {
+                Ok(_) => {
+                    println!("  {}", "✓ rdv-server connection verified".green());
+                }
+                Err(e) => {
+                    println!(
+                        "{}",
+                        format!("⚠ Warning: rdv-server not responding: {}", e).yellow()
+                    );
+                    println!("  Master Control will work with tmux only");
+                }
+            }
         }
         Err(e) => {
             println!(
                 "{}",
-                format!("⚠ Warning: Cannot access database: {}", e).yellow()
+                format!("⚠ Warning: Cannot connect to rdv-server: {}", e).yellow()
             );
             println!("  Master Control will work with tmux only");
         }
@@ -103,72 +112,56 @@ async fn start(foreground: bool, config: &Config) -> Result<()> {
     // Load existing state
     let mut state = MasterState::load(config).unwrap_or_default();
 
-    // Check database for existing orchestrator (direct SQLite)
-    let db = Database::open()?;
-    let user = db
-        .get_default_user()?
-        .ok_or_else(|| anyhow::anyhow!("No user found in database. Start the web UI first."))?;
+    // Connect to rdv-server
+    let client = ApiClient::new()?;
 
-    // Check for existing orchestrator
-    if let Ok(Some(orch)) = db.get_master_orchestrator(&user.id) {
+    // Check for existing master orchestrator
+    if let Some(orch) = client.get_master_orchestrator().await? {
         state.orchestrator_id = Some(orch.id.clone());
-        state.session_id = Some(orch.session_id.clone());
+        state.session_id = orch.session_id.clone();
         println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
 
         // Reactivate the session if it was suspended/closed
-        db.update_session_status(&orch.session_id, "active")?;
-        db.update_orchestrator_status(&orch.id, "idle")?;
+        if let Some(ref session_id) = orch.session_id {
+            client.update_session_status(session_id, "active").await?;
+        }
+        client.update_orchestrator_status(&orch.id, "idle").await?;
     } else {
-        // Check if there's an existing session with this tmux name (e.g., from previous run)
-        let existing_session = db.get_session_by_tmux_name(&session_name)?;
+        // No orchestrator - create session and orchestrator via API
+        println!("  {} Creating new Master Control via API...", "→".cyan());
 
-        let session_id = if let Some(existing) = existing_session {
-            // Reuse existing session
-            println!(
-                "  {} Reusing existing session: {}",
-                "→".cyan(),
-                &existing.id[..8]
-            );
-            db.update_session_status(&existing.id, "active")?;
-            existing.id
-        } else {
-            // No session exists - create new one
-            println!("  {} Creating new Master Control in database...", "→".cyan());
-
-            let new_id = db.create_session(&NewSession {
-                user_id: user.id.clone(),
-                name: "Master Control".to_string(),
-                tmux_session_name: session_name.clone(),
-                project_path: Some(config.paths.master_dir.to_string_lossy().to_string()),
-                folder_id: None,
-                worktree_branch: None,
-                agent_provider: Some(config.agents.default.clone()),
-                is_orchestrator_session: true,
-            })?;
-            println!("  {} Created session: {}", "✓".green(), &new_id[..8]);
-            new_id
-        };
+        // Create terminal session record
+        let session = client.create_session(&CreateSessionRequest {
+            name: "Master Control".to_string(),
+            project_path: Some(config.paths.master_dir.to_string_lossy().to_string()),
+            folder_id: None,
+            worktree_branch: None,
+            agent_provider: Some(config.agents.default.clone()),
+            is_orchestrator_session: Some(true),
+            shell_command: None,
+            environment: None,
+        }).await?;
+        println!("  {} Created session: {}", "✓".green(), &session.id[..8]);
 
         // Create orchestrator record
-        let orchestrator_id = db.create_orchestrator(&NewOrchestrator {
-            session_id: session_id.clone(),
-            user_id: user.id.clone(),
+        let orch = client.create_orchestrator(&CreateOrchestratorRequest {
+            session_id: session.id.clone(),
             orchestrator_type: "master".to_string(),
             scope_type: None,
             scope_id: None,
             custom_instructions: None,
-            monitoring_interval: 30,
-            stall_threshold: 300,
-            auto_intervention: false,
-        })?;
+            monitoring_interval: Some(30),
+            stall_threshold: Some(300),
+            auto_intervention: Some(false),
+        }).await?;
         println!(
             "  {} Created orchestrator: {}",
             "✓".green(),
-            &orchestrator_id[..8]
+            &orch.id[..8]
         );
 
-        state.orchestrator_id = Some(orchestrator_id);
-        state.session_id = Some(session_id);
+        state.orchestrator_id = Some(orch.id);
+        state.session_id = Some(session.id);
     }
 
     // Create tmux session with agent
@@ -238,45 +231,38 @@ async fn status(config: &Config) -> Result<()> {
         println!("  tmux Status: {}", "STOPPED".red());
     }
 
-    // Database status (direct SQLite)
+    // Database status via API
     println!();
-    match Database::open() {
-        Ok(db) => {
-            println!("  Database: {}", "Connected".green());
+    match ApiClient::new() {
+        Ok(client) => {
+            println!("  rdv-server: {}", "Connected".green());
 
-            if let Ok(Some(user)) = db.get_default_user() {
-                if let Ok(Some(orch)) = db.get_master_orchestrator(&user.id) {
-                    println!("  Orchestrator ID: {}", &orch.id[..8]);
-                    println!(
-                        "  DB Status: {}",
-                        match orch.status.as_str() {
-                            "running" => "RUNNING".green(),
-                            "stopped" => "STOPPED".red(),
-                            "paused" => "PAUSED".yellow(),
-                            _ => orch.status.normal(),
-                        }
-                    );
-                    println!("  Session ID: {}", &orch.session_id[..8]);
-                    println!(
-                        "  Auto Intervention: {}",
-                        if orch.auto_intervention {
-                            "Enabled".green()
-                        } else {
-                            "Disabled".yellow()
-                        }
-                    );
-                    println!("  Monitoring Interval: {}s", orch.monitoring_interval);
-                    println!("  Stall Threshold: {}s", orch.stall_threshold);
-                } else if let Some(ref id) = state.orchestrator_id {
-                    println!("  Orchestrator ID: {} (cached)", &id[..8]);
-                    println!("  DB Status: {}", "Not found".yellow());
-                } else {
-                    println!("  Orchestrator: {}", "Not registered".yellow());
+            if let Ok(Some(orch)) = client.get_master_orchestrator().await {
+                println!("  Orchestrator ID: {}", &orch.id[..8]);
+                println!(
+                    "  DB Status: {}",
+                    match orch.status.as_str() {
+                        "running" => "RUNNING".green(),
+                        "stopped" => "STOPPED".red(),
+                        "paused" => "PAUSED".yellow(),
+                        _ => orch.status.normal(),
+                    }
+                );
+                if let Some(ref session_id) = orch.session_id {
+                    let id_short = if session_id.len() >= 8 { &session_id[..8] } else { session_id };
+                    println!("  Session ID: {}", id_short);
                 }
+                println!("  Monitoring Interval: {}s", orch.monitoring_interval_secs);
+                println!("  Stall Threshold: {}s", orch.stall_threshold_secs);
+            } else if let Some(ref id) = state.orchestrator_id {
+                println!("  Orchestrator ID: {} (cached)", &id[..8]);
+                println!("  DB Status: {}", "Not found".yellow());
+            } else {
+                println!("  Orchestrator: {}", "Not registered".yellow());
             }
         }
-        Err(_) => {
-            println!("  Database: {}", "Unavailable".red());
+        Err(e) => {
+            println!("  rdv-server: {} ({})", "Unavailable".red(), e);
             if let Some(ref id) = state.orchestrator_id {
                 println!("  Orchestrator ID: {} (cached)", &id[..8]);
             }

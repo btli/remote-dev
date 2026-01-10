@@ -9,6 +9,8 @@
 //! - System health
 //!
 //! Supports JSON output for programmatic use.
+//!
+//! Uses rdv-server API for all database operations.
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -16,8 +18,9 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
+use rdv_core::client::ApiClient;
+
 use crate::config::Config;
-use crate::db::Database;
 use crate::tmux;
 
 /// Full system status for JSON output.
@@ -162,17 +165,14 @@ async fn gather_status(_config: &Config) -> Result<SystemStatus> {
         })
         .collect();
 
-    // Database stats
-    let database = if let Ok(db) = Database::open() {
-        if let Ok(Some(user)) = db.get_default_user() {
-            let active = db.get_active_session_count(&user.id).unwrap_or(0);
-            let tasks = db.list_tasks(&user.id, None).map(|t| t.len() as u32).unwrap_or(0);
-            DatabaseStats {
-                active_sessions: active,
-                total_tasks: tasks,
-            }
-        } else {
-            DatabaseStats { active_sessions: 0, total_tasks: 0 }
+    // Database stats via API
+    let database = if let Ok(client) = ApiClient::new() {
+        let active = client.list_sessions(None).await
+            .map(|sessions| sessions.iter().filter(|s| s.status == "active").count() as u32)
+            .unwrap_or(0);
+        DatabaseStats {
+            active_sessions: active,
+            total_tasks: 0, // Tasks are tracked via beads, not DB
         }
     } else {
         DatabaseStats { active_sessions: 0, total_tasks: 0 }
@@ -207,10 +207,14 @@ async fn gather_status(_config: &Config) -> Result<SystemStatus> {
         issues.push("tmux not installed".to_string());
     }
 
-    // Check database connectivity (replaces API health check)
-    let db_ok = Database::open().is_ok();
-    if !db_ok {
-        issues.push("Database not accessible".to_string());
+    // Check rdv-server connectivity
+    let api_ok = if let Ok(client) = ApiClient::new() {
+        client.health().await.is_ok()
+    } else {
+        false
+    };
+    if !api_ok {
+        issues.push("rdv-server not accessible".to_string());
     }
 
     let beads_ok = beads_available();
@@ -220,7 +224,7 @@ async fn gather_status(_config: &Config) -> Result<SystemStatus> {
 
     let health = HealthStatus {
         tmux: tmux_ok,
-        api: db_ok, // Now represents database connectivity
+        api: api_ok,
         beads: beads_ok,
         issues,
     };
@@ -289,9 +293,8 @@ fn print_dashboard(status: &SystemStatus, _config: &Config) {
 
     // Database Stats
     println!();
-    println!("  {}", "Database:".cyan().bold());
+    println!("  {}", "rdv-server:".cyan().bold());
     println!("    Active sessions: {}", status.database.active_sessions);
-    println!("    Total tasks:     {}", status.database.total_tasks);
 
     // Beads Status
     println!();
@@ -316,10 +319,10 @@ fn print_dashboard(status: &SystemStatus, _config: &Config) {
     println!("  {}", "System Health:".cyan().bold());
 
     let tmux_status = if status.health.tmux { "✓".green() } else { "✗".red() };
-    let db_status = if status.health.api { "✓".green() } else { "✗".red() };
+    let api_status = if status.health.api { "✓".green() } else { "✗".red() };
     let beads_status = if status.health.beads { "✓".green() } else { "✗".red() };
 
-    println!("    {} tmux   {} DB   {} beads", tmux_status, db_status, beads_status);
+    println!("    {} tmux   {} rdv-server   {} beads", tmux_status, api_status, beads_status);
 
     if !status.health.issues.is_empty() {
         println!();

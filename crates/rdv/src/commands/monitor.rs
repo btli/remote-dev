@@ -5,20 +5,16 @@
 //! - Computes MD5 hash
 //! - Compares with previous hash to detect stalls
 //! - Generates insights for stalled sessions
-//! - Updates session activity in database (heartbeats)
 //!
-//! Integration with Next.js MonitoringService:
-//! - Uses direct SQLite database access for state persistence
-//! - Creates insights directly in orchestrator_insight table
-//! - Updates terminal_session.last_activity_at for heartbeat tracking
+//! This CLI delegates to rdv-server's monitoring service via API.
+//! Server-side monitoring runs continuously and creates insights automatically.
 //!
-//! Stall detection logic:
-//! - If hash unchanged for > stall_threshold_secs, session is considered stalled
-//! - Confidence score: 0.7 + (0.05 × extra_minutes_beyond_threshold)
-//! - Confidence reduced by 50% if buffer has < 5 lines
+//! The CLI can:
+//! - Start/stop server-side monitoring
+//! - Check monitoring status
+//! - Perform one-off local session checks via tmux
 //!
-//! Note: Orchestrator auto-respawn is handled by tmux pane-died hook,
-//! not by this monitor. See tmux::CreateSessionConfig::auto_respawn.
+//! Uses rdv-server API for all database operations.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -26,16 +22,15 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use rdv_core::client::ApiClient;
+
 use crate::cli::{MonitorAction, MonitorCommand};
 use crate::config::Config;
-use crate::db::{Database, NewInsight};
 use crate::tmux;
 
-/// Monitoring state persisted to disk.
+/// Monitoring state persisted to disk (for local checks only).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct MonitorState {
-    /// PID of running monitor daemon (if any)
-    daemon_pid: Option<u32>,
     /// Last check timestamp
     last_check: Option<DateTime<Utc>>,
     /// Per-session monitoring data
@@ -100,224 +95,281 @@ async fn start(interval: u64, foreground: bool, config: &Config) -> Result<()> {
         "  Stall threshold: {}s",
         config.monitoring.stall_threshold_secs
     );
-    println!(
-        "  Scrollback lines: {}",
-        config.monitoring.scrollback_lines
-    );
+
+    // Connect to rdv-server
+    let client = match ApiClient::new() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("{}", format!("⚠ rdv-server unavailable: {}", e).yellow());
+            println!("  Monitoring requires rdv-server to be running");
+            return Ok(());
+        }
+    };
+
+    // Get master orchestrator
+    let orch = match client.get_master_orchestrator().await? {
+        Some(o) => o,
+        None => {
+            println!("{}", "⚠ No Master Control orchestrator found".yellow());
+            println!("  Run `rdv master start` first to create Master Control");
+            return Ok(());
+        }
+    };
+
+    println!("  Orchestrator: {}", &orch.id[..8.min(orch.id.len())]);
+
+    // Start server-side monitoring
+    let interval_ms = interval * 1000;
+    match client.start_monitoring(&orch.id, Some(interval_ms)).await {
+        Ok(status) => {
+            if status.is_active {
+                println!("{}", "✓ Server-side monitoring started".green());
+            } else {
+                println!("{}", "⚠ Monitoring may not have started".yellow());
+            }
+        }
+        Err(e) => {
+            println!("{}", format!("✗ Failed to start monitoring: {}", e).red());
+            return Ok(());
+        }
+    }
 
     if foreground {
-        // Run monitoring loop in foreground
+        // Run foreground display loop (polling server for status)
         println!();
         println!("{}", "Running in foreground (Ctrl+C to stop)".yellow());
         println!("{}", "─".repeat(60));
-        run_monitoring_loop(interval, config).await?;
+        run_display_loop(&client, &orch.id, interval).await?;
     } else {
-        // Update state to indicate we're attempting to start
-        let mut state = MonitorState::load(config).unwrap_or_default();
-        state.daemon_pid = Some(std::process::id());
-        state.save(config)?;
-
         println!();
         println!(
-            "  {}",
-            "⚠ Background daemon mode: run with --foreground for now".yellow()
+            "  Monitoring is now running on rdv-server"
         );
-        println!(
-            "  Recommended: use `rdv monitor start --foreground` in a dedicated terminal"
-        );
+        println!("  Run `rdv monitor status` to check status");
+        println!("  Run `rdv monitor stop` to stop monitoring");
     }
 
     Ok(())
 }
 
-async fn run_monitoring_loop(interval: u64, config: &Config) -> Result<()> {
-    let mut state = MonitorState::load(config).unwrap_or_default();
-    let mut cycle = 0u64;
-
-    // Open database connection for session activity updates and insights
-    let db = Database::open().ok();
-    let (_user_id, orchestrator_id) = if let Some(ref db) = db {
-        let uid = db.get_default_user().ok().flatten().map(|u| u.id);
-        let oid = if let Some(ref u) = uid {
-            db.get_master_orchestrator(u).ok().flatten().map(|o| o.id)
-        } else {
-            None
-        };
-        (uid, oid)
-    } else {
-        (None, None)
-    };
-
-    if db.is_some() {
-        println!("  {} Database connected for activity tracking", "✓".green());
-    } else {
-        println!("  {} Database unavailable, using local state only", "⚠".yellow());
-    }
-
+async fn run_display_loop(client: &ApiClient, orchestrator_id: &str, interval: u64) -> Result<()> {
     loop {
-        cycle += 1;
         let now = Utc::now();
 
-        // Get all rdv task sessions (exclude master and folder orchestrators)
-        let sessions = tmux::list_sessions()?;
-        let task_sessions: Vec<_> = sessions
-            .iter()
-            .filter(|s| {
-                s.name.starts_with("rdv-task-") || s.name.starts_with("rdv-session-")
-            })
-            .collect();
-
-        let session_count = task_sessions.len();
-
-        if session_count == 0 {
-            if cycle % 10 == 1 {
-                println!(
-                    "[{}] No task sessions to monitor",
-                    now.format("%H:%M:%S")
-                );
-            }
-        } else {
-            println!(
-                "[{}] Monitoring {} session(s)...",
-                now.format("%H:%M:%S"),
-                session_count
-            );
-
-            for session in task_sessions {
-                // Check for dead panes first
-                if let Ok(true) = tmux::is_pane_dead(&session.name) {
+        // Get stalled sessions from server
+        match client.get_stalled_sessions(orchestrator_id).await {
+            Ok(result) => {
+                if result.stalled_sessions.is_empty() {
                     println!(
-                        "  {} {} (pane dead - process exited)",
-                        "☠".red(),
-                        session.name
+                        "[{}] No stalled sessions",
+                        now.format("%H:%M:%S")
                     );
-                    // Create dead pane insight if we have database access
-                    if let (Some(db), Some(oid)) = (&db, &orchestrator_id) {
-                        if let Ok(Some(db_session)) = db.get_session_by_tmux_name(&session.name) {
-                            let insight = NewInsight {
-                                orchestrator_id: oid.clone(),
-                                session_id: Some(db_session.id.clone()),
-                                insight_type: "dead_pane".to_string(),
-                                severity: "high".to_string(),
-                                title: "Session pane died".to_string(),
-                                description: format!(
-                                    "The process in session '{}' has exited. The tmux pane is dead.",
-                                    session.name
-                                ),
-                                context: Some(format!(
-                                    "{{\"tmux_session\":\"{}\"}}",
-                                    session.name
-                                )),
-                                suggested_actions: Some(
-                                    "[\"Respawn pane\",\"Close session\",\"Review scrollback\"]".to_string()
-                                ),
-                                confidence: 1.0,
-                                triggered_by: "rdv_monitor".to_string(),
-                            };
-                            let _ = db.create_insight(&insight);
-                        }
-                    }
-                    continue;
-                }
-
-                match check_and_update_session(&session.name, &mut state, config).await {
-                    Ok(health) => {
-                        // Update session activity in database (heartbeat)
-                        if let Some(ref db) = db {
-                            // Look up session ID from tmux name
-                            if let Ok(Some(db_session)) = db.get_session_by_tmux_name(&session.name) {
-                                if health.hash_changed {
-                                    // Session is active - update activity timestamp
-                                    let _ = db.update_session_activity(&db_session.id);
-                                }
-
-                                // Create insight if stalled and no existing unresolved stall insight
-                                if health.is_stalled {
-                                    if let (Some(oid), false) = (
-                                        &orchestrator_id,
-                                        db.has_unresolved_stall_insight(&db_session.id).unwrap_or(true),
-                                    ) {
-                                        let stall_mins = health.stall_duration_secs / 60;
-                                        let severity = if health.confidence > 0.85 {
-                                            "high"
-                                        } else if health.confidence > 0.75 {
-                                            "medium"
-                                        } else {
-                                            "low"
-                                        };
-
-                                        let insight = NewInsight {
-                                            orchestrator_id: oid.clone(),
-                                            session_id: Some(db_session.id.clone()),
-                                            insight_type: "stall".to_string(),
-                                            severity: severity.to_string(),
-                                            title: format!("Session stalled for {}m", stall_mins),
-                                            description: format!(
-                                                "Session '{}' has had no activity for {} minutes. Scrollback hash unchanged.",
-                                                session.name, stall_mins
-                                            ),
-                                            context: Some(format!(
-                                                "{{\"tmux_session\":\"{}\",\"line_count\":{},\"hash\":\"{}\"}}",
-                                                session.name, health.line_count, health.hash
-                                            )),
-                                            suggested_actions: Some(
-                                                "[\"Send nudge\",\"Check agent status\",\"Review scrollback\"]".to_string()
-                                            ),
-                                            confidence: health.confidence,
-                                            triggered_by: "rdv_monitor".to_string(),
-                                        };
-
-                                        if let Ok(insight_id) = db.create_insight(&insight) {
-                                            println!(
-                                                "  {} Created insight {} for stall",
-                                                "→".cyan(),
-                                                &insight_id[..8]
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if health.is_stalled {
-                            let stall_mins = health.stall_duration_secs / 60;
-                            println!(
-                                "  {} {} (stalled {}m, confidence: {:.0}%)",
-                                "⚠".yellow(),
-                                session.name,
-                                stall_mins,
-                                health.confidence * 100.0
-                            );
-                        } else if health.hash_changed {
-                            println!(
-                                "  {} {} (active)",
-                                "✓".green(),
-                                session.name
-                            );
-                        }
-                    }
-                    Err(e) => {
+                } else {
+                    println!(
+                        "[{}] {} stalled session(s):",
+                        now.format("%H:%M:%S"),
+                        result.stalled_sessions.len()
+                    );
+                    for session in &result.stalled_sessions {
                         println!(
-                            "  {} {}: {}",
-                            "✗".red(),
-                            session.name,
-                            e
+                            "  {} {} (stalled {}m)",
+                            "⚠".yellow(),
+                            session.session_name,
+                            session.stalled_minutes
                         );
                     }
                 }
             }
+            Err(e) => {
+                println!(
+                    "[{}] {} Error checking stalled sessions: {}",
+                    now.format("%H:%M:%S"),
+                    "✗".red(),
+                    e
+                );
+            }
         }
-
-        // Clean up sessions that no longer exist
-        let existing_names: std::collections::HashSet<_> =
-            sessions.iter().map(|s| s.name.clone()).collect();
-        state.sessions.retain(|name, _| existing_names.contains(name));
-
-        state.last_check = Some(now);
-        state.save(config)?;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
     }
+}
+
+async fn stop(_config: &Config) -> Result<()> {
+    println!("{}", "Stopping monitoring service...".cyan());
+
+    // Connect to rdv-server
+    let client = match ApiClient::new() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("{}", format!("⚠ rdv-server unavailable: {}", e).yellow());
+            return Ok(());
+        }
+    };
+
+    // Get master orchestrator
+    let orch = match client.get_master_orchestrator().await? {
+        Some(o) => o,
+        None => {
+            println!("{}", "⚠ No Master Control orchestrator found".yellow());
+            return Ok(());
+        }
+    };
+
+    // Stop server-side monitoring
+    match client.stop_monitoring(&orch.id).await {
+        Ok(status) => {
+            if !status.is_active {
+                println!("{}", "✓ Monitoring stopped".green());
+            } else {
+                println!("{}", "⚠ Monitoring may still be running".yellow());
+            }
+        }
+        Err(e) => {
+            println!("{}", format!("✗ Failed to stop monitoring: {}", e).red());
+        }
+    }
+
+    Ok(())
+}
+
+async fn status(config: &Config) -> Result<()> {
+    println!("{}", "Monitoring Service Status".cyan().bold());
+    println!("{}", "─".repeat(60));
+
+    // Connect to rdv-server
+    let client = match ApiClient::new() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("  rdv-server: {} ({})", "Unavailable".red(), e);
+
+            // Fall back to local state
+            let state = MonitorState::load(config).unwrap_or_default();
+            if let Some(last) = state.last_check {
+                let ago = Utc::now().signed_duration_since(last);
+                println!("  Last local check: {} ({}s ago)", last.format("%H:%M:%S"), ago.num_seconds());
+            }
+            return Ok(());
+        }
+    };
+
+    // Get master orchestrator
+    match client.get_master_orchestrator().await? {
+        Some(orch) => {
+            println!("  Orchestrator: {} ({})", &orch.id[..8.min(orch.id.len())], orch.orchestrator_type);
+            println!("  Status: {}", orch.status);
+
+            // Get monitoring status
+            match client.get_monitoring_status(&orch.id).await {
+                Ok(status) => {
+                    let status_text = if status.is_active {
+                        "ACTIVE".green()
+                    } else {
+                        "INACTIVE".yellow()
+                    };
+                    println!("  Monitoring: {}", status_text);
+                }
+                Err(e) => {
+                    println!("  Monitoring: {} ({})", "Unknown".yellow(), e);
+                }
+            }
+
+            // Get stalled sessions
+            println!();
+            println!("  {}", "Stalled Sessions:".cyan());
+            match client.get_stalled_sessions(&orch.id).await {
+                Ok(result) => {
+                    if result.stalled_sessions.is_empty() {
+                        println!("    None");
+                    } else {
+                        for session in &result.stalled_sessions {
+                            println!(
+                                "    {} {} ({}m)",
+                                "⚠".yellow(),
+                                session.session_name,
+                                session.stalled_minutes
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("    {} Error: {}", "✗".red(), e);
+                }
+            }
+        }
+        None => {
+            println!("  Orchestrator: {}", "Not found".yellow());
+            println!("  Run `rdv master start` to create Master Control");
+        }
+    }
+
+    // Config
+    println!();
+    println!("  {}", "Configuration:".cyan());
+    println!(
+        "    Stall threshold: {}s",
+        config.monitoring.stall_threshold_secs
+    );
+    println!(
+        "    Scrollback lines: {}",
+        config.monitoring.scrollback_lines
+    );
+    println!(
+        "    Default interval: {}s",
+        config.monitoring.interval_secs
+    );
+
+    Ok(())
+}
+
+/// Local session health check via tmux (doesn't require rdv-server).
+async fn check(session_id: &str, config: &Config) -> Result<()> {
+    println!(
+        "{}",
+        format!("Checking session {}...", session_id).cyan()
+    );
+
+    // Verify session exists in tmux
+    if !tmux::session_exists(session_id)? {
+        println!("{}", format!("Session '{}' not found", session_id).red());
+        return Ok(());
+    }
+
+    // Load local state
+    let mut state = MonitorState::load(config).unwrap_or_default();
+
+    // Check session locally via tmux
+    let health = check_and_update_session(session_id, &mut state, config).await?;
+    state.save(config)?;
+
+    println!();
+    println!("  {}", "Session Health:".cyan());
+    println!("  Hash: {}", health.hash);
+    println!("  Line count: {}", health.line_count);
+    println!(
+        "  Status: {}",
+        if health.is_stalled {
+            format!(
+                "STALLED ({}s, {:.0}% confidence)",
+                health.stall_duration_secs,
+                health.confidence * 100.0
+            )
+            .red()
+            .to_string()
+        } else {
+            "HEALTHY".green().to_string()
+        }
+    );
+
+    if health.hash_changed {
+        println!("  Note: Hash changed since last check (session is active)");
+    } else if health.stall_duration_secs > 0 {
+        println!(
+            "  Note: Hash unchanged for {}s",
+            health.stall_duration_secs
+        );
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -409,154 +461,4 @@ async fn check_and_update_session(
         hash_changed,
         line_count,
     })
-}
-
-async fn stop(config: &Config) -> Result<()> {
-    println!("{}", "Stopping monitoring service...".cyan());
-
-    let state = MonitorState::load(config).unwrap_or_default();
-
-    if let Some(pid) = state.daemon_pid {
-        // Try to signal the process
-        println!("  Found daemon PID: {}", pid);
-        println!(
-            "  {}",
-            "⚠ Manual stop: kill the process or Ctrl+C the foreground monitor".yellow()
-        );
-    } else {
-        println!("  No daemon PID recorded");
-    }
-
-    Ok(())
-}
-
-async fn status(config: &Config) -> Result<()> {
-    println!("{}", "Monitoring Service Status".cyan().bold());
-    println!("{}", "─".repeat(60));
-
-    let state = MonitorState::load(config).unwrap_or_default();
-
-    // Daemon status
-    if let Some(pid) = state.daemon_pid {
-        // Check if process is still running
-        let running = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        if running {
-            println!("  Daemon: {} (PID {})", "Running".green(), pid);
-        } else {
-            println!(
-                "  Daemon: {} (PID {} not found)",
-                "Stopped".red(),
-                pid
-            );
-        }
-    } else {
-        println!("  Daemon: {}", "Not started".yellow());
-    }
-
-    // Last check
-    if let Some(last) = state.last_check {
-        let ago = Utc::now().signed_duration_since(last);
-        println!("  Last check: {} ({}s ago)", last.format("%H:%M:%S"), ago.num_seconds());
-    } else {
-        println!("  Last check: Never");
-    }
-
-    // Session snapshots
-    println!();
-    println!("  {}", "Tracked Sessions:".cyan());
-
-    if state.sessions.is_empty() {
-        println!("    No sessions tracked");
-    } else {
-        for (name, snapshot) in &state.sessions {
-            let status = if snapshot.is_stalled {
-                "STALLED".red()
-            } else {
-                "OK".green()
-            };
-            let age = Utc::now()
-                .signed_duration_since(snapshot.first_seen)
-                .num_seconds();
-            println!(
-                "    {} ({}) - hash age: {}s, {} lines",
-                name,
-                status,
-                age,
-                snapshot.line_count
-            );
-        }
-    }
-
-    // Config
-    println!();
-    println!("  {}", "Configuration:".cyan());
-    println!(
-        "    Stall threshold: {}s",
-        config.monitoring.stall_threshold_secs
-    );
-    println!(
-        "    Scrollback lines: {}",
-        config.monitoring.scrollback_lines
-    );
-    println!(
-        "    Default interval: {}s",
-        config.monitoring.interval_secs
-    );
-
-    Ok(())
-}
-
-async fn check(session_id: &str, config: &Config) -> Result<()> {
-    println!(
-        "{}",
-        format!("Checking session {}...", session_id).cyan()
-    );
-
-    // Verify session exists
-    if !tmux::session_exists(session_id)? {
-        println!("{}", format!("Session '{}' not found", session_id).red());
-        return Ok(());
-    }
-
-    // Load state
-    let mut state = MonitorState::load(config).unwrap_or_default();
-
-    // Check session
-    let health = check_and_update_session(session_id, &mut state, config).await?;
-    state.save(config)?;
-
-    println!();
-    println!("  {}", "Session Health:".cyan());
-    println!("  Hash: {}", health.hash);
-    println!("  Line count: {}", health.line_count);
-    println!(
-        "  Status: {}",
-        if health.is_stalled {
-            format!(
-                "STALLED ({}s, {:.0}% confidence)",
-                health.stall_duration_secs,
-                health.confidence * 100.0
-            )
-            .red()
-            .to_string()
-        } else {
-            "HEALTHY".green().to_string()
-        }
-    );
-
-    if health.hash_changed {
-        println!("  Note: Hash changed since last check (session is active)");
-    } else if health.stall_duration_secs > 0 {
-        println!(
-            "  Note: Hash unchanged for {}s",
-            health.stall_duration_secs
-        );
-    }
-
-    Ok(())
 }

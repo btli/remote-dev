@@ -2,7 +2,9 @@
 //!
 //! This crate provides shared functionality between the rdv CLI and rdv-server:
 //!
-//! - **db**: Direct SQLite database access
+//! - **types**: Shared data types (always available)
+//! - **client**: API client for rdv-server (Unix socket, for CLI)
+//! - **db**: Direct SQLite database access (server-side only)
 //! - **tmux**: tmux session management
 //! - **worktree**: Git worktree operations
 //! - **session**: Session lifecycle management
@@ -11,14 +13,24 @@
 //! - **mcp**: Model Context Protocol support
 
 pub mod auth;
+#[cfg(feature = "client")]
+pub mod client;
+#[cfg(feature = "db")]
 pub mod db;
 pub mod error;
 pub mod mcp;
 pub mod orchestrator;
 pub mod session;
 pub mod tmux;
+pub mod types;
 pub mod worktree;
 
 // Re-export commonly used types
-pub use db::Database;
+pub use types::*;
 pub use error::{Error, Result};
+
+#[cfg(feature = "db")]
+pub use db::Database;
+
+#[cfg(feature = "client")]
+pub use client::ApiClient;

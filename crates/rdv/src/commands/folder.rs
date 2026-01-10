@@ -2,18 +2,16 @@
 //!
 //! Folder Orchestrators manage tasks within a specific project/folder.
 //!
-//! Direct database integration (direct SQLite):
-//! - Reads folder and orchestrator records from SQLite
-//! - Uses tmux directly for session control
-//! - No HTTP API needed for most operations
+//! Uses rdv-server API for all database operations via ApiClient.
 
 use anyhow::Result;
 use colored::Colorize;
 use std::path::PathBuf;
 
+use rdv_core::client::{ApiClient, CreateFolderRequest, CreateOrchestratorRequest, CreateSessionRequest};
+
 use crate::cli::{FolderAction, FolderCommand};
 use crate::config::{Config, FolderConfig};
-use crate::db::{Database, NewFolder, NewOrchestrator, NewSession};
 use crate::error::RdvError;
 use crate::tmux;
 
@@ -60,14 +58,11 @@ async fn add(path: &str, custom_name: Option<&str>, _config: &Config) -> Result<
         format!("Adding folder '{}' to database...", folder_name).cyan()
     );
 
-    // Open database
-    let db = Database::open()?;
-    let user = db
-        .get_default_user()?
-        .ok_or_else(|| anyhow::anyhow!("No user found in database. Start the web UI first."))?;
+    // Connect to rdv-server
+    let client = ApiClient::new()?;
 
     // Check if folder already exists
-    if let Some(existing) = db.get_folder_by_name(&user.id, &folder_name)? {
+    if let Some(existing) = client.get_folder_by_name(&folder_name).await? {
         println!(
             "  {} Folder already registered: {}",
             "→".yellow(),
@@ -77,15 +72,15 @@ async fn add(path: &str, custom_name: Option<&str>, _config: &Config) -> Result<
     }
 
     // Create folder record
-    let folder_id = db.create_folder(&NewFolder {
-        user_id: user.id.clone(),
+    let folder = client.create_folder(&CreateFolderRequest {
         name: folder_name.clone(),
         parent_id: None, // Top-level folder
-    })?;
+        path: Some(folder_path.to_string_lossy().to_string()),
+    }).await?;
 
     println!("{}", "✓ Folder registered".green());
     println!("  Name: {}", folder_name);
-    println!("  ID: {}", &folder_id[..8]);
+    println!("  ID: {}", &folder.id[..8]);
     println!("  Path: {:?}", folder_path);
     println!();
     println!("  Next steps:");
@@ -113,18 +108,15 @@ async fn init(path: &str, _config: &Config) -> Result<()> {
     // Create default config
     let folder_config = FolderConfig::default();
 
-    // Check database for existing folder (direct SQLite, direct SQLite)
-    if let Ok(db) = Database::open() {
-        if let Ok(Some(user)) = db.get_default_user() {
-            let folders = db.list_folders(&user.id)?;
-            let folder_name = folder_path.file_name().map(|n| n.to_string_lossy().to_string());
-            if let Some(name) = folder_name {
-                if let Some(folder) = folders.iter().find(|f| f.name == name) {
-                    println!("  {} Found existing folder: {}", "→".cyan(), folder.name);
-                } else {
-                    println!("  {} Folder not registered in database yet", "→".cyan());
-                    println!("    (Will register when orchestrator starts via web UI)");
-                }
+    // Check database for existing folder via API
+    if let Ok(client) = ApiClient::new() {
+        let folder_name = folder_path.file_name().map(|n| n.to_string_lossy().to_string());
+        if let Some(name) = folder_name {
+            if let Ok(Some(folder)) = client.get_folder_by_name(&name).await {
+                println!("  {} Found existing folder: {}", "→".cyan(), folder.name);
+            } else {
+                println!("  {} Folder not registered in database yet", "→".cyan());
+                println!("    (Will register when orchestrator starts via web UI)");
             }
         }
     }
@@ -170,20 +162,16 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
         .unwrap_or_else(|| config.agents.default.clone());
     let agent_cmd = config.agent_command(&agent_name).unwrap_or("claude");
 
-    // Check database for existing orchestrator
-    let db = Database::open()?;
-    let user = db
-        .get_default_user()?
-        .ok_or_else(|| anyhow::anyhow!("No user found in database. Start the web UI first."))?;
+    // Connect to rdv-server
+    let client = ApiClient::new()?;
 
     // Find folder by name in database
-    let folders = db.list_folders(&user.id)?;
     let folder_name = folder_path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
-    let db_folder = folders.iter().find(|f| f.name == folder_name).cloned();
+    let db_folder = client.get_folder_by_name(&folder_name).await?;
 
     // Auto-add folder to database if not exists
     let folder = if let Some(existing) = db_folder {
@@ -193,66 +181,64 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
             "  {} Folder not in database, auto-registering...",
             "→".cyan()
         );
-        let folder_id = db.create_folder(&NewFolder {
-            user_id: user.id.clone(),
+        let created = client.create_folder(&CreateFolderRequest {
             name: folder_name.clone(),
             parent_id: None,
-        })?;
-        println!("  {} Registered folder: {}", "✓".green(), &folder_id[..8]);
-
-        // Fetch the created folder
-        db.get_folder(&folder_id)?
-            .ok_or_else(|| anyhow::anyhow!("Failed to fetch created folder"))?
+            path: Some(folder_path_str.clone()),
+        }).await?;
+        println!("  {} Registered folder: {}", "✓".green(), &created.id[..8]);
+        created
     };
 
     // Check for existing orchestrator or create new one
-    let orchestrator_id = if let Ok(Some(orch)) = db.get_folder_orchestrator(&user.id, &folder.id) {
+    let orchestrator_id = if let Some(orch) = client.get_folder_orchestrator(&folder.id).await? {
         println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
 
         // Reactivate if suspended
-        db.update_session_status(&orch.session_id, "active")?;
-        db.update_orchestrator_status(&orch.id, "idle")?;
+        if let Some(ref session_id) = orch.session_id {
+            client.update_session_status(session_id, "active").await?;
+        }
+        client.update_orchestrator_status(&orch.id, "idle").await?;
 
         orch.id.clone()
     } else {
-        // No orchestrator - create session and orchestrator
+        // No orchestrator - create session and orchestrator via API
         println!(
-            "  {} Creating Folder Control in database...",
+            "  {} Creating Folder Control via API...",
             "→".cyan()
         );
 
         // Create terminal session record
-        let new_session_id = db.create_session(&NewSession {
-            user_id: user.id.clone(),
+        let session = client.create_session(&CreateSessionRequest {
             name: format!("{} Control", folder_name),
-            tmux_session_name: session_name.clone(),
             project_path: Some(folder_path_str.clone()),
             folder_id: Some(folder.id.clone()),
             worktree_branch: None,
             agent_provider: Some(agent_name.clone()),
-            is_orchestrator_session: true,
-        })?;
-        println!("  {} Created session: {}", "✓".green(), &new_session_id[..8]);
+            is_orchestrator_session: Some(true),
+            shell_command: None,
+            environment: None,
+        }).await?;
+        println!("  {} Created session: {}", "✓".green(), &session.id[..8]);
 
         // Create orchestrator record
-        let new_orch_id = db.create_orchestrator(&NewOrchestrator {
-            session_id: new_session_id,
-            user_id: user.id.clone(),
+        let orch = client.create_orchestrator(&CreateOrchestratorRequest {
+            session_id: session.id,
             orchestrator_type: "sub_orchestrator".to_string(),
             scope_type: Some("folder".to_string()),
             scope_id: Some(folder.id.clone()),
             custom_instructions: None,
-            monitoring_interval: 30,
-            stall_threshold: 300,
-            auto_intervention: false,
-        })?;
+            monitoring_interval: Some(30),
+            stall_threshold: Some(300),
+            auto_intervention: Some(false),
+        }).await?;
         println!(
             "  {} Created orchestrator: {}",
             "✓".green(),
-            &new_orch_id[..8]
+            &orch.id[..8]
         );
 
-        new_orch_id
+        orch.id
     };
 
     // Save orchestrator ID to local config for future reference
@@ -293,7 +279,7 @@ async fn stop(path: &str, _config: &Config) -> Result<()> {
 
     println!("{}", "Stopping folder orchestrator...".cyan());
 
-    // Stop tmux session directly (direct SQLite)
+    // Stop tmux session directly
     tmux::kill_session(&session_name)?;
     println!("{}", "✓ Folder orchestrator stopped".green());
 
@@ -351,54 +337,51 @@ async fn status(path: &str, _config: &Config) -> Result<()> {
         println!("  Preferred Agent: {}", agent);
     }
 
-    // Database status (direct SQLite, direct SQLite)
+    // Database status via API
     println!();
-    match Database::open() {
-        Ok(db) => {
-            println!("  Database: {}", "Connected".green());
+    match ApiClient::new() {
+        Ok(client) => {
+            println!("  rdv-server: {}", "Connected".green());
 
-            if let Ok(Some(user)) = db.get_default_user() {
-                // Find folder by name
-                let folders = db.list_folders(&user.id)?;
-                let folder_name = folder_path.file_name().map(|n| n.to_string_lossy().to_string());
-                if let Some(name) = folder_name {
-                    if let Some(folder) = folders.iter().find(|f| f.name == name) {
-                        println!("  Folder ID: {}", &folder.id[..8]);
+            // Find folder by name
+            let folder_name = folder_path.file_name().map(|n| n.to_string_lossy().to_string());
+            if let Some(name) = folder_name {
+                if let Ok(Some(folder)) = client.get_folder_by_name(&name).await {
+                    println!("  Folder ID: {}", &folder.id[..8]);
 
-                        // Check orchestrator
-                        if let Ok(Some(orch)) = db.get_folder_orchestrator(&user.id, &folder.id) {
-                            println!("  Orchestrator ID: {}", &orch.id[..8]);
-                            println!(
-                                "  DB Status: {}",
-                                match orch.status.as_str() {
-                                    "running" => "RUNNING".green(),
-                                    "stopped" => "STOPPED".red(),
-                                    "paused" => "PAUSED".yellow(),
-                                    _ => orch.status.normal(),
-                                }
-                            );
-                            println!(
-                                "  Auto Intervention: {}",
-                                if orch.auto_intervention {
-                                    "Enabled".green()
-                                } else {
-                                    "Disabled".yellow()
-                                }
-                            );
-                        } else if let Some(ref id) = folder_config.orchestrator_id {
-                            println!("  Orchestrator ID: {} (cached)", &id[..8]);
-                            println!("  DB Status: {}", "Not found".yellow());
-                        } else {
-                            println!("  Orchestrator: {}", "Not created".yellow());
-                        }
+                    // Check orchestrator
+                    if let Ok(Some(orch)) = client.get_folder_orchestrator(&folder.id).await {
+                        println!("  Orchestrator ID: {}", &orch.id[..8]);
+                        println!(
+                            "  DB Status: {}",
+                            match orch.status.as_str() {
+                                "running" => "RUNNING".green(),
+                                "stopped" => "STOPPED".red(),
+                                "paused" => "PAUSED".yellow(),
+                                _ => orch.status.normal(),
+                            }
+                        );
+                        println!(
+                            "  Monitoring Interval: {}s",
+                            orch.monitoring_interval_secs
+                        );
+                        println!(
+                            "  Stall Threshold: {}s",
+                            orch.stall_threshold_secs
+                        );
+                    } else if let Some(ref id) = folder_config.orchestrator_id {
+                        println!("  Orchestrator ID: {} (cached)", &id[..8]);
+                        println!("  DB Status: {}", "Not found".yellow());
                     } else {
-                        println!("  Folder: {}", "Not registered in database".yellow());
+                        println!("  Orchestrator: {}", "Not created".yellow());
                     }
+                } else {
+                    println!("  Folder: {}", "Not registered in database".yellow());
                 }
             }
         }
         Err(e) => {
-            println!("  Database: {} ({})", "Unavailable".red(), e);
+            println!("  rdv-server: {} ({})", "Unavailable".red(), e);
             if let Some(ref id) = folder_config.orchestrator_id {
                 println!("  Orchestrator ID: {} (cached)", &id[..8]);
             }
@@ -448,39 +431,43 @@ async fn list(_config: &Config) -> Result<()> {
         }
     }
 
-    // Database orchestrators (direct SQLite)
-    match Database::open() {
-        Ok(db) => {
+    // Database orchestrators via API
+    match ApiClient::new() {
+        Ok(client) => {
             println!();
-            println!("  {}", "Database:".cyan());
+            println!("  {}", "rdv-server:".cyan());
 
-            if let Ok(Some(user)) = db.get_default_user() {
-                let orchestrators = db.list_orchestrators(&user.id)?;
-                let folder_orchestrators: Vec<_> = orchestrators
-                    .iter()
-                    .filter(|o| o.scope_type.as_deref() == Some("folder"))
-                    .collect();
+            match client.list_orchestrators().await {
+                Ok(orchestrators) => {
+                    let folder_orchestrators: Vec<_> = orchestrators
+                        .iter()
+                        .filter(|o| o.orchestrator_type == "folder")
+                        .collect();
 
-                if folder_orchestrators.is_empty() {
-                    println!("    No folder orchestrators registered");
-                } else {
-                    for orch in folder_orchestrators {
-                        let status = match orch.status.as_str() {
-                            "running" => "running".green(),
-                            "stopped" => "stopped".red(),
-                            "paused" => "paused".yellow(),
-                            _ => orch.status.normal(),
-                        };
-                        let scope = orch.scope_id.as_deref().unwrap_or("unknown");
-                        let id_short = if orch.id.len() >= 8 { &orch.id[..8] } else { &orch.id };
-                        println!("    {} ({}) - scope: {}", id_short, status, scope);
+                    if folder_orchestrators.is_empty() {
+                        println!("    No folder orchestrators registered");
+                    } else {
+                        for orch in folder_orchestrators {
+                            let status = match orch.status.as_str() {
+                                "running" => "running".green(),
+                                "stopped" => "stopped".red(),
+                                "paused" => "paused".yellow(),
+                                _ => orch.status.normal(),
+                            };
+                            let folder = orch.folder_id.as_deref().unwrap_or("unknown");
+                            let id_short = if orch.id.len() >= 8 { &orch.id[..8] } else { &orch.id };
+                            println!("    {} ({}) - folder: {}", id_short, status, folder);
+                        }
                     }
+                }
+                Err(e) => {
+                    println!("    Failed to list orchestrators: {}", e);
                 }
             }
         }
         Err(_) => {
             println!();
-            println!("  {}", "Database: Unavailable".red());
+            println!("  {}", "rdv-server: Unavailable".red());
         }
     }
 

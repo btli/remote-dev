@@ -1,18 +1,15 @@
 //! rdv - Remote Dev Orchestration CLI
 //!
 //! Multi-agent coordination with self-improvement capabilities.
-//! Direct SQLite + tmux architecture for fast, reliable operations.
+//! Connects to rdv-server via Unix socket for all database operations.
 
 use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-#[cfg(feature = "http-api")]
-mod api;
 mod cli;
 mod commands;
 mod config;
-mod db;
 mod error;
 mod tmux;
 

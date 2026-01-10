@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 description = "Core library for Remote Dev - shared logic between CLI and server"
 
+[features]
+default = ["client"]
+client = ["dep:reqwest", "dep:hyper-util", "dep:hyper"]
+db = ["dep:rusqlite"]
+
 [dependencies]
 # Async runtime
 tokio.workspace = true
@@ -16,8 +21,13 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 
-# Database
-rusqlite.workspace = true
+# Database (optional - only for rdv-server)
+rusqlite = { workspace = true, optional = true }
+
+# HTTP client (for unix socket communication)
+reqwest = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
 
 # Error handling
 anyhow.workspace = true

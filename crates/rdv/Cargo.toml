@@ -11,15 +11,9 @@ description = "Remote Dev orchestration CLI - multi-agent coordination with self
 name = "rdv"
 path = "src/main.rs"
 
-[features]
-default = []
-# HTTP API mode - uses Next.js API instead of direct SQLite
-# Enable with: cargo build --features http-api
-http-api = []
-
 [dependencies]
-# Core library
-rdv-core = { path = "../rdv-core" }
+# Core library (client only - NO direct DB access)
+rdv-core = { path = "../rdv-core", default-features = true, features = ["client"] }
 
 # CLI framework
 clap.workspace = true
@@ -40,10 +34,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-# Database (until migrated to rdv-core)
-rusqlite.workspace = true
-
-# HTTP client (for API communication)
+# HTTP client (for API communication via rdv-core client)
 reqwest.workspace = true
 
 # Utilities

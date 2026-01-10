@@ -2,10 +2,8 @@
 //!
 //! Sessions are task-level work units that run in isolated tmux sessions.
 //!
-//! Direct database integration (direct SQLite):
-//! - Reads session records from SQLite
-//! - Uses tmux directly for session control
-//! - No HTTP API needed for most operations
+//! Uses rdv-server API via Unix socket for database operations.
+//! tmux operations are direct (local).
 
 use anyhow::Result;
 use colored::Colorize;
@@ -13,9 +11,9 @@ use std::path::PathBuf;
 
 use crate::cli::{SessionAction, SessionCommand};
 use crate::config::Config;
-use crate::db::Database;
 use crate::error::RdvError;
 use crate::tmux;
+use rdv_core::client::{ApiClient, CreateSessionRequest};
 use rdv_core::worktree;
 
 pub async fn execute(cmd: SessionCommand, config: &Config) -> Result<()> {
@@ -180,67 +178,62 @@ async fn spawn(
         );
     }
 
-    // Create session in database FIRST to get the session ID for env vars
+    // Create session via rdv-server API
     let mut db_session_id: Option<String> = None;
     let mut db_folder_id: Option<String> = None;
 
-    match Database::open() {
-        Ok(db) => {
-            match db.get_default_user() {
-                Ok(Some(user)) => {
-                    // Find folder by explicit name/ID, or fall back to path matching
-                    let folder_id = if let Some(folder_name) = folder {
-                        // Look up by explicit folder name or ID
-                        db.list_folders(&user.id).ok()
-                            .and_then(|folders| {
-                                folders.iter()
-                                    .find(|f| f.name == folder_name || f.id == folder_name)
-                                    .map(|f| f.id.clone())
-                            })
-                    } else {
-                        // Fall back to matching by project path
-                        db.list_folders(&user.id).ok()
-                            .and_then(|folders| {
-                                folders.iter()
-                                    .find(|f| project_path_str.ends_with(&f.name))
-                                    .map(|f| f.id.clone())
-                            })
-                    };
-
-                    db_folder_id = folder_id.clone();
-
-                    let new_session = crate::db::NewSession {
-                        user_id: user.id.clone(),
-                        name: session_display_name.to_string(),
-                        tmux_session_name: tmux_session_name.clone(),
-                        project_path: Some(working_directory.clone()),
-                        folder_id,
-                        worktree_branch: worktree_branch.clone(),
-                        agent_provider: Some(agent_provider.to_string()),
-                        is_orchestrator_session: false,
-                    };
-
-                    match db.create_session(&new_session) {
-                        Ok(id) => {
-                            println!("  {} Session registered in database", "✓".green());
-                            println!("  ID: {}", &id[..8]);
-                            db_session_id = Some(id);
-                        }
-                        Err(e) => {
-                            println!("  {} Database insert: {}", "⚠".yellow(), e);
-                        }
+    match ApiClient::new() {
+        Ok(client) => {
+            // Find folder by explicit name/ID, or fall back to path matching
+            let folder_id = if let Some(folder_name) = folder {
+                // Look up by explicit folder name or ID
+                match client.list_folders().await {
+                    Ok(folders) => {
+                        folders.iter()
+                            .find(|f| f.name == folder_name || f.id == folder_name)
+                            .map(|f| f.id.clone())
                     }
+                    Err(_) => None,
                 }
-                Ok(None) => {
-                    println!("  {} No default user found in database", "⚠".yellow());
+            } else {
+                // Fall back to matching by project path
+                match client.list_folders().await {
+                    Ok(folders) => {
+                        folders.iter()
+                            .find(|f| project_path_str.ends_with(&f.name))
+                            .map(|f| f.id.clone())
+                    }
+                    Err(_) => None,
+                }
+            };
+
+            db_folder_id = folder_id.clone();
+
+            let req = CreateSessionRequest {
+                name: session_display_name.to_string(),
+                project_path: Some(working_directory.clone()),
+                folder_id,
+                worktree_branch: worktree_branch.clone(),
+                agent_provider: Some(agent_provider.to_string()),
+                is_orchestrator_session: Some(false),
+                shell_command: command.clone(),
+                environment: None,
+            };
+
+            match client.create_session(&req).await {
+                Ok(session) => {
+                    println!("  {} Session registered via rdv-server", "✓".green());
+                    println!("  ID: {}", &session.id[..8.min(session.id.len())]);
+                    db_session_id = Some(session.id);
                 }
                 Err(e) => {
-                    println!("  {} Database user lookup: {}", "⚠".yellow(), e);
+                    println!("  {} API error: {}", "⚠".yellow(), e);
                 }
             }
         }
         Err(e) => {
-            println!("  {} Database open: {}", "⚠".yellow(), e);
+            println!("  {} rdv-server not available: {}", "⚠".yellow(), e);
+            println!("  {} Session will be tmux-only (not tracked in database)", "⚠".yellow());
         }
     }
 
@@ -323,7 +316,6 @@ async fn list(folder: Option<&str>, all: bool, _config: &Config) -> Result<()> {
             } else if session.name.contains("-folder-") {
                 ("🧠", "folder")
             } else if session.name.contains("-task-") || session.name.contains("-session-") {
-                // Could be agent or shell - check database for more info
                 ("📦", "task")
             } else {
                 ("🖥️ ", "shell")
@@ -332,78 +324,81 @@ async fn list(folder: Option<&str>, all: bool, _config: &Config) -> Result<()> {
         }
     }
 
-    // Get database sessions (direct SQLite, direct SQLite)
-    match Database::open() {
-        Ok(db) => {
+    // Get database sessions via rdv-server API
+    match ApiClient::new() {
+        Ok(client) => {
             println!();
             println!("  {}", "Database Sessions:".cyan());
-
-            // Get default user
-            let user = match db.get_default_user()? {
-                Some(u) => u,
-                None => {
-                    println!("    No user found in database");
-                    return Ok(());
-                }
-            };
 
             // Get folder_id if folder path is specified
             let folder_id = if let Some(f) = folder {
                 let folder_path = resolve_folder_path(f);
                 // Find folder by path in database
-                let folders = db.list_folders(&user.id)?;
-                folders.iter().find(|fl| fl.name == folder_path.to_string_lossy()).map(|fl| fl.id.clone())
+                match client.list_folders().await {
+                    Ok(folders) => {
+                        folders.iter()
+                            .find(|fl| fl.name == folder_path.to_string_lossy())
+                            .map(|fl| fl.id.clone())
+                    }
+                    Err(_) => None,
+                }
             } else {
                 None
             };
 
-            let sessions = db.list_sessions(&user.id, folder_id.as_deref())?;
-            let filtered: Vec<_> = if all {
-                sessions
-            } else {
-                sessions.into_iter().filter(|s| s.status != "closed").collect()
-            };
-
-            if filtered.is_empty() {
-                println!("    No sessions found");
-            } else {
-                for session in filtered {
-                    let status = match session.status.as_str() {
-                        "active" => "active".green(),
-                        "suspended" => "suspended".yellow(),
-                        "closed" => "closed".red(),
-                        _ => session.status.normal(),
+            match client.list_sessions(folder_id.as_deref()).await {
+                Ok(sessions) => {
+                    let filtered: Vec<_> = if all {
+                        sessions
+                    } else {
+                        sessions.into_iter().filter(|s| s.status != "closed").collect()
                     };
 
-                    // Determine session type icon
-                    let (icon, type_label) = if session.is_orchestrator_session {
-                        ("🧠", "orch")
+                    if filtered.is_empty() {
+                        println!("    No sessions found");
                     } else {
-                        match session.agent_provider.as_deref() {
-                            Some("none") | None => ("🖥️ ", "shell"),
-                            Some(agent) => ("🤖", agent),
+                        for session in filtered {
+                            let status = match session.status.as_str() {
+                                "active" => "active".green(),
+                                "suspended" => "suspended".yellow(),
+                                "closed" => "closed".red(),
+                                _ => session.status.normal(),
+                            };
+
+                            // Determine session type icon
+                            let (icon, type_label) = if session.is_orchestrator_session {
+                                ("🧠", "orch")
+                            } else {
+                                match session.agent_provider.as_deref() {
+                                    Some("none") | None => ("🖥️ ", "shell"),
+                                    Some(agent) => ("🤖", agent),
+                                }
+                            };
+
+                            let id_short = if session.id.len() >= 8 {
+                                &session.id[..8]
+                            } else {
+                                &session.id
+                            };
+                            println!(
+                                "    {} {} ({}) [{}] - {}",
+                                icon,
+                                id_short,
+                                status,
+                                type_label,
+                                session.name
+                            );
                         }
-                    };
-
-                    let id_short = if session.id.len() >= 8 {
-                        &session.id[..8]
-                    } else {
-                        &session.id
-                    };
-                    println!(
-                        "    {} {} ({}) [{}] - {}",
-                        icon,
-                        id_short,
-                        status,
-                        type_label,
-                        session.name
-                    );
+                    }
+                }
+                Err(e) => {
+                    println!("    {} API error: {}", "⚠".yellow(), e);
                 }
             }
         }
         Err(e) => {
             println!();
-            println!("  {} Database: {}", "⚠".yellow(), e);
+            println!("  {} rdv-server: {}", "⚠".yellow(), e);
         }
     }
 
@@ -416,9 +411,9 @@ async fn attach(session_id: &str, _config: &Config) -> Result<()> {
         // Already a tmux session name
         session_id.to_string()
     } else {
-        // Might be a database session ID - try to look up tmux name
-        if let Ok(db) = Database::open() {
-            if let Ok(Some(session)) = db.get_session(session_id) {
+        // Might be a database session ID - try to look up tmux name via API
+        if let Ok(client) = ApiClient::new() {
+            if let Ok(Some(session)) = client.get_session(session_id).await {
                 session.tmux_session_name
             } else {
                 // Not found in DB, try as tmux name directly
@@ -446,7 +441,7 @@ async fn inject(session_id: &str, context: &str, _config: &Config) -> Result<()>
         format!("Injecting context into {}...", tmux_name).cyan()
     );
 
-    // Direct tmux injection (direct SQLite)
+    // Direct tmux injection
     tmux::send_keys(&tmux_name, context, true)?;
 
     println!("{}", "✓ Context injected".green());
@@ -458,7 +453,7 @@ async fn close(session_id: &str, force: bool, _config: &Config) -> Result<()> {
 
     println!("{}", format!("Closing session {}...", tmux_name).cyan());
 
-    // Close tmux session (direct, direct SQLite)
+    // Close tmux session
     if tmux::session_exists(&tmux_name)? {
         if force {
             tmux::kill_session(&tmux_name)?;
@@ -475,6 +470,15 @@ async fn close(session_id: &str, force: bool, _config: &Config) -> Result<()> {
         println!("  {} tmux session not found", "⚠".yellow());
     }
 
+    // Also close via API if available
+    if let Ok(client) = ApiClient::new() {
+        if let Ok(Some(session)) = client.get_session(session_id).await {
+            if let Err(e) = client.close_session(&session.id).await {
+                println!("  {} API close: {}", "⚠".yellow(), e);
+            }
+        }
+    }
+
     println!("{}", "✓ Session closed".green());
     Ok(())
 }
@@ -482,7 +486,7 @@ async fn close(session_id: &str, force: bool, _config: &Config) -> Result<()> {
 async fn scrollback(session_id: &str, lines: u32, _config: &Config) -> Result<()> {
     let tmux_name = resolve_tmux_name(session_id).await?;
 
-    // Direct tmux capture (direct SQLite)
+    // Direct tmux capture
     let content = tmux::capture_pane(&tmux_name, Some(lines))?;
     println!("{}", content);
     Ok(())
@@ -495,13 +499,9 @@ async fn resolve_tmux_name(session_id: &str) -> Result<String> {
         return Ok(session_id.to_string());
     }
 
-    // Try to look up in database (direct SQLite, direct SQLite)
-    if let Ok(db) = Database::open() {
-        if let Ok(Some(session)) = db.get_session(session_id) {
-            return Ok(session.tmux_session_name);
-        }
-        // Also try looking up by tmux name
-        if let Ok(Some(session)) = db.get_session_by_tmux_name(session_id) {
+    // Try to look up via rdv-server API
+    if let Ok(client) = ApiClient::new() {
+        if let Ok(Some(session)) = client.get_session(session_id).await {
             return Ok(session.tmux_session_name);
         }
     }

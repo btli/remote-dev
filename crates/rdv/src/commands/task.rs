@@ -8,6 +8,8 @@
 //! - `rdv task list` shows both rdv tasks and beads issues
 //! - Task completion updates beads status via `bd close`
 //! - Priorities and dependencies flow from beads
+//!
+//! Uses rdv-server API for session operations.
 
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -15,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
+use rdv_core::client::ApiClient;
+
 use crate::cli::{TaskAction, TaskCommand};
 use crate::config::Config;
-use crate::db::Database;
 use crate::error::RdvError;
 use crate::tmux;
 
@@ -225,35 +228,30 @@ async fn create(
         None
     };
 
-    // Look up folder via database (direct SQLite)
-    if let Ok(db) = Database::open() {
-        if let Ok(Some(user)) = db.get_default_user() {
-            // Get folder ID if path provided
-            let folder_id = if let Some(ref fp) = folder_path {
-                // Match folder by name (last component of path)
-                let folder_name = fp.file_name()
-                    .map(|n| n.to_string_lossy().to_string());
-                if let Some(name) = folder_name {
-                    let folders = db.list_folders(&user.id)?;
-                    folders.iter()
-                        .find(|f| f.name == name)
-                        .map(|f| f.id.clone())
-                } else {
-                    None
-                }
+    // Look up folder via API
+    if let Ok(client) = ApiClient::new() {
+        // Get folder ID if path provided
+        let folder_id = if let Some(ref fp) = folder_path {
+            // Match folder by name (last component of path)
+            let folder_name = fp.file_name()
+                .map(|n| n.to_string_lossy().to_string());
+            if let Some(name) = folder_name {
+                client.get_folder_by_name(&name).await.ok().flatten().map(|f| f.id)
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
-            // For now, tasks are tracked via beads
-            // The database task table will be used for orchestrator-managed tasks
-            println!();
-            println!("  {} Task registered", "→".cyan());
-            println!("    Folder ID: {:?}", folder_id);
-            println!("    Beads ID: {:?}", linked_beads_id);
-        }
+        // For now, tasks are tracked via beads
+        // The database task table will be used for orchestrator-managed tasks
+        println!();
+        println!("  {} Task registered", "→".cyan());
+        println!("    Folder ID: {:?}", folder_id);
+        println!("    Beads ID: {:?}", linked_beads_id);
     } else {
-        println!("  {} Database unavailable", "⚠".yellow());
+        println!("  {} rdv-server unavailable", "⚠".yellow());
     }
 
     println!();
@@ -329,22 +327,6 @@ async fn execute_task(task_id: &str, config: &Config) -> Result<()> {
 
     let is_beads = task_id.starts_with("beads-");
 
-    // Update database task status
-    if let Ok(db) = Database::open() {
-        // Try to find and update task in database
-        let db_task_id = if is_beads {
-            db.get_task_by_beads_id(task_id).ok().flatten().map(|t| t.id)
-        } else {
-            Some(task_id.to_string())
-        };
-
-        if let Some(ref tid) = db_task_id {
-            if db.update_task_status(tid, "in_progress").is_ok() {
-                println!("  {} Database task updated to in_progress", "✓".green());
-            }
-        }
-    }
-
     // Update beads status
     if is_beads && beads_available() {
         println!("  {} Updating beads status to in_progress...", "→".cyan());
@@ -419,21 +401,6 @@ async fn cancel(task_id: &str, reason: Option<&str>, _config: &Config) -> Result
         }
     }
 
-    // Update database task status
-    if let Ok(db) = Database::open() {
-        let db_task_id = if is_beads {
-            db.get_task_by_beads_id(task_id).ok().flatten().map(|t| t.id)
-        } else {
-            Some(task_id.to_string())
-        };
-
-        if let Some(ref tid) = db_task_id {
-            if db.update_task_status(tid, "failed").is_ok() {
-                println!("  {} Database task marked as failed", "✓".green());
-            }
-        }
-    }
-
     // Update beads if applicable
     if is_beads && beads_available() {
         let reason_msg = reason.unwrap_or("Cancelled via rdv");
@@ -488,44 +455,34 @@ async fn list(
         }
     }
 
-    // List database tasks
-    if let Ok(db) = Database::open() {
-        if let Ok(Some(user)) = db.get_default_user() {
-            println!();
-            println!("  {}", "Database Tasks:".cyan());
+    // List sessions from rdv-server
+    if let Ok(client) = ApiClient::new() {
+        println!();
+        println!("  {}", "rdv-server Sessions:".cyan());
 
-            // Determine status filter
-            let status_filter = if all { None } else { status.or(Some("open")) };
+        match client.list_sessions(None).await {
+            Ok(sessions) => {
+                let filtered: Vec<_> = sessions.iter()
+                    .filter(|s| s.status == "active")
+                    .take(10)
+                    .collect();
 
-            match db.list_tasks(&user.id, status_filter) {
-                Ok(tasks) => {
-                    if tasks.is_empty() {
-                        println!("    No database tasks found");
-                    } else {
-                        for task in tasks.iter().take(10) {
-                            let status_color = match task.status.as_str() {
-                                "open" | "pending" => "open".yellow(),
-                                "in_progress" => "in_progress".cyan(),
-                                "completed" => "completed".green(),
-                                "failed" => "failed".red(),
-                                _ => task.status.normal(),
-                            };
-                            let id_short = if task.id.len() >= 8 { &task.id[..8] } else { &task.id };
-                            println!(
-                                "    {} [{}] {}",
-                                id_short.cyan(),
-                                status_color,
-                                task.description.chars().take(50).collect::<String>()
-                            );
-                        }
-                        if tasks.len() > 10 {
-                            println!("    ... and {} more", tasks.len() - 10);
-                        }
+                if filtered.is_empty() {
+                    println!("    No active sessions");
+                } else {
+                    for session in filtered {
+                        let id_short = if session.id.len() >= 8 { &session.id[..8] } else { &session.id };
+                        println!(
+                            "    {} [{}] {}",
+                            id_short.cyan(),
+                            session.status.yellow(),
+                            session.name
+                        );
                     }
                 }
-                Err(_) => {
-                    println!("    Failed to query database tasks");
-                }
+            }
+            Err(_) => {
+                println!("    Failed to query sessions");
             }
         }
     }
@@ -592,31 +549,6 @@ async fn show(task_id: &str, _config: &Config) -> Result<()> {
 
     let is_beads = task_id.starts_with("beads-");
 
-    // Try to look up in database first
-    if let Ok(db) = Database::open() {
-        // Try direct task ID lookup
-        let db_task = if is_beads {
-            db.get_task_by_beads_id(task_id).ok().flatten()
-        } else {
-            db.get_task(task_id).ok().flatten()
-        };
-
-        if let Some(task) = db_task {
-            println!("  {}", "Database Task:".cyan());
-            println!("    ID: {}", task.id);
-            println!("    Type: {}", task.task_type);
-            println!("    Status: {}", task.status);
-            println!("    Description: {}", task.description);
-            if let Some(ref agent) = task.assigned_agent {
-                println!("    Agent: {}", agent);
-            }
-            if let Some(ref beads_id) = task.beads_issue_id {
-                println!("    Beads: {}", beads_id);
-            }
-            println!();
-        }
-    }
-
     let mut found = false;
     if is_beads && beads_available() {
         // Show beads issue details
@@ -627,20 +559,6 @@ async fn show(task_id: &str, _config: &Config) -> Result<()> {
             }
             Err(e) => {
                 println!("  {} Failed to load beads issue: {}", "⚠".yellow(), e);
-            }
-        }
-    }
-
-    // If we didn't find the task in database or beads, return error
-    if !found {
-        if let Ok(db) = Database::open() {
-            let db_found = if is_beads {
-                db.get_task_by_beads_id(task_id).ok().flatten().is_some()
-            } else {
-                db.get_task(task_id).ok().flatten().is_some()
-            };
-            if !db_found {
-                return Err(RdvError::TaskNotFound(task_id.to_string()).into());
             }
         }
     }
@@ -663,6 +581,11 @@ async fn show(task_id: &str, _config: &Config) -> Result<()> {
             };
             println!("    {} ({})", session.name, status);
         }
+        found = true;
+    }
+
+    if !found {
+        return Err(RdvError::TaskNotFound(task_id.to_string()).into());
     }
 
     Ok(())
