@@ -298,6 +298,117 @@ export function withProxy(
 }
 
 /**
+ * Proxy a request to rdv-server without authentication
+ *
+ * Used for endpoints that don't require user authentication
+ * (e.g., agent-event from trusted local hooks)
+ *
+ * @param request - Original Next.js request
+ * @param options - Optional proxy configuration
+ * @returns Response from rdv-server or error response
+ */
+export async function proxyToRdvServerNoAuth(
+  request: Request,
+  options: ProxyOptions = {}
+): Promise<NextResponse> {
+  // Load service token (still needed for internal auth)
+  const serviceToken = loadServiceToken();
+  if (!serviceToken) {
+    return NextResponse.json(
+      { error: "rdv-server not configured", code: "RDV_NOT_CONFIGURED" },
+      { status: 503 }
+    );
+  }
+
+  // Check socket exists
+  if (!existsSync(RDV_API_SOCKET)) {
+    return NextResponse.json(
+      { error: "rdv-server not running", code: "RDV_NOT_RUNNING" },
+      { status: 503 }
+    );
+  }
+
+  // Build target URL
+  const url = new URL(request.url);
+  const targetPath = options.path || url.pathname;
+  const targetUrl = `http://localhost${targetPath}${url.search}`;
+
+  // Build headers (no user ID for unauthenticated endpoints)
+  const headers: Record<string, string> = {
+    "X-RDV-Service-Token": serviceToken,
+    "Content-Type": request.headers.get("Content-Type") || "application/json",
+    ...options.headers,
+  };
+
+  // Forward relevant headers
+  const forwardHeaders = ["Accept", "Accept-Language", "User-Agent"];
+  for (const header of forwardHeaders) {
+    const value = request.headers.get(header);
+    if (value) headers[header] = value;
+  }
+
+  try {
+    // Get request body if present
+    let body: Buffer | undefined;
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      const arrayBuffer = await request.arrayBuffer();
+      if (arrayBuffer.byteLength > 0) {
+        body = Buffer.from(arrayBuffer);
+      }
+    }
+
+    // Make request to rdv-server
+    const response = await undiciRequest(targetUrl, {
+      dispatcher: getSocketAgent(),
+      method: request.method as "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+      headers,
+      body,
+      headersTimeout: options.timeout || 30000,
+      bodyTimeout: options.timeout || 30000,
+    });
+
+    // Read response body
+    const responseBody = await response.body.text();
+
+    // Build response headers
+    const responseHeaders: Record<string, string> = {};
+    const contentType = response.headers["content-type"];
+    if (contentType) {
+      responseHeaders["Content-Type"] = Array.isArray(contentType) ? contentType[0] : contentType;
+    }
+
+    // Return proxied response
+    return new NextResponse(responseBody, {
+      status: response.statusCode,
+      headers: responseHeaders,
+    });
+  } catch (error) {
+    console.error("[rdv-proxy] Request failed:", error);
+
+    // Handle connection errors
+    if (error instanceof Error) {
+      if (error.message.includes("ECONNREFUSED") || error.message.includes("ENOENT")) {
+        return NextResponse.json(
+          { error: "rdv-server not available", code: "RDV_UNAVAILABLE" },
+          { status: 503 }
+        );
+      }
+      if (error.message.includes("timeout")) {
+        return NextResponse.json(
+          { error: "rdv-server timeout", code: "RDV_TIMEOUT" },
+          { status: 504 }
+        );
+      }
+    }
+
+    return NextResponse.json(
+      { error: "Failed to proxy request", code: "PROXY_ERROR" },
+      { status: 502 }
+    );
+  }
+}
+
+/**
  * Cleanup function to be called on server shutdown
  */
 export function cleanupProxy(): void {

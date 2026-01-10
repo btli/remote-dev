@@ -171,3 +171,14 @@ pub struct InsightCounts {
     pub medium: u32,
     pub low: u32,
 }
+
+/// Audit log entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLog {
+    pub id: String,
+    pub orchestrator_id: String,
+    pub session_id: Option<String>,
+    pub action_type: String,
+    pub details: Option<String>,
+    pub created_at: i64,
+}

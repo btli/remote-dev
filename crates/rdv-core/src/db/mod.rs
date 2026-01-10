@@ -215,6 +215,16 @@ impl Database {
         Ok(())
     }
 
+    /// Update session last activity timestamp with a specific timestamp
+    pub fn update_session_activity_at(&self, session_id: &str, timestamp: i64) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        conn.execute(
+            "UPDATE terminal_session SET last_activity_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![timestamp, session_id],
+        )?;
+        Ok(())
+    }
+
     /// Get active session count for user
     pub fn get_active_session_count(&self, user_id: &str) -> Result<u32> {
         let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
@@ -800,6 +810,16 @@ impl Database {
         Ok(())
     }
 
+    /// Update orchestrator last activity timestamp
+    pub fn update_orchestrator_activity(&self, orchestrator_id: &str, timestamp: i64) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        conn.execute(
+            "UPDATE orchestrator_session SET last_activity_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![timestamp, orchestrator_id],
+        )?;
+        Ok(())
+    }
+
     /// Delete orchestrator
     pub fn delete_orchestrator(&self, orchestrator_id: &str) -> Result<()> {
         let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
@@ -1051,5 +1071,135 @@ impl Database {
         )?;
 
         Ok(id)
+    }
+
+    /// List audit logs for an orchestrator
+    pub fn list_audit_logs(
+        &self,
+        orchestrator_id: &str,
+        action_type: Option<&str>,
+        session_id: Option<&str>,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<AuditLog>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        // Build dynamic query
+        let mut query = String::from(
+            "SELECT id, orchestrator_id, session_id, action_type, details, created_at
+             FROM orchestrator_audit_log
+             WHERE orchestrator_id = ?1",
+        );
+        let mut param_idx = 2;
+
+        if action_type.is_some() {
+            query.push_str(&format!(" AND action_type = ?{}", param_idx));
+            param_idx += 1;
+        }
+        if session_id.is_some() {
+            query.push_str(&format!(" AND session_id = ?{}", param_idx));
+            param_idx += 1;
+        }
+        if start_date.is_some() {
+            query.push_str(&format!(" AND created_at >= ?{}", param_idx));
+            param_idx += 1;
+        }
+        if end_date.is_some() {
+            query.push_str(&format!(" AND created_at <= ?{}", param_idx));
+        }
+
+        query.push_str(" ORDER BY created_at DESC LIMIT ?");
+
+        let mut stmt = conn.prepare(&query)?;
+
+        // Build params dynamically
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(orchestrator_id.to_string())];
+        if let Some(at) = action_type {
+            params_vec.push(Box::new(at.to_string()));
+        }
+        if let Some(sid) = session_id {
+            params_vec.push(Box::new(sid.to_string()));
+        }
+        if let Some(sd) = start_date {
+            params_vec.push(Box::new(sd));
+        }
+        if let Some(ed) = end_date {
+            params_vec.push(Box::new(ed));
+        }
+        params_vec.push(Box::new(limit as i64));
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let logs = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(AuditLog {
+                    id: row.get(0)?,
+                    orchestrator_id: row.get(1)?,
+                    session_id: row.get(2)?,
+                    action_type: row.get(3)?,
+                    details: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(logs)
+    }
+
+    /// Count audit logs for an orchestrator (with optional filters)
+    pub fn count_audit_logs(
+        &self,
+        orchestrator_id: &str,
+        action_type: Option<&str>,
+        session_id: Option<&str>,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<u32> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        // Build dynamic query
+        let mut query = String::from(
+            "SELECT COUNT(*) FROM orchestrator_audit_log WHERE orchestrator_id = ?1",
+        );
+        let mut param_idx = 2;
+
+        if action_type.is_some() {
+            query.push_str(&format!(" AND action_type = ?{}", param_idx));
+            param_idx += 1;
+        }
+        if session_id.is_some() {
+            query.push_str(&format!(" AND session_id = ?{}", param_idx));
+            param_idx += 1;
+        }
+        if start_date.is_some() {
+            query.push_str(&format!(" AND created_at >= ?{}", param_idx));
+            param_idx += 1;
+        }
+        if end_date.is_some() {
+            query.push_str(&format!(" AND created_at <= ?{}", param_idx));
+        }
+
+        let mut stmt = conn.prepare(&query)?;
+
+        // Build params dynamically
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(orchestrator_id.to_string())];
+        if let Some(at) = action_type {
+            params_vec.push(Box::new(at.to_string()));
+        }
+        if let Some(sid) = session_id {
+            params_vec.push(Box::new(sid.to_string()));
+        }
+        if let Some(sd) = start_date {
+            params_vec.push(Box::new(sd));
+        }
+        if let Some(ed) = end_date {
+            params_vec.push(Box::new(ed));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let count: u32 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
+        Ok(count)
     }
 }

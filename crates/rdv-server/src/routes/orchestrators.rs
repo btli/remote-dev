@@ -20,6 +20,12 @@ pub fn router() -> Router<Arc<AppState>> {
             "/orchestrators",
             get(list_orchestrators).post(create_orchestrator),
         )
+        .route("/orchestrators/health", get(get_orchestrators_health))
+        .route(
+            "/orchestrators/agent-event",
+            get(agent_event_health).post(handle_agent_event),
+        )
+        .route("/orchestrators/reinitialize", post(reinitialize_orchestrator))
         .route(
             "/orchestrators/:id",
             get(get_orchestrator)
@@ -36,6 +42,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/orchestrators/:id/monitoring/stop", post(stop_monitoring))
         .route("/orchestrators/:id/monitoring/status", get(get_monitoring_status))
         .route("/orchestrators/:id/stalled-sessions", get(get_stalled_sessions))
+        .route("/orchestrators/:id/audit", get(get_audit_logs))
         // Insight routes
         .route("/insights/:insight_id", get(get_insight).delete(delete_insight))
         .route("/insights/:insight_id/resolve", post(resolve_insight))
@@ -921,5 +928,554 @@ pub async fn cleanup_insights(
 
     Ok(Json(CleanupInsightsResponse {
         deleted_count: count,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health Route
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct OrchestratorHealthMetric {
+    pub orchestrator_id: String,
+    pub orchestrator_type: String,
+    pub status: String,
+    pub stall_checking_active: bool,
+    pub health: OrchestratorHealthDetail,
+    pub config: OrchestratorConfigDetail,
+    pub timestamps: OrchestratorTimestamps,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OrchestratorHealthDetail {
+    pub minutes_since_activity: i64,
+    pub stall_threshold_minutes: i64,
+    pub is_healthy: bool,
+    pub receiving_heartbeats: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OrchestratorConfigDetail {
+    pub monitoring_interval: i32,
+    pub stall_threshold: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OrchestratorTimestamps {
+    pub last_activity_at: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HealthSummary {
+    pub total_orchestrators: usize,
+    pub active_orchestrators: usize,
+    pub healthy_orchestrators: usize,
+    pub receiving_heartbeats: usize,
+    pub overall_health: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OrchestratorsHealthResponse {
+    pub summary: HealthSummary,
+    pub orchestrators: Vec<OrchestratorHealthMetric>,
+}
+
+/// Get health metrics for all orchestrators
+pub async fn get_orchestrators_health(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Json<OrchestratorsHealthResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    let orchestrators = state
+        .db
+        .list_orchestrators(user_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let mut health_metrics = Vec::new();
+
+    for orc in &orchestrators {
+        let is_active = state.monitoring.is_stall_checking_active(&orc.id).await;
+
+        let last_activity_secs = orc.updated_at;
+        let minutes_since_activity = (now - last_activity_secs) / 60;
+        let stall_threshold_minutes = (orc.stall_threshold_secs / 60) as i64;
+
+        // Orchestrator is healthy if activity within 2x stall threshold
+        let is_healthy = minutes_since_activity < stall_threshold_minutes * 2;
+        let receiving_heartbeats = minutes_since_activity < stall_threshold_minutes;
+
+        health_metrics.push(OrchestratorHealthMetric {
+            orchestrator_id: orc.id.clone(),
+            orchestrator_type: orc.orchestrator_type.clone(),
+            status: orc.status.clone(),
+            stall_checking_active: is_active,
+            health: OrchestratorHealthDetail {
+                minutes_since_activity,
+                stall_threshold_minutes,
+                is_healthy,
+                receiving_heartbeats,
+            },
+            config: OrchestratorConfigDetail {
+                monitoring_interval: orc.monitoring_interval_secs,
+                stall_threshold: orc.stall_threshold_secs,
+            },
+            timestamps: OrchestratorTimestamps {
+                last_activity_at: orc.updated_at,
+                created_at: orc.created_at,
+                updated_at: orc.updated_at,
+            },
+        });
+    }
+
+    let total = orchestrators.len();
+    let active = health_metrics.iter().filter(|m| m.stall_checking_active).count();
+    let healthy = health_metrics.iter().filter(|m| m.health.is_healthy).count();
+    let heartbeats = health_metrics.iter().filter(|m| m.health.receiving_heartbeats).count();
+    let overall_health = if total > 0 {
+        ((healthy as f64 / total as f64) * 100.0) as u32
+    } else {
+        100
+    };
+
+    Ok(Json(OrchestratorsHealthResponse {
+        summary: HealthSummary {
+            total_orchestrators: total,
+            active_orchestrators: active,
+            healthy_orchestrators: healthy,
+            receiving_heartbeats: heartbeats,
+            overall_health,
+        },
+        orchestrators: health_metrics,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent Event Route
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AgentEventPayload {
+    pub event: String,
+    pub agent: String,
+    pub session_id: Option<String>,
+    pub tmux_session_name: Option<String>,
+    pub folder_id: Option<String>,
+    pub timestamp: Option<String>,
+    pub reason: Option<String>,
+    pub context: Option<AgentEventContext>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AgentEventContext {
+    pub cwd: Option<String>,
+    pub files_modified: Option<i32>,
+    pub last_message: Option<String>,
+    pub transcript_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentEventRouting {
+    pub folder_orchestrator: Option<String>,
+    pub master_orchestrator: Option<String>,
+    pub escalated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentEventResponse {
+    pub received: bool,
+    pub session_found: bool,
+    pub session_id: Option<String>,
+    pub event: Option<String>,
+    pub routing: Option<AgentEventRouting>,
+}
+
+/// Health check for agent-event endpoint
+pub async fn agent_event_health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "endpoint": "agent-event",
+        "supported_events": [
+            "heartbeat",
+            "session_start",
+            "session_end",
+            "task_complete",
+            "error",
+            "stalled"
+        ],
+        "supported_agents": ["claude", "codex", "gemini", "opencode"]
+    }))
+}
+
+/// Handle agent events from hooks
+pub async fn handle_agent_event(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AgentEventPayload>,
+) -> Result<Json<AgentEventResponse>, (StatusCode, String)> {
+    // Validate required fields
+    if payload.event.is_empty() || payload.agent.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Missing required fields: event, agent".to_string(),
+        ));
+    }
+
+    // Find the terminal session
+    let session = if let Some(session_id) = &payload.session_id {
+        state.db.get_session(session_id).map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+    } else if let Some(tmux_name) = &payload.tmux_session_name {
+        state.db.get_session_by_tmux_name(tmux_name).map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+    } else {
+        None
+    };
+
+    let session = match session {
+        Some(s) => s,
+        None => {
+            // Session not found - log but don't error
+            return Ok(Json(AgentEventResponse {
+                received: true,
+                session_found: false,
+                session_id: None,
+                event: Some(payload.event),
+                routing: None,
+            }));
+        }
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    // Update session's last activity timestamp
+    let _ = state.db.update_session_activity_at(&session.id, now);
+
+    // Find folder orchestrator (if session is in a folder)
+    let folder_orchestrator = if let Some(folder_id) = &session.folder_id {
+        state
+            .db
+            .get_folder_orchestrator(&session.user_id, folder_id)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+
+    // Find master orchestrator (for escalation)
+    let master_orchestrator = state
+        .db
+        .get_master_orchestrator(&session.user_id)
+        .ok()
+        .flatten();
+
+    // Update folder orchestrator activity
+    if let Some(ref fo) = folder_orchestrator {
+        let _ = state.db.update_orchestrator_activity(&fo.id, now);
+    }
+
+    // Events that should escalate to master control
+    let escalation_events = ["error", "stalled"];
+    let should_escalate = escalation_events.contains(&payload.event.as_str());
+
+    // Update master orchestrator activity for escalation events
+    if should_escalate {
+        if let Some(ref mo) = master_orchestrator {
+            let _ = state.db.update_orchestrator_activity(&mo.id, now);
+        }
+    }
+
+    let folder_orc_id = folder_orchestrator.as_ref().map(|o| o.id.clone());
+    let master_orc_id = master_orchestrator.as_ref().map(|o| o.id.clone());
+    let has_master = master_orchestrator.is_some();
+
+    Ok(Json(AgentEventResponse {
+        received: true,
+        session_found: true,
+        session_id: Some(session.id.clone()),
+        event: Some(payload.event.clone()),
+        routing: Some(AgentEventRouting {
+            folder_orchestrator: folder_orc_id,
+            master_orchestrator: if should_escalate {
+                master_orc_id
+            } else {
+                None
+            },
+            escalated: should_escalate && has_master,
+        }),
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reinitialize Route
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ReinitializeRequest {
+    #[serde(rename = "type")]
+    pub reinit_type: String,
+    pub folder_id: Option<String>,
+    pub config: Option<ReinitializeConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReinitializeConfig {
+    pub custom_instructions: Option<String>,
+    pub monitoring_interval: Option<i32>,
+    pub stall_threshold: Option<i32>,
+    pub auto_intervention: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReinitializeResponse {
+    pub success: bool,
+    #[serde(rename = "type")]
+    pub reinit_type: String,
+    pub folder_id: Option<String>,
+    pub orchestrator: Option<OrchestratorBrief>,
+    pub previous_orchestrator: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OrchestratorBrief {
+    pub id: String,
+    pub session_id: Option<String>,
+    pub orchestrator_type: String,
+    pub status: String,
+    pub scope_id: Option<String>,
+}
+
+/// Reinitialize an orchestrator
+pub async fn reinitialize_orchestrator(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ReinitializeRequest>,
+) -> Result<Json<ReinitializeResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Validate type
+    if req.reinit_type != "master" && req.reinit_type != "folder" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "type must be 'master' or 'folder'".to_string(),
+        ));
+    }
+
+    if req.reinit_type == "folder" && req.folder_id.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "folder_id is required for folder orchestrator reinitialization".to_string(),
+        ));
+    }
+
+    // Find existing orchestrator
+    let existing = if req.reinit_type == "master" {
+        state.db.get_master_orchestrator(user_id).ok().flatten()
+    } else {
+        let folder_id = req.folder_id.as_ref().unwrap();
+        state
+            .db
+            .get_folder_orchestrator(user_id, folder_id)
+            .ok()
+            .flatten()
+    };
+
+    let previous_id = existing.as_ref().map(|e| e.id.clone());
+
+    // Stop monitoring if active
+    if let Some(ref prev) = existing {
+        state.monitoring.stop_stall_checking(&prev.id).await;
+    }
+
+    // Delete existing orchestrator
+    if let Some(ref prev) = existing {
+        let _ = state.db.delete_orchestrator(&prev.id);
+    }
+
+    // Create new orchestrator
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let orchestrator_type = if req.reinit_type == "master" {
+        "master"
+    } else {
+        "folder"
+    };
+
+    let monitoring_interval = req
+        .config
+        .as_ref()
+        .and_then(|c| c.monitoring_interval)
+        .unwrap_or(30);
+    let stall_threshold = req
+        .config
+        .as_ref()
+        .and_then(|c| c.stall_threshold)
+        .unwrap_or(300);
+
+    state
+        .db
+        .create_orchestrator_simple(
+            &new_id,
+            user_id,
+            req.folder_id.as_deref(),
+            None, // session_id - will be set when session is created
+            orchestrator_type,
+            monitoring_interval,
+            stall_threshold,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let orchestrator = state
+        .db
+        .get_orchestrator(&new_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Failed to create orchestrator".to_string()))?;
+
+    let message = if previous_id.is_some() {
+        format!("{} orchestrator reinitialized successfully", req.reinit_type)
+    } else {
+        format!(
+            "{} orchestrator created (no previous orchestrator existed)",
+            req.reinit_type
+        )
+    };
+
+    Ok(Json(ReinitializeResponse {
+        success: true,
+        reinit_type: req.reinit_type.clone(),
+        folder_id: req.folder_id.clone(),
+        orchestrator: Some(OrchestratorBrief {
+            id: orchestrator.id,
+            session_id: orchestrator.session_id,
+            orchestrator_type: orchestrator.orchestrator_type,
+            status: orchestrator.status,
+            scope_id: orchestrator.folder_id,
+        }),
+        previous_orchestrator: previous_id,
+        message,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit Log Route
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AuditLogsQuery {
+    pub action_type: Option<String>,
+    pub session_id: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditLogResponse {
+    pub id: String,
+    pub orchestrator_id: String,
+    pub action_type: String,
+    pub target_session_id: Option<String>,
+    pub details: Option<serde_json::Value>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditLogsResponse {
+    pub orchestrator_id: String,
+    pub count: usize,
+    pub total: u32,
+    pub logs: Vec<AuditLogResponse>,
+}
+
+/// Get audit logs for an orchestrator
+pub async fn get_audit_logs(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+    Query(query): Query<AuditLogsQuery>,
+) -> Result<Json<AuditLogsResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Verify orchestrator ownership
+    let orchestrator = state
+        .db
+        .get_orchestrator(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Parse dates
+    let start_date = query.start_date.as_ref().and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map(|dt| dt.timestamp_millis())
+            .ok()
+    });
+    let end_date = query.end_date.as_ref().and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map(|dt| dt.timestamp_millis())
+            .ok()
+    });
+
+    let limit = query.limit.unwrap_or(100).min(500);
+
+    // Get logs
+    let logs = state
+        .db
+        .list_audit_logs(
+            &id,
+            query.action_type.as_deref(),
+            query.session_id.as_deref(),
+            start_date,
+            end_date,
+            limit,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Get total count
+    let total = state
+        .db
+        .count_audit_logs(
+            &id,
+            query.action_type.as_deref(),
+            query.session_id.as_deref(),
+            start_date,
+            end_date,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let logs_response: Vec<AuditLogResponse> = logs
+        .into_iter()
+        .map(|log| {
+            let details = log.details.as_ref().and_then(|d| serde_json::from_str(d).ok());
+            AuditLogResponse {
+                id: log.id,
+                orchestrator_id: log.orchestrator_id,
+                action_type: log.action_type,
+                target_session_id: log.session_id,
+                details,
+                created_at: log.created_at,
+            }
+        })
+        .collect();
+
+    Ok(Json(AuditLogsResponse {
+        orchestrator_id: id,
+        count: logs_response.len(),
+        total,
+        logs: logs_response,
     }))
 }
