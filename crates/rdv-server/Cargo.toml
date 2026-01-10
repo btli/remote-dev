@@ -49,6 +49,10 @@ chrono.workspace = true
 dirs.workspace = true
 libc.workspace = true
 
+# MCP (Model Context Protocol)
+rmcp.workspace = true
+schemars.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio-test.workspace = true

@@ -1,6 +1,7 @@
 //! rdv-server - Remote Dev backend server
 //!
 //! REST API and WebSocket server over unix sockets.
+//! Also supports MCP (Model Context Protocol) over stdio.
 
 use anyhow::Context;
 use hyper::server::conn::http1;
@@ -16,6 +17,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod config;
+mod mcp;
 mod middleware;
 mod routes;
 mod services;
@@ -26,13 +28,29 @@ use state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env().add_directive("rdv_server=info".parse()?))
-        .init();
+    // Check for MCP mode
+    let args: Vec<String> = std::env::args().collect();
+    let mcp_mode = args.iter().any(|a| a == "--mcp" || a == "-m");
+
+    // Initialize logging (to stderr in MCP mode to keep stdout clean)
+    if mcp_mode {
+        tracing_subscriber::registry()
+            .with(fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env().add_directive("rdv_server=info".parse()?))
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env().add_directive("rdv_server=info".parse()?))
+            .init();
+    }
 
     info!("rdv-server v{}", env!("CARGO_PKG_VERSION"));
+
+    // Run MCP mode if requested
+    if mcp_mode {
+        return run_mcp_server().await;
+    }
 
     // Load configuration
     let config = Config::load()?;
@@ -237,4 +255,40 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+}
+
+/// Run MCP server over stdio
+async fn run_mcp_server() -> anyhow::Result<()> {
+    use rmcp::transport::io::stdio;
+    use rmcp::ServiceExt;
+
+    info!("Starting MCP server over stdio");
+
+    // Open database directly (no full config needed for MCP)
+    let db = Database::open().context("Failed to open database")?;
+
+    // Create a minimal service token for MCP mode
+    let service_token = ServiceToken::generate();
+
+    // Create minimal config for MCP
+    let config = Config::load().unwrap_or_else(|_| Config::default());
+
+    // Create application state
+    let state = AppState::new(config, db, service_token);
+
+    // Create MCP server
+    let mcp_server = mcp::McpServer::new(state);
+
+    // Create stdio transport
+    let transport = stdio();
+
+    // Serve MCP protocol
+    info!("MCP server ready - awaiting client connection");
+    let server = mcp_server.serve(transport).await?;
+
+    // Wait for server to complete
+    let quit_reason = server.waiting().await?;
+    info!("MCP server shutdown: {:?}", quit_reason);
+
+    Ok(())
 }

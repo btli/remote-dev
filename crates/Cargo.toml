@@ -60,3 +60,7 @@ tokio-test = "0.4"
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
+
+# MCP (Model Context Protocol)
+rmcp = { version = "0.9", features = ["server", "transport-io", "macros"] }
+schemars = { version = "1.0.0-alpha.17", features = ["derive"] }

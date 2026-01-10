@@ -22,6 +22,25 @@ pub struct Config {
     pub service_token_file: PathBuf,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let remote_dev_dir = home.join(".remote-dev");
+        let run_dir = remote_dev_dir.join("run");
+        let server_dir = remote_dev_dir.join("server");
+
+        Self {
+            config_path: remote_dev_dir.join("config.toml"),
+            api_socket: run_dir.join("api.sock"),
+            terminal_socket: run_dir.join("terminal.sock"),
+            pid_file: server_dir.join("server.pid"),
+            log_file: server_dir.join("server.log"),
+            database_path: remote_dev_dir.join("sqlite.db"),
+            service_token_file: server_dir.join("service-token"),
+        }
+    }
+}
+
 impl Config {
     /// Load configuration from file or defaults
     ///
