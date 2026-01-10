@@ -23,12 +23,14 @@ export interface Preferences {
 }
 
 /**
- * Extended preferences including repository association
+ * Extended preferences including repository association and feature flags
  * These are also inherited through the folder hierarchy
  */
 export interface ExtendedPreferences extends Preferences {
   githubRepoId: string | null;
   localRepoPath: string | null;
+  // Feature flags
+  orchestratorFirstMode: boolean;
 }
 
 /**
@@ -63,6 +65,8 @@ export interface UserSettings {
   activeFolderId: string | null;
   pinnedFolderId: string | null;
   autoFollowActiveSession: boolean;
+  // Feature flags
+  orchestratorFirstMode: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -86,6 +90,8 @@ export interface FolderPreferences {
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars: EnvironmentVariables | null;
+  // Feature flags (nullable for inheritance)
+  orchestratorFirstMode: boolean | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -146,6 +152,8 @@ export interface UpdateUserSettingsInput {
   activeFolderId?: string | null;
   pinnedFolderId?: string | null;
   autoFollowActiveSession?: boolean;
+  // Feature flags
+  orchestratorFirstMode?: boolean;
 }
 
 /**
@@ -164,4 +172,6 @@ export interface UpdateFolderPreferencesInput {
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars?: EnvironmentVariables | null;
+  // Feature flags (nullable for inheritance)
+  orchestratorFirstMode?: boolean | null;
 }

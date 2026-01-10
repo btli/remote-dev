@@ -138,13 +138,15 @@ export function resolvePreferences(
     startupCommand: "default",
     githubRepoId: "default",
     localRepoPath: "default",
+    orchestratorFirstMode: "default",
   };
 
-  // Start with defaults (extended to include repo fields)
+  // Start with defaults (extended to include repo fields and feature flags)
   const resolved: ExtendedPreferences = {
     ...DEFAULT_PREFERENCES,
     githubRepoId: null,
     localRepoPath: null,
+    orchestratorFirstMode: false,
   };
 
   // Layer 1: Apply user settings
@@ -172,6 +174,11 @@ export function resolvePreferences(
     if (userSettings.startupCommand !== null) {
       resolved.startupCommand = userSettings.startupCommand;
       source.startupCommand = "user";
+    }
+    // Feature flags
+    if (userSettings.orchestratorFirstMode !== undefined) {
+      resolved.orchestratorFirstMode = userSettings.orchestratorFirstMode;
+      source.orchestratorFirstMode = "user";
     }
   }
 
@@ -212,6 +219,11 @@ export function resolvePreferences(
     if (folderPrefs.localRepoPath !== null) {
       resolved.localRepoPath = folderPrefs.localRepoPath;
       source.localRepoPath = folderRef;
+    }
+    // Feature flags also inherit
+    if (folderPrefs.orchestratorFirstMode !== null) {
+      resolved.orchestratorFirstMode = folderPrefs.orchestratorFirstMode;
+      source.orchestratorFirstMode = folderRef;
     }
   }
 

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Orchestrator-First Mode Feature Flag**: Opt-in control for Master Control monitoring
+  - User-level setting with per-folder overrides
+  - Hierarchical preference inheritance (Default → User → Parent Folder → Child Folder)
+  - `OrchestratorModeToggle` UI component for settings and folder preferences
+  - `isOrchestratorModeEnabled()` helper for checking effective flag state
+  - Migration script (`bun run db:migrate-orchestrators`) for safe rollout
+  - Comprehensive documentation in `docs/ORCHESTRATOR_FIRST_MODE.md`
+- **Environment Variables Documentation**: Updated `.env.local.example` with:
+  - AI Agent API keys section (ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY)
+  - MCP server configuration options
+  - Feature flags section with ORCHESTRATOR_FIRST_MODE
+
+### Changed
+
+- Monitoring service now respects `orchestratorFirstMode` feature flag on startup
+- Orchestrators for users/folders with disabled flag are skipped during initialization
+
 ## [0.2.0] - 2026-01-09
 
 ### Added

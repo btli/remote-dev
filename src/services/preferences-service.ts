@@ -421,6 +421,7 @@ function mapDbUserSettings(
     activeFolderId: db.activeFolderId,
     pinnedFolderId: db.pinnedFolderId,
     autoFollowActiveSession: db.autoFollowActiveSession ?? true,
+    orchestratorFirstMode: db.orchestratorFirstMode ?? false,
     createdAt: new Date(db.createdAt),
     updatedAt: new Date(db.updatedAt),
   };
@@ -442,6 +443,7 @@ function mapDbFolderPreferences(
     githubRepoId: dbRow.githubRepoId,
     localRepoPath: dbRow.localRepoPath,
     environmentVars: parseEnvironmentVars(dbRow.environmentVars),
+    orchestratorFirstMode: dbRow.orchestratorFirstMode ?? null,
     createdAt: new Date(dbRow.createdAt),
     updatedAt: new Date(dbRow.updatedAt),
   };

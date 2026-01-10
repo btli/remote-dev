@@ -103,6 +103,10 @@ export const userSettings = sqliteTable("user_settings", {
   autoFollowActiveSession: integer("auto_follow_active_session", { mode: "boolean" })
     .notNull()
     .default(true),
+  // Feature flags
+  orchestratorFirstMode: integer("orchestrator_first_mode", { mode: "boolean" })
+    .notNull()
+    .default(false),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -199,6 +203,8 @@ export const folderPreferences = sqliteTable(
     // Environment variables as JSON: { "PORT": "3000", "API_URL": "..." }
     // Use "__DISABLED__" value to explicitly disable an inherited variable
     environmentVars: text("environment_vars"),
+    // Feature flags (nullable for inheritance)
+    orchestratorFirstMode: integer("orchestrator_first_mode", { mode: "boolean" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

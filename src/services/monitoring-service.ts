@@ -13,7 +13,7 @@
  * Hierarchy: Agent Hooks → Folder Orchestrator → Master Control (escalation)
  */
 import { db } from "@/db";
-import { orchestratorSessions, terminalSessions } from "@/db/schema";
+import { orchestratorSessions, terminalSessions, userSettings, folderPreferences } from "@/db/schema";
 import { eq, and, lt, isNull, or } from "drizzle-orm";
 import { scrollbackMonitor } from "@/infrastructure/container";
 import type { ScrollbackSnapshot } from "@/types/orchestrator";
@@ -316,8 +316,59 @@ export function stopAllMonitoring(): void {
 }
 
 /**
+ * Check if orchestrator mode is enabled for a user/folder combination
+ *
+ * Returns true if:
+ * - Folder has orchestratorFirstMode = true, OR
+ * - Folder has orchestratorFirstMode = null AND user has orchestratorFirstMode = true
+ *
+ * Use this to gate orchestrator creation and monitoring operations.
+ */
+export async function isOrchestratorModeEnabled(
+  userId: string,
+  scopeId: string | null
+): Promise<boolean> {
+  // Get user settings
+  const userSettingsResult = await db
+    .select({ orchestratorFirstMode: userSettings.orchestratorFirstMode })
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId))
+    .limit(1);
+
+  const userEnabled = userSettingsResult[0]?.orchestratorFirstMode ?? false;
+
+  // If this is a folder-scoped orchestrator, check folder preferences
+  if (scopeId) {
+    const folderPrefsResult = await db
+      .select({ orchestratorFirstMode: folderPreferences.orchestratorFirstMode })
+      .from(folderPreferences)
+      .where(
+        and(
+          eq(folderPreferences.folderId, scopeId),
+          eq(folderPreferences.userId, userId)
+        )
+      )
+      .limit(1);
+
+    const folderEnabled = folderPrefsResult[0]?.orchestratorFirstMode;
+
+    // Folder preference takes precedence if explicitly set
+    if (folderEnabled !== null && folderEnabled !== undefined) {
+      return folderEnabled;
+    }
+  }
+
+  // Fall back to user-level preference
+  return userEnabled;
+}
+
+/**
  * Initialize stall checking for all active orchestrators
  * Call this on server startup
+ *
+ * Respects the orchestratorFirstMode feature flag:
+ * - Only starts monitoring for users/folders with the flag enabled
+ * - Orchestrators for disabled users/folders remain in 'idle' state but don't run
  */
 export async function initializeMonitoring(): Promise<void> {
   console.log("[MonitoringService] Initializing event-driven monitoring...");
@@ -330,12 +381,32 @@ export async function initializeMonitoring(): Promise<void> {
 
   console.log(`[MonitoringService] Found ${orchestrators.length} orchestrators`);
 
+  let enabledCount = 0;
+  let skippedCount = 0;
+
   // Start stall checking for each (lightweight timestamp checks)
   for (const orchestrator of orchestrators) {
+    // Check if orchestrator mode is enabled for this user/folder
+    const isEnabled = await isOrchestratorModeEnabled(
+      orchestrator.userId,
+      orchestrator.scopeId
+    );
+
+    if (!isEnabled) {
+      console.log(
+        `[MonitoringService] Skipping ${orchestrator.id} (orchestratorFirstMode disabled)`
+      );
+      skippedCount++;
+      continue;
+    }
+
     // Convert stallThreshold seconds to check interval (check at half the threshold)
     const checkInterval = Math.max(30000, (orchestrator.stallThreshold / 2) * 1000);
     startStallChecking(orchestrator.id, orchestrator.userId, checkInterval);
+    enabledCount++;
   }
 
-  console.log("[MonitoringService] Event-driven monitoring initialized");
+  console.log(
+    `[MonitoringService] Event-driven monitoring initialized: ${enabledCount} enabled, ${skippedCount} skipped (feature flag disabled)`
+  );
 }
