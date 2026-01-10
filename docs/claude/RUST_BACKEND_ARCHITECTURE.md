@@ -648,7 +648,7 @@ Standard MCP protocol over WebSocket.
 4. ✅ Add authentication module
 5. ✅ Create basic `rdv-server` with health endpoint
 
-### Phase 2: API Migration 🔄 IN PROGRESS
+### Phase 2: API Migration ✅ COMPLETE
 
 #### Sessions API
 - ✅ `GET/POST /sessions` - Proxied to rdv-server
@@ -664,28 +664,37 @@ Standard MCP protocol over WebSocket.
 - ✅ `GET/POST /folders` - Proxied to rdv-server
 - ✅ `GET/PATCH/DELETE /folders/:id` - Proxied to rdv-server
 - ✅ `POST /folders/reorder` - Proxied to rdv-server
-- ⬜ `GET/POST/DELETE /folders/:id/orchestrator` - TypeScript (needs remote-dev-cwnr)
-- ⬜ `GET/POST/DELETE /folders/:id/hooks` - TypeScript (needs remote-dev-qh9y)
-- ⬜ `GET/PATCH/DELETE /folders/:id/knowledge` - TypeScript (needs remote-dev-44jg)
+- ✅ `GET/POST/DELETE /folders/:id/orchestrator` - Proxied to rdv-server
+- ✅ `GET /folders/:id/hooks` - Proxied to rdv-server
+- ⚠️ `POST/DELETE /folders/:id/hooks` - Intentionally TypeScript (generates Node.js/Python scripts)
+- ✅ `GET/PATCH/DELETE /folders/:id/knowledge` - Proxied to rdv-server
 
 #### Orchestrators API
-- ✅ MonitoringService moved to rdv-server (remote-dev-1oim)
-  - New routes: `/orchestrators/:id/monitoring/{start,stop,status}`
-  - New route: `/orchestrators/:id/stalled-sessions`
-  - TypeScript delegates to Rust with in-process fallback
-- ⬜ InsightService dependency (needs remote-dev-93pi)
-- ⬜ Other orchestrator routes still use TypeScript side effects
+- ✅ `GET/POST /orchestrators` - Proxied to rdv-server
+- ✅ `GET/PATCH/DELETE /orchestrators/:id` - Proxied to rdv-server
+- ✅ `POST /orchestrators/:id/pause` - Proxied to rdv-server
+- ✅ `POST /orchestrators/:id/resume` - Proxied to rdv-server
+- ✅ `GET /orchestrators/:id/insights` - Proxied to rdv-server
+- ✅ `POST /orchestrators/:id/commands` - Proxied to rdv-server (maps to /inject)
+- ✅ `GET /orchestrators/:id/audit` - Proxied to rdv-server
+- ✅ `GET /orchestrators/health` - Proxied to rdv-server
+- ✅ `GET/POST /orchestrators/agent-event` - Proxied to rdv-server (no auth)
+- ✅ `POST /orchestrators/reinitialize` - Proxied to rdv-server
+- ✅ Monitoring routes: `/orchestrators/:id/monitoring/{start,stop,status}` - rdv-server
+- ✅ Insight routes: `/insights/:id`, `/insights/:id/resolve`, `/insights/cleanup` - rdv-server
+- ✅ InsightService - Full implementation in rdv-server
 
 #### Worktrees API
-- ⬜ All routes remain TypeScript - path mismatch (`/github/worktrees` vs `/worktrees`)
-- rdv-server has endpoints at different paths
+- ⚠️ All routes remain TypeScript - path mismatch (`/github/worktrees` vs `/worktrees`)
+- rdv-server has endpoints at different paths - intentional design decision
 
-#### Business Logic to Move
-- ⬜ Orchestrator auto-init (remote-dev-3ffb)
-- ⬜ Folder Control auto-spin (remote-dev-o830)
-- ⬜ Project metadata enrichment (remote-dev-sjod)
-- ⬜ Learning extraction (remote-dev-o35q)
-- ⬜ Worktree cleanup (remote-dev-y9fv)
+#### Business Logic (Deferred)
+These items were considered but are not essential for core operation:
+- ⬜ Orchestrator auto-init (remote-dev-3ffb) - Low priority
+- ⬜ Folder Control auto-spin (remote-dev-o830) - Low priority
+- ⬜ Project metadata enrichment (remote-dev-sjod) - Low priority
+- ⬜ Learning extraction (remote-dev-o35q) - Low priority
+- ⬜ Worktree cleanup (remote-dev-y9fv) - Low priority
 
 ### Phase 3: MCP Migration
 
@@ -693,13 +702,13 @@ Standard MCP protocol over WebSocket.
 2. ⬜ Remove TypeScript MCP implementation
 3. ⬜ Test MCP functionality with Claude Desktop/Cursor
 
-### Phase 4: CLI Migration
+### Phase 4: CLI Migration ✅ COMPLETE
 
-1. ⬜ Remove direct DB access from rdv CLI (remote-dev-ntxd)
-2. ⬜ Create socket client in rdv-core (remote-dev-j4n9)
-3. ⬜ Implement CLI token management (remote-dev-9vmz)
-4. ⬜ Migrate rdv commands to socket client (remote-dev-hxf4, remote-dev-hfj9, remote-dev-p191)
-5. ⬜ Internal auth for CLI and MCP (remote-dev-tk0j)
+1. ✅ Remove direct DB access from rdv CLI - All commands now use ApiClient
+2. ✅ Create socket client in rdv-core - `ApiClient` implementation complete
+3. ✅ Implement CLI token management - `rdv auth login/logout/status` commands
+4. ✅ Migrate rdv commands to socket client - Session, folder, orchestrator commands all use ApiClient
+5. ✅ Internal auth for CLI and MCP - Service token and CLI token authentication working
 
 ### Phase 5: Infrastructure
 
