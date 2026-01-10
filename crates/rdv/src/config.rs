@@ -109,8 +109,12 @@ impl ApiEndpoint {
             return ApiEndpoint::Http(url);
         }
 
-        // 2. Check for prod mode Unix socket
-        let socket_path = PathBuf::from("/tmp/rdv/next.sock");
+        // 2. Check for Unix socket in ~/.remote-dev/run/
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let remote_dev_dir = std::env::var("REMOTE_DEV_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home.join(".remote-dev"));
+        let socket_path = remote_dev_dir.join("run").join("api.sock");
         if socket_path.exists() {
             return ApiEndpoint::UnixSocket(socket_path);
         }

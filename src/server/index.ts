@@ -1,4 +1,6 @@
 import { config } from "dotenv";
+import { homedir } from "os";
+import { join } from "path";
 import { createTerminalServer } from "./terminal";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator";
 import {
@@ -15,8 +17,12 @@ import { createOversightWorker } from "../services/workers/oversight-worker";
 // Load .env.local to match Next.js environment
 config({ path: ".env.local" });
 
-// Support both port and socket modes
-const TERMINAL_SOCKET = process.env.TERMINAL_SOCKET;
+// Standard directory structure: ~/.remote-dev/run/ for sockets
+const REMOTE_DEV_DIR = process.env.REMOTE_DEV_DIR || join(homedir(), ".remote-dev");
+const DEFAULT_TERMINAL_SOCKET = join(REMOTE_DEV_DIR, "run", "terminal.sock");
+
+// Support both port and socket modes (socket takes precedence)
+const TERMINAL_SOCKET = process.env.TERMINAL_SOCKET || (process.env.NODE_ENV === "production" ? DEFAULT_TERMINAL_SOCKET : undefined);
 const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "6002");
 const MCP_ENABLED = process.env.MCP_ENABLED === "true";
 

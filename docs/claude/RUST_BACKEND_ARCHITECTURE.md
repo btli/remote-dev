@@ -47,7 +47,7 @@ This document describes the architecture for migrating Remote Dev's backend from
                     ┌───────────────┴───────────────┐
                     ▼                               ▼
      ┌──────────────────────────┐    ┌──────────────────────────┐
-     │   ~/.rdv/api.sock        │    │  ~/.rdv/terminal.sock    │
+     │   ~/.remote-dev/run/api.sock        │    │  ~/.remote-dev/run/terminal.sock    │
      │   (REST API)             │    │  (WebSocket terminals)   │
      │   Mode: 0600             │    │  Mode: 0600              │
      └──────────────────────────┘    └──────────────────────────┘
@@ -173,7 +173,7 @@ impl ServiceToken {
 
 ```rust
 /// CLI token for rdv CLI authentication
-/// Generated per-user, stored in ~/.rdv/cli-token
+/// Generated per-user, stored in ~/.remote-dev/cli-token
 pub struct CLIToken {
     /// Random 256-bit token
     pub token: [u8; 32],
@@ -193,11 +193,14 @@ pub struct CLIToken {
 ### 3. Token Storage
 
 ```
-~/.rdv/
-├── config.toml           # CLI configuration
+~/.remote-dev/
+├── config.toml           # CLI/server configuration
+├── sqlite.db             # Database
 ├── cli-token             # CLI authentication token (mode 0600)
-├── api.sock              # API socket (mode 0600)
-├── terminal.sock         # Terminal WebSocket (mode 0600)
+├── run/                  # Runtime files (sockets)
+│   ├── api.sock          # rdv-server REST API (mode 0600)
+│   ├── terminal.sock     # Node.js terminal server (mode 0600)
+│   └── nextjs.sock       # Next.js server (mode 0600)
 └── server/
     ├── service-token     # Service token for Next.js (mode 0600)
     ├── server.pid        # Server PID file
@@ -294,11 +297,11 @@ pub async fn auth_middleware(
    │   └─► If exists and process dead → Clean up stale files
    │
    ├─► Generate service token
-   │   └─► Write to ~/.rdv/server/service-token (mode 0600)
+   │   └─► Write to ~/.remote-dev/server/service-token (mode 0600)
    │
    ├─► Create unix sockets
-   │   ├─► ~/.rdv/api.sock (mode 0600)
-   │   └─► ~/.rdv/terminal.sock (mode 0600)
+   │   ├─► ~/.remote-dev/run/api.sock (mode 0600)
+   │   └─► ~/.remote-dev/run/terminal.sock (mode 0600)
    │
    ├─► Initialize database connection
    │   └─► Run migrations if needed
@@ -309,13 +312,13 @@ pub async fn auth_middleware(
    │   └─► Health check service
    │
    ├─► Write PID file
-   │   └─► ~/.rdv/server/server.pid
+   │   └─► ~/.remote-dev/server/server.pid
    │
    └─► Ready to accept connections
 
 2. Next.js starts
    │
-   ├─► Read service token from ~/.rdv/server/service-token
+   ├─► Read service token from ~/.remote-dev/server/service-token
    │   └─► Retry with backoff if not available
    │
    ├─► Verify rdv-server is running
@@ -587,7 +590,7 @@ crates/
 ### Terminal WebSocket
 
 ```
-ws://unix:~/.rdv/terminal.sock:/ws/terminal/:session_id
+ws://unix:~/.remote-dev/run/terminal.sock:/ws/terminal/:session_id
 ```
 
 **Messages:**
@@ -612,7 +615,7 @@ enum ServerMessage {
 ### MCP WebSocket
 
 ```
-ws://unix:~/.rdv/terminal.sock:/ws/mcp
+ws://unix:~/.remote-dev/run/terminal.sock:/ws/mcp
 ```
 
 Standard MCP protocol over WebSocket.
@@ -658,20 +661,20 @@ Standard MCP protocol over WebSocket.
 ### rdv-server Configuration
 
 ```toml
-# ~/.rdv/server/config.toml
+# ~/.remote-dev/server/config.toml
 
 [server]
-api_socket = "~/.rdv/api.sock"
-terminal_socket = "~/.rdv/terminal.sock"
-pid_file = "~/.rdv/server/server.pid"
-log_file = "~/.rdv/server/server.log"
+api_socket = "~/.remote-dev/run/api.sock"
+terminal_socket = "~/.remote-dev/run/terminal.sock"
+pid_file = "~/.remote-dev/server/server.pid"
+log_file = "~/.remote-dev/server/server.log"
 
 [database]
-path = "~/.rdv/sqlite.db"
+path = "~/.remote-dev/sqlite.db"
 max_connections = 10
 
 [auth]
-service_token_file = "~/.rdv/server/service-token"
+service_token_file = "~/.remote-dev/server/service-token"
 token_rotation_days = 30
 
 [monitoring]
@@ -692,7 +695,7 @@ export default {
     return [
       {
         source: '/api/:path*',
-        destination: `http://unix:${process.env.RDV_API_SOCKET || '~/.rdv/api.sock'}:/:path*`,
+        destination: `http://unix:${process.env.RDV_API_SOCKET || '~/.remote-dev/run/api.sock'}:/:path*`,
       },
     ];
   },
