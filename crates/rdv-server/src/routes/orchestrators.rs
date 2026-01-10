@@ -3,7 +3,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get, patch, post},
+    routing::{get, post},
     Extension, Json, Router,
 };
 use rdv_core::tmux;
@@ -30,6 +30,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/orchestrators/:id/inject", post(inject_command))
         .route("/orchestrators/:id/pause", post(pause_orchestrator))
         .route("/orchestrators/:id/resume", post(resume_orchestrator))
+        // Monitoring routes
+        .route("/orchestrators/:id/monitoring/start", post(start_monitoring))
+        .route("/orchestrators/:id/monitoring/stop", post(stop_monitoring))
+        .route("/orchestrators/:id/monitoring/status", get(get_monitoring_status))
+        .route("/orchestrators/:id/stalled-sessions", get(get_stalled_sessions))
 }
 
 #[derive(Debug, Serialize)]
@@ -487,4 +492,174 @@ pub async fn inject_command(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(StatusCode::ACCEPTED)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Monitoring Routes
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct StartMonitoringRequest {
+    pub interval_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MonitoringStatusResponse {
+    pub is_active: bool,
+    pub orchestrator_id: String,
+}
+
+/// Start monitoring for an orchestrator
+pub async fn start_monitoring(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+    Json(req): Json<StartMonitoringRequest>,
+) -> Result<Json<MonitoringStatusResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get orchestrator and verify ownership
+    let orchestrator = state
+        .db
+        .get_orchestrator(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Default interval: use orchestrator's configured interval, or 60 seconds
+    let interval_ms = req.interval_ms.unwrap_or_else(|| {
+        (orchestrator.monitoring_interval_secs as u64) * 1000
+    });
+
+    // Start monitoring
+    state
+        .monitoring
+        .clone()
+        .start_stall_checking(id.clone(), user_id.to_string(), interval_ms)
+        .await;
+
+    Ok(Json(MonitoringStatusResponse {
+        is_active: true,
+        orchestrator_id: id,
+    }))
+}
+
+/// Stop monitoring for an orchestrator
+pub async fn stop_monitoring(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+) -> Result<Json<MonitoringStatusResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get orchestrator and verify ownership
+    let orchestrator = state
+        .db
+        .get_orchestrator(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Stop monitoring
+    state.monitoring.stop_stall_checking(&id).await;
+
+    Ok(Json(MonitoringStatusResponse {
+        is_active: false,
+        orchestrator_id: id,
+    }))
+}
+
+/// Get monitoring status for an orchestrator
+pub async fn get_monitoring_status(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+) -> Result<Json<MonitoringStatusResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get orchestrator and verify ownership
+    let orchestrator = state
+        .db
+        .get_orchestrator(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    let is_active = state.monitoring.is_stall_checking_active(&id).await;
+
+    Ok(Json(MonitoringStatusResponse {
+        is_active,
+        orchestrator_id: id,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct StalledSessionResponse {
+    pub session_id: String,
+    pub session_name: String,
+    pub tmux_session_name: String,
+    pub folder_id: Option<String>,
+    pub last_activity_at: Option<i64>,
+    pub stalled_minutes: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StalledSessionsResponse {
+    pub orchestrator_id: String,
+    pub stalled_sessions: Vec<StalledSessionResponse>,
+    pub checked_at: i64,
+}
+
+/// Get stalled sessions for an orchestrator
+pub async fn get_stalled_sessions(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+) -> Result<Json<StalledSessionsResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get orchestrator and verify ownership
+    let orchestrator = state
+        .db
+        .get_orchestrator(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Check for stalled sessions
+    let result = state
+        .monitoring
+        .check_for_stalled_sessions(&id, user_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let stalled_sessions: Vec<StalledSessionResponse> = result
+        .stalled_sessions
+        .into_iter()
+        .map(|s| StalledSessionResponse {
+            session_id: s.session_id,
+            session_name: s.session_name,
+            tmux_session_name: s.tmux_session_name,
+            folder_id: s.folder_id,
+            last_activity_at: s.last_activity_at,
+            stalled_minutes: s.stalled_minutes,
+        })
+        .collect();
+
+    Ok(Json(StalledSessionsResponse {
+        orchestrator_id: id,
+        stalled_sessions,
+        checked_at: result.checked_at,
+    }))
 }

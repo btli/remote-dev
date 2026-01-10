@@ -310,3 +310,96 @@ export function cleanupProxy(): void {
     socketAgent = null;
   }
 }
+
+/**
+ * Make an internal call to rdv-server (for service-to-service communication)
+ *
+ * Unlike proxyToRdvServer which proxies browser requests, this function
+ * allows TypeScript services to call rdv-server endpoints directly.
+ *
+ * @param method - HTTP method
+ * @param path - Target path (e.g., "/orchestrators/123/monitoring/status")
+ * @param userId - User ID for authentication
+ * @param body - Optional request body (will be JSON serialized)
+ * @returns Response data or null if unavailable
+ *
+ * @example
+ * ```ts
+ * const status = await callRdvServer<MonitoringStatus>(
+ *   "GET",
+ *   `/orchestrators/${id}/monitoring/status`,
+ *   userId
+ * );
+ * ```
+ */
+export async function callRdvServer<T>(
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  path: string,
+  userId: string,
+  body?: unknown
+): Promise<{ data: T; status: number } | { error: string; status: number }> {
+  // Load service token
+  const serviceToken = loadServiceToken();
+  if (!serviceToken) {
+    return { error: "rdv-server not configured", status: 503 };
+  }
+
+  // Check socket exists
+  if (!existsSync(RDV_API_SOCKET)) {
+    return { error: "rdv-server not running", status: 503 };
+  }
+
+  const targetUrl = `http://localhost${path}`;
+  const headers: Record<string, string> = {
+    "X-RDV-Service-Token": serviceToken,
+    "X-RDV-User-ID": userId,
+    "Content-Type": "application/json",
+  };
+
+  try {
+    const response = await undiciRequest(targetUrl, {
+      dispatcher: getSocketAgent(),
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      headersTimeout: 30000,
+      bodyTimeout: 30000,
+    });
+
+    const responseBody = await response.body.text();
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return {
+        data: responseBody ? JSON.parse(responseBody) : ({} as T),
+        status: response.statusCode,
+      };
+    }
+
+    // Try to parse error response
+    try {
+      const errorData = JSON.parse(responseBody);
+      return {
+        error: errorData.error || `Request failed with status ${response.statusCode}`,
+        status: response.statusCode,
+      };
+    } catch {
+      return {
+        error: responseBody || `Request failed with status ${response.statusCode}`,
+        status: response.statusCode,
+      };
+    }
+  } catch (error) {
+    console.error("[rdv-proxy] Internal call failed:", error);
+
+    if (error instanceof Error) {
+      if (error.message.includes("ECONNREFUSED") || error.message.includes("ENOENT")) {
+        return { error: "rdv-server not available", status: 503 };
+      }
+      if (error.message.includes("timeout")) {
+        return { error: "rdv-server timeout", status: 504 };
+      }
+    }
+
+    return { error: "Internal server error", status: 500 };
+  }
+}

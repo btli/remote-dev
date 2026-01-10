@@ -669,10 +669,12 @@ Standard MCP protocol over WebSocket.
 - ⬜ `GET/PATCH/DELETE /folders/:id/knowledge` - TypeScript (needs remote-dev-44jg)
 
 #### Orchestrators API
-- ⬜ All routes remain TypeScript - blocked by:
-  - MonitoringService in-process dependency (needs remote-dev-1oim)
-  - InsightService dependency (needs remote-dev-93pi)
-- rdv-server has endpoints ready, but Next.js routes have side effects
+- ✅ MonitoringService moved to rdv-server (remote-dev-1oim)
+  - New routes: `/orchestrators/:id/monitoring/{start,stop,status}`
+  - New route: `/orchestrators/:id/stalled-sessions`
+  - TypeScript delegates to Rust with in-process fallback
+- ⬜ InsightService dependency (needs remote-dev-93pi)
+- ⬜ Other orchestrator routes still use TypeScript side effects
 
 #### Worktrees API
 - ⬜ All routes remain TypeScript - path mismatch (`/github/worktrees` vs `/worktrees`)

@@ -9,7 +9,6 @@ use rdv_core::{auth::ServiceToken, Database};
 use std::fs::{self, Permissions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::net::UnixListener;
 use tokio::signal;
 use tower::ServiceExt;
@@ -19,6 +18,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 mod config;
 mod middleware;
 mod routes;
+mod services;
 mod state;
 
 use config::Config;

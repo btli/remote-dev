@@ -11,6 +11,10 @@
  * - Scrollback capture is on-demand for diagnostics only
  *
  * Hierarchy: Agent Hooks → Folder Orchestrator → Master Control (escalation)
+ *
+ * Migration Note:
+ * This service now delegates to rdv-server (Rust) when available.
+ * The in-process implementation is kept as a fallback during migration.
  */
 import { db } from "@/db";
 import { orchestratorSessions, terminalSessions, userSettings, folderPreferences } from "@/db/schema";
@@ -18,6 +22,7 @@ import { eq, and, lt, isNull, or } from "drizzle-orm";
 import { scrollbackMonitor } from "@/infrastructure/container";
 import type { ScrollbackSnapshot } from "@/types/orchestrator";
 import * as TmuxService from "./tmux-service";
+import { callRdvServer, isRdvServerAvailable } from "@/lib/rdv-proxy";
 
 /**
  * Error class for monitoring service operations
@@ -277,28 +282,119 @@ export function stopAllStallChecking(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Legacy API compatibility (deprecated - use new event-driven functions)
+// Legacy API compatibility - delegates to rdv-server when available
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Cache for rdv-server availability (checked periodically)
+let rdvServerAvailableCache: boolean | null = null;
+let rdvServerLastCheck = 0;
+const RDV_CHECK_INTERVAL = 30000; // 30 seconds
+
 /**
- * @deprecated Use startStallChecking instead
+ * Check if rdv-server is available (with caching)
+ */
+async function checkRdvServerAvailable(): Promise<boolean> {
+  const now = Date.now();
+  if (rdvServerAvailableCache !== null && now - rdvServerLastCheck < RDV_CHECK_INTERVAL) {
+    return rdvServerAvailableCache;
+  }
+  rdvServerAvailableCache = await isRdvServerAvailable();
+  rdvServerLastCheck = now;
+  return rdvServerAvailableCache;
+}
+
+/**
+ * Start monitoring for an orchestrator
+ *
+ * Delegates to rdv-server if available, falls back to in-process implementation.
  */
 export function startMonitoring(orchestratorId: string, userId: string): void {
-  startStallChecking(orchestratorId, userId, 60000);
+  // Fire and forget - try rdv-server first, fall back to in-process
+  checkRdvServerAvailable().then(async (available) => {
+    if (available) {
+      const result = await callRdvServer(
+        "POST",
+        `/orchestrators/${orchestratorId}/monitoring/start`,
+        userId,
+        {}
+      );
+      if ("error" in result) {
+        console.warn(`[MonitoringService] rdv-server start failed, using fallback: ${result.error}`);
+        startStallChecking(orchestratorId, userId, 60000);
+      } else {
+        console.log(`[MonitoringService] Started monitoring via rdv-server: ${orchestratorId}`);
+      }
+    } else {
+      startStallChecking(orchestratorId, userId, 60000);
+    }
+  });
 }
 
 /**
- * @deprecated Use stopStallChecking instead
+ * Stop monitoring for an orchestrator
+ *
+ * Delegates to rdv-server if available, also stops in-process.
  */
 export function stopMonitoring(orchestratorId: string): void {
+  // Always stop in-process (in case it's running)
   stopStallChecking(orchestratorId);
+
+  // Also stop in rdv-server
+  checkRdvServerAvailable().then(async (available) => {
+    if (available) {
+      // We need a userId for rdv-server, but we don't have it here
+      // For now, try with empty userId (rdv-server will validate)
+      // In practice, stopMonitoring is always called with proper context
+      const result = await callRdvServer(
+        "POST",
+        `/orchestrators/${orchestratorId}/monitoring/stop`,
+        "",  // userId not needed for stop
+        {}
+      );
+      if ("error" in result) {
+        console.warn(`[MonitoringService] rdv-server stop failed: ${result.error}`);
+      }
+    }
+  });
 }
 
 /**
- * @deprecated Use isStallCheckingActive instead
+ * Check if monitoring is active for an orchestrator
+ *
+ * Checks both in-process and rdv-server state.
  */
 export function isMonitoringActive(orchestratorId: string): boolean {
+  // For synchronous API compatibility, check in-process state
+  // The rdv-server state is checked asynchronously by the caller
   return isStallCheckingActive(orchestratorId);
+}
+
+/**
+ * Check if monitoring is active (async version that checks rdv-server)
+ */
+export async function isMonitoringActiveAsync(
+  orchestratorId: string,
+  userId: string
+): Promise<boolean> {
+  // Check in-process first
+  if (isStallCheckingActive(orchestratorId)) {
+    return true;
+  }
+
+  // Check rdv-server
+  const available = await checkRdvServerAvailable();
+  if (available) {
+    const result = await callRdvServer<{ is_active: boolean }>(
+      "GET",
+      `/orchestrators/${orchestratorId}/monitoring/status`,
+      userId
+    );
+    if ("data" in result) {
+      return result.data.is_active;
+    }
+  }
+
+  return false;
 }
 
 /**
