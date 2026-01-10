@@ -13,11 +13,12 @@ use std::path::PathBuf;
 
 use crate::cli::{FolderAction, FolderCommand};
 use crate::config::{Config, FolderConfig};
-use crate::db::Database;
+use crate::db::{Database, NewFolder, NewOrchestrator, NewSession};
 use crate::tmux;
 
 pub async fn execute(cmd: FolderCommand, config: &Config) -> Result<()> {
     match cmd.action {
+        FolderAction::Add { path, name } => add(&path, name.as_deref(), config).await,
         FolderAction::Init { path } => init(&path, config).await,
         FolderAction::Start { path, foreground } => start(&path, foreground, config).await,
         FolderAction::Stop { path } => stop(&path, config).await,
@@ -43,6 +44,54 @@ fn session_name_for_folder(path: &PathBuf) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     format!("rdv-folder-{}", folder_name)
+}
+
+/// Add folder to database (register for orchestration)
+async fn add(path: &str, custom_name: Option<&str>, _config: &Config) -> Result<()> {
+    let folder_path = resolve_path(path);
+    let folder_name = custom_name
+        .map(|s| s.to_string())
+        .or_else(|| folder_path.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    println!(
+        "{}",
+        format!("Adding folder '{}' to database...", folder_name).cyan()
+    );
+
+    // Open database
+    let db = Database::open()?;
+    let user = db
+        .get_default_user()?
+        .ok_or_else(|| anyhow::anyhow!("No user found in database. Start the web UI first."))?;
+
+    // Check if folder already exists
+    if let Some(existing) = db.get_folder_by_name(&user.id, &folder_name)? {
+        println!(
+            "  {} Folder already registered: {}",
+            "→".yellow(),
+            &existing.id[..8]
+        );
+        return Ok(());
+    }
+
+    // Create folder record
+    let folder_id = db.create_folder(&NewFolder {
+        user_id: user.id.clone(),
+        name: folder_name.clone(),
+        parent_id: None, // Top-level folder
+    })?;
+
+    println!("{}", "✓ Folder registered".green());
+    println!("  Name: {}", folder_name);
+    println!("  ID: {}", &folder_id[..8]);
+    println!("  Path: {:?}", folder_path);
+    println!();
+    println!("  Next steps:");
+    println!("    rdv folder init {}   # Initialize orchestrator config", path);
+    println!("    rdv folder start {}  # Start folder orchestrator", path);
+
+    Ok(())
 }
 
 async fn init(path: &str, _config: &Config) -> Result<()> {
@@ -111,7 +160,7 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
     );
 
     // Load folder config
-    let folder_config = FolderConfig::load(&folder_path).unwrap_or_default();
+    let mut folder_config = FolderConfig::load(&folder_path).unwrap_or_default();
 
     // Determine agent to use
     let agent_name = folder_config
@@ -120,32 +169,115 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
         .unwrap_or_else(|| config.agents.default.clone());
     let agent_cmd = config.agent_command(&agent_name).unwrap_or("claude");
 
-    // Check database for existing orchestrator (direct SQLite, direct SQLite)
-    if let Ok(db) = Database::open() {
-        if let Ok(Some(user)) = db.get_default_user() {
-            // Find folder by name
-            let folders = db.list_folders(&user.id)?;
-            let folder_name = folder_path.file_name().map(|n| n.to_string_lossy().to_string());
-            if let Some(name) = folder_name {
-                if let Some(folder) = folders.iter().find(|f| f.name == name) {
-                    if let Ok(Some(orch)) = db.get_folder_orchestrator(&user.id, &folder.id) {
-                        println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
-                    }
-                }
-            }
-        }
+    // Check database for existing orchestrator
+    let db = Database::open()?;
+    let user = db
+        .get_default_user()?
+        .ok_or_else(|| anyhow::anyhow!("No user found in database. Start the web UI first."))?;
+
+    // Find folder by name in database
+    let folders = db.list_folders(&user.id)?;
+    let folder_name = folder_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let db_folder = folders.iter().find(|f| f.name == folder_name).cloned();
+
+    // Auto-add folder to database if not exists
+    let folder = if let Some(existing) = db_folder {
+        existing
+    } else {
+        println!(
+            "  {} Folder not in database, auto-registering...",
+            "→".cyan()
+        );
+        let folder_id = db.create_folder(&NewFolder {
+            user_id: user.id.clone(),
+            name: folder_name.clone(),
+            parent_id: None,
+        })?;
+        println!("  {} Registered folder: {}", "✓".green(), &folder_id[..8]);
+
+        // Fetch the created folder
+        db.get_folder(&folder_id)?
+            .ok_or_else(|| anyhow::anyhow!("Failed to fetch created folder"))?
+    };
+
+    // Track session and orchestrator IDs
+    let mut _session_id: Option<String> = None;
+    let mut orchestrator_id: Option<String> = None;
+
+    // Check for existing orchestrator
+    if let Ok(Some(orch)) = db.get_folder_orchestrator(&user.id, &folder.id) {
+        println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
+        orchestrator_id = Some(orch.id.clone());
+        _session_id = Some(orch.session_id.clone());
+
+        // Reactivate if suspended
+        db.update_session_status(&orch.session_id, "active")?;
+        db.update_orchestrator_status(&orch.id, "idle")?;
+    } else {
+        // No orchestrator - create session and orchestrator
+        println!(
+            "  {} Creating Folder Control in database...",
+            "→".cyan()
+        );
+
+        // Create terminal session record
+        let new_session_id = db.create_session(&NewSession {
+            user_id: user.id.clone(),
+            name: format!("{} Control", folder_name),
+            tmux_session_name: session_name.clone(),
+            project_path: Some(folder_path_str.clone()),
+            folder_id: Some(folder.id.clone()),
+            agent_provider: Some(agent_name.clone()),
+            is_orchestrator_session: true,
+        })?;
+        println!("  {} Created session: {}", "✓".green(), &new_session_id[..8]);
+
+        // Create orchestrator record
+        let new_orch_id = db.create_orchestrator(&NewOrchestrator {
+            session_id: new_session_id.clone(),
+            user_id: user.id.clone(),
+            orchestrator_type: "sub_orchestrator".to_string(),
+            scope_type: Some("folder".to_string()),
+            scope_id: Some(folder.id.clone()),
+            custom_instructions: None,
+            monitoring_interval: 30,
+            stall_threshold: 300,
+            auto_intervention: false,
+        })?;
+        println!(
+            "  {} Created orchestrator: {}",
+            "✓".green(),
+            &new_orch_id[..8]
+        );
+
+        orchestrator_id = Some(new_orch_id);
+        _session_id = Some(new_session_id);
     }
 
-    // Create tmux session directly (direct SQLite)
-    // The web app will detect and track the session
+    // Save orchestrator ID to local config for future reference
+    if let Some(ref orch_id) = orchestrator_id {
+        folder_config.orchestrator_id = Some(orch_id.clone());
+        folder_config.save(&folder_path)?;
+    }
+
+    // Create tmux session with agent
+    // Enable remain_on_exit so monitor can respawn if agent exits
     tmux::create_session(&tmux::CreateSessionConfig {
         session_name: session_name.clone(),
         working_directory: Some(folder_path_str),
         command: Some(agent_cmd.to_string()),
+        remain_on_exit: true, // Keep pane alive for respawning
     })?;
 
     println!("{}", "✓ Folder orchestrator started".green());
     println!("  Session: {}", session_name);
+    if let Some(ref id) = orchestrator_id {
+        println!("  Orchestrator ID: {}", &id[..8]);
+    }
 
     if foreground {
         tmux::attach_session(&session_name)?;

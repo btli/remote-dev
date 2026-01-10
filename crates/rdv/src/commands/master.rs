@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::{MasterAction, MasterCommand};
 use crate::config::Config;
-use crate::db::Database;
+use crate::db::{Database, NewOrchestrator, NewSession};
 use crate::tmux;
 
 /// Local state file for Master Control.
@@ -104,23 +104,81 @@ async fn start(foreground: bool, config: &Config) -> Result<()> {
     let mut state = MasterState::load(config).unwrap_or_default();
 
     // Check database for existing orchestrator (direct SQLite)
-    if let Ok(db) = Database::open() {
-        if let Ok(Some(user)) = db.get_default_user() {
-            if let Ok(Some(orch)) = db.get_master_orchestrator(&user.id) {
-                state.orchestrator_id = Some(orch.id.clone());
-                state.session_id = Some(orch.session_id.clone());
-                println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
-            }
-        }
+    let db = Database::open()?;
+    let user = db
+        .get_default_user()?
+        .ok_or_else(|| anyhow::anyhow!("No user found in database. Start the web UI first."))?;
+
+    // Check for existing orchestrator
+    if let Ok(Some(orch)) = db.get_master_orchestrator(&user.id) {
+        state.orchestrator_id = Some(orch.id.clone());
+        state.session_id = Some(orch.session_id.clone());
+        println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
+
+        // Reactivate the session if it was suspended/closed
+        db.update_session_status(&orch.session_id, "active")?;
+        db.update_orchestrator_status(&orch.id, "idle")?;
+    } else {
+        // Check if there's an existing session with this tmux name (e.g., from previous run)
+        let existing_session = db.get_session_by_tmux_name(&session_name)?;
+
+        let session_id = if let Some(existing) = existing_session {
+            // Reuse existing session
+            println!(
+                "  {} Reusing existing session: {}",
+                "→".cyan(),
+                &existing.id[..8]
+            );
+            db.update_session_status(&existing.id, "active")?;
+            existing.id
+        } else {
+            // No session exists - create new one
+            println!("  {} Creating new Master Control in database...", "→".cyan());
+
+            let new_id = db.create_session(&NewSession {
+                user_id: user.id.clone(),
+                name: "Master Control".to_string(),
+                tmux_session_name: session_name.clone(),
+                project_path: Some(config.paths.master_dir.to_string_lossy().to_string()),
+                folder_id: None,
+                agent_provider: Some(config.agents.default.clone()),
+                is_orchestrator_session: true,
+            })?;
+            println!("  {} Created session: {}", "✓".green(), &new_id[..8]);
+            new_id
+        };
+
+        // Create orchestrator record
+        let orchestrator_id = db.create_orchestrator(&NewOrchestrator {
+            session_id: session_id.clone(),
+            user_id: user.id.clone(),
+            orchestrator_type: "master".to_string(),
+            scope_type: None,
+            scope_id: None,
+            custom_instructions: None,
+            monitoring_interval: 30,
+            stall_threshold: 300,
+            auto_intervention: false,
+        })?;
+        println!(
+            "  {} Created orchestrator: {}",
+            "✓".green(),
+            &orchestrator_id[..8]
+        );
+
+        state.orchestrator_id = Some(orchestrator_id);
+        state.session_id = Some(session_id);
     }
 
     // Create tmux session with agent
+    // Enable remain_on_exit so monitor can respawn if agent exits
     let agent_cmd = config.agent_command(&config.agents.default).unwrap_or("claude");
 
     tmux::create_session(&tmux::CreateSessionConfig {
         session_name: session_name.clone(),
         working_directory: Some(config.paths.master_dir.to_string_lossy().to_string()),
         command: Some(agent_cmd.to_string()),
+        remain_on_exit: true, // Keep pane alive for respawning
     })?;
 
     state.tmux_session = Some(session_name.clone());

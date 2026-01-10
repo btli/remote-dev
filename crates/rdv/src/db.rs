@@ -147,6 +147,42 @@ impl Database {
         })
     }
 
+    /// Create a new terminal session
+    pub fn create_session(&self, session: &NewSession) -> Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        self.conn.execute(
+            "INSERT INTO terminal_session
+             (id, user_id, name, tmux_session_name, project_path, folder_id,
+              agent_provider, is_orchestrator_session, status, last_activity_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?9, ?9)",
+            params![
+                id,
+                session.user_id,
+                session.name,
+                session.tmux_session_name,
+                session.project_path,
+                session.folder_id,
+                session.agent_provider,
+                session.is_orchestrator_session,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Update session status
+    pub fn update_session_status(&self, session_id: &str, status: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.conn.execute(
+            "UPDATE terminal_session SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            params![status, now, session_id],
+        )?;
+        Ok(())
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Folder Operations
     // ─────────────────────────────────────────────────────────────────────────
@@ -194,6 +230,57 @@ impl Database {
         })
         .optional()
         .context("Failed to get folder")
+    }
+
+    /// Get folder by name for a user
+    pub fn get_folder_by_name(&self, user_id: &str, name: &str) -> Result<Option<Folder>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, user_id, parent_id, name, collapsed, sort_order, created_at
+             FROM session_folder WHERE user_id = ?1 AND name = ?2"
+        )?;
+
+        stmt.query_row(params![user_id, name], |row| {
+            Ok(Folder {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                parent_id: row.get(2)?,
+                name: row.get(3)?,
+                collapsed: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .optional()
+        .context("Failed to get folder by name")
+    }
+
+    /// Create a new folder
+    pub fn create_folder(&self, folder: &NewFolder) -> Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Get max sort_order for this user to append at end
+        let max_order: i32 = self.conn.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM session_folder WHERE user_id = ?1",
+            params![folder.user_id],
+            |row| row.get(0),
+        )?;
+
+        self.conn.execute(
+            "INSERT INTO session_folder
+             (id, user_id, parent_id, name, collapsed, sort_order, created_at)
+             VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
+            params![
+                id,
+                folder.user_id,
+                folder.parent_id,
+                folder.name,
+                max_order + 1,
+                now,
+            ],
+        )?;
+
+        Ok(id)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -260,6 +347,35 @@ impl Database {
             params![status, chrono::Utc::now().timestamp_millis(), orchestrator_id],
         )?;
         Ok(())
+    }
+
+    /// Create a new orchestrator
+    pub fn create_orchestrator(&self, orchestrator: &NewOrchestrator) -> Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        self.conn.execute(
+            "INSERT INTO orchestrator_session
+             (id, session_id, user_id, type, status, scope_type, scope_id,
+              custom_instructions, monitoring_interval, stall_threshold,
+              auto_intervention, last_activity_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'idle', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?11)",
+            params![
+                id,
+                orchestrator.session_id,
+                orchestrator.user_id,
+                orchestrator.orchestrator_type,
+                orchestrator.scope_type,
+                orchestrator.scope_id,
+                orchestrator.custom_instructions,
+                orchestrator.monitoring_interval,
+                orchestrator.stall_threshold,
+                orchestrator.auto_intervention,
+                now,
+            ],
+        )?;
+
+        Ok(id)
     }
 
     fn map_orchestrator(row: &rusqlite::Row) -> rusqlite::Result<Orchestrator> {
@@ -715,4 +831,38 @@ pub struct NewInsight {
     pub suggested_actions: Option<String>,
     pub confidence: f64,
     pub triggered_by: String,
+}
+
+/// Input struct for creating a new terminal session
+#[derive(Debug, Clone)]
+pub struct NewSession {
+    pub user_id: String,
+    pub name: String,
+    pub tmux_session_name: String,
+    pub project_path: Option<String>,
+    pub folder_id: Option<String>,
+    pub agent_provider: Option<String>,
+    pub is_orchestrator_session: bool,
+}
+
+/// Input struct for creating a new folder
+#[derive(Debug, Clone)]
+pub struct NewFolder {
+    pub user_id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+}
+
+/// Input struct for creating a new orchestrator
+#[derive(Debug, Clone)]
+pub struct NewOrchestrator {
+    pub session_id: String,
+    pub user_id: String,
+    pub orchestrator_type: String, // "master" or "sub_orchestrator"
+    pub scope_type: Option<String>, // "folder" or None
+    pub scope_id: Option<String>,   // folder_id or None
+    pub custom_instructions: Option<String>,
+    pub monitoring_interval: i32,
+    pub stall_threshold: i32,
+    pub auto_intervention: bool,
 }

@@ -114,6 +114,17 @@ pub struct FolderCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum FolderAction {
+    /// Add folder to database (register for orchestration)
+    Add {
+        /// Path to folder (defaults to current directory)
+        #[arg(default_value = ".")]
+        path: String,
+
+        /// Custom name for the folder (defaults to directory name)
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+
     /// Initialize folder orchestrator
     Init {
         /// Path to folder (defaults to current directory)

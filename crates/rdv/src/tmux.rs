@@ -100,6 +100,20 @@ pub fn create_session(config: &CreateSessionConfig) -> RdvResult<()> {
         return Err(TmuxError::CommandFailed(stderr.to_string()).into());
     }
 
+    // Enable remain-on-exit so the pane stays when the process exits
+    // This allows us to detect dead panes and respawn them
+    if config.remain_on_exit {
+        let _ = Command::new("tmux")
+            .args([
+                "set-option",
+                "-t",
+                &config.session_name,
+                "remain-on-exit",
+                "on",
+            ])
+            .output();
+    }
+
     debug!("Created tmux session: {}", config.session_name);
     Ok(())
 }
@@ -207,6 +221,99 @@ pub fn scrollback_hash(session_name: &str, lines: u32) -> RdvResult<String> {
     Ok(format!("{:x}", digest))
 }
 
+/// Check if the pane in a session is dead (process exited but pane remains).
+/// Returns true if the pane exists but its process has exited.
+pub fn is_pane_dead(session_name: &str) -> RdvResult<bool> {
+    if !session_exists(session_name)? {
+        return Err(TmuxError::SessionNotFound(session_name.to_string()).into());
+    }
+
+    let output = Command::new("tmux")
+        .args([
+            "list-panes",
+            "-t",
+            session_name,
+            "-F",
+            "#{pane_dead}",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(TmuxError::CommandFailed(stderr.to_string()).into());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // pane_dead is "1" if dead, "0" if alive
+    Ok(stdout.trim() == "1")
+}
+
+/// Respawn a dead pane with a new command.
+/// If no command is provided, uses the original command.
+pub fn respawn_pane(session_name: &str, command: Option<&str>) -> RdvResult<()> {
+    if !session_exists(session_name)? {
+        return Err(TmuxError::SessionNotFound(session_name.to_string()).into());
+    }
+
+    let mut args = vec!["respawn-pane", "-t", session_name, "-k"];
+
+    if let Some(cmd) = command {
+        args.push(cmd);
+    }
+
+    let output = Command::new("tmux").args(&args).output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(TmuxError::CommandFailed(stderr.to_string()).into());
+    }
+
+    debug!("Respawned pane in session: {}", session_name);
+    Ok(())
+}
+
+/// Get pane status for a session.
+#[derive(Debug, Clone)]
+pub struct PaneStatus {
+    pub session_name: String,
+    pub is_dead: bool,
+    pub pid: Option<u32>,
+}
+
+/// Get detailed pane status.
+pub fn get_pane_status(session_name: &str) -> RdvResult<PaneStatus> {
+    if !session_exists(session_name)? {
+        return Err(TmuxError::SessionNotFound(session_name.to_string()).into());
+    }
+
+    let output = Command::new("tmux")
+        .args([
+            "list-panes",
+            "-t",
+            session_name,
+            "-F",
+            "#{pane_dead}:#{pane_pid}",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(TmuxError::CommandFailed(stderr.to_string()).into());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = stdout.trim().split(':').collect();
+
+    let is_dead = parts.first().map(|s| *s == "1").unwrap_or(false);
+    let pid = parts.get(1).and_then(|s| s.parse().ok());
+
+    Ok(PaneStatus {
+        session_name: session_name.to_string(),
+        is_dead,
+        pid,
+    })
+}
+
 /// Session information.
 #[derive(Debug, Clone)]
 pub struct TmuxSession {
@@ -221,6 +328,8 @@ pub struct CreateSessionConfig {
     pub session_name: String,
     pub working_directory: Option<String>,
     pub command: Option<String>,
+    /// Keep pane alive when process exits (for respawning)
+    pub remain_on_exit: bool,
 }
 
 #[cfg(test)]
