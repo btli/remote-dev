@@ -15,6 +15,9 @@ pub enum Error {
     #[error("Database not found. Set RDV_DATABASE_PATH or run from project directory.")]
     DatabaseNotFound,
 
+    #[error("Database lock poisoned")]
+    LockPoisoned,
+
     #[error("No user found in database")]
     NoUser,
 

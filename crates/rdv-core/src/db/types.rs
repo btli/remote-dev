@@ -35,9 +35,13 @@ pub struct Folder {
     pub user_id: String,
     pub parent_id: Option<String>,
     pub name: String,
+    pub path: Option<String>,
+    pub color: Option<String>,
+    pub icon: Option<String>,
     pub collapsed: bool,
     pub sort_order: i32,
     pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,4 +113,50 @@ pub struct NewOrchestrator {
     pub monitoring_interval: i32,
     pub stall_threshold: i32,
     pub auto_intervention: bool,
+}
+
+/// Orchestrator insight
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Insight {
+    pub id: String,
+    pub orchestrator_id: String,
+    pub session_id: Option<String>,
+    pub insight_type: String,
+    pub severity: String,
+    pub title: String,
+    pub description: String,
+    pub context: Option<String>,
+    pub suggested_actions: Option<String>,
+    pub resolved: bool,
+    pub resolved_at: Option<i64>,
+    pub resolved_by: Option<String>,
+    pub created_at: i64,
+}
+
+/// Input for creating a new insight
+#[derive(Debug, Clone)]
+pub struct NewInsight {
+    pub orchestrator_id: String,
+    pub session_id: Option<String>,
+    pub insight_type: String,
+    pub severity: String,
+    pub title: String,
+    pub description: String,
+    pub context: Option<String>,
+    pub suggested_actions: Option<String>,
+}
+
+/// Orchestrator for REST responses (simpler structure)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrchestratorSimple {
+    pub id: String,
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub session_id: Option<String>,
+    pub orchestrator_type: String,
+    pub status: String,
+    pub monitoring_interval_secs: i32,
+    pub stall_threshold_secs: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
