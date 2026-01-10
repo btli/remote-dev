@@ -1,31 +1,13 @@
-import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
-import { moveSessionToFolderUseCase } from "@/infrastructure/container";
-import { EntityNotFoundError } from "@/domain/errors/DomainError";
+import { withAuth } from "@/lib/api";
+import { proxyToRdvServer } from "@/lib/rdv-proxy";
 
 /**
- * PUT /api/sessions/:id/folder - Move a session to a folder (or remove from folder)
+ * PUT /api/sessions/:id/folder - Move a session to a folder
+ *
+ * Proxies to rdv-server.
  */
 export const PUT = withAuth(async (request, { userId, params }) => {
-  const body = await request.json();
-  const { folderId } = body;
-
-  // folderId can be null (to remove from folder) or a string (to move to folder)
-  if (folderId !== null && typeof folderId !== "string") {
-    return errorResponse("folderId must be a string or null", 400);
-  }
-
-  try {
-    await moveSessionToFolderUseCase.execute({
-      sessionId: params!.id,
-      userId,
-      folderId,
-    });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    if (error instanceof EntityNotFoundError) {
-      return errorResponse(error.message, 404, error.code);
-    }
-    throw error;
-  }
+  return proxyToRdvServer(request, userId, {
+    path: `/sessions/${params!.id}/folder`,
+  });
 });

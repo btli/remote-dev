@@ -4,6 +4,9 @@ import * as SessionService from "@/services/session-service";
 
 /**
  * POST /api/sessions/reorder - Reorder sessions (update tab order)
+ *
+ * NOTE: This stays as TypeScript until rdv-server implements
+ * the /sessions/reorder endpoint.
  */
 export const POST = withAuth(async (request, { userId }) => {
   const body = await request.json();

@@ -1,38 +1,39 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
+import { proxyToRdvServer } from "@/lib/rdv-proxy";
 import { generateWsToken } from "@/server/terminal";
-import * as SessionService from "@/services/session-service";
 
 /**
  * GET /api/sessions/:id/token - Get WebSocket authentication token
  *
- * Returns a short-lived token (5 minutes) for connecting to the terminal WebSocket.
- * Supports both session auth and API key auth for agent access.
+ * Verifies session ownership via rdv-server, then generates token
+ * for the Node.js terminal WebSocket server.
  *
- * Agent workflow:
- * 1. GET /api/sessions/:id/token (with API key)
- * 2. Connect to ws://host:3001?token=<token>&tmuxSession=<tmuxSessionName>
- * 3. Send: { type: "input", data: "command\n" }
- * 4. Receive: { type: "output", data: "..." }
+ * Note: Token generation stays in Next.js because the terminal
+ * WebSocket server is in Node.js. Consider moving both to Rust.
  */
-export const GET = withApiAuth(async (_request, { userId, params }) => {
+export const GET = withApiAuth(async (request, { userId, params }) => {
   const sessionId = params?.id;
   if (!sessionId) {
     return errorResponse("Session ID is required", 400, "ID_REQUIRED");
   }
 
-  // Verify the session belongs to this user
-  const terminalSession = await SessionService.getSession(sessionId, userId);
-  if (!terminalSession) {
-    return errorResponse("Session not found", 404, "SESSION_NOT_FOUND");
+  // Verify session exists and belongs to user via rdv-server
+  const sessionResponse = await proxyToRdvServer(request, userId, {
+    path: `/sessions/${sessionId}`,
+  });
+
+  if (!sessionResponse.ok) {
+    return sessionResponse;
   }
 
+  const session = await sessionResponse.json();
   const token = generateWsToken(sessionId, userId);
 
   return NextResponse.json({
     token,
     sessionId,
-    tmuxSessionName: terminalSession.tmuxSessionName,
+    tmuxSessionName: session.tmux_session_name,
     expiresIn: 300, // 5 minutes
   });
 });

@@ -84,14 +84,22 @@ This document describes the architecture for migrating Remote Dev's backend from
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           RDV CLI                                        │
 │                                                                         │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐         │
-│  │  CLI Commands   │  │  Socket Client  │  │  Direct tmux    │         │
-│  │  (clap)         │  │  (rdv-core)     │  │  (fallback)     │         │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘         │
+│  ┌─────────────────┐  ┌─────────────────┐                               │
+│  │  CLI Commands   │  │  Socket Client  │                               │
+│  │  (clap)         │  │  (HTTP client)  │                               │
+│  └─────────────────┘  └─────────────────┘                               │
 │                                                                         │
-│  • Connects to rdv-server via unix socket                               │
+│  • Connects to rdv-server via unix socket (NO direct DB access)         │
 │  • Uses CLI token for authentication                                    │
-│  • Falls back to direct operations if server unavailable                │
+│  • rdv-server must be running for CLI to function                       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       MCP CLIENTS (Claude Desktop, Cursor)               │
+│                                                                         │
+│  • Connect to rdv-server via MCP protocol (stdio)                       │
+│  • Use API key for authentication                                       │
+│  • rdv-server exposes MCP server directly                               │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -131,6 +139,16 @@ RDV CLI → RUST BACKEND
      └──────────▶ [Validate CLI Token]
                   [Map to User]
                   [Process Request]
+
+MCP CLIENT → RUST BACKEND (stdio)
+     │            │
+     ▼            │
+[API Key]        │
+(from config)    │
+     │            │
+     └────────────▶ [Validate API Key]
+                    [Map to User]
+                    [Process MCP Request]
 ```
 
 ### 2. Token Types
@@ -622,39 +640,76 @@ Standard MCP protocol over WebSocket.
 
 ## Migration Plan
 
-### Phase 1: Core Infrastructure (Week 1-2)
+### Phase 1: Core Infrastructure ✅ COMPLETE
 
-1. Create `rdv-core` crate structure
-2. Move database code from current rdv to rdv-core
-3. Move tmux code to rdv-core
-4. Add authentication module
-5. Create basic `rdv-server` with health endpoint
+1. ✅ Create `rdv-core` crate structure
+2. ✅ Move database code from current rdv to rdv-core
+3. ✅ Move tmux code to rdv-core
+4. ✅ Add authentication module
+5. ✅ Create basic `rdv-server` with health endpoint
 
-### Phase 2: API Migration (Week 3-4)
+### Phase 2: API Migration 🔄 IN PROGRESS
 
-1. Implement session routes in rdv-server
-2. Implement folder routes in rdv-server
-3. Implement worktree routes in rdv-server
-4. Update Next.js to proxy to rdv-server
+#### Sessions API
+- ✅ `GET/POST /sessions` - Proxied to rdv-server
+- ✅ `GET/PATCH/DELETE /sessions/:id` - Proxied to rdv-server
+- ✅ `POST /sessions/:id/suspend` - Proxied to rdv-server
+- ✅ `POST /sessions/:id/resume` - Proxied to rdv-server
+- ✅ `POST /sessions/:id/exec` - Proxied to rdv-server
+- ✅ `PUT /sessions/:id/folder` - Proxied to rdv-server
+- ⬜ `POST /sessions/reorder` - TypeScript (needs remote-dev-zxbw)
+- ✅ `GET /sessions/:id/token` - Hybrid (verify via rdv-server, token gen in Node.js)
 
-### Phase 3: WebSocket Migration (Week 5)
+#### Folders API
+- ✅ `GET/POST /folders` - Proxied to rdv-server
+- ✅ `GET/PATCH/DELETE /folders/:id` - Proxied to rdv-server
+- ⬜ `POST /folders/reorder` - TypeScript (needs remote-dev-ynlf)
+- ⬜ `GET/POST/DELETE /folders/:id/orchestrator` - TypeScript (needs remote-dev-cwnr)
+- ⬜ `GET/POST/DELETE /folders/:id/hooks` - TypeScript (needs remote-dev-qh9y)
+- ⬜ `GET/PATCH/DELETE /folders/:id/knowledge` - TypeScript (needs remote-dev-44jg)
 
-1. Implement terminal WebSocket in rdv-server
-2. Update Next.js WebSocket proxy
-3. Test terminal functionality
+#### Orchestrators API
+- ⬜ All routes remain TypeScript - blocked by:
+  - MonitoringService in-process dependency (needs remote-dev-1oim)
+  - InsightService dependency (needs remote-dev-93pi)
+- rdv-server has endpoints ready, but Next.js routes have side effects
 
-### Phase 4: CLI Update (Week 6)
+#### Worktrees API
+- ⬜ All routes remain TypeScript - path mismatch (`/github/worktrees` vs `/worktrees`)
+- rdv-server has endpoints at different paths
 
-1. Update rdv CLI to use socket client
-2. Add fallback to direct operations
-3. Implement CLI token authentication
+#### Business Logic to Move
+- ⬜ Orchestrator auto-init (remote-dev-3ffb)
+- ⬜ Folder Control auto-spin (remote-dev-o830)
+- ⬜ Project metadata enrichment (remote-dev-sjod)
+- ⬜ Learning extraction (remote-dev-o35q)
+- ⬜ Worktree cleanup (remote-dev-y9fv)
 
-### Phase 5: Testing & Rollout (Week 7-8)
+### Phase 3: MCP Migration
 
-1. Integration testing
-2. Performance testing
-3. Security audit
-4. Gradual rollout
+1. ⬜ Implement MCP server in rdv-server (remote-dev-6r09)
+2. ⬜ Remove TypeScript MCP implementation
+3. ⬜ Test MCP functionality with Claude Desktop/Cursor
+
+### Phase 4: CLI Migration
+
+1. ⬜ Remove direct DB access from rdv CLI (remote-dev-ntxd)
+2. ⬜ Create socket client in rdv-core (remote-dev-j4n9)
+3. ⬜ Implement CLI token management (remote-dev-9vmz)
+4. ⬜ Migrate rdv commands to socket client (remote-dev-hxf4, remote-dev-hfj9, remote-dev-p191)
+5. ⬜ Internal auth for CLI and MCP (remote-dev-tk0j)
+
+### Phase 5: Infrastructure
+
+1. ⬜ Configure Next.js to listen on Unix socket (remote-dev-c69e)
+2. ⬜ Create cloudflared configuration (remote-dev-ulby)
+
+### Phase 6: Cleanup
+
+1. ⬜ Remove TypeScript business logic services
+2. ⬜ Remove unused TypeScript code
+3. ⬜ Integration testing
+4. ⬜ Security audit
 
 ## Configuration
 

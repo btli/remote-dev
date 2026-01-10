@@ -1,52 +1,38 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
-import {
-  listFoldersUseCase,
-  createFolderUseCase,
-} from "@/infrastructure/container";
-import { FolderPresenter } from "@/interface/presenters/FolderPresenter";
-import { EntityNotFoundError } from "@/domain/errors/DomainError";
+import { withAuth } from "@/lib/api";
+import { proxyToRdvServer } from "@/lib/rdv-proxy";
 
 /**
  * GET /api/folders - Get all folders and session mappings for the current user
+ *
+ * Proxies to rdv-server.
  */
-export const GET = withAuth(async (_request, { userId }) => {
-  const result = await listFoldersUseCase.execute({ userId });
-
-  return NextResponse.json({
-    folders: FolderPresenter.toResponseMany(result.folders),
-    sessionFolders: result.sessionFolders,
+export const GET = withAuth(async (request, { userId }) => {
+  const response = await proxyToRdvServer(request, userId, {
+    path: "/folders",
   });
+
+  // Transform response to match frontend expectations
+  if (response.ok) {
+    const data = await response.json();
+    // rdv-server returns { folders: [...], session_folders: [...] }
+    // Frontend expects { folders: [...], sessionFolders: [...] }
+    return NextResponse.json({
+      folders: data.folders || [],
+      sessionFolders: data.session_folders || [],
+    });
+  }
+
+  return response;
 });
 
 /**
  * POST /api/folders - Create a new folder (optionally nested)
+ *
+ * Proxies to rdv-server.
  */
 export const POST = withAuth(async (request, { userId }) => {
-  const result = await parseJsonBody<{ name: string; parentId?: string | null }>(request);
-  if ("error" in result) return result.error;
-  const { name, parentId } = result.data;
-
-  if (!name || typeof name !== "string") {
-    return errorResponse("Name is required", 400);
-  }
-
-  // Validate parentId if provided
-  if (parentId !== undefined && parentId !== null && typeof parentId !== "string") {
-    return errorResponse("parentId must be a string or null", 400);
-  }
-
-  try {
-    const folder = await createFolderUseCase.execute({
-      userId,
-      name,
-      parentId,
-    });
-    return NextResponse.json(FolderPresenter.toResponse(folder), { status: 201 });
-  } catch (error) {
-    if (error instanceof EntityNotFoundError) {
-      return errorResponse(error.message, 404, error.code);
-    }
-    throw error;
-  }
+  return proxyToRdvServer(request, userId, {
+    path: "/folders",
+  });
 });
