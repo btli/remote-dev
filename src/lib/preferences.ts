@@ -175,11 +175,9 @@ export function resolvePreferences(
       resolved.startupCommand = userSettings.startupCommand;
       source.startupCommand = "user";
     }
-    // Feature flags
-    if (userSettings.orchestratorFirstMode !== undefined) {
-      resolved.orchestratorFirstMode = userSettings.orchestratorFirstMode;
-      source.orchestratorFirstMode = "user";
-    }
+    // Feature flags (boolean, always present - apply unconditionally)
+    resolved.orchestratorFirstMode = userSettings.orchestratorFirstMode;
+    source.orchestratorFirstMode = "user";
   }
 
   // Layer 2+: Apply folder chain (ancestors first, then children override)

@@ -825,6 +825,69 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [createSession, setActiveSession]
   );
 
+  // TODO: Add toast notifications for success/failure feedback to user
+  const handleReinitOrchestrator = useCallback(
+    async (folderId: string): Promise<boolean> => {
+      try {
+        // Handle master control vs folder orchestrator
+        const body = folderId
+          ? { type: "folder", folderId }
+          : { type: "master" };
+
+        const response = await fetch("/api/orchestrators/reinitialize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.message || "Failed to reinitialize orchestrator");
+        }
+
+        const result = await response.json();
+        console.log("Orchestrator reinitialized:", result);
+
+        // Refresh sessions to show the new orchestrator session
+        refreshSessions();
+        return true;
+      } catch (error) {
+        console.error("Failed to reinitialize orchestrator:", error);
+        return false;
+      }
+    },
+    [refreshSessions]
+  );
+
+  // TODO: Add toast notifications for success/failure feedback to user
+  const handleReinstallHooks = useCallback(
+    async (folderId: string): Promise<boolean> => {
+      try {
+        // Install hooks for all providers
+        const response = await fetch(`/api/folders/${folderId}/hooks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            providers: ["claude", "codex", "gemini", "opencode"],
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.message || "Failed to reinstall hooks");
+        }
+
+        const result = await response.json();
+        console.log("Hooks reinstalled:", result);
+        return true;
+      } catch (error) {
+        console.error("Failed to reinstall hooks:", error);
+        return false;
+      }
+    },
+    []
+  );
+
   // Handler for opening the wizard from Plus button or command palette
   // Sets wizardFolderId to current active folder so new sessions inherit the folder context
   const handleOpenWizard = useCallback(() => {
@@ -1207,6 +1270,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onPortsOpen={() => setIsPortsModalOpen(true)}
             onViewIssues={handleViewIssues}
             onViewPRs={handleViewPRs}
+            onFolderReinitOrchestrator={handleReinitOrchestrator}
+            onOrchestratorReinstallHooks={handleReinstallHooks}
           />
       </div>
 
@@ -1449,7 +1514,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onStartRecording={handleStartRecording}
         onStopRecording={handleStopRecording}
         onViewRecordings={() => setIsRecordingsModalOpen(true)}
+        onReinitOrchestrator={
+          activeProject.folderId
+            ? () => handleReinitOrchestrator(activeProject.folderId!)
+            : undefined
+        }
         activeSessionId={activeSessionId}
+        activeFolderId={activeProject.folderId}
         isSplitMode={isSplitMode}
         isRecording={isRecording}
       />

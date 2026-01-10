@@ -46,10 +46,14 @@ export function OrchestratorModeToggle({
 
   // Get the source of the current value
   const source = currentPreferences?.source?.orchestratorFirstMode;
-  const isInherited =
-    folderId && source && typeof source === "object" && source.type === "folder";
-  const inheritedFrom =
-    isInherited && typeof source === "object" ? source.folderName : null;
+  const sourceFolder = source && typeof source === "object" ? source : null;
+
+  // Check if current folder has its own override (vs inherited from parent/user)
+  const hasLocalOverride = folderId && sourceFolder?.folderId === folderId;
+
+  // Check if value is inherited from a parent folder (not the current folder)
+  const isInheritedFromParent = folderId && sourceFolder && sourceFolder.folderId !== folderId;
+  const inheritedFrom = isInheritedFromParent ? sourceFolder.folderName : null;
 
   const handleToggle = async (checked: boolean) => {
     if (folderId) {
@@ -102,7 +106,7 @@ export function OrchestratorModeToggle({
       </div>
 
       <div className="flex items-center gap-2">
-        {folderId && isInherited && (
+        {hasLocalOverride && (
           <button
             onClick={handleClearOverride}
             className="text-xs text-muted-foreground hover:text-foreground"
