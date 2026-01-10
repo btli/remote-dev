@@ -107,6 +107,9 @@ export const userSettings = sqliteTable("user_settings", {
   orchestratorFirstMode: integer("orchestrator_first_mode", { mode: "boolean" })
     .notNull()
     .default(false),
+  // Master Control orchestrator settings
+  // Directory where Master Control runs (default: ~/.remote-dev/projects)
+  masterControlDirectory: text("master_control_directory"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

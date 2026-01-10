@@ -21,10 +21,22 @@ import {
   createSubOrchestratorUseCase,
 } from "@/infrastructure/container";
 import { db } from "@/db";
-import { sessionFolders, terminalSessions, orchestratorSessions } from "@/db/schema";
+import { sessionFolders, terminalSessions, orchestratorSessions, userSettings } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { mkdir, writeFile } from "fs/promises";
+import { existsSync } from "fs";
 import { join, dirname } from "path";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Default directory for Master Control orchestrator.
+ * This is where the Master Control session runs from.
+ * Users can override this in their settings.
+ */
+const DEFAULT_MASTER_CONTROL_DIR = join(process.env.HOME || "/tmp", ".remote-dev", "projects");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -149,12 +161,23 @@ export async function bootstrapMasterControl(
     };
   }
 
-  // Step 1: Determine working directory
-  // Master Control runs from user's home directory (no specific project)
-  const workDir = process.env.HOME || "/tmp";
-  const configDir = join(workDir, ".remote-dev", "orchestrators", "master", ".claude");
+  // Step 1: Get user's Master Control directory setting
+  const settings = await db
+    .select({ masterControlDirectory: userSettings.masterControlDirectory })
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId))
+    .limit(1);
 
-  // Step 2: Create the terminal session (runs in home directory)
+  // Use user's setting or fall back to default (~/.remote-dev/projects)
+  const workDir = settings[0]?.masterControlDirectory || DEFAULT_MASTER_CONTROL_DIR;
+  const configDir = join(workDir, ".claude");
+
+  // Ensure the directory exists
+  if (!existsSync(workDir)) {
+    await mkdir(workDir, { recursive: true });
+  }
+
+  // Step 2: Create the terminal session (runs in configured directory)
   const session = await SessionService.createSession(userId, {
     name: "Master Control",
     projectPath: workDir,
