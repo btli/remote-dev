@@ -182,3 +182,19 @@ pub struct AuditLog {
     pub details: Option<String>,
     pub created_at: i64,
 }
+
+/// GitHub repository (cached from GitHub API)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubRepository {
+    pub id: String,
+    pub user_id: String,
+    pub github_id: i64,
+    pub name: String,
+    pub full_name: String,
+    pub clone_url: String,
+    pub default_branch: String,
+    pub local_path: Option<String>,
+    pub is_private: bool,
+    pub added_at: i64,
+    pub updated_at: i64,
+}

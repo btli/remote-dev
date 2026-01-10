@@ -38,6 +38,24 @@ pub fn get_repo_root(path: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
+/// Get the current branch name of a git repository
+pub fn get_current_branch(path: &Path) -> Result<Option<String>> {
+    let output = Command::new("git")
+        .args(["-C", &path.to_string_lossy(), "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()?;
+
+    if output.status.success() {
+        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            Ok(None) // Detached HEAD state
+        } else {
+            Ok(Some(branch))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 /// Fetch remote refs to ensure we have the latest
 pub fn fetch_remote_refs(repo_path: &Path) -> Result<bool> {
     let output = Command::new("git")

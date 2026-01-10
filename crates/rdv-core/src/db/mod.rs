@@ -1202,4 +1202,68 @@ impl Database {
         let count: u32 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
         Ok(count)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GitHub Repository Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get a GitHub repository by ID
+    pub fn get_github_repository(&self, id: &str, user_id: &str) -> Result<Option<GitHubRepository>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let repo = conn
+            .query_row(
+                "SELECT id, user_id, github_id, name, full_name, clone_url, default_branch,
+                        local_path, is_private, added_at, updated_at
+                 FROM github_repository
+                 WHERE id = ?1 AND user_id = ?2",
+                params![id, user_id],
+                |row| {
+                    Ok(GitHubRepository {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        github_id: row.get(2)?,
+                        name: row.get(3)?,
+                        full_name: row.get(4)?,
+                        clone_url: row.get(5)?,
+                        default_branch: row.get(6)?,
+                        local_path: row.get(7)?,
+                        is_private: row.get(8)?,
+                        added_at: row.get(9)?,
+                        updated_at: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(repo)
+    }
+
+    /// List GitHub repositories for a user
+    pub fn list_github_repositories(&self, user_id: &str) -> Result<Vec<GitHubRepository>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, github_id, name, full_name, clone_url, default_branch,
+                    local_path, is_private, added_at, updated_at
+             FROM github_repository
+             WHERE user_id = ?1
+             ORDER BY name ASC",
+        )?;
+        let repos = stmt
+            .query_map(params![user_id], |row| {
+                Ok(GitHubRepository {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    github_id: row.get(2)?,
+                    name: row.get(3)?,
+                    full_name: row.get(4)?,
+                    clone_url: row.get(5)?,
+                    default_branch: row.get(6)?,
+                    local_path: row.get(7)?,
+                    is_private: row.get(8)?,
+                    added_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(repos)
+    }
 }
