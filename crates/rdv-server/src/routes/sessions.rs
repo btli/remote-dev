@@ -9,6 +9,7 @@ use axum::{
 use rdv_core::{
     db::types::{NewSession, Session},
     tmux,
+    worktree,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -309,6 +310,34 @@ pub async fn close_session(
 
     // Kill tmux session
     let _ = tmux::kill_session(&session.tmux_session_name);
+
+    // Cleanup worktree if this session has one
+    if let (Some(project_path), Some(branch)) =
+        (session.project_path.as_ref(), session.worktree_branch.as_ref())
+    {
+        let worktree_path = std::path::Path::new(project_path);
+        info!(
+            "Cleaning up worktree for session {} at {:?} (branch: {})",
+            &id[..8.min(id.len())],
+            worktree_path,
+            branch
+        );
+
+        // Use force=true to remove even if there are uncommitted changes
+        // Don't delete the branch by default - user may want to keep it
+        match worktree::cleanup_worktree(worktree_path, false, true) {
+            Ok(result) => {
+                info!(
+                    "Worktree cleanup result: removed={}, dir_deleted={}, branch_deleted={}",
+                    result.worktree_removed, result.directory_deleted, result.branch_deleted
+                );
+            }
+            Err(e) => {
+                // Log but don't fail session close
+                warn!("Failed to cleanup worktree for session {}: {}", &id[..8.min(id.len())], e);
+            }
+        }
+    }
 
     // Update database
     state
