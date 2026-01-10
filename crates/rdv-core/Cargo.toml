@@ -9,7 +9,7 @@ description = "Core library for Remote Dev - shared logic between CLI and server
 
 [features]
 default = ["client"]
-client = ["dep:reqwest", "dep:hyper-util", "dep:hyper"]
+client = ["dep:reqwest", "dep:hyper-util", "dep:hyper", "dep:http-body-util"]
 db = ["dep:rusqlite"]
 
 [dependencies]
@@ -28,6 +28,7 @@ rusqlite = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
 
 # Error handling
 anyhow.workspace = true

@@ -15,26 +15,28 @@
 //! }
 //! ```
 
-use crate::types::*;
 use crate::error::{Error, Result};
+use crate::types::*;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
+use hyper::client::conn::http1;
+use hyper::Request;
+use hyper_util::rt::TokioIo;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::PathBuf;
+use tokio::net::UnixStream;
 use tracing::{debug, warn};
 
 /// Default socket path
 const DEFAULT_SOCKET_PATH: &str = ".remote-dev/run/api.sock";
 
-/// API client for rdv-server
+/// API client for rdv-server using Unix socket
 #[derive(Clone)]
 pub struct ApiClient {
-    /// Base URL for HTTP requests (http://unix-socket style)
-    base_url: String,
     /// Unix socket path
     socket_path: PathBuf,
     /// CLI token for authentication
     token: Option<String>,
-    /// HTTP client
-    client: reqwest::Client,
 }
 
 impl ApiClient {
@@ -62,27 +64,18 @@ impl ApiClient {
             None
         };
 
-        // Build HTTP client
-        let client = reqwest::Client::builder()
-            .build()
-            .map_err(|e| Error::Other(format!("Failed to create HTTP client: {}", e)))?;
-
-        // Format: http://unix:{socket_path}:/ for hyper unix socket
-        // But reqwest doesn't directly support unix sockets, so we use a connector
-        let base_url = "http://localhost".to_string(); // Will be overridden by connector
-
-        Ok(Self {
-            base_url,
-            socket_path,
-            token,
-        client,
-        })
+        Ok(Self { socket_path, token })
     }
 
     /// Set the authentication token
     pub fn with_token(mut self, token: String) -> Self {
         self.token = Some(token);
         self
+    }
+
+    /// Get the socket path
+    pub fn socket_path(&self) -> &PathBuf {
+        &self.socket_path
     }
 
     /// Check if the server is available
@@ -278,32 +271,29 @@ impl ApiClient {
     // ─────────────────────────────────────────────────────────────────────────
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-        self.request(reqwest::Method::GET, path, Option::<()>::None).await
+        self.request("GET", path, Option::<()>::None).await
     }
 
     async fn post<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
-        self.request(reqwest::Method::POST, path, Some(body)).await
+        self.request("POST", path, Some(body)).await
     }
 
     async fn patch<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
-        self.request(reqwest::Method::PATCH, path, Some(body)).await
+        self.request("PATCH", path, Some(body)).await
     }
 
     async fn delete(&self, path: &str) -> Result<()> {
-        let _: serde_json::Value = self.request(reqwest::Method::DELETE, path, Option::<()>::None).await?;
+        let _: serde_json::Value = self.request("DELETE", path, Option::<()>::None).await?;
         Ok(())
     }
 
+    /// Make an HTTP request over Unix socket
     async fn request<T: DeserializeOwned, B: Serialize>(
         &self,
-        method: reqwest::Method,
+        method: &str,
         path: &str,
         body: Option<B>,
     ) -> Result<T> {
-        // For now, we use a simple HTTP connection to localhost
-        // In production, we would use a Unix socket connector
-        // TODO: Implement proper Unix socket support via hyper connector
-
         // Check if socket exists
         if !self.socket_path.exists() {
             return Err(Error::Other(format!(
@@ -312,42 +302,77 @@ impl ApiClient {
             )));
         }
 
-        let url = format!("{}{}", self.base_url, path);
-        debug!("API request: {} {}", method, url);
+        debug!("API request: {} {} (via {:?})", method, path, self.socket_path);
 
-        let mut req = self.client.request(method, &url);
+        // Connect to Unix socket
+        let stream = UnixStream::connect(&self.socket_path)
+            .await
+            .map_err(|e| Error::Other(format!("Failed to connect to socket: {}", e)))?;
+
+        let io = TokioIo::new(stream);
+
+        // Create HTTP connection
+        let (mut sender, conn) = http1::handshake(io)
+            .await
+            .map_err(|e| Error::Other(format!("HTTP handshake failed: {}", e)))?;
+
+        // Spawn connection driver
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                warn!("Connection error: {}", e);
+            }
+        });
+
+        // Build request body
+        let body_bytes = if let Some(ref b) = body {
+            serde_json::to_vec(b)
+                .map_err(|e| Error::Other(format!("Failed to serialize body: {}", e)))?
+        } else {
+            Vec::new()
+        };
+
+        // Build request
+        let mut req_builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Host", "localhost")
+            .header("Content-Type", "application/json");
 
         // Add auth header
         if let Some(ref token) = self.token {
-            req = req.header("Authorization", format!("Bearer {}", token));
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", token));
         }
 
-        // Add body
-        if let Some(ref b) = body {
-            req = req.json(b);
-        }
+        let req = req_builder
+            .body(Full::new(Bytes::from(body_bytes)))
+            .map_err(|e| Error::Other(format!("Failed to build request: {}", e)))?;
 
-        // Note: This won't work with Unix sockets directly.
-        // We need to implement a Unix socket transport.
-        // For now, let's use a workaround via TCP fallback or socat.
-        let resp = req.send().await.map_err(|e| {
-            Error::Other(format!("HTTP request failed: {}. Is rdv-server running?", e))
-        })?;
+        // Send request
+        let resp = sender
+            .send_request(req)
+            .await
+            .map_err(|e| Error::Other(format!("HTTP request failed: {}", e)))?;
 
         let status = resp.status();
+
+        // Read response body
+        let body = resp
+            .into_body()
+            .collect()
+            .await
+            .map_err(|e| Error::Other(format!("Failed to read response: {}", e)))?
+            .to_bytes();
+
+        // Parse response
         if status.is_success() {
-            let data: T = resp.json().await.map_err(|e| {
-                Error::Other(format!("Failed to parse response: {}", e))
-            })?;
+            let data: T = serde_json::from_slice(&body)
+                .map_err(|e| Error::Other(format!("Failed to parse response: {}", e)))?;
             Ok(data)
-        } else if status == reqwest::StatusCode::NOT_FOUND {
+        } else if status == hyper::StatusCode::NOT_FOUND {
             Err(Error::NotFound(path.to_string()))
         } else {
-            let error_text = resp.text().await.unwrap_or_default();
-            Err(Error::Other(format!(
-                "API error {}: {}",
-                status, error_text
-            )))
+            let error_text = String::from_utf8_lossy(&body);
+            Err(Error::Other(format!("API error {}: {}", status, error_text)))
         }
     }
 }
