@@ -41,6 +41,7 @@ import {
   type SkillDefinition,
   type ToolDefinition,
 } from "@/hooks/useProjectKnowledge";
+import { AddConventionDialog, AddPatternDialog } from "@/components/knowledge";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props
@@ -64,6 +65,8 @@ export function ProjectKnowledgePanel({
   });
 
   const [scanning, setScanning] = useState(false);
+  const [addConventionOpen, setAddConventionOpen] = useState(false);
+  const [addPatternOpen, setAddPatternOpen] = useState(false);
 
   const handleScan = async () => {
     setScanning(true);
@@ -184,10 +187,16 @@ export function ProjectKnowledgePanel({
 
         <ScrollArea className="flex-1">
           <TabsContent value="conventions" className="m-0 p-4">
-            <ConventionsList conventions={knowledge.conventions} />
+            <ConventionsList
+              conventions={knowledge.conventions}
+              onAdd={() => setAddConventionOpen(true)}
+            />
           </TabsContent>
           <TabsContent value="patterns" className="m-0 p-4">
-            <PatternsList patterns={knowledge.patterns} />
+            <PatternsList
+              patterns={knowledge.patterns}
+              onAdd={() => setAddPatternOpen(true)}
+            />
           </TabsContent>
           <TabsContent value="skills" className="m-0 p-4">
             <SkillsList skills={knowledge.skills} />
@@ -197,6 +206,20 @@ export function ProjectKnowledgePanel({
           </TabsContent>
         </ScrollArea>
       </Tabs>
+
+      {/* Add Dialogs */}
+      <AddConventionDialog
+        folderId={folderId}
+        open={addConventionOpen}
+        onOpenChange={setAddConventionOpen}
+        onAdded={fetch}
+      />
+      <AddPatternDialog
+        folderId={folderId}
+        open={addPatternOpen}
+        onOpenChange={setAddPatternOpen}
+        onAdded={fetch}
+      />
     </div>
   );
 }
@@ -205,7 +228,13 @@ export function ProjectKnowledgePanel({
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ConventionsList({ conventions }: { conventions: Convention[] }) {
+function ConventionsList({
+  conventions,
+  onAdd,
+}: {
+  conventions: Convention[];
+  onAdd?: () => void;
+}) {
   const [expandedCategories, setExpandedCategories] = useStateCollapsible<Set<string>>(
     new Set()
   );
@@ -216,6 +245,7 @@ function ConventionsList({ conventions }: { conventions: Convention[] }) {
         icon={FileCode2}
         message="No conventions learned yet"
         action="Add Convention"
+        onAdd={onAdd}
       />
     );
   }
@@ -290,13 +320,20 @@ function ConventionsList({ conventions }: { conventions: Convention[] }) {
   );
 }
 
-function PatternsList({ patterns }: { patterns: LearnedPattern[] }) {
+function PatternsList({
+  patterns,
+  onAdd,
+}: {
+  patterns: LearnedPattern[];
+  onAdd?: () => void;
+}) {
   if (patterns.length === 0) {
     return (
       <EmptyState
         icon={Lightbulb}
         message="No patterns learned yet"
         action="Add Pattern"
+        onAdd={onAdd}
       />
     );
   }
@@ -420,16 +457,18 @@ function EmptyState({
   icon: Icon,
   message,
   action,
+  onAdd,
 }: {
   icon: React.ElementType;
   message: string;
   action: string;
+  onAdd?: () => void;
 }) {
   return (
     <div className="text-center py-8">
       <Icon className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
       <p className="text-sm text-muted-foreground mb-3">{message}</p>
-      <Button variant="outline" size="sm">
+      <Button variant="outline" size="sm" onClick={onAdd}>
         <Plus className="h-3 w-3 mr-1" />
         {action}
       </Button>

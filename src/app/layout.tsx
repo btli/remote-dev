@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { AppearanceProvider } from "@/contexts/AppearanceContext";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -58,6 +59,7 @@ export default function RootLayout({
         <SessionProvider>
           <AppearanceProvider>{children}</AppearanceProvider>
         </SessionProvider>
+        <Toaster position="bottom-right" />
         <ServiceWorkerRegistration />
       </body>
     </html>

@@ -15,6 +15,7 @@ import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { IssuesModal } from "@/components/github/IssuesModal";
 import { PRsModal } from "@/components/github/PRsModal";
+import { ProjectKnowledgeModal } from "@/components/knowledge";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
@@ -159,6 +160,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     folderId: string;
     folderName: string;
     initialTab?: "general" | "appearance" | "repository" | "environment";
+  } | null>(null);
+  const [knowledgeModal, setKnowledgeModal] = useState<{
+    folderId: string;
+    folderName: string;
   } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
@@ -661,6 +666,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleFolderSettings = useCallback(
     (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => {
       setFolderSettingsModal({ folderId, folderName, initialTab });
+    },
+    []
+  );
+
+  const handleFolderKnowledge = useCallback(
+    (folderId: string, folderName: string) => {
+      setKnowledgeModal({ folderId, folderName });
     },
     []
   );
@@ -1272,6 +1284,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onViewPRs={handleViewPRs}
             onFolderReinitOrchestrator={handleReinitOrchestrator}
             onOrchestratorReinstallHooks={handleReinstallHooks}
+            onFolderKnowledge={handleFolderKnowledge}
           />
       </div>
 
@@ -1491,6 +1504,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           initialTab={folderSettingsModal?.initialTab}
         />
       </Activity>
+
+      {/* Project Knowledge Modal */}
+      <ProjectKnowledgeModal
+        open={knowledgeModal !== null}
+        onOpenChange={(open) => !open && setKnowledgeModal(null)}
+        folderId={knowledgeModal?.folderId ?? ""}
+        folderName={knowledgeModal?.folderName}
+      />
 
       {/* Command Palette */}
       <CommandPalette

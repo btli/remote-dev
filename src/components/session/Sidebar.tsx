@@ -7,7 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
-  Brain,
+  Brain, RefreshCw, BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -110,6 +110,9 @@ interface SidebarProps {
   onPortsOpen?: () => void;
   onViewIssues?: (folderId: string) => void;
   onViewPRs?: (folderId: string) => void;
+  onFolderReinitOrchestrator?: (folderId: string) => void;
+  onOrchestratorReinstallHooks?: (folderId: string) => void;
+  onFolderKnowledge?: (folderId: string, folderName: string) => void;
 }
 
 export function Sidebar({
@@ -154,6 +157,9 @@ export function Sidebar({
   onPortsOpen,
   onViewIssues,
   onViewPRs,
+  onFolderReinitOrchestrator,
+  onOrchestratorReinstallHooks,
+  onFolderKnowledge,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -258,9 +264,15 @@ export function Sidebar({
     onSessionClose(session.id);
   }, [onSessionClose]);
 
+  // Separate orchestrator sessions (Master Control is pinned to top)
+  const masterControlSession = activeSessions.find(
+    (s) => s.isOrchestratorSession && !s.folderId
+  );
+
   // Sessions not in any folder - use session.folderId directly for accurate rendering
+  // Exclude orchestrator sessions from regular root sessions
   const rootSessions = activeSessions.filter(
-    (s) => !s.folderId
+    (s) => !s.folderId && !s.isOrchestratorSession
   );
 
   // Build folder tree from flat list, sorted by sortOrder
@@ -1111,8 +1123,8 @@ export function Sidebar({
               );
             })()}
 
-            {/* Close button - hidden if session has scheduled commands */}
-            {!isEditing && (() => {
+            {/* Close button - hidden for orchestrator sessions and sessions with scheduled commands */}
+            {!isEditing && !session.isOrchestratorSession && (() => {
               const schedules = getSchedulesForSession(session.id);
               const hasActiveSchedules = schedules.some(s => s.enabled);
               if (hasActiveSchedules) return null;
@@ -1135,91 +1147,129 @@ export function Sidebar({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
-          <ContextMenuItem
-            onClick={() => {
-              setEditingId(session.id);
-              setEditingType("session");
-              setEditValue(session.name);
-            }}
-          >
-            <Pencil className="w-3.5 h-3.5 mr-2" />
-            Rename
-          </ContextMenuItem>
-          {folders.length > 0 && (
-            <ContextMenuSub>
-              <ContextMenuSubTrigger>
-                <Folder className="w-3.5 h-3.5 mr-2" />
-                Move to Folder
-              </ContextMenuSubTrigger>
-              <ContextMenuSubContent className="w-40">
-                {currentFolderId && (
-                  <ContextMenuItem onClick={() => onSessionMove(session.id, null)}>
-                    <X className="w-3.5 h-3.5 mr-2" />
-                    Remove from Folder
-                  </ContextMenuItem>
-                )}
-                {folders.map((folder) => (
-                  <ContextMenuItem
-                    key={folder.id}
-                    onClick={() => onSessionMove(session.id, folder.id)}
-                    disabled={currentFolderId === folder.id}
-                  >
-                    <FolderOpen className="w-3.5 h-3.5 mr-2" />
-                    {folder.name}
-                  </ContextMenuItem>
-                ))}
-              </ContextMenuSubContent>
-            </ContextMenuSub>
-          )}
-          {/* Schedule command option */}
-          {onSessionSchedule && (
-            <ContextMenuItem onClick={() => onSessionSchedule(session.id)}>
-              <Clock className="w-3.5 h-3.5 mr-2" />
-              Schedule Command
-            </ContextMenuItem>
-          )}
-          <ContextMenuSeparator />
-          {/* Split options */}
-          {(() => {
-            const splitGroup = getSplitForSession(session.id);
-            if (splitGroup) {
-              // Session is in a split - show unsplit option
-              return (
-                <ContextMenuItem
-                  onClick={() => removeFromSplit(session.id)}
-                >
-                  <Minus className="w-3.5 h-3.5 mr-2" />
-                  Unsplit
-                </ContextMenuItem>
-              );
-            } else {
-              // Session is not in a split - show split options
-              return (
+          {session.isOrchestratorSession ? (
+            /* Orchestrator session context menu */
+            <>
+              <ContextMenuItem
+                onClick={() => {
+                  setEditingId(session.id);
+                  setEditingType("session");
+                  setEditValue(session.name);
+                }}
+              >
+                <Pencil className="w-3.5 h-3.5 mr-2" />
+                Rename
+              </ContextMenuItem>
+              {session.folderId && onFolderReinitOrchestrator && (
                 <>
+                  <ContextMenuSeparator />
                   <ContextMenuItem
-                    onClick={() => createSplit(session.id, "horizontal")}
+                    onClick={() => onFolderReinitOrchestrator(session.folderId!)}
                   >
-                    <SplitSquareHorizontal className="w-3.5 h-3.5 mr-2" />
-                    Split Horizontal
+                    <RefreshCw className="w-3.5 h-3.5 mr-2" />
+                    Reinitialize
                   </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => createSplit(session.id, "vertical")}
-                  >
-                    <SplitSquareVertical className="w-3.5 h-3.5 mr-2" />
-                    Split Vertical
-                  </ContextMenuItem>
+                  {onOrchestratorReinstallHooks && (
+                    <ContextMenuItem
+                      onClick={() => onOrchestratorReinstallHooks(session.folderId!)}
+                    >
+                      <Settings className="w-3.5 h-3.5 mr-2" />
+                      Reinstall Hooks
+                    </ContextMenuItem>
+                  )}
                 </>
-              );
-            }
-          })()}
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={() => handleSessionCloseRequest(session)}
-            className="text-destructive focus:text-destructive"
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-2" />
-            Close Session
-          </ContextMenuItem>
+              )}
+            </>
+          ) : (
+            /* Regular session context menu */
+            <>
+              <ContextMenuItem
+                onClick={() => {
+                  setEditingId(session.id);
+                  setEditingType("session");
+                  setEditValue(session.name);
+                }}
+              >
+                <Pencil className="w-3.5 h-3.5 mr-2" />
+                Rename
+              </ContextMenuItem>
+              {folders.length > 0 && (
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>
+                    <Folder className="w-3.5 h-3.5 mr-2" />
+                    Move to Folder
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-40">
+                    {currentFolderId && (
+                      <ContextMenuItem onClick={() => onSessionMove(session.id, null)}>
+                        <X className="w-3.5 h-3.5 mr-2" />
+                        Remove from Folder
+                      </ContextMenuItem>
+                    )}
+                    {folders.map((folder) => (
+                      <ContextMenuItem
+                        key={folder.id}
+                        onClick={() => onSessionMove(session.id, folder.id)}
+                        disabled={currentFolderId === folder.id}
+                      >
+                        <FolderOpen className="w-3.5 h-3.5 mr-2" />
+                        {folder.name}
+                      </ContextMenuItem>
+                    ))}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+              )}
+              {/* Schedule command option */}
+              {onSessionSchedule && (
+                <ContextMenuItem onClick={() => onSessionSchedule(session.id)}>
+                  <Clock className="w-3.5 h-3.5 mr-2" />
+                  Schedule Command
+                </ContextMenuItem>
+              )}
+              <ContextMenuSeparator />
+              {/* Split options */}
+              {(() => {
+                const splitGroup = getSplitForSession(session.id);
+                if (splitGroup) {
+                  // Session is in a split - show unsplit option
+                  return (
+                    <ContextMenuItem
+                      onClick={() => removeFromSplit(session.id)}
+                    >
+                      <Minus className="w-3.5 h-3.5 mr-2" />
+                      Unsplit
+                    </ContextMenuItem>
+                  );
+                } else {
+                  // Session is not in a split - show split options
+                  return (
+                    <>
+                      <ContextMenuItem
+                        onClick={() => createSplit(session.id, "horizontal")}
+                      >
+                        <SplitSquareHorizontal className="w-3.5 h-3.5 mr-2" />
+                        Split Horizontal
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onClick={() => createSplit(session.id, "vertical")}
+                      >
+                        <SplitSquareVertical className="w-3.5 h-3.5 mr-2" />
+                        Split Vertical
+                      </ContextMenuItem>
+                    </>
+                  );
+                }
+              })()}
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={() => handleSessionCloseRequest(session)}
+                className="text-destructive focus:text-destructive"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-2" />
+                Close Session
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
         </ContextMenu>
         {/* Drop indicator - after */}
@@ -1542,6 +1592,63 @@ export function Sidebar({
                     placeholder="Folder name..."
                     className="flex-1 bg-input border border-primary/50 rounded px-1.5 py-0.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                   />
+                </div>
+              )}
+
+              {/* Master Control - pinned to top */}
+              {masterControlSession && (
+                <div className="mb-2 pb-2 border-b border-border/50">
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <div
+                        onClick={() => onSessionClick(masterControlSession.id)}
+                        className={cn(
+                          "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
+                          "hover:bg-muted/50 transition-colors",
+                          activeSessionId === masterControlSession.id && "bg-muted"
+                        )}
+                      >
+                        <Brain
+                          className={cn(
+                            "w-4 h-4 shrink-0",
+                            activeSessionId === masterControlSession.id
+                              ? "text-purple-500"
+                              : "text-purple-400/70"
+                          )}
+                        />
+                        <span
+                          className={cn(
+                            "text-xs truncate flex-1",
+                            activeSessionId === masterControlSession.id
+                              ? "text-foreground font-medium"
+                              : "text-muted-foreground"
+                          )}
+                        >
+                          {masterControlSession.name}
+                        </span>
+                      </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-48">
+                      <ContextMenuItem
+                        onClick={() => {
+                          setEditingId(masterControlSession.id);
+                          setEditingType("session");
+                          setEditValue(masterControlSession.name);
+                        }}
+                      >
+                        <Pencil className="w-3.5 h-3.5 mr-2" />
+                        Rename
+                      </ContextMenuItem>
+                      {onFolderReinitOrchestrator && (
+                        <ContextMenuItem
+                          onClick={() => onFolderReinitOrchestrator("")}
+                        >
+                          <RefreshCw className="w-3.5 h-3.5 mr-2" />
+                          Reinitialize
+                        </ContextMenuItem>
+                      )}
+                    </ContextMenuContent>
+                  </ContextMenu>
                 </div>
               )}
 
@@ -1871,6 +1978,14 @@ export function Sidebar({
                                   <span className="ml-auto text-[10px] text-primary">Linked</span>
                                 )}
                               </ContextMenuItem>
+                              {onFolderKnowledge && (
+                                <ContextMenuItem
+                                  onClick={() => onFolderKnowledge(node.id, node.name)}
+                                >
+                                  <BookOpen className="w-3.5 h-3.5 mr-2" />
+                                  View Knowledge
+                                </ContextMenuItem>
+                              )}
                               {onViewIssues && folderHasRepo(node.id) && (
                                 <ContextMenuItem
                                   onClick={() => onViewIssues(node.id)}
@@ -1887,6 +2002,28 @@ export function Sidebar({
                                   View PRs
                                 </ContextMenuItem>
                               )}
+                              {(onFolderReinitOrchestrator || onOrchestratorReinstallHooks) && (
+                                <>
+                                  <ContextMenuSeparator />
+                                  {onFolderReinitOrchestrator && (
+                                    <ContextMenuItem
+                                      onClick={() => onFolderReinitOrchestrator(node.id)}
+                                    >
+                                      <RefreshCw className="w-3.5 h-3.5 mr-2" />
+                                      Reinitialize Orchestrator
+                                    </ContextMenuItem>
+                                  )}
+                                  {onOrchestratorReinstallHooks && (
+                                    <ContextMenuItem
+                                      onClick={() => onOrchestratorReinstallHooks(node.id)}
+                                    >
+                                      <Settings className="w-3.5 h-3.5 mr-2" />
+                                      Reinstall Hooks
+                                    </ContextMenuItem>
+                                  )}
+                                </>
+                              )}
+                              <ContextMenuSeparator />
                               <ContextMenuItem
                                 onClick={() => {
                                   setEditingId(node.id);

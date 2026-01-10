@@ -7,6 +7,8 @@ import * as TrashService from "@/services/trash-service";
 import * as ScheduleService from "@/services/schedule-service";
 import { notifySessionJobsRemoved } from "@/lib/scheduler-client";
 import { getFolderPreferences } from "@/services/preferences-service";
+import { SessionEndAnalysisService, type SessionEndType } from "@/services/session-end-analysis-service";
+import { container } from "@/infrastructure/container";
 import type { UpdateSessionInput, SessionStatus } from "@/types/session";
 import { resolve } from "path";
 
@@ -32,6 +34,111 @@ function validateProjectPath(path: string | undefined): string | undefined {
   }
 
   return resolved;
+}
+
+/**
+ * Extract learnings from a closed session in background.
+ *
+ * This function analyzes the session transcript and updates
+ * project knowledge with any patterns, conventions, skills discovered.
+ */
+async function extractLearnings(params: {
+  sessionId: string;
+  folderId: string;
+  projectPath: string;
+  agentProvider: string;
+}): Promise<void> {
+  const { sessionId, folderId, projectPath, agentProvider } = params;
+
+  console.log(`[Learning] Starting extraction for session ${sessionId}`);
+
+  try {
+    // Create analysis service
+    const analysisService = new SessionEndAnalysisService();
+
+    // Analyze the session
+    const analysis = await analysisService.analyze({
+      sessionId,
+      projectPath,
+      agentProvider: agentProvider as "claude" | "codex" | "gemini" | "opencode",
+      endType: "user_closed" as SessionEndType,
+    });
+
+    // Get or create project knowledge for this folder
+    let knowledge = await container.projectKnowledgeRepository.findByFolderId(folderId);
+
+    if (!knowledge) {
+      // Create new project knowledge if it doesn't exist
+      const { ProjectKnowledge } = await import("@/domain/entities/ProjectKnowledge");
+      knowledge = ProjectKnowledge.create({
+        folderId,
+        userId: "", // Will be set from folder relationship
+        techStack: [],
+        metadata: { projectPath },
+      });
+    }
+
+    // Add learnings to project knowledge
+    let updated = knowledge;
+
+    for (const learning of analysis.learnings) {
+      if (learning.type === "pattern" || learning.type === "error_handling") {
+        updated = updated.addPattern({
+          type: learning.type === "error_handling" ? "gotcha" : "success",
+          description: learning.description,
+          context: learning.evidence,
+          confidence: learning.confidence,
+        });
+      } else if (learning.type === "command") {
+        updated = updated.addPattern({
+          type: "success",
+          description: `Command pattern: ${learning.description}`,
+          context: learning.evidence,
+          confidence: learning.confidence,
+        });
+      } else if (learning.type === "tool") {
+        updated = updated.addPattern({
+          type: "success",
+          description: `Tool reliability: ${learning.description}`,
+          context: learning.evidence,
+          confidence: learning.confidence,
+        });
+      }
+    }
+
+    // Add improvements as skills or gotchas
+    for (const improvement of analysis.improvements) {
+      if (improvement.type === "skill") {
+        updated = updated.addSkill({
+          name: improvement.title,
+          description: improvement.description,
+          command: improvement.action || "",
+          triggers: [],
+          steps: [],
+          scope: "project",
+          verified: false,
+        });
+      } else if (improvement.type === "gotcha") {
+        updated = updated.addPattern({
+          type: "gotcha",
+          description: improvement.description,
+          context: improvement.action || "",
+          confidence: 0.7,
+        });
+      }
+    }
+
+    // Save updated knowledge
+    await container.projectKnowledgeRepository.save(updated);
+
+    console.log(
+      `[Learning] Extracted ${analysis.learnings.length} learnings, ` +
+      `${analysis.improvements.length} improvements for session ${sessionId}`
+    );
+  } catch (error) {
+    console.error(`[Learning] Failed to extract for session ${sessionId}:`, error);
+    throw error;
+  }
 }
 
 /**
@@ -189,6 +296,20 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
     }
 
     await SessionService.closeSession(id, userId);
+
+    // Extract learnings in background (fire-and-forget)
+    // This doesn't block the close response
+    if (terminalSession?.folderId && terminalSession?.projectPath && terminalSession?.agentProvider) {
+      extractLearnings({
+        sessionId: id,
+        folderId: terminalSession.folderId,
+        projectPath: terminalSession.projectPath,
+        agentProvider: terminalSession.agentProvider,
+      }).catch((err) => {
+        console.error("[Learning] Failed to extract learnings:", err);
+      });
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof SessionService.SessionServiceError) {
