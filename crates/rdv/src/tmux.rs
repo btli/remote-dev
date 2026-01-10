@@ -292,7 +292,8 @@ pub fn respawn_pane(session_name: &str, command: Option<&str>) -> RdvResult<()> 
 /// Get pane status for a session.
 #[derive(Debug, Clone)]
 pub struct PaneStatus {
-    pub session_name: String,
+    /// Session name (kept for debugging/future use)
+    pub _session_name: String,
     pub is_dead: bool,
     pub pid: Option<u32>,
 }
@@ -325,7 +326,7 @@ pub fn get_pane_status(session_name: &str) -> RdvResult<PaneStatus> {
     let pid = parts.get(1).and_then(|s| s.parse().ok());
 
     Ok(PaneStatus {
-        session_name: session_name.to_string(),
+        _session_name: session_name.to_string(),
         is_dead,
         pid,
     })
@@ -362,5 +363,104 @@ mod tests {
         let result = check_tmux();
         // Don't assert - tmux may not be installed in CI
         println!("tmux check result: {:?}", result);
+    }
+
+    #[test]
+    fn test_create_session_config_default() {
+        let config = CreateSessionConfig::default();
+
+        assert!(config.session_name.is_empty());
+        assert!(config.working_directory.is_none());
+        assert!(config.command.is_none());
+        assert!(!config.auto_respawn);
+        assert!(config.env.is_none());
+    }
+
+    #[test]
+    fn test_create_session_config_with_values() {
+        let mut env = std::collections::HashMap::new();
+        env.insert("KEY".to_string(), "VALUE".to_string());
+
+        let config = CreateSessionConfig {
+            session_name: "test-session".to_string(),
+            working_directory: Some("/tmp".to_string()),
+            command: Some("echo hello".to_string()),
+            auto_respawn: true,
+            env: Some(env),
+        };
+
+        assert_eq!(config.session_name, "test-session");
+        assert_eq!(config.working_directory, Some("/tmp".to_string()));
+        assert_eq!(config.command, Some("echo hello".to_string()));
+        assert!(config.auto_respawn);
+        assert!(config.env.is_some());
+        assert_eq!(
+            config.env.as_ref().unwrap().get("KEY"),
+            Some(&"VALUE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_tmux_session_struct() {
+        let session = TmuxSession {
+            name: "my-session".to_string(),
+            created: 1234567890,
+            attached: true,
+        };
+
+        assert_eq!(session.name, "my-session");
+        assert_eq!(session.created, 1234567890);
+        assert!(session.attached);
+    }
+
+    #[test]
+    fn test_pane_status_struct() {
+        let status = PaneStatus {
+            _session_name: "test".to_string(),
+            is_dead: false,
+            pid: Some(12345),
+        };
+
+        assert!(!status.is_dead);
+        assert_eq!(status.pid, Some(12345));
+    }
+
+    #[test]
+    fn test_session_exists_nonexistent() {
+        // Test with a session name that definitely doesn't exist
+        let result = session_exists("rdv-test-nonexistent-session-12345");
+        // This should succeed (return Ok) with false
+        match result {
+            Ok(exists) => assert!(!exists, "Session should not exist"),
+            Err(_) => {
+                // tmux might not be installed, that's ok
+            }
+        }
+    }
+
+    #[test]
+    fn test_list_sessions() {
+        // Just test that it doesn't panic
+        let result = list_sessions();
+        match result {
+            Ok(sessions) => {
+                // Verify we get a vector (possibly empty)
+                println!("Found {} sessions", sessions.len());
+            }
+            Err(_) => {
+                // tmux might not be running or installed
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_session_info_nonexistent() {
+        let result = get_session_info("rdv-test-nonexistent-session-99999");
+        match result {
+            Ok(info) => assert!(info.is_none(), "Session should not exist"),
+            Err(_) => {
+                // tmux might not be installed
+            }
+        }
     }
 }

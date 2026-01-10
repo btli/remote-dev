@@ -18,6 +18,7 @@ use std::process::Command;
 use crate::cli::{TaskAction, TaskCommand};
 use crate::config::Config;
 use crate::db::Database;
+use crate::error::RdvError;
 use crate::tmux;
 
 /// A beads issue parsed from `bd show` output.
@@ -49,7 +50,7 @@ fn run_beads(args: &[&str]) -> Result<String> {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("bd command failed: {}", stderr)
+        Err(RdvError::Beads(format!("bd command failed: {}", stderr)).into())
     }
 }
 
@@ -328,6 +329,22 @@ async fn execute_task(task_id: &str, config: &Config) -> Result<()> {
 
     let is_beads = task_id.starts_with("beads-");
 
+    // Update database task status
+    if let Ok(db) = Database::open() {
+        // Try to find and update task in database
+        let db_task_id = if is_beads {
+            db.get_task_by_beads_id(task_id).ok().flatten().map(|t| t.id)
+        } else {
+            Some(task_id.to_string())
+        };
+
+        if let Some(ref tid) = db_task_id {
+            if db.update_task_status(tid, "in_progress").is_ok() {
+                println!("  {} Database task updated to in_progress", "✓".green());
+            }
+        }
+    }
+
     // Update beads status
     if is_beads && beads_available() {
         println!("  {} Updating beads status to in_progress...", "→".cyan());
@@ -402,6 +419,21 @@ async fn cancel(task_id: &str, reason: Option<&str>, _config: &Config) -> Result
         }
     }
 
+    // Update database task status
+    if let Ok(db) = Database::open() {
+        let db_task_id = if is_beads {
+            db.get_task_by_beads_id(task_id).ok().flatten().map(|t| t.id)
+        } else {
+            Some(task_id.to_string())
+        };
+
+        if let Some(ref tid) = db_task_id {
+            if db.update_task_status(tid, "failed").is_ok() {
+                println!("  {} Database task marked as failed", "✓".green());
+            }
+        }
+    }
+
     // Update beads if applicable
     if is_beads && beads_available() {
         let reason_msg = reason.unwrap_or("Cancelled via rdv");
@@ -453,6 +485,48 @@ async fn list(
                 "detached".yellow()
             };
             println!("    {} ({})", session.name, attached);
+        }
+    }
+
+    // List database tasks
+    if let Ok(db) = Database::open() {
+        if let Ok(Some(user)) = db.get_default_user() {
+            println!();
+            println!("  {}", "Database Tasks:".cyan());
+
+            // Determine status filter
+            let status_filter = if all { None } else { status.or(Some("open")) };
+
+            match db.list_tasks(&user.id, status_filter) {
+                Ok(tasks) => {
+                    if tasks.is_empty() {
+                        println!("    No database tasks found");
+                    } else {
+                        for task in tasks.iter().take(10) {
+                            let status_color = match task.status.as_str() {
+                                "open" | "pending" => "open".yellow(),
+                                "in_progress" => "in_progress".cyan(),
+                                "completed" => "completed".green(),
+                                "failed" => "failed".red(),
+                                _ => task.status.normal(),
+                            };
+                            let id_short = if task.id.len() >= 8 { &task.id[..8] } else { &task.id };
+                            println!(
+                                "    {} [{}] {}",
+                                id_short.cyan(),
+                                status_color,
+                                task.description.chars().take(50).collect::<String>()
+                            );
+                        }
+                        if tasks.len() > 10 {
+                            println!("    ... and {} more", tasks.len() - 10);
+                        }
+                    }
+                }
+                Err(_) => {
+                    println!("    Failed to query database tasks");
+                }
+            }
         }
     }
 
@@ -518,14 +592,55 @@ async fn show(task_id: &str, _config: &Config) -> Result<()> {
 
     let is_beads = task_id.starts_with("beads-");
 
+    // Try to look up in database first
+    if let Ok(db) = Database::open() {
+        // Try direct task ID lookup
+        let db_task = if is_beads {
+            db.get_task_by_beads_id(task_id).ok().flatten()
+        } else {
+            db.get_task(task_id).ok().flatten()
+        };
+
+        if let Some(task) = db_task {
+            println!("  {}", "Database Task:".cyan());
+            println!("    ID: {}", task.id);
+            println!("    Type: {}", task.task_type);
+            println!("    Status: {}", task.status);
+            println!("    Description: {}", task.description);
+            if let Some(ref agent) = task.assigned_agent {
+                println!("    Agent: {}", agent);
+            }
+            if let Some(ref beads_id) = task.beads_issue_id {
+                println!("    Beads: {}", beads_id);
+            }
+            println!();
+        }
+    }
+
+    let mut found = false;
     if is_beads && beads_available() {
         // Show beads issue details
         match run_beads(&["show", task_id]) {
             Ok(output) => {
                 println!("{}", output);
+                found = true;
             }
             Err(e) => {
                 println!("  {} Failed to load beads issue: {}", "⚠".yellow(), e);
+            }
+        }
+    }
+
+    // If we didn't find the task in database or beads, return error
+    if !found {
+        if let Ok(db) = Database::open() {
+            let db_found = if is_beads {
+                db.get_task_by_beads_id(task_id).ok().flatten().is_some()
+            } else {
+                db.get_task(task_id).ok().flatten().is_some()
+            };
+            if !db_found {
+                return Err(RdvError::TaskNotFound(task_id.to_string()).into());
             }
         }
     }

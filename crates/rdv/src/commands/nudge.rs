@@ -4,9 +4,15 @@ use anyhow::Result;
 use colored::Colorize;
 
 use crate::config::Config;
+use crate::error::RdvError;
 use crate::tmux;
 
 pub async fn execute(session_id: &str, message: &str, _config: &Config) -> Result<()> {
+    // Validate message is not empty or just whitespace
+    if message.trim().is_empty() {
+        return Err(RdvError::Other("Nudge message cannot be empty".to_string()).into());
+    }
+
     println!("{}", format!("Nudging {}...", session_id).cyan());
 
     // Send message directly to session via tmux

@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use crate::cli::{SessionAction, SessionCommand};
 use crate::config::Config;
 use crate::db::Database;
+use crate::error::RdvError;
 use crate::tmux;
 
 pub async fn execute(cmd: SessionCommand, config: &Config) -> Result<()> {
@@ -37,6 +38,9 @@ pub async fn execute(cmd: SessionCommand, config: &Config) -> Result<()> {
         SessionAction::Close { session_id, force } => close(&session_id, force, config).await,
         SessionAction::Scrollback { session_id, lines } => {
             scrollback(&session_id, lines, config).await
+        }
+        SessionAction::Respawn { session_id, command } => {
+            respawn(&session_id, command.as_deref(), config).await
         }
     }
 }
@@ -102,6 +106,14 @@ async fn spawn(
         None // Shell session - just spawn a shell
     } else {
         let agent_cmd = config.agent_command(agent).unwrap_or(agent);
+
+        // Verify agent CLI is available
+        if which::which(agent_cmd).is_err() {
+            return Err(RdvError::AgentNotAvailable(
+                format!("Agent CLI '{}' not found. Install it first.", agent_cmd)
+            ).into());
+        }
+
         let mut cmd_parts = vec![agent_cmd.to_string()];
 
         // Add --dangerously-skip-permissions for claude if requested
@@ -373,8 +385,7 @@ async fn attach(session_id: &str, _config: &Config) -> Result<()> {
     };
 
     if !tmux::session_exists(&tmux_name)? {
-        println!("{}", format!("Session '{}' not found", session_id).red());
-        return Ok(());
+        return Err(RdvError::SessionNotFound(session_id.to_string()).into());
     }
 
     tmux::attach_session(&tmux_name)?;
@@ -452,4 +463,37 @@ async fn resolve_tmux_name(session_id: &str) -> Result<String> {
 
     // Fall back to using the ID as-is
     Ok(session_id.to_string())
+}
+
+async fn respawn(session_id: &str, command: Option<&str>, _config: &Config) -> Result<()> {
+    let tmux_name = resolve_tmux_name(session_id).await?;
+
+    println!(
+        "{}",
+        format!("Respawning pane in session {}...", tmux_name).cyan()
+    );
+
+    // Check if session exists
+    if !tmux::session_exists(&tmux_name)? {
+        return Err(RdvError::SessionNotFound(tmux_name).into());
+    }
+
+    // Check if pane is actually dead
+    if !tmux::is_pane_dead(&tmux_name)? {
+        return Err(RdvError::InvalidStateTransition(
+            "Cannot respawn: pane is still running. Use `rdv session close` first.".to_string()
+        ).into());
+    }
+
+    // Respawn the pane
+    tmux::respawn_pane(&tmux_name, command)?;
+
+    println!("  {} Pane respawned successfully", "✓".green());
+    if let Some(cmd) = command {
+        println!("  Command: {}", cmd);
+    } else {
+        println!("  Command: (using original command)");
+    }
+
+    Ok(())
 }

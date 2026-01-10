@@ -25,6 +25,7 @@ use std::process::Command;
 
 use crate::cli::EscalateCommand;
 use crate::config::Config;
+use crate::error::RdvError;
 use crate::tmux;
 
 /// Check if beads (bd) is available.
@@ -43,7 +44,7 @@ fn run_beads(args: &[&str]) -> Result<String> {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("bd command failed: {}", stderr)
+        Err(RdvError::Beads(format!("bd command failed: {}", stderr)).into())
     }
 }
 

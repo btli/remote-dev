@@ -22,9 +22,7 @@ impl Database {
     /// Open database connection, auto-detecting location
     pub fn open() -> Result<Self> {
         let path = Self::find_database()?;
-        let conn = Connection::open(&path)
-            .with_context(|| format!("Failed to open database at {:?}", path))?;
-        Ok(Self { conn })
+        Self::open_path(&path)
     }
 
     /// Open database at specific path
@@ -865,4 +863,317 @@ pub struct NewOrchestrator {
     pub monitoring_interval: i32,
     pub stall_threshold: i32,
     pub auto_intervention: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_open_path_creates_database() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let db_path = temp.path().join("test.db");
+
+        // Database shouldn't exist yet
+        assert!(!db_path.exists());
+
+        // Opening should create it
+        let result = Database::open_path(&db_path);
+        assert!(result.is_ok(), "Failed to open database: {:?}", result.err());
+
+        // Path should exist after creation
+        assert!(db_path.exists());
+    }
+
+    #[test]
+    fn test_open_path_with_nonexistent_parent() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let db_path = temp.path().join("nested").join("path").join("test.db");
+
+        // This should fail because parent directories don't exist
+        let result = Database::open_path(&db_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_open_path_with_existing_db() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let db_path = temp.path().join("existing.db");
+
+        // Create the database first
+        let _db1 = Database::open_path(&db_path).expect("Failed to create database");
+
+        // Opening again should work
+        let db2 = Database::open_path(&db_path);
+        assert!(db2.is_ok(), "Failed to reopen database: {:?}", db2.err());
+    }
+
+    #[test]
+    fn test_user_struct() {
+        let user = User {
+            id: "user-123".to_string(),
+            name: Some("Test User".to_string()),
+            email: Some("test@example.com".to_string()),
+        };
+
+        assert_eq!(user.id, "user-123");
+        assert_eq!(user.name, Some("Test User".to_string()));
+        assert_eq!(user.email, Some("test@example.com".to_string()));
+
+        // Test with None values
+        let user_minimal = User {
+            id: "user-456".to_string(),
+            name: None,
+            email: None,
+        };
+        assert!(user_minimal.name.is_none());
+        assert!(user_minimal.email.is_none());
+    }
+
+    #[test]
+    fn test_session_struct() {
+        let session = Session {
+            id: "sess-123".to_string(),
+            user_id: "user-456".to_string(),
+            name: "Test Session".to_string(),
+            tmux_session_name: "rdv-abc".to_string(),
+            project_path: Some("/path/to/project".to_string()),
+            folder_id: Some("folder-789".to_string()),
+            agent_provider: Some("claude".to_string()),
+            is_orchestrator_session: false,
+            status: "active".to_string(),
+            created_at: 1000000,
+            updated_at: 1000001,
+        };
+
+        assert_eq!(session.id, "sess-123");
+        assert_eq!(session.status, "active");
+        assert!(!session.is_orchestrator_session);
+        assert_eq!(session.agent_provider, Some("claude".to_string()));
+    }
+
+    #[test]
+    fn test_folder_struct() {
+        let folder = Folder {
+            id: "folder-123".to_string(),
+            user_id: "user-456".to_string(),
+            parent_id: Some("parent-789".to_string()),
+            name: "My Folder".to_string(),
+            collapsed: false,
+            sort_order: 5,
+            created_at: 1000000,
+        };
+
+        assert_eq!(folder.id, "folder-123");
+        assert_eq!(folder.name, "My Folder");
+        assert!(!folder.collapsed);
+        assert_eq!(folder.sort_order, 5);
+
+        // Test root folder (no parent)
+        let root_folder = Folder {
+            id: "folder-root".to_string(),
+            user_id: "user-456".to_string(),
+            parent_id: None,
+            name: "Root".to_string(),
+            collapsed: true,
+            sort_order: 0,
+            created_at: 1000000,
+        };
+        assert!(root_folder.parent_id.is_none());
+        assert!(root_folder.collapsed);
+    }
+
+    #[test]
+    fn test_orchestrator_struct() {
+        let orchestrator = Orchestrator {
+            id: "orch-123".to_string(),
+            session_id: "sess-456".to_string(),
+            user_id: "user-789".to_string(),
+            orchestrator_type: "master".to_string(),
+            status: "active".to_string(),
+            scope_type: None,
+            scope_id: None,
+            custom_instructions: Some("Be helpful".to_string()),
+            monitoring_interval: 30,
+            stall_threshold: 300,
+            auto_intervention: true,
+            last_activity_at: 1000000,
+            created_at: 999999,
+            updated_at: 1000001,
+            tmux_session_name: "rdv-master".to_string(),
+        };
+
+        assert_eq!(orchestrator.orchestrator_type, "master");
+        assert!(orchestrator.auto_intervention);
+        assert_eq!(orchestrator.monitoring_interval, 30);
+        assert_eq!(orchestrator.stall_threshold, 300);
+    }
+
+    #[test]
+    fn test_insight_struct() {
+        let insight = Insight {
+            id: "insight-123".to_string(),
+            orchestrator_id: "orch-456".to_string(),
+            session_id: Some("sess-789".to_string()),
+            insight_type: "stall".to_string(),
+            severity: "high".to_string(),
+            title: "Session Stalled".to_string(),
+            description: "No activity for 10 minutes".to_string(),
+            context: Some("{\"last_hash\":\"abc\"}".to_string()),
+            suggested_actions: Some("[\"Check logs\",\"Restart session\"]".to_string()),
+            resolved: false,
+            resolved_at: None,
+            resolved_by: None,
+            resolution_notes: None,
+            confidence: 0.85,
+            triggered_by: "monitoring".to_string(),
+            created_at: 1000000,
+        };
+
+        assert_eq!(insight.insight_type, "stall");
+        assert_eq!(insight.severity, "high");
+        assert!(!insight.resolved);
+        assert_eq!(insight.confidence, 0.85);
+
+        // Test resolved insight
+        let resolved_insight = Insight {
+            resolved: true,
+            resolved_at: Some(1000500),
+            resolved_by: Some("user@example.com".to_string()),
+            resolution_notes: Some("Fixed manually".to_string()),
+            ..insight.clone()
+        };
+        assert!(resolved_insight.resolved);
+        assert!(resolved_insight.resolved_at.is_some());
+    }
+
+    #[test]
+    fn test_task_struct() {
+        let task = Task {
+            id: "task-123".to_string(),
+            orchestrator_id: Some("orch-456".to_string()),
+            user_id: "user-789".to_string(),
+            folder_id: Some("folder-abc".to_string()),
+            description: "Fix the bug".to_string(),
+            task_type: "bug".to_string(),
+            status: "pending".to_string(),
+            confidence: Some(0.9),
+            estimated_duration: Some(30),
+            assigned_agent: Some("claude".to_string()),
+            delegation_id: None,
+            beads_issue_id: Some("beads-xyz".to_string()),
+            context_injected: false,
+            result_json: None,
+            error_json: None,
+            created_at: 1000000,
+            updated_at: 1000001,
+            completed_at: None,
+        };
+
+        assert_eq!(task.task_type, "bug");
+        assert_eq!(task.status, "pending");
+        assert!(!task.context_injected);
+        assert!(task.completed_at.is_none());
+
+        // Test completed task
+        let completed_task = Task {
+            status: "completed".to_string(),
+            completed_at: Some(1000500),
+            result_json: Some("{\"success\": true}".to_string()),
+            ..task.clone()
+        };
+        assert_eq!(completed_task.status, "completed");
+        assert!(completed_task.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_stalled_session_struct() {
+        let stalled = StalledSession {
+            session_id: "sess-123".to_string(),
+            session_name: "Test Session".to_string(),
+            tmux_session_name: "rdv-abc".to_string(),
+            folder_id: Some("folder-456".to_string()),
+            last_activity_at: Some(1000000),
+            stalled_minutes: 15,
+        };
+
+        assert_eq!(stalled.stalled_minutes, 15);
+        assert!(stalled.last_activity_at.is_some());
+
+        // Test session that never had activity
+        let never_active = StalledSession {
+            last_activity_at: None,
+            stalled_minutes: -1,
+            ..stalled.clone()
+        };
+        assert!(never_active.last_activity_at.is_none());
+        assert_eq!(never_active.stalled_minutes, -1);
+    }
+
+    #[test]
+    fn test_new_insight_struct() {
+        let new_insight = NewInsight {
+            orchestrator_id: "orch-123".to_string(),
+            session_id: Some("sess-456".to_string()),
+            insight_type: "error".to_string(),
+            severity: "medium".to_string(),
+            title: "Error Detected".to_string(),
+            description: "Something went wrong".to_string(),
+            context: None,
+            suggested_actions: None,
+            confidence: 0.75,
+            triggered_by: "user".to_string(),
+        };
+
+        assert_eq!(new_insight.insight_type, "error");
+        assert_eq!(new_insight.confidence, 0.75);
+    }
+
+    #[test]
+    fn test_new_session_struct() {
+        let new_session = NewSession {
+            user_id: "user-123".to_string(),
+            name: "New Session".to_string(),
+            tmux_session_name: "rdv-new".to_string(),
+            project_path: Some("/projects/test".to_string()),
+            folder_id: None,
+            agent_provider: Some("claude".to_string()),
+            is_orchestrator_session: false,
+        };
+
+        assert_eq!(new_session.name, "New Session");
+        assert!(!new_session.is_orchestrator_session);
+    }
+
+    #[test]
+    fn test_new_folder_struct() {
+        let new_folder = NewFolder {
+            user_id: "user-123".to_string(),
+            name: "New Folder".to_string(),
+            parent_id: None,
+        };
+
+        assert_eq!(new_folder.name, "New Folder");
+        assert!(new_folder.parent_id.is_none());
+    }
+
+    #[test]
+    fn test_new_orchestrator_struct() {
+        let new_orch = NewOrchestrator {
+            session_id: "sess-123".to_string(),
+            user_id: "user-456".to_string(),
+            orchestrator_type: "sub_orchestrator".to_string(),
+            scope_type: Some("folder".to_string()),
+            scope_id: Some("folder-789".to_string()),
+            custom_instructions: Some("Monitor this folder".to_string()),
+            monitoring_interval: 60,
+            stall_threshold: 600,
+            auto_intervention: false,
+        };
+
+        assert_eq!(new_orch.orchestrator_type, "sub_orchestrator");
+        assert!(!new_orch.auto_intervention);
+        assert_eq!(new_orch.monitoring_interval, 60);
+    }
 }

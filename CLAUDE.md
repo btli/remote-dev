@@ -353,10 +353,12 @@ cargo build --release
 | `rdv master status` | Show Master Control status |
 | `rdv master attach` | Attach to Master Control session |
 | **Folder Orchestrators** | |
+| `rdv folder add [path] [-n name]` | Add folder to database (register for orchestration) |
 | `rdv folder init [path]` | Initialize folder orchestrator |
 | `rdv folder start [path]` | Start folder orchestrator |
 | `rdv folder stop [path]` | Stop folder orchestrator |
 | `rdv folder status [path]` | Show folder orchestrator status |
+| `rdv folder attach [path]` | Attach to folder orchestrator session |
 | `rdv folder list` | List all folder orchestrators |
 | **Sessions** | |
 | `rdv session spawn <folder> [-a agent]` | Spawn task session |
@@ -365,6 +367,7 @@ cargo build --release
 | `rdv session inject <id> <context>` | Inject context |
 | `rdv session scrollback <id>` | Get scrollback content |
 | `rdv session close <id> [--force]` | Close session |
+| `rdv session respawn <id> [-c cmd]` | Respawn a dead pane (restart process) |
 | **Tasks** | |
 | `rdv task create <desc> [-f folder]` | Create task (with beads) |
 | `rdv task list [--status]` | List tasks |
@@ -386,6 +389,11 @@ cargo build --release
 | `rdv mail mark <id>` | Mark message as read |
 | **Escalation** | |
 | `rdv escalate --severity <level> --topic <topic>` | Escalate to Master Control |
+| **Insights** | |
+| `rdv insights list [-o orch] [--unresolved]` | List orchestrator insights |
+| `rdv insights show <id>` | Show insight details |
+| `rdv insights resolve <id> [-n notes]` | Resolve an insight |
+| `rdv insights stalled [-t threshold]` | Check for stalled sessions |
 | **Utilities** | |
 | `rdv nudge <session> <message>` | Send real-time nudge to session |
 | `rdv peek <session>` | Quick health check on session |
@@ -472,7 +480,9 @@ Features:
 | `crates/rdv/src/commands/escalate.rs` | Escalation to Master Control |
 | `crates/rdv/src/commands/nudge.rs` | Real-time session nudges |
 | `crates/rdv/src/commands/peek.rs` | Session health inspection |
+| `crates/rdv/src/commands/insights.rs` | Insight listing, resolution, stall detection |
 | `crates/rdv/src/config.rs` | Configuration management |
+| `crates/rdv/src/error.rs` | Domain-specific error types (TmuxError, RdvError) |
 
 ### UI Components
 

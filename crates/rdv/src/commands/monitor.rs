@@ -184,6 +184,42 @@ async fn run_monitoring_loop(interval: u64, config: &Config) -> Result<()> {
             );
 
             for session in task_sessions {
+                // Check for dead panes first
+                if let Ok(true) = tmux::is_pane_dead(&session.name) {
+                    println!(
+                        "  {} {} (pane dead - process exited)",
+                        "☠".red(),
+                        session.name
+                    );
+                    // Create dead pane insight if we have database access
+                    if let (Some(db), Some(oid)) = (&db, &orchestrator_id) {
+                        if let Ok(Some(db_session)) = db.get_session_by_tmux_name(&session.name) {
+                            let insight = NewInsight {
+                                orchestrator_id: oid.clone(),
+                                session_id: Some(db_session.id.clone()),
+                                insight_type: "dead_pane".to_string(),
+                                severity: "high".to_string(),
+                                title: "Session pane died".to_string(),
+                                description: format!(
+                                    "The process in session '{}' has exited. The tmux pane is dead.",
+                                    session.name
+                                ),
+                                context: Some(format!(
+                                    "{{\"tmux_session\":\"{}\"}}",
+                                    session.name
+                                )),
+                                suggested_actions: Some(
+                                    "[\"Respawn pane\",\"Close session\",\"Review scrollback\"]".to_string()
+                                ),
+                                confidence: 1.0,
+                                triggered_by: "rdv_monitor".to_string(),
+                            };
+                            let _ = db.create_insight(&insight);
+                        }
+                    }
+                    continue;
+                }
+
                 match check_and_update_session(&session.name, &mut state, config).await {
                     Ok(health) => {
                         // Update session activity in database (heartbeat)

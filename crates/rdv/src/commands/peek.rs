@@ -1,4 +1,10 @@
 //! Peek at session health.
+//!
+//! Provides quick health inspection of a tmux session including:
+//! - Session status (running/attached/dead pane)
+//! - Pane process status (alive/dead/PID)
+//! - Scrollback hash for stall detection
+//! - Recent output preview
 
 use anyhow::Result;
 use colored::Colorize;
@@ -18,8 +24,21 @@ pub async fn execute(session_id: &str, config: &Config) -> Result<()> {
 
     // Get session info
     if let Some(info) = tmux::get_session_info(session_id)? {
-        println!("  Status: {}", "RUNNING".green());
+        println!("  Session: {}", "EXISTS".green());
         println!("  Attached: {}", if info.attached { "Yes" } else { "No" });
+        println!("  Created: {}", info.created);
+    }
+
+    // Get detailed pane status
+    let pane_status = tmux::get_pane_status(session_id)?;
+    if pane_status.is_dead {
+        println!("  Pane: {} (process exited)", "DEAD".red());
+        println!("    Use `rdv session close {}` to clean up", session_id);
+    } else {
+        println!("  Pane: {}", "ALIVE".green());
+        if let Some(pid) = pane_status.pid {
+            println!("  PID: {}", pid);
+        }
     }
 
     // Get scrollback hash for health check

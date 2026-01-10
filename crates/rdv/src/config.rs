@@ -151,6 +151,7 @@ impl ApiEndpoint {
     }
 
     /// Get the URL for HTTP requests (for Unix sockets, this is used for Host header)
+    #[cfg(feature = "http-api")]
     pub fn base_url(&self) -> String {
         match self {
             ApiEndpoint::Http(url) => url.clone(),
@@ -159,11 +160,13 @@ impl ApiEndpoint {
     }
 
     /// Check if this is a Unix socket endpoint
+    #[cfg(feature = "http-api")]
     pub fn is_unix_socket(&self) -> bool {
         matches!(self, ApiEndpoint::UnixSocket(_))
     }
 
     /// Get the Unix socket path if applicable
+    #[cfg(feature = "http-api")]
     pub fn socket_path(&self) -> Option<&PathBuf> {
         match self {
             ApiEndpoint::UnixSocket(path) => Some(path),
@@ -277,6 +280,7 @@ impl Config {
     }
 
     /// Save configuration to file.
+    #[cfg(feature = "http-api")]
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path();
 
@@ -306,6 +310,7 @@ impl Config {
     }
 
     /// Get the API endpoint (detects Unix socket vs HTTP)
+    #[cfg(feature = "http-api")]
     pub fn api_endpoint(&self) -> ApiEndpoint {
         if self.api.url.starts_with("unix:") {
             ApiEndpoint::UnixSocket(PathBuf::from(self.api.url.trim_start_matches("unix:")))
@@ -371,5 +376,138 @@ impl FolderConfig {
         std::fs::write(config_path, content)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+
+        // Check default agent is set
+        assert_eq!(config.agents.default, "claude");
+
+        // Check default agents are registered
+        assert!(config.agents.commands.contains_key("claude"));
+        assert!(config.agents.commands.contains_key("codex"));
+        assert!(config.agents.commands.contains_key("gemini"));
+        assert!(config.agents.commands.contains_key("opencode"));
+
+        // Check default monitoring values
+        assert_eq!(config.monitoring.interval_secs, 30);
+        assert_eq!(config.monitoring.stall_threshold_secs, 300);
+        assert_eq!(config.monitoring.scrollback_lines, 200);
+
+        // Check auto_start is enabled by default
+        assert!(config.master.auto_start);
+    }
+
+    #[test]
+    fn test_agent_command_lookup() {
+        let config = Config::default();
+
+        assert_eq!(config.agent_command("claude"), Some("claude"));
+        assert_eq!(config.agent_command("codex"), Some("codex"));
+        assert_eq!(config.agent_command("unknown"), None);
+    }
+
+    #[test]
+    fn test_ensure_dirs_creates_directories() {
+        let temp = tempdir().expect("Failed to create temp dir");
+        let config = Config {
+            paths: PathsConfig {
+                data_dir: temp.path().join("data"),
+                master_dir: temp.path().join("master"),
+                transcripts_dir: temp.path().join("transcripts"),
+            },
+            ..Config::default()
+        };
+
+        // Directories shouldn't exist yet
+        assert!(!config.paths.data_dir.exists());
+        assert!(!config.paths.master_dir.exists());
+        assert!(!config.paths.transcripts_dir.exists());
+
+        // Create them
+        config.ensure_dirs().expect("Failed to create directories");
+
+        // Now they should exist
+        assert!(config.paths.data_dir.exists());
+        assert!(config.paths.master_dir.exists());
+        assert!(config.paths.transcripts_dir.exists());
+    }
+
+    #[test]
+    fn test_api_endpoint_detect_default() {
+        // Without env vars or socket, should default to HTTP localhost:3000
+        let endpoint = ApiEndpoint::detect();
+        match endpoint {
+            ApiEndpoint::Http(url) => {
+                // Should contain localhost
+                assert!(url.contains("localhost"));
+            }
+            ApiEndpoint::UnixSocket(_) => {
+                // This is also valid if socket exists
+            }
+        }
+    }
+
+    #[test]
+    fn test_folder_config_default() {
+        let folder_config = FolderConfig::default();
+
+        assert!(folder_config.orchestrator_id.is_none());
+        assert!(folder_config.preferred_agent.is_none());
+        assert!(folder_config.monitoring_interval_secs.is_none());
+        assert!(folder_config.stall_threshold_secs.is_none());
+        assert!(!folder_config.auto_start);
+    }
+
+    #[test]
+    fn test_folder_config_save_and_load() {
+        let temp = tempdir().expect("Failed to create temp dir");
+
+        let config = FolderConfig {
+            orchestrator_id: Some("test-orch-id".to_string()),
+            preferred_agent: Some("claude".to_string()),
+            monitoring_interval_secs: Some(60),
+            stall_threshold_secs: Some(600),
+            auto_start: true,
+        };
+
+        // Save config
+        config.save(temp.path()).expect("Failed to save config");
+
+        // Verify file was created
+        let config_path = temp
+            .path()
+            .join(".remote-dev")
+            .join("orchestrator")
+            .join("config.toml");
+        assert!(config_path.exists());
+
+        // Load config back
+        let loaded = FolderConfig::load(temp.path()).expect("Failed to load config");
+
+        assert_eq!(loaded.orchestrator_id, Some("test-orch-id".to_string()));
+        assert_eq!(loaded.preferred_agent, Some("claude".to_string()));
+        assert_eq!(loaded.monitoring_interval_secs, Some(60));
+        assert_eq!(loaded.stall_threshold_secs, Some(600));
+        assert!(loaded.auto_start);
+    }
+
+    #[test]
+    fn test_folder_config_load_nonexistent() {
+        let temp = tempdir().expect("Failed to create temp dir");
+
+        // Loading from a path without config should return defaults
+        let loaded = FolderConfig::load(temp.path()).expect("Failed to load default config");
+
+        assert!(loaded.orchestrator_id.is_none());
+        assert!(!loaded.auto_start);
     }
 }

@@ -2,9 +2,11 @@
 
 use anyhow::Result;
 use colored::Colorize;
-use std::path::PathBuf;
 
-use crate::config::{ApiEndpoint, Config};
+#[cfg(feature = "http-api")]
+use crate::config::ApiEndpoint;
+use crate::config::Config;
+use crate::db::Database;
 use crate::tmux;
 
 pub async fn execute(config: &Config) -> Result<()> {
@@ -41,26 +43,65 @@ pub async fn execute(config: &Config) -> Result<()> {
         println!("{}", "○ will be created".yellow());
     }
 
-    // Check API connectivity
-    let endpoint = config.api_endpoint();
-    match &endpoint {
-        ApiEndpoint::UnixSocket(path) => {
-            print!("  API (unix:{}):", path.display());
-            if path.exists() {
-                println!(" {}", "✓ socket exists".green());
-            } else {
-                println!(" {}", "✗ socket not found".red());
-                issues.push("Unix socket not found - is the server running?");
+    // Check API connectivity (only when http-api feature is enabled)
+    #[cfg(feature = "http-api")]
+    {
+        let endpoint = config.api_endpoint();
+        match &endpoint {
+            ApiEndpoint::UnixSocket(path) => {
+                print!("  API (unix:{}):", path.display());
+                if path.exists() {
+                    println!(" {}", "✓ socket exists".green());
+                } else {
+                    println!(" {}", "✗ socket not found".red());
+                    issues.push("Unix socket not found - is the server running?");
+                }
+            }
+            ApiEndpoint::Http(url) => {
+                print!("  API ({}):", url);
+                match check_api_http(url).await {
+                    Ok(_) => println!(" {}", "✓ reachable".green()),
+                    Err(e) => {
+                        println!(" {}", format!("✗ {}", e).red());
+                        issues.push("Cannot reach Remote Dev API");
+                    }
+                }
             }
         }
-        ApiEndpoint::Http(url) => {
-            print!("  API ({}):", url);
-            match check_api_http(url).await {
-                Ok(_) => println!(" {}", "✓ reachable".green()),
-                Err(e) => {
-                    println!(" {}", format!("✗ {}", e).red());
-                    issues.push("Cannot reach Remote Dev API");
+    }
+    #[cfg(not(feature = "http-api"))]
+    {
+        print!("  Database: ");
+        match Database::open() {
+            Ok(db) => {
+                println!("{}", "✓ connected (direct SQLite mode)".green());
+                // Check user info
+                print!("  User: ");
+                match db.get_default_user() {
+                    Ok(Some(user)) => {
+                        let name = user.name.as_deref().unwrap_or("(no name)");
+                        let email = user.email.as_deref().unwrap_or("(no email)");
+                        println!("{} <{}>", name.green(), email);
+                        // Also verify get_user_by_email works if we have an email
+                        if let Some(ref e) = user.email {
+                            if db.get_user_by_email(e).is_ok() {
+                                println!("    {} user lookup working", "✓".green());
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        println!("{}", "✗ no user found".red());
+                        issues.push("No user found in database - run db:seed first");
+                    }
+                    Err(e) => {
+                        println!("{}", format!("✗ error: {}", e).red());
+                        issues.push("Failed to query user from database");
+                    }
                 }
+            }
+            Err(e) => {
+                println!("{}", format!("✗ {}", e).red());
+                issues.push("Database not accessible");
             }
         }
     }
@@ -100,12 +141,14 @@ pub async fn execute(config: &Config) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "http-api")]
 async fn check_api_http(url: &str) -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
 
-    client.get(format!("{}/api/health", url))
+    client
+        .get(format!("{}/api/health", url))
         .send()
         .await?;
 

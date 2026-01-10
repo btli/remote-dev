@@ -5,6 +5,7 @@
 pub mod doctor;
 pub mod escalate;
 pub mod folder;
+pub mod insights;
 pub mod learn;
 pub mod mail;
 pub mod master;

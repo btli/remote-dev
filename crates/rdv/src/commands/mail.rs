@@ -17,26 +17,13 @@
 //! - "session:<id>" → Specific session
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use colored::Colorize;
-use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 use crate::cli::{MailAction, MailCommand};
 use crate::config::Config;
-
-/// A message parsed from beads output.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Message {
-    id: String,
-    subject: String,
-    body: String,
-    from: String,
-    to: String,
-    created: DateTime<Utc>,
-    read: bool,
-    priority: u8,
-}
+use crate::error::RdvError;
 
 /// Check if beads (bd) is available.
 fn beads_available() -> bool {
@@ -54,7 +41,7 @@ fn run_beads(args: &[&str]) -> Result<String> {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("bd command failed: {}", stderr)
+        Err(RdvError::Beads(format!("bd command failed: {}", stderr)).into())
     }
 }
 

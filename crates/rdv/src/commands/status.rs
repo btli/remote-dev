@@ -27,6 +27,7 @@ pub struct SystemStatus {
     pub master_control: MasterStatus,
     pub folder_orchestrators: Vec<FolderOrchestratorStatus>,
     pub sessions: Vec<SessionStatus>,
+    pub database: DatabaseStats,
     pub beads: BeadsStatus,
     pub health: HealthStatus,
 }
@@ -51,6 +52,12 @@ pub struct SessionStatus {
     pub name: String,
     pub session_type: String,
     pub attached: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseStats {
+    pub active_sessions: u32,
+    pub total_tasks: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +162,22 @@ async fn gather_status(_config: &Config) -> Result<SystemStatus> {
         })
         .collect();
 
+    // Database stats
+    let database = if let Ok(db) = Database::open() {
+        if let Ok(Some(user)) = db.get_default_user() {
+            let active = db.get_active_session_count(&user.id).unwrap_or(0);
+            let tasks = db.list_tasks(&user.id, None).map(|t| t.len() as u32).unwrap_or(0);
+            DatabaseStats {
+                active_sessions: active,
+                total_tasks: tasks,
+            }
+        } else {
+            DatabaseStats { active_sessions: 0, total_tasks: 0 }
+        }
+    } else {
+        DatabaseStats { active_sessions: 0, total_tasks: 0 }
+    };
+
     // Beads status
     let beads = if beads_available() {
         BeadsStatus {
@@ -207,6 +230,7 @@ async fn gather_status(_config: &Config) -> Result<SystemStatus> {
         master_control,
         folder_orchestrators,
         sessions,
+        database,
         beads,
         health,
     })
@@ -262,6 +286,12 @@ fn print_dashboard(status: &SystemStatus, _config: &Config) {
             println!("    {} {} {}", type_icon, session.name, attach);
         }
     }
+
+    // Database Stats
+    println!();
+    println!("  {}", "Database:".cyan().bold());
+    println!("    Active sessions: {}", status.database.active_sessions);
+    println!("    Total tasks:     {}", status.database.total_tasks);
 
     // Beads Status
     println!();

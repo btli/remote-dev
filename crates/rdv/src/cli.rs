@@ -59,6 +59,9 @@ pub enum Commands {
     /// Run diagnostics
     Doctor,
 
+    /// View orchestrator insights (stall detection, errors, suggestions)
+    Insights(InsightsCommand),
+
     /// Show system status (dashboard view)
     Status {
         /// Output as JSON
@@ -338,6 +341,16 @@ pub enum SessionAction {
         #[arg(short, long, default_value = "100")]
         lines: u32,
     },
+
+    /// Respawn a dead pane (restart the process)
+    Respawn {
+        /// Session ID or tmux session name
+        session_id: String,
+
+        /// Command to run (uses original command if not specified)
+        #[arg(short, long)]
+        command: Option<String>,
+    },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -501,4 +514,55 @@ pub struct EscalateCommand {
     /// Related issue ID
     #[arg(short, long)]
     pub issue: Option<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Insights Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct InsightsCommand {
+    #[command(subcommand)]
+    pub action: InsightsAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum InsightsAction {
+    /// List insights for an orchestrator
+    List {
+        /// Orchestrator ID (defaults to Master Control)
+        #[arg(short, long)]
+        orchestrator: Option<String>,
+
+        /// Show only unresolved insights
+        #[arg(short, long)]
+        unresolved: bool,
+
+        /// Show all insights (including resolved)
+        #[arg(short, long)]
+        all: bool,
+    },
+
+    /// Show details of a specific insight
+    Show {
+        /// Insight ID
+        insight_id: String,
+    },
+
+    /// Resolve an insight
+    Resolve {
+        /// Insight ID
+        insight_id: String,
+
+        /// Resolution notes
+        #[arg(short, long)]
+        notes: Option<String>,
+    },
+
+    /// Check for stalled sessions (uses database query)
+    Stalled {
+        /// Stall threshold in seconds
+        #[arg(short, long, default_value = "300")]
+        threshold: i64,
+    },
 }

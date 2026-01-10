@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use crate::cli::{FolderAction, FolderCommand};
 use crate::config::{Config, FolderConfig};
 use crate::db::{Database, NewFolder, NewOrchestrator, NewSession};
+use crate::error::RdvError;
 use crate::tmux;
 
 pub async fn execute(cmd: FolderCommand, config: &Config) -> Result<()> {
@@ -204,19 +205,15 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("Failed to fetch created folder"))?
     };
 
-    // Track session and orchestrator IDs
-    let mut _session_id: Option<String> = None;
-    let mut orchestrator_id: Option<String> = None;
-
-    // Check for existing orchestrator
-    if let Ok(Some(orch)) = db.get_folder_orchestrator(&user.id, &folder.id) {
+    // Check for existing orchestrator or create new one
+    let orchestrator_id = if let Ok(Some(orch)) = db.get_folder_orchestrator(&user.id, &folder.id) {
         println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
-        orchestrator_id = Some(orch.id.clone());
-        _session_id = Some(orch.session_id.clone());
 
         // Reactivate if suspended
         db.update_session_status(&orch.session_id, "active")?;
         db.update_orchestrator_status(&orch.id, "idle")?;
+
+        orch.id.clone()
     } else {
         // No orchestrator - create session and orchestrator
         println!(
@@ -238,7 +235,7 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
 
         // Create orchestrator record
         let new_orch_id = db.create_orchestrator(&NewOrchestrator {
-            session_id: new_session_id.clone(),
+            session_id: new_session_id,
             user_id: user.id.clone(),
             orchestrator_type: "sub_orchestrator".to_string(),
             scope_type: Some("folder".to_string()),
@@ -254,15 +251,12 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
             &new_orch_id[..8]
         );
 
-        orchestrator_id = Some(new_orch_id);
-        _session_id = Some(new_session_id);
-    }
+        new_orch_id
+    };
 
     // Save orchestrator ID to local config for future reference
-    if let Some(ref orch_id) = orchestrator_id {
-        folder_config.orchestrator_id = Some(orch_id.clone());
-        folder_config.save(&folder_path)?;
-    }
+    folder_config.orchestrator_id = Some(orchestrator_id.clone());
+    folder_config.save(&folder_path)?;
 
     // Create tmux session with agent
     // Enable auto_respawn so agent restarts immediately if it exits
@@ -276,9 +270,7 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
 
     println!("{}", "✓ Folder orchestrator started".green());
     println!("  Session: {}", session_name);
-    if let Some(ref id) = orchestrator_id {
-        println!("  Orchestrator ID: {}", &id[..8]);
-    }
+    println!("  Orchestrator ID: {}", &orchestrator_id[..8]);
 
     if foreground {
         tmux::attach_session(&session_name)?;
@@ -420,9 +412,10 @@ async fn attach(path: &str, _config: &Config) -> Result<()> {
     let session_name = session_name_for_folder(&folder_path);
 
     if !tmux::session_exists(&session_name)? {
-        println!("{}", "Folder orchestrator is not running".yellow());
-        println!("Run `rdv folder start` to start it first");
-        return Ok(());
+        return Err(RdvError::OrchestratorNotFound(
+            format!("Folder orchestrator for '{}' is not running. Run `rdv folder start` first.",
+                    folder_path.display())
+        ).into());
     }
 
     tmux::attach_session(&session_name)?;

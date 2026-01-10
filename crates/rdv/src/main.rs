@@ -7,6 +7,7 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
+#[cfg(feature = "http-api")]
 mod api;
 mod cli;
 mod commands;
@@ -45,6 +46,7 @@ async fn main() -> Result<()> {
         Commands::Escalate(cmd) => commands::escalate::execute(cmd, &config).await,
         Commands::Peek { session_id } => commands::peek::execute(&session_id, &config).await,
         Commands::Doctor => commands::doctor::execute(&config).await,
+        Commands::Insights(cmd) => commands::insights::execute(cmd, &config).await,
         Commands::Status { json } => commands::status::execute(json, &config).await,
         Commands::Version => {
             println!("rdv {}", env!("CARGO_PKG_VERSION"));
