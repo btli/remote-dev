@@ -152,9 +152,9 @@ impl Database {
 
         self.conn.execute(
             "INSERT INTO terminal_session
-             (id, user_id, name, tmux_session_name, project_path, folder_id,
+             (id, user_id, name, tmux_session_name, project_path, folder_id, worktree_branch,
               agent_provider, is_orchestrator_session, status, last_activity_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?9, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'active', ?10, ?10, ?10)",
             params![
                 id,
                 session.user_id,
@@ -162,6 +162,7 @@ impl Database {
                 session.tmux_session_name,
                 session.project_path,
                 session.folder_id,
+                session.worktree_branch,
                 session.agent_provider,
                 session.is_orchestrator_session,
                 now,
@@ -839,6 +840,7 @@ pub struct NewSession {
     pub tmux_session_name: String,
     pub project_path: Option<String>,
     pub folder_id: Option<String>,
+    pub worktree_branch: Option<String>,
     pub agent_provider: Option<String>,
     pub is_orchestrator_session: bool,
 }
@@ -1138,12 +1140,14 @@ mod tests {
             tmux_session_name: "rdv-new".to_string(),
             project_path: Some("/projects/test".to_string()),
             folder_id: None,
+            worktree_branch: Some("feature/my-branch".to_string()),
             agent_provider: Some("claude".to_string()),
             is_orchestrator_session: false,
         };
 
         assert_eq!(new_session.name, "New Session");
         assert!(!new_session.is_orchestrator_session);
+        assert_eq!(new_session.worktree_branch, Some("feature/my-branch".to_string()));
     }
 
     #[test]

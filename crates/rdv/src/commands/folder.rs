@@ -228,6 +228,7 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
             tmux_session_name: session_name.clone(),
             project_path: Some(folder_path_str.clone()),
             folder_id: Some(folder.id.clone()),
+            worktree_branch: None,
             agent_provider: Some(agent_name.clone()),
             is_orchestrator_session: true,
         })?;

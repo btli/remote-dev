@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::error::RdvError;
 use crate::tmux;
+use rdv_core::worktree;
 
 pub async fn execute(cmd: SessionCommand, config: &Config) -> Result<()> {
     match cmd.action {
@@ -133,11 +134,49 @@ async fn spawn(
         Some(cmd_parts.join(" "))
     };
 
-    // TODO: Create worktree if requested
-    if worktree {
+    // Create worktree if requested (for agent sessions only)
+    let mut working_directory = project_path_str.clone();
+    let mut worktree_branch: Option<String> = None;
+
+    if worktree && !is_shell {
+        // For worktrees, we need a git repo
+        if !worktree::is_git_repo(&project_path)? {
+            return Err(RdvError::Config(
+                format!("{:?} is not a git repository. Worktrees require a git repo.", project_path)
+            ).into());
+        }
+
+        // Determine branch name
+        let branch_name = branch.map(|b| b.to_string()).unwrap_or_else(|| {
+            // Generate a unique branch name based on session
+            worktree::generate_branch_name(&session_id, "agent")
+        });
+
+        println!("  Creating worktree for branch: {}", branch_name.cyan());
+
+        // Create worktree (create branch if it doesn't exist)
+        let wt_info = worktree::create_branch_with_worktree(
+            &project_path,
+            &branch_name,
+            branch,  // base_branch
+            None,    // Let it auto-generate path
+        )?;
+
+        println!("  {} Worktree created at {:?}", "✓".green(), wt_info.path);
+
+        // Copy env files from main repo to worktree
+        let copy_result = worktree::copy_env_files(&project_path, &wt_info.path);
+        if !copy_result.copied.is_empty() {
+            println!("  {} Copied env files: {}", "✓".green(), copy_result.copied.join(", "));
+        }
+
+        // Update working directory and branch info
+        working_directory = wt_info.path.to_string_lossy().to_string();
+        worktree_branch = Some(wt_info.branch);
+    } else if worktree && is_shell {
         println!(
             "  {}",
-            "⚠ Worktree support not yet implemented".yellow()
+            "⚠ Worktrees are only supported for agent sessions".yellow()
         );
     }
 
@@ -174,8 +213,9 @@ async fn spawn(
                         user_id: user.id.clone(),
                         name: session_display_name.to_string(),
                         tmux_session_name: tmux_session_name.clone(),
-                        project_path: Some(project_path_str.clone()),
+                        project_path: Some(working_directory.clone()),
                         folder_id,
+                        worktree_branch: worktree_branch.clone(),
                         agent_provider: Some(agent_provider.to_string()),
                         is_orchestrator_session: false,
                     };
@@ -215,12 +255,17 @@ async fn spawn(
     // Always set the tmux session name for reference
     env_vars.insert("RDV_TMUX_SESSION".to_string(), tmux_session_name.clone());
     env_vars.insert("RDV_PROJECT_PATH".to_string(), project_path_str.clone());
+    // Add worktree info if applicable
+    if let Some(ref branch) = worktree_branch {
+        env_vars.insert("RDV_WORKTREE_BRANCH".to_string(), branch.clone());
+    }
+    env_vars.insert("RDV_WORKING_DIR".to_string(), working_directory.clone());
 
     // Create tmux session with context env vars
     // Task sessions close on exit - user can respawn via UI if needed
     tmux::create_session(&tmux::CreateSessionConfig {
         session_name: tmux_session_name.clone(),
-        working_directory: Some(project_path_str.clone()),
+        working_directory: Some(working_directory.clone()),
         command,
         auto_respawn: false,
         env: Some(env_vars),
