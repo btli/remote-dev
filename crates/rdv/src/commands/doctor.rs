@@ -2,8 +2,9 @@
 
 use anyhow::Result;
 use colored::Colorize;
+use std::path::PathBuf;
 
-use crate::config::Config;
+use crate::config::{ApiEndpoint, Config};
 use crate::tmux;
 
 pub async fn execute(config: &Config) -> Result<()> {
@@ -41,12 +42,26 @@ pub async fn execute(config: &Config) -> Result<()> {
     }
 
     // Check API connectivity
-    print!("  API ({}):", config.api.url);
-    match check_api(&config.api.url).await {
-        Ok(_) => println!(" {}", "✓ reachable".green()),
-        Err(e) => {
-            println!(" {}", format!("✗ {}", e).red());
-            issues.push("Cannot reach Remote Dev API");
+    let endpoint = config.api_endpoint();
+    match &endpoint {
+        ApiEndpoint::UnixSocket(path) => {
+            print!("  API (unix:{}):", path.display());
+            if path.exists() {
+                println!(" {}", "✓ socket exists".green());
+            } else {
+                println!(" {}", "✗ socket not found".red());
+                issues.push("Unix socket not found - is the server running?");
+            }
+        }
+        ApiEndpoint::Http(url) => {
+            print!("  API ({}):", url);
+            match check_api_http(url).await {
+                Ok(_) => println!(" {}", "✓ reachable".green()),
+                Err(e) => {
+                    println!(" {}", format!("✗ {}", e).red());
+                    issues.push("Cannot reach Remote Dev API");
+                }
+            }
         }
     }
 
@@ -85,7 +100,7 @@ pub async fn execute(config: &Config) -> Result<()> {
     Ok(())
 }
 
-async fn check_api(url: &str) -> Result<()> {
+async fn check_api_http(url: &str) -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
