@@ -27,6 +27,7 @@ pub fn router() -> Router<Arc<AppState>> {
                 .delete(delete_orchestrator),
         )
         .route("/orchestrators/:id/insights", get(get_insights))
+        .route("/orchestrators/:id/insights/counts", get(get_insight_counts))
         .route("/orchestrators/:id/inject", post(inject_command))
         .route("/orchestrators/:id/pause", post(pause_orchestrator))
         .route("/orchestrators/:id/resume", post(resume_orchestrator))
@@ -35,6 +36,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/orchestrators/:id/monitoring/stop", post(stop_monitoring))
         .route("/orchestrators/:id/monitoring/status", get(get_monitoring_status))
         .route("/orchestrators/:id/stalled-sessions", get(get_stalled_sessions))
+        // Insight routes
+        .route("/insights/:insight_id", get(get_insight).delete(delete_insight))
+        .route("/insights/:insight_id/resolve", post(resolve_insight))
+        .route("/insights/cleanup", post(cleanup_insights))
+        .route("/sessions/:session_id/insights/resolve", post(resolve_session_insights))
 }
 
 #[derive(Debug, Serialize)]
@@ -661,5 +667,259 @@ pub async fn get_stalled_sessions(
         orchestrator_id: id,
         stalled_sessions,
         checked_at: result.checked_at,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Insight Routes
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct InsightCountsResponse {
+    pub total: u32,
+    pub unresolved: u32,
+    pub critical: u32,
+    pub high: u32,
+    pub medium: u32,
+    pub low: u32,
+}
+
+/// Get insight counts for an orchestrator
+pub async fn get_insight_counts(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+) -> Result<Json<InsightCountsResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get orchestrator and verify ownership
+    let orchestrator = state
+        .db
+        .get_orchestrator(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Get counts
+    let counts = state
+        .insights
+        .get_insight_counts(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(InsightCountsResponse {
+        total: counts.total,
+        unresolved: counts.unresolved,
+        critical: counts.critical,
+        high: counts.high,
+        medium: counts.medium,
+        low: counts.low,
+    }))
+}
+
+/// Get a single insight by ID
+pub async fn get_insight(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(insight_id): Path<String>,
+) -> Result<Json<InsightResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get insight
+    let insight = state
+        .insights
+        .get_insight(&insight_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or((StatusCode::NOT_FOUND, "Insight not found".to_string()))?;
+
+    // Verify ownership via orchestrator
+    let orchestrator = state
+        .db
+        .get_orchestrator(&insight.orchestrator_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    Ok(Json(InsightResponse {
+        id: insight.id,
+        orchestrator_id: insight.orchestrator_id,
+        session_id: insight.session_id,
+        insight_type: insight.insight_type,
+        severity: insight.severity,
+        title: insight.title,
+        description: insight.description,
+        context: insight.context,
+        suggested_actions: insight.suggested_actions,
+        resolved: insight.resolved,
+        resolved_at: insight.resolved_at,
+        resolved_by: insight.resolved_by,
+        created_at: insight.created_at,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveInsightRequest {
+    pub resolved_by: Option<String>,
+}
+
+/// Resolve an insight
+pub async fn resolve_insight(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(insight_id): Path<String>,
+    Json(req): Json<ResolveInsightRequest>,
+) -> Result<Json<InsightResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get insight first to verify ownership
+    let insight = state
+        .insights
+        .get_insight(&insight_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or((StatusCode::NOT_FOUND, "Insight not found".to_string()))?;
+
+    // Verify ownership via orchestrator
+    let orchestrator = state
+        .db
+        .get_orchestrator(&insight.orchestrator_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Resolve the insight
+    state
+        .insights
+        .resolve_insight(&insight_id, req.resolved_by.as_deref())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    // Get updated insight
+    let insight = state
+        .insights
+        .get_insight(&insight_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or((StatusCode::NOT_FOUND, "Insight not found".to_string()))?;
+
+    Ok(Json(InsightResponse {
+        id: insight.id,
+        orchestrator_id: insight.orchestrator_id,
+        session_id: insight.session_id,
+        insight_type: insight.insight_type,
+        severity: insight.severity,
+        title: insight.title,
+        description: insight.description,
+        context: insight.context,
+        suggested_actions: insight.suggested_actions,
+        resolved: insight.resolved,
+        resolved_at: insight.resolved_at,
+        resolved_by: insight.resolved_by,
+        created_at: insight.created_at,
+    }))
+}
+
+/// Delete an insight
+pub async fn delete_insight(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(insight_id): Path<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Get insight first to verify ownership
+    let insight = state
+        .insights
+        .get_insight(&insight_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or((StatusCode::NOT_FOUND, "Insight not found".to_string()))?;
+
+    // Verify ownership via orchestrator
+    let orchestrator = state
+        .db
+        .get_orchestrator(&insight.orchestrator_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Orchestrator not found".to_string()))?;
+
+    if orchestrator.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Delete the insight
+    state
+        .insights
+        .delete_insight(&insight_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResolveSessionInsightsResponse {
+    pub resolved_count: usize,
+}
+
+/// Bulk resolve insights for a session
+pub async fn resolve_session_insights(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(session_id): Path<String>,
+    Json(req): Json<ResolveInsightRequest>,
+) -> Result<Json<ResolveSessionInsightsResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Verify session ownership
+    let session = state
+        .db
+        .get_session(&session_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
+
+    if session.user_id != user_id {
+        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
+    }
+
+    // Resolve all session insights
+    let count = state
+        .insights
+        .resolve_session_insights(&session_id, req.resolved_by.as_deref())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(ResolveSessionInsightsResponse {
+        resolved_count: count,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CleanupInsightsRequest {
+    pub max_age_secs: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CleanupInsightsResponse {
+    pub deleted_count: usize,
+}
+
+/// Cleanup old resolved insights
+pub async fn cleanup_insights(
+    State(state): State<Arc<AppState>>,
+    Extension(_auth): Extension<AuthContext>,
+    Json(req): Json<CleanupInsightsRequest>,
+) -> Result<Json<CleanupInsightsResponse>, (StatusCode, String)> {
+    // Default: 30 days
+    let max_age_secs = req.max_age_secs.unwrap_or(30 * 24 * 60 * 60);
+
+    let count = state
+        .insights
+        .cleanup_old_insights(max_age_secs)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    Ok(Json(CleanupInsightsResponse {
+        deleted_count: count,
     }))
 }

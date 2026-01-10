@@ -887,6 +887,146 @@ impl Database {
         Ok(id)
     }
 
+    /// Get insight by ID
+    pub fn get_insight(&self, insight_id: &str) -> Result<Option<Insight>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        conn.query_row(
+            "SELECT id, orchestrator_id, session_id, type, severity, title, description,
+                    context, suggested_actions, resolved, resolved_at, resolved_by, created_at
+             FROM orchestrator_insight WHERE id = ?1",
+            params![insight_id],
+            |row| {
+                Ok(Insight {
+                    id: row.get(0)?,
+                    orchestrator_id: row.get(1)?,
+                    session_id: row.get(2)?,
+                    insight_type: row.get(3)?,
+                    severity: row.get(4)?,
+                    title: row.get(5)?,
+                    description: row.get(6)?,
+                    context: row.get(7)?,
+                    suggested_actions: row.get(8)?,
+                    resolved: row.get(9)?,
+                    resolved_at: row.get(10)?,
+                    resolved_by: row.get(11)?,
+                    created_at: row.get(12)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Error::from)
+    }
+
+    /// Resolve an insight
+    pub fn resolve_insight(&self, insight_id: &str, resolved_by: Option<&str>) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let rows = conn.execute(
+            "UPDATE orchestrator_insight
+             SET resolved = 1, resolved_at = ?1, resolved_by = ?2
+             WHERE id = ?3 AND resolved = 0",
+            params![now, resolved_by, insight_id],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Delete an insight
+    pub fn delete_insight(&self, insight_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        let rows = conn.execute(
+            "DELETE FROM orchestrator_insight WHERE id = ?1",
+            params![insight_id],
+        )?;
+
+        Ok(rows > 0)
+    }
+
+    /// Bulk resolve insights for a session
+    pub fn resolve_session_insights(&self, session_id: &str, resolved_by: Option<&str>) -> Result<usize> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let rows = conn.execute(
+            "UPDATE orchestrator_insight
+             SET resolved = 1, resolved_at = ?1, resolved_by = ?2
+             WHERE session_id = ?3 AND resolved = 0",
+            params![now, resolved_by, session_id],
+        )?;
+
+        Ok(rows)
+    }
+
+    /// Get insight counts for an orchestrator
+    pub fn get_insight_counts(&self, orchestrator_id: &str) -> Result<InsightCounts> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        // Total count
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_insight WHERE orchestrator_id = ?1",
+            params![orchestrator_id],
+            |row| row.get(0),
+        )?;
+
+        // Unresolved count
+        let unresolved: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_insight WHERE orchestrator_id = ?1 AND resolved = 0",
+            params![orchestrator_id],
+            |row| row.get(0),
+        )?;
+
+        // Count by severity (unresolved only)
+        let critical: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_insight WHERE orchestrator_id = ?1 AND resolved = 0 AND severity = 'critical'",
+            params![orchestrator_id],
+            |row| row.get(0),
+        )?;
+
+        let high: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_insight WHERE orchestrator_id = ?1 AND resolved = 0 AND severity = 'high'",
+            params![orchestrator_id],
+            |row| row.get(0),
+        )?;
+
+        let medium: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_insight WHERE orchestrator_id = ?1 AND resolved = 0 AND severity = 'medium'",
+            params![orchestrator_id],
+            |row| row.get(0),
+        )?;
+
+        let low: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM orchestrator_insight WHERE orchestrator_id = ?1 AND resolved = 0 AND severity = 'low'",
+            params![orchestrator_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(InsightCounts {
+            total: total as u32,
+            unresolved: unresolved as u32,
+            critical: critical as u32,
+            high: high as u32,
+            medium: medium as u32,
+            low: low as u32,
+        })
+    }
+
+    /// Cleanup old resolved insights
+    pub fn cleanup_old_insights(&self, max_age_secs: i64) -> Result<usize> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let cutoff = chrono::Utc::now().timestamp_millis() - (max_age_secs * 1000);
+
+        let rows = conn.execute(
+            "DELETE FROM orchestrator_insight
+             WHERE resolved = 1 AND resolved_at IS NOT NULL AND resolved_at <= ?1",
+            params![cutoff],
+        )?;
+
+        Ok(rows)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Audit Log Operations
     // ─────────────────────────────────────────────────────────────────────────

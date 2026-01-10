@@ -8,7 +8,7 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 
 use crate::config::Config;
-use crate::services::MonitoringService;
+use crate::services::{InsightService, MonitoringService};
 
 /// CLI token entry for validation
 #[derive(Debug, Clone)]
@@ -74,6 +74,8 @@ pub struct AppState {
     pub terminal_connections: Arc<RwLock<HashMap<String, TerminalConnection>>>,
     /// Monitoring service for orchestrator stall detection
     pub monitoring: Arc<MonitoringService>,
+    /// Insight service for managing orchestrator insights
+    pub insights: Arc<InsightService>,
     /// Server start time
     pub start_time: Instant,
     /// Whether server is accepting connections
@@ -89,6 +91,7 @@ impl AppState {
         Arc::new(Self {
             config: Arc::new(config),
             monitoring: Arc::new(MonitoringService::new(Arc::clone(&db))),
+            insights: Arc::new(InsightService::new(Arc::clone(&db))),
             db,
             service_token: Arc::new(service_token),
             cli_tokens: Arc::new(CLITokenRegistry::new()),

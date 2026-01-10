@@ -160,3 +160,14 @@ pub struct OrchestratorSimple {
     pub created_at: i64,
     pub updated_at: i64,
 }
+
+/// Insight counts by severity for an orchestrator
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InsightCounts {
+    pub total: u32,
+    pub unresolved: u32,
+    pub critical: u32,
+    pub high: u32,
+    pub medium: u32,
+    pub low: u32,
+}
