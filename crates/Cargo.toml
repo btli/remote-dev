@@ -1,0 +1,60 @@
+[workspace]
+resolver = "2"
+members = [
+    "rdv-core",
+    "rdv",
+    "rdv-server",
+]
+
+[workspace.package]
+edition = "2024"
+authors = ["Bryan Li"]
+license = "MIT"
+repository = "https://github.com/btli/remote-dev"
+
+[workspace.dependencies]
+# Core dependencies shared across crates
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# HTTP/Web
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+# CLI
+clap = { version = "4", features = ["derive", "env", "cargo"] }
+colored = "3"
+dialoguer = "0.11"
+indicatif = "0.17"
+
+# Utilities
+which = "7"
+dirs = "6"
+directories = "6"
+md5 = "0.7"
+toml = "0.8"
+base64 = "0.22"
+rand = "0.8"
+
+# System
+libc = "0.2"
+
+# Testing
+tempfile = "3"
+tokio-test = "0.4"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }

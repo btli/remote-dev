@@ -1,0 +1,42 @@
+[package]
+name = "rdv-core"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core library for Remote Dev - shared logic between CLI and server"
+
+[dependencies]
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+# Database
+rusqlite.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Time & UUID
+chrono.workspace = true
+uuid.workspace = true
+
+# Utilities
+which.workspace = true
+dirs.workspace = true
+md5.workspace = true
+base64.workspace = true
+rand.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-test.workspace = true

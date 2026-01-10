@@ -197,7 +197,7 @@ async fn run_monitoring_loop(interval: u64, config: &Config) -> Result<()> {
 
                                 // Create insight if stalled and no existing unresolved stall insight
                                 if health.is_stalled {
-                                    if let (Some(ref oid), false) = (
+                                    if let (Some(oid), false) = (
                                         &orchestrator_id,
                                         db.has_unresolved_stall_insight(&db_session.id).unwrap_or(true),
                                     ) {
