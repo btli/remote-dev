@@ -3,19 +3,18 @@
 //! Master Control is the system-wide orchestrator that coordinates
 //! across all projects and manages the agent pool.
 //!
-//! Integration with Remote Dev API:
-//! - Creates orchestrator record on first start
-//! - Persists orchestrator state in database
-//! - Creates session record for the Master Control tmux session
-//! - Updates status on lifecycle events
+//! Direct database integration:
+//! - Reads orchestrator records from SQLite
+//! - Uses tmux directly for session control
+//! - No HTTP API needed for most operations
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 
-use crate::api::ApiClient;
 use crate::cli::{MasterAction, MasterCommand};
 use crate::config::Config;
+use crate::db::Database;
 use crate::tmux;
 
 /// Local state file for Master Control.
@@ -69,16 +68,18 @@ async fn init(config: &Config) -> Result<()> {
     // Check tmux
     tmux::check_tmux()?;
 
-    // Check API connectivity
-    let api = ApiClient::new(config)?;
-    if !api.health_check().await? {
-        println!(
-            "{}",
-            "⚠ Warning: Cannot reach Remote Dev API".yellow()
-        );
-        println!("  Master Control will work locally, but state won't be synchronized");
-    } else {
-        println!("  {}", "✓ API connection verified".green());
+    // Check database connectivity (direct SQLite)
+    match Database::open() {
+        Ok(_) => {
+            println!("  {}", "✓ Database connection verified".green());
+        }
+        Err(e) => {
+            println!(
+                "{}",
+                format!("⚠ Warning: Cannot access database: {}", e).yellow()
+            );
+            println!("  Master Control will work with tmux only");
+        }
     }
 
     println!("{}", "✓ Master Control initialized".green());
@@ -102,56 +103,15 @@ async fn start(foreground: bool, config: &Config) -> Result<()> {
     // Load existing state
     let mut state = MasterState::load(config).unwrap_or_default();
 
-    // Try to integrate with Remote Dev API
-    let api = ApiClient::new(config)?;
-    let api_available = api.health_check().await.unwrap_or(false);
-
-    if api_available {
-        // Check if orchestrator exists
-        let orchestrator = api.get_master_control().await?;
-
-        if let Some(orch) = orchestrator {
-            // Orchestrator exists, reuse it
-            state.orchestrator_id = Some(orch.id.clone());
-            state.session_id = Some(orch.session_id.clone());
-            println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
-        } else {
-            // Create session in Remote Dev first
-            let session = api
-                .create_session(crate::api::CreateSessionRequest {
-                    name: "Master Control".to_string(),
-                    folder_id: None,
-                    working_directory: Some(config.paths.master_dir.to_string_lossy().to_string()),
-                    agent_provider: Some(config.agents.default.clone()),
-                    worktree_id: None,
-                })
-                .await
-                .context("Failed to create Master Control session in API")?;
-
-            // Create orchestrator
-            let orchestrator = api
-                .create_master_control(&session.id)
-                .await
-                .context("Failed to create Master Control orchestrator")?;
-
-            state.orchestrator_id = Some(orchestrator.id.clone());
-            state.session_id = Some(session.id.clone());
-            println!(
-                "  {} Created orchestrator: {}",
-                "✓".green(),
-                &orchestrator.id[..8]
-            );
+    // Check database for existing orchestrator (direct SQLite)
+    if let Ok(db) = Database::open() {
+        if let Ok(Some(user)) = db.get_default_user() {
+            if let Ok(Some(orch)) = db.get_master_orchestrator(&user.id) {
+                state.orchestrator_id = Some(orch.id.clone());
+                state.session_id = Some(orch.session_id.clone());
+                println!("  {} Existing orchestrator: {}", "→".cyan(), &orch.id[..8]);
+            }
         }
-
-        // Update orchestrator status to running
-        if let Some(ref orch_id) = state.orchestrator_id {
-            api.update_orchestrator_status(orch_id, "running").await?;
-        }
-    } else {
-        println!(
-            "  {}",
-            "⚠ API unavailable, running in local-only mode".yellow()
-        );
     }
 
     // Create tmux session with agent
@@ -192,17 +152,7 @@ async fn stop(config: &Config) -> Result<()> {
 
     println!("{}", "Stopping Master Control...".cyan());
 
-    // Update API status
-    let state = MasterState::load(config).unwrap_or_default();
-    let api = ApiClient::new(config)?;
-
-    if api.health_check().await.unwrap_or(false) {
-        if let Some(ref orch_id) = state.orchestrator_id {
-            api.update_orchestrator_status(orch_id, "stopped").await?;
-            println!("  {} Updated orchestrator status", "✓".green());
-        }
-    }
-
+    // Stop tmux session directly
     tmux::kill_session(&session_name)?;
     println!("{}", "✓ Master Control stopped".green());
 
@@ -228,50 +178,48 @@ async fn status(config: &Config) -> Result<()> {
         println!("  tmux Status: {}", "STOPPED".red());
     }
 
-    // API status
+    // Database status (direct SQLite)
     println!();
-    let api = ApiClient::new(config)?;
-    if api.health_check().await.unwrap_or(false) {
-        println!("  API: {}", "Connected".green());
+    match Database::open() {
+        Ok(db) => {
+            println!("  Database: {}", "Connected".green());
 
-        if let Ok(Some(orch)) = api.get_master_control().await {
-            println!("  Orchestrator ID: {}", &orch.id[..8]);
-            println!(
-                "  API Status: {}",
-                match orch.status.as_str() {
-                    "running" => "RUNNING".green(),
-                    "stopped" => "STOPPED".red(),
-                    "paused" => "PAUSED".yellow(),
-                    _ => orch.status.normal(),
-                }
-            );
-            println!("  Session ID: {}", &orch.session_id[..8]);
-            println!(
-                "  Monitoring: {}",
-                if orch.config.monitoring_enabled {
-                    "Enabled".green()
+            if let Ok(Some(user)) = db.get_default_user() {
+                if let Ok(Some(orch)) = db.get_master_orchestrator(&user.id) {
+                    println!("  Orchestrator ID: {}", &orch.id[..8]);
+                    println!(
+                        "  DB Status: {}",
+                        match orch.status.as_str() {
+                            "running" => "RUNNING".green(),
+                            "stopped" => "STOPPED".red(),
+                            "paused" => "PAUSED".yellow(),
+                            _ => orch.status.normal(),
+                        }
+                    );
+                    println!("  Session ID: {}", &orch.session_id[..8]);
+                    println!(
+                        "  Auto Intervention: {}",
+                        if orch.auto_intervention {
+                            "Enabled".green()
+                        } else {
+                            "Disabled".yellow()
+                        }
+                    );
+                    println!("  Monitoring Interval: {}s", orch.monitoring_interval);
+                    println!("  Stall Threshold: {}s", orch.stall_threshold);
+                } else if let Some(ref id) = state.orchestrator_id {
+                    println!("  Orchestrator ID: {} (cached)", &id[..8]);
+                    println!("  DB Status: {}", "Not found".yellow());
                 } else {
-                    "Disabled".yellow()
+                    println!("  Orchestrator: {}", "Not registered".yellow());
                 }
-            );
-            println!(
-                "  Monitoring Interval: {}s",
-                orch.config.monitoring_interval_secs
-            );
-            println!(
-                "  Stall Threshold: {}s",
-                orch.config.stall_threshold_secs
-            );
-        } else if let Some(ref id) = state.orchestrator_id {
-            println!("  Orchestrator ID: {} (cached)", &id[..8]);
-            println!("  API Status: {}", "Unknown".yellow());
-        } else {
-            println!("  Orchestrator: {}", "Not registered".yellow());
+            }
         }
-    } else {
-        println!("  API: {}", "Disconnected".red());
-        if let Some(ref id) = state.orchestrator_id {
-            println!("  Orchestrator ID: {} (cached)", &id[..8]);
+        Err(_) => {
+            println!("  Database: {}", "Unavailable".red());
+            if let Some(ref id) = state.orchestrator_id {
+                println!("  Orchestrator ID: {} (cached)", &id[..8]);
+            }
         }
     }
 

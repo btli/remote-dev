@@ -1,7 +1,7 @@
 //! rdv - Remote Dev Orchestration CLI
 //!
 //! Multi-agent coordination with self-improvement capabilities.
-//! Inspired by Gastown, adapted for Remote Dev's terminal-first architecture.
+//! Direct SQLite + tmux architecture for fast, reliable operations.
 
 use anyhow::Result;
 use clap::Parser;
@@ -11,6 +11,7 @@ mod api;
 mod cli;
 mod commands;
 mod config;
+mod db;
 mod error;
 mod tmux;
 

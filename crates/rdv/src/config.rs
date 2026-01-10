@@ -91,9 +91,93 @@ pub struct PathsConfig {
     pub transcripts_dir: PathBuf,
 }
 
+/// API connection mode - either HTTP URL or Unix socket
+#[derive(Debug, Clone)]
+pub enum ApiEndpoint {
+    Http(String),
+    UnixSocket(PathBuf),
+}
+
+impl ApiEndpoint {
+    /// Detect the best API endpoint based on environment
+    pub fn detect() -> Self {
+        // 1. Explicit override via environment variable
+        if let Ok(url) = std::env::var("RDV_API_URL") {
+            if url.starts_with("unix:") {
+                return ApiEndpoint::UnixSocket(PathBuf::from(url.trim_start_matches("unix:")));
+            }
+            return ApiEndpoint::Http(url);
+        }
+
+        // 2. Check for prod mode Unix socket
+        let socket_path = PathBuf::from("/tmp/rdv/next.sock");
+        if socket_path.exists() {
+            return ApiEndpoint::UnixSocket(socket_path);
+        }
+
+        // 3. Try to read PORT from .env.local in current directory or parent dirs
+        if let Some(port) = Self::find_env_port() {
+            return ApiEndpoint::Http(format!("http://localhost:{}", port));
+        }
+
+        // 4. Default fallback
+        ApiEndpoint::Http("http://localhost:3000".to_string())
+    }
+
+    /// Search for PORT in .env.local files walking up the directory tree
+    fn find_env_port() -> Option<u16> {
+        let mut current = std::env::current_dir().ok()?;
+
+        loop {
+            let env_file = current.join(".env.local");
+            if env_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(&env_file) {
+                    for line in content.lines() {
+                        if let Some(port_str) = line.strip_prefix("PORT=") {
+                            if let Ok(port) = port_str.trim().parse::<u16>() {
+                                return Some(port);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !current.pop() {
+                break;
+            }
+        }
+
+        None
+    }
+
+    /// Get the URL for HTTP requests (for Unix sockets, this is used for Host header)
+    pub fn base_url(&self) -> String {
+        match self {
+            ApiEndpoint::Http(url) => url.clone(),
+            ApiEndpoint::UnixSocket(_) => "http://localhost".to_string(),
+        }
+    }
+
+    /// Check if this is a Unix socket endpoint
+    pub fn is_unix_socket(&self) -> bool {
+        matches!(self, ApiEndpoint::UnixSocket(_))
+    }
+
+    /// Get the Unix socket path if applicable
+    pub fn socket_path(&self) -> Option<&PathBuf> {
+        match self {
+            ApiEndpoint::UnixSocket(path) => Some(path),
+            ApiEndpoint::Http(_) => None,
+        }
+    }
+}
+
 // Default value functions
 fn default_api_url() -> String {
-    std::env::var("RDV_API_URL").unwrap_or_else(|_| "http://localhost:3000".to_string())
+    match ApiEndpoint::detect() {
+        ApiEndpoint::Http(url) => url,
+        ApiEndpoint::UnixSocket(path) => format!("unix:{}", path.display()),
+    }
 }
 
 fn default_master_prefix() -> String {
@@ -219,6 +303,15 @@ impl Config {
     /// Get the agent CLI command for a given agent type.
     pub fn agent_command(&self, agent: &str) -> Option<&str> {
         self.agents.commands.get(agent).map(|s| s.as_str())
+    }
+
+    /// Get the API endpoint (detects Unix socket vs HTTP)
+    pub fn api_endpoint(&self) -> ApiEndpoint {
+        if self.api.url.starts_with("unix:") {
+            ApiEndpoint::UnixSocket(PathBuf::from(self.api.url.trim_start_matches("unix:")))
+        } else {
+            ApiEndpoint::Http(self.api.url.clone())
+        }
     }
 
     /// Ensure all required directories exist.

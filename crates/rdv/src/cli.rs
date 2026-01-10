@@ -1,6 +1,6 @@
 //! CLI argument definitions using clap derive macros.
 //!
-//! Command structure inspired by Gastown's `gt` CLI.
+//! Command structure for multi-agent orchestration.
 
 use clap::{Parser, Subcommand, Args};
 
