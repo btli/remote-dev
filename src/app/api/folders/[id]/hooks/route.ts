@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { proxyToRdvServer } from "@/lib/rdv-proxy";
 import { db } from "@/db";
 import { sessionFolders, terminalSessions, orchestratorSessions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   installAgentHooks,
-  checkHooksInstalled,
   type AgentProvider,
 } from "@/services/agent-hooks-service";
 
@@ -14,71 +14,12 @@ const VALID_PROVIDERS: AgentProvider[] = ["claude", "codex", "gemini", "opencode
 /**
  * GET /api/folders/[id]/hooks - Check hook installation status
  *
- * Returns which agent hooks are installed for this folder's project.
+ * Proxies to rdv-server /api/folders/:id/hooks.
  */
 export const GET = withAuth(async (request, { userId, params }) => {
-  try {
-    const folderId = params!.id;
-
-    // Get folder
-    const folder = await db
-      .select()
-      .from(sessionFolders)
-      .where(
-        and(
-          eq(sessionFolders.id, folderId),
-          eq(sessionFolders.userId, userId)
-        )
-      )
-      .limit(1);
-
-    if (folder.length === 0) {
-      return errorResponse("Folder not found", 404, "FOLDER_NOT_FOUND");
-    }
-
-    // Get project path from folder's sessions or preferences
-    // Look for the most recent session with a project path
-    const sessions = await db
-      .select()
-      .from(terminalSessions)
-      .where(
-        and(
-          eq(terminalSessions.folderId, folderId),
-          eq(terminalSessions.userId, userId)
-        )
-      )
-      .limit(1);
-
-    const projectPath = sessions[0]?.projectPath;
-
-    if (!projectPath) {
-      return NextResponse.json({
-        folderId,
-        folderName: folder[0].name,
-        projectPath: null,
-        hooks: null,
-        message: "No project path found for this folder",
-      });
-    }
-
-    // Check hook status for each provider
-    const hookStatus: Record<AgentProvider, boolean> = {
-      claude: await checkHooksInstalled("claude", projectPath),
-      codex: await checkHooksInstalled("codex", projectPath),
-      gemini: await checkHooksInstalled("gemini", projectPath),
-      opencode: await checkHooksInstalled("opencode", projectPath),
-    };
-
-    return NextResponse.json({
-      folderId,
-      folderName: folder[0].name,
-      projectPath,
-      hooks: hookStatus,
-    });
-  } catch (error) {
-    console.error("[API] Failed to check hooks:", error);
-    return errorResponse("Failed to check hooks", 500);
-  }
+  return proxyToRdvServer(request, userId, {
+    path: `/folders/${params!.id}/hooks`,
+  });
 });
 
 /**
@@ -86,6 +27,9 @@ export const GET = withAuth(async (request, { userId, params }) => {
  *
  * Installs hooks for the specified agent provider(s) in the folder's project.
  * Requires a folder orchestrator to exist for proper routing.
+ *
+ * Note: This endpoint remains in TypeScript because it writes Node.js and Python
+ * scripts that are easier to generate in their native languages.
  */
 export const POST = withAuth(async (request, { userId, params }) => {
   try {
@@ -134,7 +78,8 @@ export const POST = withAuth(async (request, { userId, params }) => {
       return errorResponse("Folder not found", 404, "FOLDER_NOT_FOUND");
     }
 
-    // Get folder orchestrator (required for hook routing)
+    // Check for folder orchestrator (recommended but not strictly required)
+    // The hooks will still work without an orchestrator, but events won't be routed
     const orchestrator = await db
       .select()
       .from(orchestratorSessions)
@@ -147,13 +92,7 @@ export const POST = withAuth(async (request, { userId, params }) => {
       )
       .limit(1);
 
-    if (orchestrator.length === 0) {
-      return errorResponse(
-        "Folder orchestrator required. Create one first via POST /api/folders/{id}/orchestrator",
-        400,
-        "ORCHESTRATOR_REQUIRED"
-      );
-    }
+    const hasOrchestrator = orchestrator.length > 0;
 
     // Get project path
     let projectPath: string | null = null;
@@ -202,6 +141,8 @@ export const POST = withAuth(async (request, { userId, params }) => {
     }
 
     // Install hooks for each provider
+    // Note: Hooks are now DYNAMIC - they detect the tmux session at runtime
+    // No need to pass sessionId/folderId - hooks auto-discover via tmux session lookup
     const results: Array<{
       provider: AgentProvider;
       success: boolean;
@@ -209,16 +150,8 @@ export const POST = withAuth(async (request, { userId, params }) => {
       configPath?: string;
     }> = [];
 
-    // Use the orchestrator's session ID for hook configuration
-    const orchestratorSessionId = orchestrator[0].sessionId;
-
     for (const provider of providers) {
-      const installResult = await installAgentHooks(
-        provider,
-        projectPath,
-        orchestratorSessionId,
-        folderId
-      );
+      const installResult = await installAgentHooks(provider, projectPath);
 
       results.push({
         provider,
@@ -234,11 +167,14 @@ export const POST = withAuth(async (request, { userId, params }) => {
         folderId,
         folderName: folder[0].name,
         projectPath,
-        orchestratorId: orchestrator[0].id,
+        hasOrchestrator,
+        orchestratorId: hasOrchestrator ? orchestrator[0].id : null,
         results,
         success: allSucceeded,
         message: allSucceeded
-          ? "All hooks installed successfully"
+          ? hasOrchestrator
+            ? "All hooks installed successfully"
+            : "All hooks installed. Note: Create a folder orchestrator to enable event routing."
           : anySucceeded
             ? "Some hooks installed successfully"
             : "Failed to install hooks",
