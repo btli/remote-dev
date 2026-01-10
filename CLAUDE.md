@@ -19,10 +19,13 @@ Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 
 ## Commands
 
 ```bash
-# Development (runs Next.js + terminal server concurrently)
+# Development - Start all servers
+# Terminal 1: Rust backend
+cd crates && cargo run --release --bin rdv-server
+# Terminal 2: Next.js + Terminal server
 bun run dev
 
-# Or run separately
+# Or run Next.js servers separately
 bun run dev:next      # Next.js dev server with Turbopack (port 3000)
 bun run dev:terminal  # Terminal WebSocket server (port 3001)
 
@@ -31,9 +34,22 @@ bun run build
 bun run start          # Next.js server
 bun run start:terminal # Terminal server
 
+# Rust backend
+cd crates
+cargo build --release           # Build all crates
+cargo run --release --bin rdv-server  # Run server
+cargo install --path rdv        # Install CLI globally
+
+# rdv CLI (after rdv-server is running)
+rdv auth login        # Authenticate CLI
+rdv status            # System status
+rdv doctor            # Run diagnostics
+
 # Code quality
 bun run lint
 bun run typecheck
+cd crates && cargo clippy       # Rust linting
+cd crates && cargo test         # Rust tests
 
 # Database
 bun run db:push      # Push schema changes to SQLite
@@ -45,11 +61,44 @@ bun run db:seed      # Seed authorized users
 
 ## Architecture
 
-### Two-Server Model
+### Target Architecture (Migration in Progress)
 
-The application runs two servers:
-1. **Next.js** (port 3000) - Web UI, authentication, API routes, static assets
-2. **Terminal Server** (port 3001) - WebSocket server with PTY/tmux (runs via `tsx` for node-pty compatibility)
+**rdv-server (Rust)** is the single backend that owns ALL business logic:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     rdv-server (Rust)                            │
+│  • REST API via Unix socket (~/.remote-dev/run/api.sock)        │
+│  • MCP server via stdio                                          │
+│  • ALL business logic (sessions, folders, orchestrators, etc.)  │
+│  • SQLite access, tmux operations, git/worktree management      │
+└─────────────────────────────────────────────────────────────────┘
+         ▲                    ▲                    ▲
+         │                    │                    │
+    Unix Socket          Unix Socket            stdio
+         │                    │                    │
+┌────────┴────────┐  ┌───────┴───────┐  ┌────────┴────────┐
+│    Next.js      │  │    rdv CLI    │  │   MCP Clients   │
+│  (auth + proxy) │  │ (thin client) │  │ (Claude, etc.)  │
+└─────────────────┘  └───────────────┘  └─────────────────┘
+         ▲
+         │ cloudflared
+         │
+    [Browser]
+```
+
+**Authentication:**
+- External (web): Cloudflare Access via cloudflared
+- Internal: Service tokens (Next.js), CLI tokens (rdv), API keys (MCP/agents)
+
+See `docs/claude/RUST_BACKEND_ARCHITECTURE.md` for full details.
+
+### Current State (During Migration)
+
+The application currently runs:
+1. **Next.js** - Web UI + auth + API proxy to rdv-server
+2. **Terminal Server** (Node.js) - WebSocket server with PTY/tmux
+3. **rdv-server** (Rust) - Backend REST API
 
 ### Terminal Flow with tmux Persistence
 
@@ -329,18 +378,51 @@ Remote Dev supports multiple AI coding agents with unified management:
 └── .env               # Secrets from provider
 ```
 
+### Rust Backend Crates
+
+The backend is implemented as a Rust workspace with three crates in `crates/`:
+
+| Crate | Purpose |
+|-------|---------|
+| **rdv-core** | Shared library (db, tmux, auth, client, types) |
+| **rdv-server** | REST API server (axum, Unix socket) |
+| **rdv** | CLI tool (clap, uses ApiClient) |
+
+**Build:**
+```bash
+cd crates
+cargo build --release
+# Binaries at target/release/rdv-server and target/release/rdv
+```
+
+### rdv-server (Rust REST API)
+
+**Location:** `crates/rdv-server/`
+
+The primary backend handling all business logic via Unix socket:
+
+```
+rdv-server/src/
+├── middleware/    # Auth (service token, CLI token)
+├── routes/        # API handlers (sessions, folders, orchestrators, etc.)
+├── services/      # Background services (monitoring)
+├── ws/            # WebSocket handlers
+├── config.rs      # Server configuration
+├── main.rs        # Entry point, socket binding
+└── state.rs       # Application state
+```
+
+**Key Features:**
+- Unix socket: `~/.remote-dev/run/api.sock`
+- Service token auth for Next.js proxy
+- CLI token auth for rdv CLI
+- Background monitoring service
+
 ### rdv CLI (Rust Orchestration Tool)
 
-The `rdv` CLI is a Rust-based tool for multi-agent orchestration. It uses **direct SQLite database access** (no HTTP API) and **tmux** for session management.
+The CLI uses **ApiClient** to communicate with rdv-server via Unix socket (no direct database access).
 
 **Location:** `crates/rdv/`
-
-**Build and Install:**
-```bash
-cd crates/rdv
-cargo build --release
-# Binary at target/release/rdv
-```
 
 **Commands:**
 
@@ -400,10 +482,12 @@ cargo build --release
 | `rdv status [--json]` | System status dashboard |
 | `rdv doctor` | Run diagnostics |
 
-**Database Integration:**
-- Direct SQLite access via `rusqlite` (no HTTP API)
-- Reads/writes same `sqlite.db` as Next.js
-- Uses `RDV_DATABASE_PATH` env or auto-discovers `sqlite.db`
+**API Client Integration:**
+- Uses `ApiClient` from rdv-core for all server communication
+- Connects to rdv-server via Unix socket (`~/.remote-dev/run/api.sock`)
+- CLI token stored at `~/.remote-dev/cli-token`
+- Requires rdv-server to be running
+- Authenticate with `rdv auth login`
 
 **Monitoring Integration:**
 - Captures tmux scrollback and computes MD5 hash
@@ -468,18 +552,21 @@ Features:
 **Key Files:**
 | File | Purpose |
 |------|---------|
-| `crates/rdv/src/db.rs` | Direct SQLite database operations |
-| `crates/rdv/src/tmux.rs` | tmux session management |
-| `crates/rdv/src/commands/monitor.rs` | Monitoring service with DB integration |
+| `crates/rdv-core/src/client/mod.rs` | ApiClient for Unix socket communication |
+| `crates/rdv-core/src/db/` | Database access layer |
+| `crates/rdv-core/src/tmux/` | tmux operations (capture, inject) |
+| `crates/rdv-core/src/auth/` | Token generation and validation |
+| `crates/rdv-core/src/types.rs` | Shared type definitions |
+| `crates/rdv-server/src/routes/` | API route handlers |
+| `crates/rdv-server/src/middleware/` | Auth middleware |
+| `crates/rdv/src/api.rs` | CLI ApiClient wrapper |
+| `crates/rdv/src/cli.rs` | Clap argument definitions |
+| `crates/rdv/src/tmux.rs` | Direct tmux operations |
+| `crates/rdv/src/commands/auth.rs` | CLI authentication (login/logout/status) |
 | `crates/rdv/src/commands/master.rs` | Master Control commands |
 | `crates/rdv/src/commands/folder.rs` | Folder orchestrator commands |
 | `crates/rdv/src/commands/session.rs` | Session management commands |
-| `crates/rdv/src/commands/task.rs` | Task lifecycle commands |
-| `crates/rdv/src/commands/learn.rs` | Self-improvement/learning system |
-| `crates/rdv/src/commands/mail.rs` | Inter-agent messaging via beads |
-| `crates/rdv/src/commands/escalate.rs` | Escalation to Master Control |
-| `crates/rdv/src/commands/nudge.rs` | Real-time session nudges |
-| `crates/rdv/src/commands/peek.rs` | Session health inspection |
+| `crates/rdv/src/commands/monitor.rs` | Monitoring service commands |
 | `crates/rdv/src/commands/insights.rs` | Insight listing, resolution, stall detection |
 | `crates/rdv/src/config.rs` | Configuration management |
 | `crates/rdv/src/error.rs` | Domain-specific error types (TmuxError, RdvError) |
@@ -570,6 +657,14 @@ React Contexts in `src/contexts/`:
 | `src/components/orchestrator/*.tsx` | 8 orchestrator UI components |
 
 ## API Routes
+
+> **Note:** Most API routes are proxied to rdv-server via Unix socket. Next.js handles authentication and forwards requests with service token.
+
+### Proxied to rdv-server
+- Sessions, Folders, Orchestrators, Worktrees, Knowledge, Hooks
+
+### TypeScript-only (Next.js)
+- GitHub, Templates, Recordings, Preferences, API Keys, Splits, Trash, Secrets
 
 ### Sessions
 - `GET /api/sessions` - List user's sessions

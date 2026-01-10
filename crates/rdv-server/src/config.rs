@@ -85,3 +85,120 @@ impl Config {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+
+        // Should have all paths set correctly
+        assert!(config.config_path.ends_with("config.toml"));
+        assert!(config.api_socket.ends_with("api.sock"));
+        assert!(config.terminal_socket.ends_with("terminal.sock"));
+        assert!(config.pid_file.ends_with("server.pid"));
+        assert!(config.log_file.ends_with("server.log"));
+        assert!(config.database_path.ends_with("sqlite.db"));
+        assert!(config.service_token_file.ends_with("service-token"));
+    }
+
+    #[test]
+    fn test_default_config_directory_structure() {
+        let config = Config::default();
+
+        // All paths should be under ~/.remote-dev
+        let home = dirs::home_dir().unwrap();
+        let remote_dev_dir = home.join(".remote-dev");
+
+        assert!(config.config_path.starts_with(&remote_dev_dir));
+        assert!(config.database_path.starts_with(&remote_dev_dir));
+    }
+
+    #[test]
+    fn test_config_load_with_custom_dir() {
+        // Set custom directory
+        let temp_dir = tempfile::tempdir().unwrap();
+        let custom_path = temp_dir.path().to_path_buf();
+
+        // Save current value to restore later
+        let old_val = env::var("REMOTE_DEV_DIR").ok();
+        // SAFETY: This test runs in isolation and we restore the env var afterward
+        unsafe { env::set_var("REMOTE_DEV_DIR", &custom_path) };
+
+        let config = Config::load().unwrap();
+
+        // Should use custom directory
+        assert!(config.config_path.starts_with(&custom_path));
+        assert!(config.api_socket.starts_with(&custom_path));
+        assert!(config.database_path.starts_with(&custom_path));
+
+        // Cleanup
+        // SAFETY: Restoring environment to previous state
+        unsafe {
+            if let Some(val) = old_val {
+                env::set_var("REMOTE_DEV_DIR", val);
+            } else {
+                env::remove_var("REMOTE_DEV_DIR");
+            }
+        }
+    }
+
+    #[test]
+    fn test_config_load_creates_directories() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let custom_path = temp_dir.path().to_path_buf();
+
+        // Save current value to restore later
+        let old_val = env::var("REMOTE_DEV_DIR").ok();
+        // SAFETY: This test runs in isolation and we restore the env var afterward
+        unsafe { env::set_var("REMOTE_DEV_DIR", &custom_path) };
+
+        let _config = Config::load().unwrap();
+
+        // Should have created run/ and server/ directories
+        let run_dir = custom_path.join("run");
+        let server_dir = custom_path.join("server");
+
+        assert!(run_dir.exists());
+        assert!(server_dir.exists());
+
+        // Cleanup
+        // SAFETY: Restoring environment to previous state
+        unsafe {
+            if let Some(val) = old_val {
+                env::set_var("REMOTE_DEV_DIR", val);
+            } else {
+                env::remove_var("REMOTE_DEV_DIR");
+            }
+        }
+    }
+
+    #[test]
+    fn test_config_paths_are_absolute() {
+        let config = Config::default();
+
+        // All paths should be absolute (unless home dir not found)
+        if dirs::home_dir().is_some() {
+            assert!(config.config_path.is_absolute());
+            assert!(config.api_socket.is_absolute());
+            assert!(config.terminal_socket.is_absolute());
+            assert!(config.pid_file.is_absolute());
+            assert!(config.log_file.is_absolute());
+            assert!(config.database_path.is_absolute());
+            assert!(config.service_token_file.is_absolute());
+        }
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config1 = Config::default();
+        let config2 = config1.clone();
+
+        assert_eq!(config1.config_path, config2.config_path);
+        assert_eq!(config1.api_socket, config2.api_socket);
+        assert_eq!(config1.database_path, config2.database_path);
+    }
+}

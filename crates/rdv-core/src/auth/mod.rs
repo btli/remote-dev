@@ -137,3 +137,153 @@ impl AuthContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_service_token_generate() {
+        let token1 = ServiceToken::generate();
+        let token2 = ServiceToken::generate();
+
+        // Tokens should be different
+        assert_ne!(token1.token, token2.token);
+        // Token IDs should be different
+        assert_ne!(token1.token_id, token2.token_id);
+        // Token should be 32 bytes
+        assert_eq!(token1.token.len(), 32);
+    }
+
+    #[test]
+    fn test_service_token_verify() {
+        let token = ServiceToken::generate();
+
+        // Correct token should verify
+        assert!(token.verify(&token.token));
+
+        // Wrong token should not verify
+        let wrong_token = [0u8; 32];
+        assert!(!token.verify(&wrong_token));
+
+        // Empty token should not verify
+        assert!(!token.verify(&[]));
+    }
+
+    #[test]
+    fn test_service_token_file_roundtrip() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let token_path = temp_dir.path().join("test-token");
+
+        let original = ServiceToken::generate();
+        original.write_to_file(&token_path).unwrap();
+
+        let loaded = ServiceToken::read_from_file(&token_path).unwrap();
+
+        // Token bytes should match
+        assert_eq!(original.token, loaded.token);
+    }
+
+    #[test]
+    fn test_service_token_file_permissions() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let token_path = temp_dir.path().join("test-token");
+
+        let token = ServiceToken::generate();
+        token.write_to_file(&token_path).unwrap();
+
+        // Check file permissions (0600 = owner read/write only)
+        let metadata = std::fs::metadata(&token_path).unwrap();
+        let permissions = metadata.permissions();
+        assert_eq!(permissions.mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn test_cli_token_generate() {
+        let user_id = uuid::Uuid::new_v4();
+        let token = CLIToken::generate(user_id, "test-token");
+
+        assert_eq!(token.user_id, user_id);
+        assert_eq!(token.name, "test-token");
+        assert!(token.last_used_at.is_none());
+        assert!(token.expires_at.is_none());
+        assert_eq!(token.token.len(), 32);
+    }
+
+    #[test]
+    fn test_cli_token_is_expired_no_expiry() {
+        let user_id = uuid::Uuid::new_v4();
+        let token = CLIToken::generate(user_id, "test");
+
+        // Token with no expiry should never be expired
+        assert!(!token.is_expired());
+    }
+
+    #[test]
+    fn test_cli_token_is_expired_future() {
+        let user_id = uuid::Uuid::new_v4();
+        let mut token = CLIToken::generate(user_id, "test");
+        token.expires_at = Some(SystemTime::now() + Duration::from_secs(3600));
+
+        // Token expiring in the future should not be expired
+        assert!(!token.is_expired());
+    }
+
+    #[test]
+    fn test_cli_token_is_expired_past() {
+        let user_id = uuid::Uuid::new_v4();
+        let mut token = CLIToken::generate(user_id, "test");
+        // Set expiry to 1 hour ago
+        token.expires_at = Some(SystemTime::now() - Duration::from_secs(3600));
+
+        // Token that expired in the past should be expired
+        assert!(token.is_expired());
+    }
+
+    #[test]
+    fn test_auth_context_user_id_service() {
+        let user_id = uuid::Uuid::new_v4();
+        let ctx = AuthContext::Service { user_id };
+
+        assert_eq!(ctx.user_id(), user_id);
+    }
+
+    #[test]
+    fn test_auth_context_user_id_cli() {
+        let user_id = uuid::Uuid::new_v4();
+        let token_id = uuid::Uuid::new_v4();
+        let ctx = AuthContext::CLI { user_id, token_id };
+
+        assert_eq!(ctx.user_id(), user_id);
+    }
+
+    #[test]
+    fn test_auth_context_clone() {
+        let user_id = uuid::Uuid::new_v4();
+        let ctx = AuthContext::Service { user_id };
+        let cloned = ctx.clone();
+
+        assert_eq!(ctx.user_id(), cloned.user_id());
+    }
+
+    #[test]
+    fn test_service_token_clone() {
+        let token = ServiceToken::generate();
+        let cloned = token.clone();
+
+        assert_eq!(token.token, cloned.token);
+        assert_eq!(token.token_id, cloned.token_id);
+    }
+
+    #[test]
+    fn test_cli_token_clone() {
+        let user_id = uuid::Uuid::new_v4();
+        let token = CLIToken::generate(user_id, "test");
+        let cloned = token.clone();
+
+        assert_eq!(token.token, cloned.token);
+        assert_eq!(token.user_id, cloned.user_id);
+        assert_eq!(token.name, cloned.name);
+    }
+}

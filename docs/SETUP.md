@@ -15,7 +15,17 @@ Complete guide for setting up Remote Dev on your local machine.
    brew install oven-sh/bun/bun
    ```
 
-2. **tmux** (for session persistence)
+2. **Rust** (stable, for rdv-server and rdv CLI)
+   ```bash
+   # macOS/Linux
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   source $HOME/.cargo/env
+
+   # Or with Homebrew (macOS)
+   brew install rust
+   ```
+
+3. **tmux** (for session persistence)
    ```bash
    # macOS
    brew install tmux
@@ -27,7 +37,7 @@ Complete guide for setting up Remote Dev on your local machine.
    sudo dnf install tmux
    ```
 
-3. **Git** (for repository features)
+4. **Git** (for repository features)
    ```bash
    # Usually pre-installed, verify with:
    git --version
@@ -36,9 +46,11 @@ Complete guide for setting up Remote Dev on your local machine.
 ### Verify Installation
 
 ```bash
-bun --version    # Should show 1.x.x
-tmux -V          # Should show tmux 3.x
-git --version    # Should show git 2.x
+bun --version     # Should show 1.x.x
+rustc --version   # Should show rustc 1.x.x
+cargo --version   # Should show cargo 1.x.x
+tmux -V           # Should show tmux 3.x
+git --version     # Should show git 2.x
 ```
 
 ## Installation
@@ -63,7 +75,26 @@ This installs all Node.js dependencies including:
 - Drizzle ORM for database
 - shadcn/ui components
 
-### 3. Configure Environment
+### 3. Build Rust Backend
+
+Build the Rust crates (rdv-server and rdv CLI):
+
+```bash
+cd crates
+cargo build --release
+```
+
+This creates:
+- `target/release/rdv-server` - The REST API server
+- `target/release/rdv` - The command-line tool
+
+Optionally, install the rdv CLI globally:
+
+```bash
+cargo install --path crates/rdv
+```
+
+### 4. Configure Environment
 
 Create `.env.local` with your settings:
 
@@ -87,7 +118,7 @@ Or use the init script for guided setup (recommended):
 ./scripts/init.sh
 ```
 
-### 4. Initialize Database
+### 5. Initialize Database
 
 Push the schema to create tables:
 
@@ -95,7 +126,7 @@ Push the schema to create tables:
 bun run db:push
 ```
 
-### 5. Add Authorized Users
+### 6. Add Authorized Users
 
 Set the `AUTHORIZED_USERS` environment variable with comma-separated emails and run the seed script:
 
@@ -109,15 +140,34 @@ For multiple users:
 AUTHORIZED_USERS="user1@example.com,user2@example.com" bun run db:seed
 ```
 
-### 6. Start the Application
+### 7. Start the Application
+
+Start all three servers:
 
 ```bash
+# Terminal 1: Rust backend (rdv-server)
+./crates/target/release/rdv-server
+# Or if installed via cargo install:
+rdv-server
+
+# Terminal 2: Next.js + Terminal server
 bun run dev
 ```
 
-This starts both servers using ports from `.env.local`:
-- Next.js on http://localhost:6001 (or `$PORT`)
-- Terminal server on ws://localhost:6002 (or `$TERMINAL_PORT`)
+This starts:
+- **rdv-server** listening on Unix socket `~/.remote-dev/run/api.sock`
+- **Next.js** on http://localhost:6001 (or `$PORT`)
+- **Terminal server** on ws://localhost:6002 (or `$TERMINAL_PORT`)
+
+### 8. Authenticate rdv CLI (Optional)
+
+If you want to use the rdv CLI, authenticate first:
+
+```bash
+rdv auth login
+```
+
+This generates a CLI token stored at `~/.remote-dev/cli-token`.
 
 ## Quick Setup with Init Script
 
@@ -389,6 +439,49 @@ For more details, see the [Next.js MCP documentation](https://nextjs.org/docs/ap
 | `.mcp.json` | MCP server configuration |
 | `sqlite.db` | SQLite database |
 | `~/.remote-dev/repos/` | Cloned repositories |
+| `~/.remote-dev/run/api.sock` | rdv-server Unix socket |
+| `~/.remote-dev/cli-token` | CLI authentication token |
+| `~/.remote-dev/server/service-token` | Service token (Next.js to rdv-server) |
+| `crates/target/release/rdv-server` | Rust backend binary |
+| `crates/target/release/rdv` | Rust CLI binary |
+
+## rdv CLI Usage
+
+The rdv CLI provides command-line access to Remote Dev features:
+
+```bash
+# Check system status
+rdv status
+
+# Run diagnostics
+rdv doctor
+
+# Session management
+rdv session list
+rdv session spawn my-project --agent claude
+rdv session attach <session-id>
+rdv session close <session-id>
+
+# Folder management
+rdv folder list
+rdv folder init /path/to/project
+
+# Master Control (orchestrator)
+rdv master init
+rdv master start
+rdv master status
+rdv master attach
+
+# Learning system
+rdv learn analyze <session-name>
+rdv learn show .
+
+# Inter-agent communication
+rdv mail inbox
+rdv mail send session:<id> "Subject" "Message"
+```
+
+Run `rdv --help` for full command reference.
 
 ## Next Steps
 

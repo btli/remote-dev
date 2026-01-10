@@ -114,3 +114,159 @@ impl AppState {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_entry(id: &str, user_id: &str, hash: [u8; 32]) -> CLITokenEntry {
+        CLITokenEntry {
+            token_hash: hash,
+            user_id: user_id.to_string(),
+            token_id: id.to_string(),
+            name: format!("test-token-{}", id),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cli_token_registry_new() {
+        let registry = CLITokenRegistry::new();
+        // Should start empty - no tokens to validate
+        let result = registry.validate(&[0u8; 32]).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cli_token_registry_add_and_validate() {
+        let registry = CLITokenRegistry::new();
+        let hash = [1u8; 32];
+        let entry = create_test_entry("token-1", "user-1", hash);
+
+        registry.add(entry.clone()).await;
+
+        // Should find the token
+        let result = registry.validate(&hash).await;
+        assert!(result.is_some());
+        let found = result.unwrap();
+        assert_eq!(found.token_id, "token-1");
+        assert_eq!(found.user_id, "user-1");
+    }
+
+    #[tokio::test]
+    async fn test_cli_token_registry_validate_not_found() {
+        let registry = CLITokenRegistry::new();
+        let hash = [1u8; 32];
+        let entry = create_test_entry("token-1", "user-1", hash);
+
+        registry.add(entry).await;
+
+        // Different hash should not be found
+        let different_hash = [2u8; 32];
+        let result = registry.validate(&different_hash).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cli_token_registry_remove() {
+        let registry = CLITokenRegistry::new();
+        let hash = [1u8; 32];
+        let entry = create_test_entry("token-1", "user-1", hash);
+
+        registry.add(entry).await;
+
+        // Should find the token
+        assert!(registry.validate(&hash).await.is_some());
+
+        // Remove the token
+        registry.remove("token-1").await;
+
+        // Should no longer find the token
+        assert!(registry.validate(&hash).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cli_token_registry_load_from_db() {
+        let registry = CLITokenRegistry::new();
+
+        let entries = vec![
+            create_test_entry("token-1", "user-1", [1u8; 32]),
+            create_test_entry("token-2", "user-2", [2u8; 32]),
+            create_test_entry("token-3", "user-1", [3u8; 32]),
+        ];
+
+        registry.load_from_db(entries).await;
+
+        // All tokens should be found
+        assert!(registry.validate(&[1u8; 32]).await.is_some());
+        assert!(registry.validate(&[2u8; 32]).await.is_some());
+        assert!(registry.validate(&[3u8; 32]).await.is_some());
+
+        // Non-existent hash should not be found
+        assert!(registry.validate(&[4u8; 32]).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cli_token_registry_multiple_tokens_same_user() {
+        let registry = CLITokenRegistry::new();
+
+        // Same user, different tokens
+        let entry1 = create_test_entry("token-1", "user-1", [1u8; 32]);
+        let entry2 = create_test_entry("token-2", "user-1", [2u8; 32]);
+
+        registry.add(entry1).await;
+        registry.add(entry2).await;
+
+        // Both tokens should be valid
+        let result1 = registry.validate(&[1u8; 32]).await;
+        let result2 = registry.validate(&[2u8; 32]).await;
+
+        assert!(result1.is_some());
+        assert!(result2.is_some());
+        assert_eq!(result1.unwrap().user_id, "user-1");
+        assert_eq!(result2.unwrap().user_id, "user-1");
+    }
+
+    #[tokio::test]
+    async fn test_cli_token_registry_overwrite_same_id() {
+        let registry = CLITokenRegistry::new();
+
+        // Add token with ID "token-1"
+        let entry1 = create_test_entry("token-1", "user-1", [1u8; 32]);
+        registry.add(entry1).await;
+
+        // Add another token with same ID but different hash
+        let entry2 = create_test_entry("token-1", "user-2", [2u8; 32]);
+        registry.add(entry2).await;
+
+        // Old hash should no longer work
+        assert!(registry.validate(&[1u8; 32]).await.is_none());
+
+        // New hash should work
+        let result = registry.validate(&[2u8; 32]).await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().user_id, "user-2");
+    }
+
+    #[test]
+    fn test_cli_token_entry_clone() {
+        let entry = create_test_entry("token-1", "user-1", [1u8; 32]);
+        let cloned = entry.clone();
+
+        assert_eq!(entry.token_id, cloned.token_id);
+        assert_eq!(entry.user_id, cloned.user_id);
+        assert_eq!(entry.token_hash, cloned.token_hash);
+        assert_eq!(entry.name, cloned.name);
+    }
+
+    #[test]
+    fn test_terminal_connection_fields() {
+        let conn = TerminalConnection {
+            session_id: "session-123".to_string(),
+            connected_at: Instant::now(),
+        };
+
+        assert_eq!(conn.session_id, "session-123");
+        // connected_at should be recent
+        assert!(conn.connected_at.elapsed().as_secs() < 1);
+    }
+}

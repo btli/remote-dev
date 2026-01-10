@@ -157,3 +157,80 @@ fn hash_token(token_str: &str) -> [u8; 32] {
 pub fn extract_auth(request: &Request<Body>) -> Option<&AuthContext> {
     request.extensions().get::<AuthContext>()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auth_context_user_id_from_service() {
+        let ctx = AuthContext::Service {
+            user_id: "user-123".to_string(),
+        };
+        assert_eq!(ctx.user_id(), "user-123");
+    }
+
+    #[test]
+    fn test_auth_context_user_id_from_cli() {
+        let ctx = AuthContext::CLI {
+            user_id: "user-456".to_string(),
+            token_id: "token-abc".to_string(),
+        };
+        assert_eq!(ctx.user_id(), "user-456");
+    }
+
+    #[test]
+    fn test_auth_context_clone() {
+        let ctx = AuthContext::Service {
+            user_id: "user-789".to_string(),
+        };
+        let cloned = ctx.clone();
+        assert_eq!(ctx.user_id(), cloned.user_id());
+    }
+
+    #[test]
+    fn test_hash_token_deterministic() {
+        let token = "test-token-123";
+        let hash1 = hash_token(token);
+        let hash2 = hash_token(token);
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_token_different_inputs() {
+        let hash1 = hash_token("token-a");
+        let hash2 = hash_token("token-b");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_token_length() {
+        let hash = hash_token("any-token");
+        assert_eq!(hash.len(), 32); // SHA-256 produces 32 bytes
+    }
+
+    #[test]
+    fn test_hash_token_empty_string() {
+        let hash = hash_token("");
+        assert_eq!(hash.len(), 32);
+        // Empty string SHA-256 should produce a consistent hash
+        let hash2 = hash_token("");
+        assert_eq!(hash, hash2);
+    }
+
+    #[test]
+    fn test_auth_error_status_codes() {
+        // Test that each error variant produces the expected status code
+        let missing_token_response = AuthError::MissingToken.into_response();
+        assert_eq!(missing_token_response.status(), StatusCode::UNAUTHORIZED);
+
+        let invalid_token_response = AuthError::InvalidToken.into_response();
+        assert_eq!(invalid_token_response.status(), StatusCode::UNAUTHORIZED);
+
+        let missing_user_response = AuthError::MissingUserId.into_response();
+        assert_eq!(missing_user_response.status(), StatusCode::UNAUTHORIZED);
+
+        let expired_token_response = AuthError::ExpiredToken.into_response();
+        assert_eq!(expired_token_response.status(), StatusCode::UNAUTHORIZED);
+    }
+}

@@ -53,28 +53,36 @@ function getLockKey(operation: string, userId: string, scopeId?: string): string
 /**
  * Execute an operation with lock protection.
  * If another request is already performing the same operation, wait for it.
+ *
+ * Uses a retry loop to handle race conditions where multiple waiters wake up
+ * simultaneously after the first operation completes.
  */
 async function withOperationLock<T>(
   lockKey: string,
   factory: () => Promise<T>
 ): Promise<T> {
-  const existingLock = operationLocks.get(lockKey);
-  if (existingLock) {
-    console.log(`[OrchestratorService] Waiting for existing operation: ${lockKey}`);
-    await existingLock;
-    // After waiting, the operation completed - we don't need to do it again
-    // But for reinitialize, we want to return the result of the first operation
-    // So we'll run the factory again which will just find the newly created orchestrator
-  }
+  // Retry loop to handle race condition after waiting
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const existingLock = operationLocks.get(lockKey);
+    if (existingLock) {
+      console.log(`[OrchestratorService] Waiting for existing operation: ${lockKey}`);
+      await existingLock;
+      // After waiting, re-check if another waiter grabbed the lock
+      // This prevents multiple waiters from all running the factory
+      continue;
+    }
 
-  const operationPromise = factory();
-  operationLocks.set(lockKey, operationPromise);
+    // No existing lock - create our operation
+    const operationPromise = factory();
+    operationLocks.set(lockKey, operationPromise);
 
-  try {
-    const result = await operationPromise;
-    return result;
-  } finally {
-    operationLocks.delete(lockKey);
+    try {
+      const result = await operationPromise;
+      return result;
+    } finally {
+      operationLocks.delete(lockKey);
+    }
   }
 }
 
