@@ -39,6 +39,47 @@ import { join, dirname } from "path";
 const DEFAULT_MASTER_CONTROL_DIR = join(process.env.HOME || "/tmp", ".remote-dev", "projects");
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lock mechanism to prevent race conditions in orchestrator creation
+// ─────────────────────────────────────────────────────────────────────────────
+
+const creationLocks = new Map<string, Promise<BootstrapResult>>();
+
+/**
+ * Generate a lock key for orchestrator creation.
+ */
+function getLockKey(type: "master" | "folder", userId: string, scopeId?: string): string {
+  return type === "master" ? `master:${userId}` : `folder:${userId}:${scopeId}`;
+}
+
+/**
+ * Execute a bootstrap function with lock protection.
+ * If another request is already creating the same orchestrator, wait for it.
+ */
+async function withCreationLock<T extends BootstrapResult>(
+  lockKey: string,
+  factory: () => Promise<T>
+): Promise<T> {
+  // Check if there's already a creation in progress
+  const existingLock = creationLocks.get(lockKey);
+  if (existingLock) {
+    console.log(`[Bootstrap] Waiting for existing creation: ${lockKey}`);
+    return existingLock as Promise<T>;
+  }
+
+  // Create new lock promise
+  const creationPromise = factory();
+  creationLocks.set(lockKey, creationPromise);
+
+  try {
+    const result = await creationPromise;
+    return result;
+  } finally {
+    // Clean up lock after completion (success or failure)
+    creationLocks.delete(lockKey);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -262,24 +303,28 @@ export async function autoSpinFolderControl(params: {
  * Bootstrap Master Control orchestrator.
  *
  * Creates a Claude Code session that monitors ALL sessions across folders.
+ * Uses lock to prevent race conditions when multiple requests try to create
+ * the same orchestrator simultaneously.
  */
 export async function bootstrapMasterControl(
   input: BootstrapMasterInput
 ): Promise<BootstrapResult> {
   const { userId, customInstructions } = input;
+  const lockKey = getLockKey("master", userId);
 
-  // Check if master already exists
-  const existingMaster = await container.orchestratorRepository.findMasterByUserId(userId);
-  if (existingMaster) {
-    // Return existing master info
-    const session = await SessionService.getSession(existingMaster.sessionId, userId);
-    return {
-      orchestratorId: existingMaster.id,
-      sessionId: existingMaster.sessionId,
-      tmuxSessionName: session?.tmuxSessionName || "",
-      claudeMdPath: "", // Would need to be stored
-    };
-  }
+  return withCreationLock(lockKey, async () => {
+    // Check if master already exists (inside lock to prevent race)
+    const existingMaster = await container.orchestratorRepository.findMasterByUserId(userId);
+    if (existingMaster) {
+      // Return existing master info
+      const session = await SessionService.getSession(existingMaster.sessionId, userId);
+      return {
+        orchestratorId: existingMaster.id,
+        sessionId: existingMaster.sessionId,
+        tmuxSessionName: session?.tmuxSessionName || "",
+        claudeMdPath: "", // Would need to be stored
+      };
+    }
 
   // Step 1: Get user's Master Control directory setting
   const settings = await db
@@ -351,6 +396,7 @@ export async function bootstrapMasterControl(
     tmuxSessionName: session.tmuxSessionName,
     claudeMdPath,
   };
+  }); // End withCreationLock
 }
 
 /**
@@ -358,27 +404,31 @@ export async function bootstrapMasterControl(
  *
  * Creates a Claude Code session that monitors sessions within a specific folder.
  * Loads folder-specific project knowledge.
+ * Uses lock to prevent race conditions when multiple requests try to create
+ * the same orchestrator simultaneously.
  */
 export async function bootstrapFolderControl(
   input: BootstrapFolderInput
 ): Promise<BootstrapResult> {
   const { userId, folderId, projectPath, customInstructions } = input;
+  const lockKey = getLockKey("folder", userId, folderId);
 
-  // Check if folder control already exists
-  const existingControls = await container.orchestratorRepository.findByScope(
-    userId,
-    folderId
-  );
-  if (existingControls.length > 0) {
-    const existingControl = existingControls[0];
-    const session = await SessionService.getSession(existingControl.sessionId, userId);
-    return {
-      orchestratorId: existingControl.id,
-      sessionId: existingControl.sessionId,
-      tmuxSessionName: session?.tmuxSessionName || "",
-      claudeMdPath: "",
-    };
-  }
+  return withCreationLock(lockKey, async () => {
+    // Check if folder control already exists (inside lock to prevent race)
+    const existingControls = await container.orchestratorRepository.findByScope(
+      userId,
+      folderId
+    );
+    if (existingControls.length > 0) {
+      const existingControl = existingControls[0];
+      const session = await SessionService.getSession(existingControl.sessionId, userId);
+      return {
+        orchestratorId: existingControl.id,
+        sessionId: existingControl.sessionId,
+        tmuxSessionName: session?.tmuxSessionName || "",
+        claudeMdPath: "",
+      };
+    }
 
   // Step 1: Get folder info
   const folders = await db
@@ -457,6 +507,7 @@ export async function bootstrapFolderControl(
     tmuxSessionName: session.tmuxSessionName,
     claudeMdPath,
   };
+  }); // End withCreationLock
 }
 
 /**

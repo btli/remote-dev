@@ -94,7 +94,7 @@ interface SidebarProps {
   onFolderToggle: (folderId: string) => void;
   onFolderClick: (folderId: string) => void;
   onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
-  onFolderNewSession: (folderId: string) => void;
+  onFolderNewSession: (folderId: string, type: "agent" | "terminal") => void;
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
   onFolderMove: (folderId: string, newParentId: string | null) => void;
@@ -1945,10 +1945,15 @@ export function Sidebar({
                           ) : (
                             /* Regular folder context menu */
                             <>
-                              <ContextMenuItem onClick={() => onFolderNewSession(node.id)}>
-                                <Terminal className="w-3.5 h-3.5 mr-2" />
-                                New Session
+                              <ContextMenuItem onClick={() => onFolderNewSession(node.id, "agent")}>
+                                <Bot className="w-3.5 h-3.5 mr-2" />
+                                New Agent
                               </ContextMenuItem>
+                              <ContextMenuItem onClick={() => onFolderNewSession(node.id, "terminal")}>
+                                <Terminal className="w-3.5 h-3.5 mr-2" />
+                                New Terminal
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
                               <ContextMenuItem onClick={() => onFolderAdvancedSession(node.id)}>
                                 <Sparkles className="w-3.5 h-3.5 mr-2" />
                                 Advanced...

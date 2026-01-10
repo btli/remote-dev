@@ -517,6 +517,38 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     maybeAutoFollowFolder,
   ]);
 
+  // Quick new agent session - creates a Claude Code agent session
+  const handleQuickNewAgentSession = useCallback(async () => {
+    const folderId = activeProject.folderId || undefined;
+    const name = generateSessionName(folderId, sessionCounter);
+    setSessionCounter((c) => c + 1);
+    try {
+      const newSession = await createSession({
+        name,
+        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
+        folderId,
+        agentProvider: "claude",
+        autoLaunchAgent: true,
+      });
+      // Register session-folder mapping in FolderContext for UI update
+      if (newSession && folderId) {
+        registerSessionFolder(newSession.id, folderId);
+      }
+      maybeAutoFollowFolder(folderId ?? null);
+    } catch (error) {
+      logSessionError("create agent session", error);
+    }
+  }, [
+    createSession,
+    sessionCounter,
+    generateSessionName,
+    currentPreferences.defaultWorkingDirectory,
+    activeProject.folderId,
+    registerSessionFolder,
+    logSessionError,
+    maybeAutoFollowFolder,
+  ]);
+
   const handleCloseSession = useCallback(
     async (sessionId: string, options?: { deleteWorktree?: boolean }) => {
       void options; // Both options go to trash for recovery
@@ -779,16 +811,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handleFolderNewSession = useCallback(
-    async (folderId: string) => {
+    async (folderId: string, type: "agent" | "terminal" = "terminal") => {
       const prefs = resolvePreferencesForFolder(folderId);
       const name = generateSessionName(folderId, sessionCounter);
       setSessionCounter((c) => c + 1);
       // Pass folderId at creation time so preferences (including startupCommand) are applied
+      // Set agentProvider based on type: "claude" for agent sessions, "none" for terminals
       try {
         const newSession = await createSession({
           name,
           projectPath: prefs.defaultWorkingDirectory || undefined,
           folderId,
+          agentProvider: type === "agent" ? "claude" : "none",
+          autoLaunchAgent: type === "agent",
         });
         // Register session-folder mapping in FolderContext for UI update
         if (newSession) {
@@ -1517,6 +1552,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <CommandPalette
         onNewSession={handleOpenWizard}
         onQuickNewSession={handleQuickNewSession}
+        onNewAgentSession={handleQuickNewAgentSession}
         onNewFolder={() => handleCreateFolder("New Folder")}
         onOpenSettings={() => {
           // Open settings modal (could be expanded in future)

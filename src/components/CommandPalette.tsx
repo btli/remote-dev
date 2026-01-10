@@ -25,6 +25,8 @@ import {
   Video,
   Circle,
   Square,
+  Brain,
+  Bot,
 } from "lucide-react";
 
 interface CommandAction {
@@ -39,6 +41,7 @@ interface CommandAction {
 interface CommandPaletteProps {
   onNewSession: () => void;
   onQuickNewSession: () => void;
+  onNewAgentSession?: () => void;
   onNewFolder: () => void;
   onOpenSettings: () => void;
   onCloseActiveSession?: () => void;
@@ -51,7 +54,9 @@ interface CommandPaletteProps {
   onStartRecording?: () => void;
   onStopRecording?: () => void;
   onViewRecordings?: () => void;
+  onReinitOrchestrator?: () => void;
   activeSessionId?: string | null;
+  activeFolderId?: string | null;
   isSplitMode?: boolean;
   isRecording?: boolean;
 }
@@ -59,6 +64,7 @@ interface CommandPaletteProps {
 export function CommandPalette({
   onNewSession,
   onQuickNewSession,
+  onNewAgentSession,
   onNewFolder,
   onOpenSettings,
   onCloseActiveSession,
@@ -71,7 +77,9 @@ export function CommandPalette({
   onStartRecording,
   onStopRecording,
   onViewRecordings,
+  onReinitOrchestrator,
   activeSessionId,
+  activeFolderId,
   isSplitMode,
   isRecording,
 }: CommandPaletteProps) {
@@ -106,6 +114,17 @@ export function CommandPalette({
       group: "Sessions",
       onSelect: () => runAction(onQuickNewSession),
     },
+    ...(onNewAgentSession
+      ? [
+          {
+            id: "new-agent-session",
+            label: "New Agent",
+            icon: <Bot className="w-4 h-4" />,
+            group: "Sessions",
+            onSelect: () => runAction(onNewAgentSession),
+          },
+        ]
+      : []),
     {
       id: "new-session-advanced",
       label: "New Session (Advanced)",
@@ -223,6 +242,18 @@ export function CommandPalette({
       group: "Settings",
       onSelect: () => runAction(onOpenSettings),
     },
+    // Orchestrator actions
+    ...(activeFolderId && onReinitOrchestrator
+      ? [
+          {
+            id: "reinit-orchestrator",
+            label: "Reinitialize Orchestrator",
+            icon: <Brain className="w-4 h-4" />,
+            group: "Orchestrator",
+            onSelect: () => runAction(onReinitOrchestrator),
+          },
+        ]
+      : []),
     // Keyboard shortcuts
     ...(onShowKeyboardShortcuts
       ? [
