@@ -14,3 +14,11 @@ export {
   type AddKnowledgeInput,
   type SearchOptions,
 } from "./LanceKnowledgeStore";
+
+export {
+  EpisodeStore,
+  getEpisodeStore,
+  getGlobalEpisodeStore,
+  type EpisodeSearchResult,
+  type EpisodeSearchOptions,
+} from "./episode-store";
