@@ -657,13 +657,13 @@ Standard MCP protocol over WebSocket.
 - ✅ `POST /sessions/:id/resume` - Proxied to rdv-server
 - ✅ `POST /sessions/:id/exec` - Proxied to rdv-server
 - ✅ `PUT /sessions/:id/folder` - Proxied to rdv-server
-- ⬜ `POST /sessions/reorder` - TypeScript (needs remote-dev-zxbw)
+- ✅ `POST /sessions/reorder` - Proxied to rdv-server
 - ✅ `GET /sessions/:id/token` - Hybrid (verify via rdv-server, token gen in Node.js)
 
 #### Folders API
 - ✅ `GET/POST /folders` - Proxied to rdv-server
 - ✅ `GET/PATCH/DELETE /folders/:id` - Proxied to rdv-server
-- ⬜ `POST /folders/reorder` - TypeScript (needs remote-dev-ynlf)
+- ✅ `POST /folders/reorder` - Proxied to rdv-server
 - ⬜ `GET/POST/DELETE /folders/:id/orchestrator` - TypeScript (needs remote-dev-cwnr)
 - ⬜ `GET/POST/DELETE /folders/:id/hooks` - TypeScript (needs remote-dev-qh9y)
 - ⬜ `GET/PATCH/DELETE /folders/:id/knowledge` - TypeScript (needs remote-dev-44jg)

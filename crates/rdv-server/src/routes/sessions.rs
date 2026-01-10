@@ -3,7 +3,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{delete, get, patch, post},
+    routing::{get, post},
     Extension, Json, Router,
 };
 use rdv_core::{
@@ -20,6 +20,7 @@ use crate::state::AppState;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/sessions", get(list_sessions).post(create_session))
+        .route("/sessions/reorder", post(reorder_sessions))
         .route(
             "/sessions/:id",
             get(get_session).patch(update_session).delete(close_session),
@@ -415,4 +416,30 @@ pub async fn get_scrollback(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(ScrollbackResponse { content }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReorderSessionsRequest {
+    pub session_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReorderSessionsResponse {
+    pub success: bool,
+}
+
+/// Reorder sessions (update tab order)
+pub async fn reorder_sessions(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ReorderSessionsRequest>,
+) -> Result<Json<ReorderSessionsResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    state
+        .db
+        .reorder_sessions(user_id, &req.session_ids)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    Ok(Json(ReorderSessionsResponse { success: true }))
 }

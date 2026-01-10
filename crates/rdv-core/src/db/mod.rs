@@ -259,6 +259,36 @@ impl Database {
         Ok(())
     }
 
+    /// Reorder sessions by updating their tab_order based on the order of IDs provided
+    /// Validates all sessions belong to the user before updating
+    pub fn reorder_sessions(&self, user_id: &str, session_ids: &[String]) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Use a transaction to ensure atomicity
+        let tx = conn.unchecked_transaction()?;
+
+        for (index, session_id) in session_ids.iter().enumerate() {
+            let rows_affected = tx.execute(
+                "UPDATE terminal_session SET tab_order = ?1, updated_at = ?2
+                 WHERE id = ?3 AND user_id = ?4",
+                params![index as i32, now, session_id, user_id],
+            )?;
+
+            // If no rows affected, session doesn't exist or doesn't belong to user
+            if rows_affected == 0 {
+                // Roll back by dropping tx without commit
+                return Err(Error::Other(format!(
+                    "Session {} not found or access denied",
+                    session_id
+                )));
+            }
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Folder Operations
     // ─────────────────────────────────────────────────────────────────────────
@@ -425,6 +455,36 @@ impl Database {
             "DELETE FROM session_folder WHERE id = ?1",
             params![folder_id],
         )?;
+        Ok(())
+    }
+
+    /// Reorder folders by updating their sort_order based on the order of IDs provided
+    /// Validates all folders belong to the user before updating
+    pub fn reorder_folders(&self, user_id: &str, folder_ids: &[String]) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Use a transaction to ensure atomicity
+        let tx = conn.unchecked_transaction()?;
+
+        for (index, folder_id) in folder_ids.iter().enumerate() {
+            let rows_affected = tx.execute(
+                "UPDATE session_folder SET sort_order = ?1, updated_at = ?2
+                 WHERE id = ?3 AND user_id = ?4",
+                params![index as i32, now, folder_id, user_id],
+            )?;
+
+            // If no rows affected, folder doesn't exist or doesn't belong to user
+            if rows_affected == 0 {
+                // Roll back by dropping tx without commit
+                return Err(Error::Other(format!(
+                    "Folder {} not found or access denied",
+                    folder_id
+                )));
+            }
+        }
+
+        tx.commit()?;
         Ok(())
     }
 

@@ -3,7 +3,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, patch, post},
+    routing::{get, post},
     Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,7 @@ use crate::state::AppState;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/folders", get(list_folders).post(create_folder))
+        .route("/folders/reorder", post(reorder_folders))
         .route(
             "/folders/:id",
             get(get_folder).patch(update_folder).delete(delete_folder),
@@ -283,4 +284,30 @@ pub async fn get_children(
         .collect();
 
     Ok(Json(children))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReorderFoldersRequest {
+    pub folder_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReorderFoldersResponse {
+    pub success: bool,
+}
+
+/// Reorder folders (update sort order)
+pub async fn reorder_folders(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<ReorderFoldersRequest>,
+) -> Result<Json<ReorderFoldersResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    state
+        .db
+        .reorder_folders(user_id, &req.folder_ids)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    Ok(Json(ReorderFoldersResponse { success: true }))
 }
