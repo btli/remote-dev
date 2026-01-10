@@ -346,27 +346,49 @@ cargo build --release
 
 | Command | Description |
 |---------|-------------|
+| **Master Control** | |
 | `rdv master init` | Initialize Master Control |
-| `rdv master start [--foreground]` | Start Master Control |
+| `rdv master start [--foreground]` | Start Master Control (spawns Claude agent) |
 | `rdv master stop` | Stop Master Control |
 | `rdv master status` | Show Master Control status |
 | `rdv master attach` | Attach to Master Control session |
+| **Folder Orchestrators** | |
 | `rdv folder init [path]` | Initialize folder orchestrator |
 | `rdv folder start [path]` | Start folder orchestrator |
 | `rdv folder stop [path]` | Stop folder orchestrator |
 | `rdv folder status [path]` | Show folder orchestrator status |
 | `rdv folder list` | List all folder orchestrators |
+| **Sessions** | |
 | `rdv session spawn <folder> [-a agent]` | Spawn task session |
 | `rdv session list [-f folder]` | List sessions |
 | `rdv session attach <id>` | Attach to session |
 | `rdv session inject <id> <context>` | Inject context |
 | `rdv session scrollback <id>` | Get scrollback content |
+| `rdv session close <id> [--force]` | Close session |
+| **Tasks** | |
 | `rdv task create <desc> [-f folder]` | Create task (with beads) |
 | `rdv task list [--status]` | List tasks |
 | `rdv task execute <id>` | Execute planned task |
+| **Monitoring** | |
 | `rdv monitor start [--foreground]` | Start monitoring service |
 | `rdv monitor status` | Show monitoring status |
 | `rdv monitor check <session>` | Check session health |
+| **Self-Improvement** | |
+| `rdv learn analyze <session> [--save]` | Analyze session transcript for learnings |
+| `rdv learn extract [path]` | Extract learnings from all transcripts in folder |
+| `rdv learn apply [path] [--dry-run]` | Apply learnings to CLAUDE.md |
+| `rdv learn show [path]` | Show project knowledge base |
+| `rdv learn list [--type] [--folder]` | List learnings by type or folder |
+| **Inter-Agent Communication** | |
+| `rdv mail inbox [--unread]` | View message inbox |
+| `rdv mail read <id>` | Read a message (auto-marks as read) |
+| `rdv mail send <target> <subject> <msg>` | Send message to agent/folder/session |
+| `rdv mail mark <id>` | Mark message as read |
+| **Escalation** | |
+| `rdv escalate --severity <level> --topic <topic>` | Escalate to Master Control |
+| **Utilities** | |
+| `rdv nudge <session> <message>` | Send real-time nudge to session |
+| `rdv peek <session>` | Quick health check on session |
 | `rdv status [--json]` | System status dashboard |
 | `rdv doctor` | Run diagnostics |
 
@@ -387,6 +409,54 @@ cargo build --release
 - Auto-creates beads issues on task creation
 - Updates beads status on task completion
 
+**Self-Improvement System:**
+
+The learning system extracts knowledge from completed sessions and applies it to project configuration:
+
+| Learning Type | Description |
+|---------------|-------------|
+| `convention` | Code style, naming patterns, architecture decisions |
+| `pattern` | Recurring solutions, workflows, best practices |
+| `skill` | Reusable capabilities, verified code snippets |
+| `tool` | MCP tool definitions, automation scripts |
+| `gotcha` | Pitfalls, warnings, things that broke |
+
+**Storage:** `.remote-dev/knowledge/project-knowledge.json`
+
+**Workflow:**
+1. `rdv learn analyze <session>` - Analyze session transcript
+2. `rdv learn extract` - Batch extract from all transcripts
+3. `rdv learn apply` - Update CLAUDE.md with learned patterns
+
+**Inter-Agent Communication (Mail):**
+
+Messages are stored as beads issues with `type=message`. Provides persistence and integration with beads workflow.
+
+| Target Format | Destination |
+|---------------|-------------|
+| `master` | Master Control |
+| `folder:<name>` | Folder Orchestrator |
+| `session:<id>` | Specific session |
+
+Real-time notifications via tmux when target is running.
+
+**Escalation System:**
+
+High-priority messages to Master Control for critical issues requiring human intervention.
+
+| Severity | Beads Priority | Use Case |
+|----------|----------------|----------|
+| CRITICAL | P0 | Immediate attention required |
+| HIGH | P1 | Urgent issues |
+| MEDIUM | P2 | Normal priority |
+| LOW | P3 | Informational |
+
+Features:
+- Creates beads issue with `type=escalation`
+- Real-time notification to Master Control via tmux
+- Links to related beads issues
+- Formatted notification banners with severity indicators
+
 **Key Files:**
 | File | Purpose |
 |------|---------|
@@ -397,6 +467,11 @@ cargo build --release
 | `crates/rdv/src/commands/folder.rs` | Folder orchestrator commands |
 | `crates/rdv/src/commands/session.rs` | Session management commands |
 | `crates/rdv/src/commands/task.rs` | Task lifecycle commands |
+| `crates/rdv/src/commands/learn.rs` | Self-improvement/learning system |
+| `crates/rdv/src/commands/mail.rs` | Inter-agent messaging via beads |
+| `crates/rdv/src/commands/escalate.rs` | Escalation to Master Control |
+| `crates/rdv/src/commands/nudge.rs` | Real-time session nudges |
+| `crates/rdv/src/commands/peek.rs` | Session health inspection |
 | `crates/rdv/src/config.rs` | Configuration management |
 
 ### UI Components
