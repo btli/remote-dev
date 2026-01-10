@@ -149,20 +149,21 @@ export async function bootstrapMasterControl(
     };
   }
 
-  // Step 1: Determine working directory (user home or tmp)
+  // Step 1: Determine working directory
+  // Master Control runs from user's home directory (no specific project)
   const workDir = process.env.HOME || "/tmp";
-  const orchestratorDir = join(workDir, ".remote-dev", "orchestrators", "master");
+  const configDir = join(workDir, ".remote-dev", "orchestrators", "master", ".claude");
 
-  // Step 2: Create the terminal session
+  // Step 2: Create the terminal session (runs in home directory)
   const session = await SessionService.createSession(userId, {
     name: "Master Control",
-    projectPath: orchestratorDir,
+    projectPath: workDir,
     isOrchestratorSession: true,
     agentProvider: "claude",
   });
 
   // Step 3: Generate CLAUDE.md for the orchestrator
-  const claudeMdPath = join(orchestratorDir, "CLAUDE.md");
+  const claudeMdPath = join(configDir, "CLAUDE.md");
   const instructions = generateOrchestratorInstructions({
     type: "master",
     customInstructions,
@@ -177,11 +178,11 @@ export async function bootstrapMasterControl(
   });
 
   // Step 4: Write CLAUDE.md to disk
-  await mkdir(dirname(claudeMdPath), { recursive: true });
+  await mkdir(configDir, { recursive: true });
   await writeFile(claudeMdPath, instructions, "utf-8");
 
-  // Step 4b: Write .mcp.json for MCP server access
-  const mcpConfigPath = join(orchestratorDir, ".mcp.json");
+  // Step 4b: Write .mcp.json for MCP server access (in config dir)
+  const mcpConfigPath = join(configDir, ".mcp.json");
   await writeMcpConfig(mcpConfigPath);
 
   // Step 5: Create orchestrator record
@@ -194,8 +195,8 @@ export async function bootstrapMasterControl(
     autoIntervention: false,
   });
 
-  // Step 6: Start Claude Code in the session
-  await startClaudeInSession(session.tmuxSessionName, orchestratorDir);
+  // Step 6: Start Claude Code in the session (in home directory)
+  await startClaudeInSession(session.tmuxSessionName, workDir);
 
   console.log(`[Bootstrap] Created Master Control orchestrator: ${orchestrator.id}`);
 
@@ -249,20 +250,21 @@ export async function bootstrapFolderControl(
   // Step 2: Get project knowledge for this folder
   const projectKnowledge = await container.projectKnowledgeRepository.findByFolderId(folderId);
 
-  // Step 3: Determine orchestrator directory
-  const orchestratorDir = join(projectPath, ".remote-dev", "orchestrator");
+  // Step 3: Config directory for orchestrator files (CLAUDE.md, .mcp.json)
+  // Session runs in projectPath, config goes in .claude/ subdirectory
+  const configDir = join(projectPath, ".claude");
 
-  // Step 4: Create the terminal session
+  // Step 4: Create the terminal session (runs in actual project directory)
   const session = await SessionService.createSession(userId, {
     name: `${folder.name} Control`,
-    projectPath: orchestratorDir,
+    projectPath: projectPath,  // Run in actual project, not subdirectory
     folderId,
     isOrchestratorSession: true,
     agentProvider: "claude",
   });
 
   // Step 5: Generate CLAUDE.md with project knowledge
-  const claudeMdPath = join(orchestratorDir, "CLAUDE.md");
+  const claudeMdPath = join(configDir, "CLAUDE.md");
   const instructions = generateOrchestratorInstructions({
     type: "folder",
     folderName: folder.name,
@@ -281,11 +283,11 @@ export async function bootstrapFolderControl(
   });
 
   // Step 6: Write CLAUDE.md to disk
-  await mkdir(dirname(claudeMdPath), { recursive: true });
+  await mkdir(configDir, { recursive: true });
   await writeFile(claudeMdPath, instructions, "utf-8");
 
-  // Step 6b: Write .mcp.json for MCP server access
-  const mcpConfigPath = join(orchestratorDir, ".mcp.json");
+  // Step 6b: Write .mcp.json for MCP server access (in .claude/ config dir)
+  const mcpConfigPath = join(configDir, ".mcp.json");
   await writeMcpConfig(mcpConfigPath);
 
   // Step 7: Create orchestrator record
@@ -299,8 +301,8 @@ export async function bootstrapFolderControl(
     autoIntervention: false,
   });
 
-  // Step 8: Start Claude Code in the session
-  await startClaudeInSession(session.tmuxSessionName, orchestratorDir);
+  // Step 8: Start Claude Code in the session (in actual project directory)
+  await startClaudeInSession(session.tmuxSessionName, projectPath);
 
   console.log(`[Bootstrap] Created Folder Control orchestrator: ${orchestrator.id} for folder ${folder.name}`);
 
