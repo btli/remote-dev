@@ -115,7 +115,7 @@ async fn gather_status(_config: &Config) -> Result<SystemStatus> {
     let tmux_sessions = tmux::list_sessions().unwrap_or_default();
 
     // Master Control status
-    let master_session = tmux_sessions.iter().find(|s| s.name == "rdv-master");
+    let master_session = tmux_sessions.iter().find(|s| s.name == "rdv-master-control");
     let master_control = MasterStatus {
         running: master_session.is_some(),
         session_name: master_session.map(|s| s.name.clone()),

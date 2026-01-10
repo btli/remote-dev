@@ -32,7 +32,8 @@ export async function createSession(
   input: CreateSessionInput
 ): Promise<TerminalSession> {
   const sessionId = crypto.randomUUID();
-  const tmuxSessionName = TmuxService.generateSessionName(sessionId);
+  // Use custom tmux session name if provided (for orchestrators), otherwise generate
+  const tmuxSessionName = input.tmuxSessionName || TmuxService.generateSessionName(sessionId);
 
   // Get the next tab order
   const existingSessions = await db.query.terminalSessions.findMany({

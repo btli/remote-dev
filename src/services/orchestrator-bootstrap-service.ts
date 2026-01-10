@@ -298,11 +298,13 @@ export async function bootstrapMasterControl(
   }
 
   // Step 2: Create the terminal session (runs in configured directory)
+  // Use predictable name rdv-master-control so rdv CLI can detect it
   const session = await SessionService.createSession(userId, {
     name: "Master Control",
     projectPath: workDir,
     isOrchestratorSession: true,
     agentProvider: "claude",
+    tmuxSessionName: "rdv-master-control",
   });
 
   // Step 3: Generate CLAUDE.md for the orchestrator

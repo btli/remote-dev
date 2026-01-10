@@ -196,7 +196,7 @@ pub async fn execute(cmd: EscalateCommand, config: &Config) -> Result<()> {
 /// Attempt to notify Master Control session directly.
 fn notify_master_control(cmd: &EscalateCommand, sender: &str, _config: &Config) {
     // Try to find Master Control session
-    let master_session = "rdv-master";
+    let master_session = "rdv-master-control";
 
     if tmux::session_exists(master_session).unwrap_or(false) {
         println!();

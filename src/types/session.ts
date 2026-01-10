@@ -49,6 +49,8 @@ export interface CreateSessionInput {
   agentFlags?: string[];              // Additional flags for the agent CLI
   // Orchestrator flag
   isOrchestratorSession?: boolean;    // Marks orchestrator sessions
+  // Custom tmux session name (for predictable orchestrator naming like rdv-master-control)
+  tmuxSessionName?: string;
   // Feature session fields
   startupCommand?: string;      // Override resolved preferences
   featureDescription?: string;  // Original feature description
