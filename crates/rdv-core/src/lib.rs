@@ -12,6 +12,7 @@
 //! - **auth**: Token-based authentication
 //! - **mcp**: Model Context Protocol support
 //! - **learning**: Learning extraction and knowledge management
+//! - **project**: Project detection and metadata
 
 pub mod auth;
 #[cfg(feature = "client")]
@@ -22,6 +23,7 @@ pub mod error;
 pub mod learning;
 pub mod mcp;
 pub mod orchestrator;
+pub mod project;
 pub mod session;
 pub mod tmux;
 pub mod types;

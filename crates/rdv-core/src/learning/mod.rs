@@ -176,12 +176,13 @@ pub fn analyze_transcript(content: &str) -> TranscriptAnalysis {
             analysis.commands += 1;
         }
 
-        // Detect patterns
-        if line.contains("pattern")
-            || line.contains("convention")
-            || line.contains("always")
-            || line.contains("never")
-            || line.contains("should")
+        // Detect patterns (case-insensitive)
+        let lower_line = line.to_lowercase();
+        if lower_line.contains("pattern")
+            || lower_line.contains("convention")
+            || lower_line.contains("always")
+            || lower_line.contains("never")
+            || lower_line.contains("should")
         {
             if analysis.patterns.len() < 10 {
                 analysis.patterns.push(line.to_string());
