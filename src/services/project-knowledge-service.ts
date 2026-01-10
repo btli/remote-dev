@@ -33,6 +33,10 @@ export class ProjectKnowledgeService {
 
   /**
    * Get knowledge for a folder, creating if it doesn't exist.
+   *
+   * Note: Tech stack and project knowledge are populated by the Folder Control
+   * agent via MCP tools (knowledge_add), not by auto-detection. The agent
+   * reads CLAUDE.md and analyzes the project to report accurate knowledge.
    */
   async getOrCreateForFolder(
     folderId: string,
@@ -44,14 +48,12 @@ export class ProjectKnowledgeService {
       return existing;
     }
 
-    // Create new knowledge entry with detected tech stack
-    const techStack = await this.detectTechStack(folderPath);
-
+    // Create empty knowledge entry - Folder Control agent will populate it
     const { ProjectKnowledge: PKClass } = await import("@/domain/entities/ProjectKnowledge");
     const knowledge = PKClass.create({
       folderId,
       userId,
-      techStack,
+      techStack: [], // Agent will report this via knowledge_add
       metadata: {
         projectPath: folderPath,
       },
@@ -266,87 +268,6 @@ export class ProjectKnowledgeService {
     );
 
     return similar.map((s) => knowledge.patterns[s.index]);
-  }
-
-  /**
-   * Detect tech stack from folder contents using ProjectMetadataService.
-   * This provides comprehensive detection of languages, frameworks, and tools.
-   */
-  private async detectTechStack(folderPath: string): Promise<string[]> {
-    try {
-      const { ProjectMetadataService } = await import("./project-metadata-service");
-      const metadataService = new ProjectMetadataService();
-      const result = await metadataService.detect(folderPath);
-
-      const techStack: string[] = [];
-
-      // Add primary language
-      if (result.primaryLanguage) {
-        techStack.push(result.primaryLanguage);
-      }
-
-      // Add framework
-      if (result.framework) {
-        techStack.push(result.framework);
-      }
-
-      // Add package manager
-      if (result.packageManager) {
-        techStack.push(result.packageManager);
-      }
-
-      // Add common indicators
-      if (result.hasDocker) techStack.push("docker");
-      if (result.git) techStack.push("git");
-      if (result.hasTypeScript) techStack.push("typescript");
-
-      // Add test framework
-      if (result.testFramework?.framework) {
-        techStack.push(result.testFramework.framework);
-      }
-
-      return techStack;
-    } catch {
-      // Fallback to empty if detection fails
-      return [];
-    }
-  }
-
-  /**
-   * Refresh tech stack for existing project knowledge.
-   * Re-detects the tech stack from the folder and updates the knowledge.
-   */
-  async refreshTechStack(
-    knowledgeId: string,
-    folderPath: string
-  ): Promise<ProjectKnowledge | null> {
-    const knowledge = await this.repository.findById(knowledgeId);
-    if (!knowledge) {
-      return null;
-    }
-
-    const techStack = await this.detectTechStack(folderPath);
-    const updated = knowledge.updateTechStack(techStack).markScanned();
-    await this.repository.save(updated);
-    return updated;
-  }
-
-  /**
-   * Refresh tech stack by folder ID.
-   */
-  async refreshTechStackByFolderId(
-    folderId: string,
-    folderPath: string
-  ): Promise<ProjectKnowledge | null> {
-    const knowledge = await this.repository.findByFolderId(folderId);
-    if (!knowledge) {
-      return null;
-    }
-
-    const techStack = await this.detectTechStack(folderPath);
-    const updated = knowledge.updateTechStack(techStack).markScanned();
-    await this.repository.save(updated);
-    return updated;
   }
 
   /**

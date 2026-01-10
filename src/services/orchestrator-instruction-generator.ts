@@ -63,6 +63,11 @@ export function generateOrchestratorInstructions(
     sections.push(generateProjectKnowledgeSection(projectKnowledge, projectPath));
   }
 
+  // Startup initialization (folder orchestrators only)
+  if (type === "folder" && projectPath) {
+    sections.push(generateStartupInitialization(projectPath));
+  }
+
   // Duties
   sections.push(generateDuties(type));
 
@@ -327,6 +332,63 @@ function generateProjectKnowledgeSection(
   }
 
   return sections.join("\n\n");
+}
+
+function generateStartupInitialization(projectPath: string): string {
+  return `## Startup Initialization
+
+**IMPORTANT**: On startup, you must analyze this project and report your findings.
+
+### Step 1: Read Project Documentation
+\`\`\`bash
+# Read the project's CLAUDE.md (or equivalent)
+cat ${projectPath}/CLAUDE.md 2>/dev/null || cat ${projectPath}/.claude/CLAUDE.md 2>/dev/null || echo "No CLAUDE.md found"
+\`\`\`
+
+### Step 2: Analyze Project Structure
+Look at the project files to understand:
+- Primary programming language (Python, TypeScript, Rust, Go, etc.)
+- Framework in use (Next.js, FastAPI, Django, etc.)
+- Package manager (bun, npm, pip, cargo, etc.)
+- Test framework (vitest, pytest, etc.)
+
+### Step 3: Report Project Knowledge via MCP
+
+Use the \`knowledge_add\` MCP tool to report what you learned:
+
+\`\`\`
+# Report tech stack as a convention
+knowledge_add({
+  folderId: "<folder-uuid>",
+  type: "convention",
+  name: "tech_stack",
+  description: "Python FastAPI backend with SQLite database",
+  confidence: 0.9,
+  source: "startup-analysis"
+})
+
+# Report key patterns you observe
+knowledge_add({
+  folderId: "<folder-uuid>",
+  type: "pattern",
+  name: "api_structure",
+  description: "REST API endpoints follow /api/v1/{resource} pattern",
+  confidence: 0.8,
+  source: "startup-analysis"
+})
+\`\`\`
+
+### Knowledge Types to Report
+
+| Type | What to Report |
+|------|----------------|
+| \`convention\` | Tech stack, coding style, naming patterns, architecture decisions |
+| \`pattern\` | Common solutions, workflows, anti-patterns to avoid |
+| \`skill\` | Reusable commands, scripts, or procedures |
+| \`tool\` | Custom MCP tools or automation |
+
+### After Initialization
+Once you've reported the project knowledge, enter monitoring mode and wait for events.`;
 }
 
 function generateDuties(type: "master" | "folder"): string {
