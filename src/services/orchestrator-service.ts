@@ -18,6 +18,10 @@ import {
 import type { Orchestrator } from "@/domain/entities/Orchestrator";
 import type { OrchestratorAuditLog } from "@/domain/entities/OrchestratorAuditLog";
 import type { ProjectMetadata } from "@/domain/entities/ProjectMetadata";
+import {
+  bootstrapMasterControl,
+  bootstrapFolderControl,
+} from "@/services/orchestrator-bootstrap-service";
 
 /**
  * Error class for orchestrator service operations
@@ -430,6 +434,11 @@ export async function updateOrchestrator(
  * Ensure master orchestrator exists for a user
  * Creates one if it doesn't exist yet
  * Returns the existing or newly created orchestrator
+ *
+ * Uses the bootstrap service to create a real Claude Code session with:
+ * - CLAUDE.md instructions for orchestration
+ * - .mcp.json for MCP server access
+ * - Claude Code started with --resume
  */
 export async function ensureMasterOrchestrator(
   userId: string
@@ -444,30 +453,22 @@ export async function ensureMasterOrchestrator(
     return { orchestrator: existing, created: false };
   }
 
-  // Import SessionService to create orchestrator session
-  const SessionService = await import("./session-service");
+  // Use bootstrap service to create fully-instrumented orchestrator session
+  const bootstrapResult = await bootstrapMasterControl({ userId });
 
-  // Create dedicated control session with isOrchestratorSession flag
-  // Master Control uses the default agent (can be any provider)
-  const orchestratorSession = await SessionService.createSession(userId, {
-    name: "Master Control",
-    isOrchestratorSession: true,
-    // Note: agentProvider intentionally omitted - Master Control is agent-agnostic
-  });
-
-  // Create master orchestrator
-  const result = await createMasterOrchestrator({
-    userId,
-    sessionId: orchestratorSession.id,
-    monitoringInterval: 30, // Default: check every 30 seconds
-    stallThreshold: 300, // Default: 5 minutes of inactivity
-    autoIntervention: false, // Default: manual intervention only
-  });
+  // Retrieve the orchestrator entity
+  const orchestrator = await getOrchestrator(bootstrapResult.orchestratorId, userId);
+  if (!orchestrator) {
+    throw new OrchestratorServiceError(
+      "Failed to retrieve orchestrator after bootstrap",
+      "BOOTSTRAP_FAILED"
+    );
+  }
 
   return {
-    orchestrator: result.orchestrator,
+    orchestrator,
     created: true,
-    sessionId: orchestratorSession.id,
+    sessionId: bootstrapResult.sessionId,
   };
 }
 
@@ -475,6 +476,11 @@ export async function ensureMasterOrchestrator(
  * Create or update folder sub-orchestrator with automatic session setup
  * If an orchestrator already exists for this folder, returns it
  * Otherwise creates a new dedicated session and sub-orchestrator
+ *
+ * Uses the bootstrap service to create a real Claude Code session with:
+ * - CLAUDE.md instructions with project knowledge
+ * - .mcp.json for MCP server access
+ * - Claude Code started with --resume
  */
 export async function ensureFolderSubOrchestrator(
   userId: string,
@@ -496,10 +502,8 @@ export async function ensureFolderSubOrchestrator(
     return { orchestrator: existing, created: false };
   }
 
-  // Import SessionService
-  const SessionService = await import("./session-service");
-  const { sessionFolders } = await import("@/db/schema");
-  const { eq, and } = await import("drizzle-orm");
+  const { sessionFolders, terminalSessions } = await import("@/db/schema");
+  const { desc } = await import("drizzle-orm");
 
   // Validate folder ownership (IDOR protection)
   const folder = await db
@@ -520,32 +524,48 @@ export async function ensureFolderSubOrchestrator(
     );
   }
 
-  const folderName = folder[0].name;
+  // Get project path from an existing session in this folder
+  const existingSessions = await db
+    .select({ projectPath: terminalSessions.projectPath })
+    .from(terminalSessions)
+    .where(
+      and(
+        eq(terminalSessions.folderId, folderId),
+        eq(terminalSessions.userId, userId)
+      )
+    )
+    .orderBy(desc(terminalSessions.createdAt))
+    .limit(1);
 
-  // Create dedicated control session for this folder
-  // Folder Control is agent-agnostic and monitors all agent types
-  const orchestratorSession = await SessionService.createSession(userId, {
-    name: `${folderName} Control`,
-    folderId, // Associate session with the folder
-    isOrchestratorSession: true,
-    // Note: agentProvider intentionally omitted - Folder Control is agent-agnostic
-  });
+  const projectPath = existingSessions[0]?.projectPath;
+  if (!projectPath) {
+    throw new OrchestratorServiceError(
+      "No sessions with project path found in folder",
+      "NO_PROJECT_PATH"
+    );
+  }
 
-  // Create sub-orchestrator with defaults
-  const result = await createSubOrchestrator({
+  // Use bootstrap service to create fully-instrumented orchestrator session
+  const bootstrapResult = await bootstrapFolderControl({
     userId,
-    sessionId: orchestratorSession.id,
     folderId,
+    projectPath,
     customInstructions: config?.customInstructions,
-    monitoringInterval: config?.monitoringInterval ?? 30,
-    stallThreshold: config?.stallThreshold ?? 300,
-    autoIntervention: config?.autoIntervention ?? false,
   });
+
+  // Retrieve the orchestrator entity
+  const orchestrator = await getOrchestrator(bootstrapResult.orchestratorId, userId);
+  if (!orchestrator) {
+    throw new OrchestratorServiceError(
+      "Failed to retrieve orchestrator after bootstrap",
+      "BOOTSTRAP_FAILED"
+    );
+  }
 
   return {
-    orchestrator: result.orchestrator,
+    orchestrator,
     created: true,
-    sessionId: orchestratorSession.id,
+    sessionId: bootstrapResult.sessionId,
   };
 }
 
