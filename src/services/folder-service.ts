@@ -320,3 +320,92 @@ export async function moveSessionToFolder(
 
   return result.rowsAffected > 0;
 }
+
+/**
+ * Get immediate child folders for a parent folder
+ * Uses the session_folder_user_parent_idx composite index
+ */
+export async function getChildFolders(
+  folderId: string,
+  userId: string
+): Promise<SessionFolder[]> {
+  const children = await db.query.sessionFolders.findMany({
+    where: and(
+      eq(sessionFolders.userId, userId),
+      eq(sessionFolders.parentId, folderId)
+    ),
+    orderBy: [asc(sessionFolders.sortOrder)],
+  });
+
+  return children.map((f) => ({
+    id: f.id,
+    userId: f.userId,
+    parentId: f.parentId ?? null,
+    name: f.name,
+    collapsed: f.collapsed ?? false,
+    sortOrder: f.sortOrder,
+    createdAt: new Date(f.createdAt),
+    updatedAt: new Date(f.updatedAt),
+  }));
+}
+
+/**
+ * Get parent chain from folder to root
+ * Returns array from immediate parent to root (excludes input folder)
+ * Efficient: loads all folders once and walks in memory
+ */
+export async function getParentChain(
+  folderId: string,
+  userId: string
+): Promise<SessionFolder[]> {
+  // Load all folders once (typically < 100 folders per user)
+  const allFolders = await getFolders(userId);
+  const folderMap = new Map(allFolders.map((f) => [f.id, f]));
+
+  // Find the starting folder
+  const startFolder = folderMap.get(folderId);
+  if (!startFolder) {
+    return [];
+  }
+
+  // Walk up the parent chain
+  const chain: SessionFolder[] = [];
+  let currentParentId = startFolder.parentId;
+
+  while (currentParentId) {
+    const parent = folderMap.get(currentParentId);
+    if (!parent) break;
+    chain.push(parent);
+    currentParentId = parent.parentId;
+  }
+
+  return chain; // Ordered: immediate parent → root
+}
+
+/**
+ * Get a single folder by ID with ownership validation
+ */
+export async function getFolderById(
+  folderId: string,
+  userId: string
+): Promise<SessionFolder | null> {
+  const folder = await db.query.sessionFolders.findFirst({
+    where: and(
+      eq(sessionFolders.id, folderId),
+      eq(sessionFolders.userId, userId)
+    ),
+  });
+
+  if (!folder) return null;
+
+  return {
+    id: folder.id,
+    userId: folder.userId,
+    parentId: folder.parentId ?? null,
+    name: folder.name,
+    collapsed: folder.collapsed ?? false,
+    sortOrder: folder.sortOrder,
+    createdAt: new Date(folder.createdAt),
+    updatedAt: new Date(folder.updatedAt),
+  };
+}

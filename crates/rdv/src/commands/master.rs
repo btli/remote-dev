@@ -179,6 +179,7 @@ async fn start(foreground: bool, config: &Config) -> Result<()> {
         working_directory: Some(config.paths.master_dir.to_string_lossy().to_string()),
         command: Some(agent_cmd.to_string()),
         auto_respawn: true, // Restart agent on exit via pane-died hook
+        env: None,
     })?;
 
     state.tmux_session = Some(session_name.clone());

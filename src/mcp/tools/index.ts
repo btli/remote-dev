@@ -27,6 +27,7 @@ import type { RegisteredTool } from "../types";
  *
  * Folder Tools:
  * - folder_list, folder_create, folder_update, folder_delete
+ * - folder_get_children, folder_get_context
  * - preferences_get, preferences_set
  *
  * Orchestrator Tools:

@@ -256,8 +256,9 @@ pub struct SessionCommand {
 pub enum SessionAction {
     /// Spawn a new task session
     Spawn {
-        /// Folder path
-        folder: String,
+        /// Project path (filesystem directory)
+        #[arg(default_value = ".")]
+        path: String,
 
         /// Agent to use (claude, codex, gemini, opencode, none)
         #[arg(short, long, default_value = "claude")]
@@ -278,6 +279,18 @@ pub enum SessionAction {
         /// Session name
         #[arg(short, long)]
         name: Option<String>,
+
+        /// Sidebar folder name or ID to associate session with
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Additional flags to pass to the agent CLI
+        #[arg(short = 'F', long = "flag", action = clap::ArgAction::Append)]
+        flags: Vec<String>,
+
+        /// Skip permission prompts (adds --dangerously-skip-permissions for claude)
+        #[arg(long)]
+        dangerously_skip_permissions: bool,
     },
 
     /// List sessions

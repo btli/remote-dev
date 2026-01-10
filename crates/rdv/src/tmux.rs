@@ -100,6 +100,22 @@ pub fn create_session(config: &CreateSessionConfig) -> RdvResult<()> {
         return Err(TmuxError::CommandFailed(stderr.to_string()).into());
     }
 
+    // Set environment variables in the session
+    if let Some(ref env_vars) = config.env {
+        for (key, value) in env_vars {
+            let _ = Command::new("tmux")
+                .args([
+                    "set-environment",
+                    "-t",
+                    &config.session_name,
+                    key,
+                    value,
+                ])
+                .output();
+            debug!("Set env var {}={} in session {}", key, value, config.session_name);
+        }
+    }
+
     // Auto-respawn: Set up pane-died hook to automatically restart the process
     // This respawns immediately when process exits - no dead panes, no polling
     if config.auto_respawn {
@@ -332,6 +348,8 @@ pub struct CreateSessionConfig {
     /// Auto-respawn process when it exits (for orchestrators)
     /// Uses tmux pane-died hook - no dead panes, immediate restart
     pub auto_respawn: bool,
+    /// Environment variables to set in the session
+    pub env: Option<std::collections::HashMap<String, String>>,
 }
 
 #[cfg(test)]

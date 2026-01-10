@@ -271,6 +271,7 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
         working_directory: Some(folder_path_str),
         command: Some(agent_cmd.to_string()),
         auto_respawn: true, // Restart agent on exit via pane-died hook
+        env: None,
     })?;
 
     println!("{}", "✓ Folder orchestrator started".green());

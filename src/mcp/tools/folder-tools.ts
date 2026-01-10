@@ -2,13 +2,24 @@
  * Folder Tools - Folder and Preferences Management
  *
  * Tools for organizing sessions into folders and managing preferences.
+ * Includes hierarchy tools for agent context awareness.
  */
 import { z } from "zod";
 import { createTool } from "../registry";
 import { successResult } from "../utils/error-handler";
 import * as FolderService from "@/services/folder-service";
 import * as PreferencesService from "@/services/preferences-service";
+import { DrizzleProjectMetadataRepository } from "@/infrastructure/persistence/repositories/DrizzleProjectMetadataRepository";
+import { ProjectMetadataMapper } from "@/infrastructure/persistence/mappers/ProjectMetadataMapper";
 import type { RegisteredTool } from "../types";
+import type {
+  FolderChildResponse,
+  FolderMetadataSummary,
+  FolderContextResponse,
+} from "@/types/mcp-responses";
+
+// Repository instance for metadata lookups
+const metadataRepository = new DrizzleProjectMetadataRepository();
 
 /**
  * folder_list - List all folders
@@ -268,6 +279,203 @@ const preferencesSet = createTool({
 });
 
 /**
+ * folder_get_children - Get child folders for a parent
+ *
+ * Used by agents to understand what sub-projects exist under their assigned folder.
+ */
+const folderGetChildren = createTool({
+  name: "folder_get_children",
+  description:
+    "Get immediate child folders for a parent folder. " +
+    "Use this to discover sub-projects in your assigned scope. " +
+    "Set includeMetadata=true to get tech stack info for each child.",
+  inputSchema: z.object({
+    folderId: z.string().uuid().describe("Parent folder ID to get children for"),
+    includeMetadata: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Include project metadata (tech stack) for each child"),
+  }),
+  handler: async (input, context) => {
+    // Validate folder exists and belongs to user
+    const folder = await FolderService.getFolderById(input.folderId, context.userId);
+    if (!folder) {
+      return successResult({
+        success: false,
+        error: "Folder not found or access denied",
+        code: "FOLDER_NOT_FOUND",
+      });
+    }
+
+    const children = await FolderService.getChildFolders(input.folderId, context.userId);
+
+    // Optionally fetch metadata for each child
+    const childResponses: FolderChildResponse[] = await Promise.all(
+      children.map(async (child) => {
+        const response: FolderChildResponse = {
+          id: child.id,
+          name: child.name,
+          collapsed: child.collapsed,
+          sortOrder: child.sortOrder,
+        };
+
+        if (input.includeMetadata) {
+          const metadata = await metadataRepository.findByFolderId(child.id, context.userId);
+          if (metadata) {
+            response.metadata = {
+              category: metadata.category,
+              framework: metadata.framework,
+              primaryLanguage: metadata.primaryLanguage,
+              enrichmentStatus: metadata.enrichmentStatus.toString(),
+              enrichedAt: metadata.enrichedAt?.toISOString() ?? null,
+            };
+          }
+        }
+
+        return response;
+      })
+    );
+
+    return successResult({
+      success: true,
+      count: childResponses.length,
+      children: childResponses,
+    });
+  },
+});
+
+/**
+ * folder_get_context - Get complete project context for agent startup
+ *
+ * This is the primary tool for agents to understand their assigned scope.
+ * Returns folder metadata, preferences, tech stack, children, and parent chain.
+ */
+const folderGetContext = createTool({
+  name: "folder_get_context",
+  description:
+    "Get complete project context for a folder. " +
+    "Use this on startup to understand your assigned scope, tech stack, preferences, " +
+    "child projects you can coordinate, and your position in the folder hierarchy. " +
+    "Essential for autonomous agents to operate within their project boundary.",
+  inputSchema: z.object({
+    folderId: z.string().uuid().describe("Folder ID to get context for"),
+    includeChildren: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Include child folders and their metadata"),
+    includeParentChain: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Include parent folder chain to root"),
+  }),
+  handler: async (input, context) => {
+    // Get folder details
+    const folder = await FolderService.getFolderById(input.folderId, context.userId);
+    if (!folder) {
+      return successResult({
+        success: false,
+        error: "Folder not found or access denied",
+        code: "FOLDER_NOT_FOUND",
+      });
+    }
+
+    // Get resolved preferences (with inheritance)
+    const preferences = await PreferencesService.getResolvedPreferences(
+      context.userId,
+      input.folderId
+    );
+
+    // Get project metadata if enriched
+    const metadata = await metadataRepository.findByFolderId(input.folderId, context.userId);
+
+    // Build response
+    const response: FolderContextResponse = {
+      success: true,
+      folder: {
+        id: folder.id,
+        name: folder.name,
+        path: metadata?.projectPath ?? preferences.defaultWorkingDirectory ?? null,
+      },
+      preferences: preferences,
+      projectMetadata: metadata
+        ? {
+            category: metadata.category,
+            framework: metadata.framework,
+            primaryLanguage: metadata.primaryLanguage,
+            languages: metadata.languages,
+            packageManager: metadata.packageManager,
+            dependencyCount: metadata.dependencies.length,
+            devDependencyCount: metadata.devDependencies.length,
+            testFramework: metadata.testFramework?.framework ?? null,
+            buildTool: metadata.buildTool?.tool ?? null,
+            suggestedStartupCommands: metadata.suggestedStartupCommands,
+            enrichmentStatus: metadata.enrichmentStatus.toString(),
+            enrichedAt: metadata.enrichedAt?.toISOString() ?? null,
+          }
+        : null,
+      children: null,
+      parentChain: null,
+      hint: "",
+    };
+
+    // Get children if requested
+    if (input.includeChildren) {
+      const children = await FolderService.getChildFolders(input.folderId, context.userId);
+      response.children = await Promise.all(
+        children.map(async (child) => {
+          const childMeta = await metadataRepository.findByFolderId(child.id, context.userId);
+          return {
+            id: child.id,
+            name: child.name,
+            collapsed: child.collapsed,
+            sortOrder: child.sortOrder,
+            metadata: childMeta
+              ? {
+                  category: childMeta.category,
+                  framework: childMeta.framework,
+                  primaryLanguage: childMeta.primaryLanguage,
+                  enrichmentStatus: childMeta.enrichmentStatus.toString(),
+                  enrichedAt: childMeta.enrichedAt?.toISOString() ?? null,
+                }
+              : undefined,
+          };
+        })
+      );
+    }
+
+    // Get parent chain if requested
+    if (input.includeParentChain) {
+      const parents = await FolderService.getParentChain(input.folderId, context.userId);
+      response.parentChain = parents.map((p) => ({
+        id: p.id,
+        name: p.name,
+      }));
+    }
+
+    // Generate contextual hint
+    const hints: string[] = [];
+    if (metadata) {
+      hints.push(`${metadata.framework ?? metadata.category} project`);
+      if (metadata.primaryLanguage) {
+        hints.push(`primary language: ${metadata.primaryLanguage}`);
+      }
+    }
+    if (response.children && response.children.length > 0) {
+      hints.push(`${response.children.length} child project(s) in scope`);
+    }
+    if (!metadata) {
+      hints.push("metadata not enriched - use project_metadata_enrich to detect tech stack");
+    }
+    response.hint = hints.join(", ");
+
+    return successResult(response);
+  },
+});
+
+/**
  * Export all folder tools
  */
 export const folderTools: RegisteredTool[] = [
@@ -277,4 +485,6 @@ export const folderTools: RegisteredTool[] = [
   folderDelete,
   preferencesGet,
   preferencesSet,
+  folderGetChildren,
+  folderGetContext,
 ];

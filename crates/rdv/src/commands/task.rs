@@ -360,6 +360,7 @@ async fn execute_task(task_id: &str, config: &Config) -> Result<()> {
         working_directory: Some(working_dir),
         command: Some(agent_cmd.to_string()),
         auto_respawn: false,
+        env: None,
     })?;
 
     // Inject context

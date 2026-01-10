@@ -19,13 +19,16 @@ use crate::tmux;
 pub async fn execute(cmd: SessionCommand, config: &Config) -> Result<()> {
     match cmd.action {
         SessionAction::Spawn {
-            folder,
+            path,
             agent,
             shell,
             worktree,
             branch,
             name,
-        } => spawn(&folder, &agent, shell, worktree, branch.as_deref(), name.as_deref(), config).await,
+            folder,
+            flags,
+            dangerously_skip_permissions,
+        } => spawn(&path, &agent, shell, worktree, branch.as_deref(), name.as_deref(), folder.as_deref(), &flags, dangerously_skip_permissions, config).await,
         SessionAction::List { folder, all } => list(folder.as_deref(), all, config).await,
         SessionAction::Attach { session_id } => attach(&session_id, config).await,
         SessionAction::Inject { session_id, context } => {
@@ -48,23 +51,29 @@ fn resolve_folder_path(folder: &str) -> PathBuf {
 }
 
 async fn spawn(
-    folder: &str,
+    path: &str,
     agent: &str,
     shell: bool,
     worktree: bool,
     branch: Option<&str>,
     name: Option<&str>,
+    folder: Option<&str>,
+    flags: &[String],
+    dangerously_skip_permissions: bool,
     config: &Config,
 ) -> Result<()> {
-    let folder_path = resolve_folder_path(folder);
-    let folder_path_str = folder_path.to_string_lossy().to_string();
+    let project_path = resolve_folder_path(path);
+    let project_path_str = project_path.to_string_lossy().to_string();
 
     // Determine if this is a shell or agent session
     let is_shell = shell || agent == "none";
     let agent_provider = if is_shell { "none" } else { agent };
 
     println!("{}", "Spawning session...".cyan());
-    println!("  Folder: {:?}", folder_path);
+    println!("  Path: {:?}", project_path);
+    if let Some(f) = folder {
+        println!("  Folder: {}", f.cyan());
+    }
     if is_shell {
         println!("  Type: {} (shell)", "🖥️".cyan());
     } else {
@@ -81,19 +90,35 @@ async fn spawn(
     let session_id = uuid::Uuid::new_v4().to_string();
     let short_id = &session_id[..8];
     let session_display_name = name.unwrap_or_else(|| {
-        folder_path
+        project_path
             .file_name()
             .map(|n| n.to_str().unwrap_or("session"))
             .unwrap_or("session")
     });
     let tmux_session_name = format!("rdv-session-{}", &session_id);
 
-    // Determine command to run
+    // Build command with flags
     let command = if is_shell {
         None // Shell session - just spawn a shell
     } else {
         let agent_cmd = config.agent_command(agent).unwrap_or(agent);
-        Some(agent_cmd.to_string())
+        let mut cmd_parts = vec![agent_cmd.to_string()];
+
+        // Add --dangerously-skip-permissions for claude if requested
+        if dangerously_skip_permissions && agent == "claude" {
+            cmd_parts.push("--dangerously-skip-permissions".to_string());
+            println!("  Flags: {}", "--dangerously-skip-permissions".yellow());
+        }
+
+        // Add any custom flags
+        for flag in flags {
+            cmd_parts.push(flag.clone());
+        }
+        if !flags.is_empty() {
+            println!("  Custom flags: {}", flags.join(" ").yellow());
+        }
+
+        Some(cmd_parts.join(" "))
     };
 
     // TODO: Create worktree if requested
@@ -104,47 +129,90 @@ async fn spawn(
         );
     }
 
-    // Create tmux session
-    // Task sessions close on exit - user can respawn via UI if needed
-    tmux::create_session(&tmux::CreateSessionConfig {
-        session_name: tmux_session_name.clone(),
-        working_directory: Some(folder_path_str.clone()),
-        command,
-        auto_respawn: false,
-    })?;
+    // Create session in database FIRST to get the session ID for env vars
+    let mut db_session_id: Option<String> = None;
+    let mut db_folder_id: Option<String> = None;
 
-    // Create session in database
-    if let Ok(db) = Database::open() {
-        if let Ok(Some(user)) = db.get_default_user() {
-            // Find or create folder for the project path
-            let folder_id = db.list_folders(&user.id).ok()
-                .and_then(|folders| {
-                    folders.iter()
-                        .find(|f| f.name == folder_path_str || f.name.ends_with(session_display_name))
-                        .map(|f| f.id.clone())
-                });
+    match Database::open() {
+        Ok(db) => {
+            match db.get_default_user() {
+                Ok(Some(user)) => {
+                    // Find folder by explicit name/ID, or fall back to path matching
+                    let folder_id = if let Some(folder_name) = folder {
+                        // Look up by explicit folder name or ID
+                        db.list_folders(&user.id).ok()
+                            .and_then(|folders| {
+                                folders.iter()
+                                    .find(|f| f.name == folder_name || f.id == folder_name)
+                                    .map(|f| f.id.clone())
+                            })
+                    } else {
+                        // Fall back to matching by project path
+                        db.list_folders(&user.id).ok()
+                            .and_then(|folders| {
+                                folders.iter()
+                                    .find(|f| project_path_str.ends_with(&f.name))
+                                    .map(|f| f.id.clone())
+                            })
+                    };
 
-            let new_session = crate::db::NewSession {
-                user_id: user.id.clone(),
-                name: session_display_name.to_string(),
-                tmux_session_name: tmux_session_name.clone(),
-                project_path: Some(folder_path_str.clone()),
-                folder_id,
-                agent_provider: Some(agent_provider.to_string()),
-                is_orchestrator_session: false,
-            };
+                    db_folder_id = folder_id.clone();
 
-            match db.create_session(&new_session) {
-                Ok(id) => {
-                    println!("  {} Session registered in database", "✓".green());
-                    println!("  ID: {}", &id[..8]);
+                    let new_session = crate::db::NewSession {
+                        user_id: user.id.clone(),
+                        name: session_display_name.to_string(),
+                        tmux_session_name: tmux_session_name.clone(),
+                        project_path: Some(project_path_str.clone()),
+                        folder_id,
+                        agent_provider: Some(agent_provider.to_string()),
+                        is_orchestrator_session: false,
+                    };
+
+                    match db.create_session(&new_session) {
+                        Ok(id) => {
+                            println!("  {} Session registered in database", "✓".green());
+                            println!("  ID: {}", &id[..8]);
+                            db_session_id = Some(id);
+                        }
+                        Err(e) => {
+                            println!("  {} Database insert: {}", "⚠".yellow(), e);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    println!("  {} No default user found in database", "⚠".yellow());
                 }
                 Err(e) => {
-                    println!("  {} Database: {}", "⚠".yellow(), e);
+                    println!("  {} Database user lookup: {}", "⚠".yellow(), e);
                 }
             }
         }
+        Err(e) => {
+            println!("  {} Database open: {}", "⚠".yellow(), e);
+        }
     }
+
+    // Build environment variables for agent context
+    let mut env_vars = std::collections::HashMap::new();
+    if let Some(ref sid) = db_session_id {
+        env_vars.insert("RDV_SESSION_ID".to_string(), sid.clone());
+    }
+    if let Some(ref fid) = db_folder_id {
+        env_vars.insert("RDV_FOLDER_ID".to_string(), fid.clone());
+    }
+    // Always set the tmux session name for reference
+    env_vars.insert("RDV_TMUX_SESSION".to_string(), tmux_session_name.clone());
+    env_vars.insert("RDV_PROJECT_PATH".to_string(), project_path_str.clone());
+
+    // Create tmux session with context env vars
+    // Task sessions close on exit - user can respawn via UI if needed
+    tmux::create_session(&tmux::CreateSessionConfig {
+        session_name: tmux_session_name.clone(),
+        working_directory: Some(project_path_str.clone()),
+        command,
+        auto_respawn: false,
+        env: Some(env_vars),
+    })?;
 
     let session_type = if is_shell { "shell" } else { "agent" };
     println!("{}", format!("✓ {} session spawned", session_type).green());
