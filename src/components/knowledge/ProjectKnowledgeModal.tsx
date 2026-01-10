@@ -31,16 +31,18 @@ export function ProjectKnowledgeModal({
 }: ProjectKnowledgeModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Project Knowledge</DialogTitle>
+      <DialogContent className="sm:max-w-[600px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle className="flex items-center gap-2 text-foreground">
+            Project Knowledge
+          </DialogTitle>
           <DialogDescription>
             {folderName
               ? `Learned patterns, conventions, and skills for ${folderName}`
               : "View and manage project knowledge"}
           </DialogDescription>
         </DialogHeader>
-        <div className="flex-1 min-h-0 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-auto">
           <ProjectKnowledgePanel folderId={folderId} className="h-full" />
         </div>
       </DialogContent>

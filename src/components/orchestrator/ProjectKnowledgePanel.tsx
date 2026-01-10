@@ -153,39 +153,39 @@ export function ProjectKnowledgePanel({
       )}
 
       {/* Tabs */}
-      <Tabs defaultValue="conventions" className="flex-1 flex flex-col">
-        <TabsList className="w-full justify-start rounded-none border-b px-4">
-          <TabsTrigger value="conventions" className="gap-1">
+      <Tabs defaultValue="conventions" className="flex-1 flex flex-col min-h-0">
+        <TabsList className="w-full justify-start rounded-none border-b px-2 flex-shrink-0 h-auto flex-wrap gap-1 py-1">
+          <TabsTrigger value="conventions" className="gap-1 text-xs px-2 py-1">
             <FileCode2 className="h-3 w-3" />
-            Conventions
-            <Badge variant="outline" className="ml-1 h-5 px-1.5">
+            <span className="hidden sm:inline">Conventions</span>
+            <Badge variant="outline" className="h-4 px-1 text-[10px]">
               {knowledge.conventions.length}
             </Badge>
           </TabsTrigger>
-          <TabsTrigger value="patterns" className="gap-1">
+          <TabsTrigger value="patterns" className="gap-1 text-xs px-2 py-1">
             <Lightbulb className="h-3 w-3" />
-            Patterns
-            <Badge variant="outline" className="ml-1 h-5 px-1.5">
+            <span className="hidden sm:inline">Patterns</span>
+            <Badge variant="outline" className="h-4 px-1 text-[10px]">
               {knowledge.patterns.length}
             </Badge>
           </TabsTrigger>
-          <TabsTrigger value="skills" className="gap-1">
+          <TabsTrigger value="skills" className="gap-1 text-xs px-2 py-1">
             <Code2 className="h-3 w-3" />
-            Skills
-            <Badge variant="outline" className="ml-1 h-5 px-1.5">
+            <span className="hidden sm:inline">Skills</span>
+            <Badge variant="outline" className="h-4 px-1 text-[10px]">
               {knowledge.skills.length}
             </Badge>
           </TabsTrigger>
-          <TabsTrigger value="tools" className="gap-1">
+          <TabsTrigger value="tools" className="gap-1 text-xs px-2 py-1">
             <Wrench className="h-3 w-3" />
-            Tools
-            <Badge variant="outline" className="ml-1 h-5 px-1.5">
+            <span className="hidden sm:inline">Tools</span>
+            <Badge variant="outline" className="h-4 px-1 text-[10px]">
               {knowledge.tools.length}
             </Badge>
           </TabsTrigger>
         </TabsList>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <TabsContent value="conventions" className="m-0 p-4">
             <ConventionsList
               conventions={knowledge.conventions}
