@@ -190,20 +190,6 @@ export async function createSession(
     }
   }
 
-  // Determine startup command (explicit override takes precedence)
-  let startupCommand = input.startupCommand || preferences.startupCommand || undefined;
-
-  // Handle agent-aware session: auto-launch the agent CLI
-  if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
-    const agentCommand = buildAgentCommand(input.agentProvider, input.agentFlags);
-    if (agentCommand) {
-      // If there's already a startup command, chain them
-      startupCommand = startupCommand
-        ? `${startupCommand} && ${agentCommand}`
-        : agentCommand;
-    }
-  }
-
   // Fetch profile environment overlay if profile is specified
   let profileEnv: Record<string, string> | undefined;
   if (input.profileId) {
@@ -219,15 +205,35 @@ export async function createSession(
   // Fetch folder environment variables to inject into the shell
   const folderEnv = await getEnvironmentForSession(userId, input.folderId);
 
-  // Create the tmux session with profile environment and folder shell environment
+  // Determine session type and command approach:
+  // - Agent sessions: Use native tmux command spawning (command runs as the session process)
+  // - Terminal sessions: Start a plain shell, optionally with startupCommand injection
+  const isAgentSession = input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent;
+
+  // Create the tmux session
   try {
-    await TmuxService.createSession(
-      tmuxSessionName,
-      workingPath ?? undefined,
-      startupCommand,
-      profileEnv,
-      folderEnv ?? undefined
-    );
+    if (isAgentSession) {
+      // Agent session: Use native command spawning
+      // The agent CLI runs directly as the session process (no shell injection)
+      const agentCommand = buildAgentCommand(input.agentProvider!, input.agentFlags);
+      await TmuxService.createSession({
+        sessionName: tmuxSessionName,
+        cwd: workingPath ?? undefined,
+        command: agentCommand || undefined,
+        env: profileEnv,
+        autoRespawn: input.isOrchestratorSession ?? false, // Orchestrators auto-respawn
+      });
+    } else {
+      // Terminal session: Start a shell, optionally with startup command
+      const startupCommand = input.startupCommand || preferences.startupCommand || undefined;
+      await TmuxService.createSession(
+        tmuxSessionName,
+        workingPath ?? undefined,
+        startupCommand,
+        profileEnv,
+        folderEnv ?? undefined
+      );
+    }
   } catch (error) {
     if (error instanceof TmuxService.TmuxServiceError) {
       throw new SessionServiceError(

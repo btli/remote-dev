@@ -37,6 +37,47 @@ export class OrchestratorServiceError extends Error {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Lock mechanism to prevent race conditions in orchestrator operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+const operationLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Generate a lock key for orchestrator operations.
+ */
+function getLockKey(operation: string, userId: string, scopeId?: string): string {
+  return scopeId ? `${operation}:${userId}:${scopeId}` : `${operation}:${userId}`;
+}
+
+/**
+ * Execute an operation with lock protection.
+ * If another request is already performing the same operation, wait for it.
+ */
+async function withOperationLock<T>(
+  lockKey: string,
+  factory: () => Promise<T>
+): Promise<T> {
+  const existingLock = operationLocks.get(lockKey);
+  if (existingLock) {
+    console.log(`[OrchestratorService] Waiting for existing operation: ${lockKey}`);
+    await existingLock;
+    // After waiting, the operation completed - we don't need to do it again
+    // But for reinitialize, we want to return the result of the first operation
+    // So we'll run the factory again which will just find the newly created orchestrator
+  }
+
+  const operationPromise = factory();
+  operationLocks.set(lockKey, operationPromise);
+
+  try {
+    const result = await operationPromise;
+    return result;
+  } finally {
+    operationLocks.delete(lockKey);
+  }
+}
+
 /**
  * Input for creating a master orchestrator
  */
@@ -587,51 +628,55 @@ export async function reinitializeMasterOrchestrator(
   sessionId: string;
   previousOrchestrator?: { id: string; sessionId: string };
 }> {
-  const MonitoringService = await import("./monitoring-service");
-  const SessionService = await import("./session-service");
+  const lockKey = getLockKey("reinit-master", userId);
 
-  // Find existing master orchestrator
-  const existing = await getMasterOrchestrator(userId);
-  let previousOrchestrator: { id: string; sessionId: string } | undefined;
+  return withOperationLock(lockKey, async () => {
+    const MonitoringService = await import("./monitoring-service");
+    const SessionService = await import("./session-service");
 
-  if (existing) {
-    previousOrchestrator = {
-      id: existing.id,
-      sessionId: existing.sessionId,
-    };
+    // Find existing master orchestrator
+    const existing = await getMasterOrchestrator(userId);
+    let previousOrchestrator: { id: string; sessionId: string } | undefined;
 
-    // Stop monitoring
-    MonitoringService.stopMonitoring(existing.id);
+    if (existing) {
+      previousOrchestrator = {
+        id: existing.id,
+        sessionId: existing.sessionId,
+      };
 
-    // Delete orchestrator record
-    await db
-      .delete(orchestratorSessions)
-      .where(eq(orchestratorSessions.id, existing.id));
+      // Stop monitoring
+      MonitoringService.stopMonitoring(existing.id);
 
-    // Close the orchestrator session
-    try {
-      await SessionService.closeSession(userId, existing.sessionId);
-    } catch (error) {
-      // Session might already be closed, ignore
-      console.log(`[OrchestratorService] Previous session already closed: ${existing.sessionId}`);
+      // Delete orchestrator record
+      await db
+        .delete(orchestratorSessions)
+        .where(eq(orchestratorSessions.id, existing.id));
+
+      // Close the orchestrator session
+      try {
+        await SessionService.closeSession(userId, existing.sessionId);
+      } catch (error) {
+        // Session might already be closed, ignore
+        console.log(`[OrchestratorService] Previous session already closed: ${existing.sessionId}`);
+      }
+
+      console.log(`[OrchestratorService] Deleted previous master orchestrator: ${existing.id}`);
     }
 
-    console.log(`[OrchestratorService] Deleted previous master orchestrator: ${existing.id}`);
-  }
+    // Create new master orchestrator
+    const result = await ensureMasterOrchestrator(userId);
 
-  // Create new master orchestrator
-  const result = await ensureMasterOrchestrator(userId);
+    // Start monitoring for new orchestrator
+    MonitoringService.startMonitoring(result.orchestrator.id, userId);
 
-  // Start monitoring for new orchestrator
-  MonitoringService.startMonitoring(result.orchestrator.id, userId);
+    console.log(`[OrchestratorService] Created new master orchestrator: ${result.orchestrator.id}`);
 
-  console.log(`[OrchestratorService] Created new master orchestrator: ${result.orchestrator.id}`);
-
-  return {
-    orchestrator: result.orchestrator,
-    sessionId: result.sessionId!,
-    previousOrchestrator,
-  };
+    return {
+      orchestrator: result.orchestrator,
+      sessionId: result.sessionId!,
+      previousOrchestrator,
+    };
+  }); // End withOperationLock
 }
 
 /**
@@ -659,51 +704,55 @@ export async function reinitializeFolderOrchestrator(
   sessionId: string;
   previousOrchestrator?: { id: string; sessionId: string };
 }> {
-  const MonitoringService = await import("./monitoring-service");
-  const SessionService = await import("./session-service");
+  const lockKey = getLockKey("reinit-folder", userId, folderId);
 
-  // Find existing folder orchestrator
-  const existing = await getSubOrchestratorForFolder(folderId, userId);
-  let previousOrchestrator: { id: string; sessionId: string } | undefined;
+  return withOperationLock(lockKey, async () => {
+    const MonitoringService = await import("./monitoring-service");
+    const SessionService = await import("./session-service");
 
-  if (existing) {
-    previousOrchestrator = {
-      id: existing.id,
-      sessionId: existing.sessionId,
-    };
+    // Find existing folder orchestrator
+    const existing = await getSubOrchestratorForFolder(folderId, userId);
+    let previousOrchestrator: { id: string; sessionId: string } | undefined;
 
-    // Stop monitoring
-    MonitoringService.stopMonitoring(existing.id);
+    if (existing) {
+      previousOrchestrator = {
+        id: existing.id,
+        sessionId: existing.sessionId,
+      };
 
-    // Delete orchestrator record
-    await db
-      .delete(orchestratorSessions)
-      .where(eq(orchestratorSessions.id, existing.id));
+      // Stop monitoring
+      MonitoringService.stopMonitoring(existing.id);
 
-    // Close the orchestrator session
-    try {
-      await SessionService.closeSession(userId, existing.sessionId);
-    } catch (error) {
-      // Session might already be closed, ignore
-      console.log(`[OrchestratorService] Previous session already closed: ${existing.sessionId}`);
+      // Delete orchestrator record
+      await db
+        .delete(orchestratorSessions)
+        .where(eq(orchestratorSessions.id, existing.id));
+
+      // Close the orchestrator session
+      try {
+        await SessionService.closeSession(userId, existing.sessionId);
+      } catch (error) {
+        // Session might already be closed, ignore
+        console.log(`[OrchestratorService] Previous session already closed: ${existing.sessionId}`);
+      }
+
+      console.log(`[OrchestratorService] Deleted previous folder orchestrator: ${existing.id}`);
     }
 
-    console.log(`[OrchestratorService] Deleted previous folder orchestrator: ${existing.id}`);
-  }
+    // Create new folder orchestrator
+    const result = await ensureFolderSubOrchestrator(userId, folderId, config);
 
-  // Create new folder orchestrator
-  const result = await ensureFolderSubOrchestrator(userId, folderId, config);
+    // Start monitoring for new orchestrator
+    MonitoringService.startMonitoring(result.orchestrator.id, userId);
 
-  // Start monitoring for new orchestrator
-  MonitoringService.startMonitoring(result.orchestrator.id, userId);
+    console.log(`[OrchestratorService] Created new folder orchestrator: ${result.orchestrator.id}`);
 
-  console.log(`[OrchestratorService] Created new folder orchestrator: ${result.orchestrator.id}`);
-
-  return {
-    orchestrator: result.orchestrator,
-    sessionId: result.sessionId!,
-    previousOrchestrator,
-  };
+    return {
+      orchestrator: result.orchestrator,
+      sessionId: result.sessionId!,
+      previousOrchestrator,
+    };
+  }); // End withOperationLock
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
