@@ -155,7 +155,7 @@ impl ApiEndpoint {
     }
 
     /// Get the URL for HTTP requests (for Unix sockets, this is used for Host header)
-    #[cfg(feature = "http-api")]
+    #[allow(dead_code)]
     pub fn base_url(&self) -> String {
         match self {
             ApiEndpoint::Http(url) => url.clone(),
@@ -164,13 +164,13 @@ impl ApiEndpoint {
     }
 
     /// Check if this is a Unix socket endpoint
-    #[cfg(feature = "http-api")]
+    #[allow(dead_code)]
     pub fn is_unix_socket(&self) -> bool {
         matches!(self, ApiEndpoint::UnixSocket(_))
     }
 
     /// Get the Unix socket path if applicable
-    #[cfg(feature = "http-api")]
+    #[allow(dead_code)]
     pub fn socket_path(&self) -> Option<&PathBuf> {
         match self {
             ApiEndpoint::UnixSocket(path) => Some(path),
@@ -284,7 +284,7 @@ impl Config {
     }
 
     /// Save configuration to file.
-    #[cfg(feature = "http-api")]
+    #[allow(dead_code)]
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path();
 
@@ -314,7 +314,7 @@ impl Config {
     }
 
     /// Get the API endpoint (detects Unix socket vs HTTP)
-    #[cfg(feature = "http-api")]
+    #[allow(dead_code)]
     pub fn api_endpoint(&self) -> ApiEndpoint {
         if self.api.url.starts_with("unix:") {
             ApiEndpoint::UnixSocket(PathBuf::from(self.api.url.trim_start_matches("unix:")))

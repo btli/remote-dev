@@ -47,6 +47,7 @@ dialoguer.workspace = true
 indicatif.workspace = true
 md5.workspace = true
 which.workspace = true
+hostname.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true

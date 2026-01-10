@@ -18,6 +18,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Authentication management (CLI token)
+    Auth(AuthCommand),
+
     /// Master Control management (system-wide orchestrator)
     Master(MasterCommand),
 
@@ -71,6 +74,32 @@ pub enum Commands {
 
     /// Show version
     Version,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Authentication Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct AuthCommand {
+    #[command(subcommand)]
+    pub action: AuthAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AuthAction {
+    /// Login to rdv-server (register CLI token)
+    Login {
+        /// Custom name for the token (defaults to rdv-cli-{hostname})
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+
+    /// Logout (revoke CLI token)
+    Logout,
+
+    /// Show authentication status
+    Status,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

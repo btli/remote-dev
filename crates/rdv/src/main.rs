@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
 
     // Execute command
     match cli.command {
+        Commands::Auth(cmd) => commands::auth::handle(cmd.action, &config).await,
         Commands::Master(cmd) => commands::master::execute(cmd, &config).await,
         Commands::Folder(cmd) => commands::folder::execute(cmd, &config).await,
         Commands::Task(cmd) => commands::task::execute(cmd, &config).await,

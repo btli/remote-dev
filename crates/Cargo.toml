@@ -43,6 +43,7 @@ indicatif = "0.17"
 
 # Utilities
 which = "7"
+hostname = "0.4"
 dirs = "6"
 directories = "6"
 md5 = "0.7"

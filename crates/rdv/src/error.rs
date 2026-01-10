@@ -39,6 +39,7 @@ pub enum RdvError {
     Serialization(String),
 
     #[error("Escalation required: {0}")]
+    #[allow(dead_code)]
     EscalationRequired(String),
 
     #[error("{0}")]
