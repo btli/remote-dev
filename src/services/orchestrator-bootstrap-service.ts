@@ -62,6 +62,60 @@ export interface BootstrapFolderInput {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Startup Initialization
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Initialize orchestrators on server startup.
+ *
+ * This ensures Master Control exists for all users with active sessions,
+ * and wakes any existing orchestrators that should be running.
+ */
+export async function initializeOrchestrators(): Promise<void> {
+  console.log("[Bootstrap] Initializing orchestrators on startup...");
+
+  try {
+    // Find all users with active non-orchestrator sessions
+    const usersWithSessions = await db
+      .selectDistinct({ userId: terminalSessions.userId })
+      .from(terminalSessions)
+      .where(
+        and(
+          eq(terminalSessions.status, "active"),
+          eq(terminalSessions.isOrchestratorSession, false)
+        )
+      );
+
+    console.log(`[Bootstrap] Found ${usersWithSessions.length} users with active sessions`);
+
+    for (const { userId } of usersWithSessions) {
+      try {
+        // Check if Master Control exists
+        const existingMaster = await container.orchestratorRepository.findMasterByUserId(userId);
+
+        if (!existingMaster) {
+          console.log(`[Bootstrap] Creating Master Control for user ${userId}...`);
+          const result = await bootstrapMasterControl({ userId });
+          console.log(`[Bootstrap] Created Master Control: ${result.orchestratorId}`);
+        } else {
+          // Wake existing Master Control if dormant
+          console.log(`[Bootstrap] Waking existing Master Control: ${existingMaster.id}`);
+          await wakeOrchestrator(existingMaster.id);
+        }
+      } catch (error) {
+        console.error(`[Bootstrap] Failed to initialize orchestrator for user ${userId}:`, error);
+        // Continue with other users
+      }
+    }
+
+    console.log("[Bootstrap] Orchestrator initialization complete");
+  } catch (error) {
+    console.error("[Bootstrap] Failed to initialize orchestrators:", error);
+    throw error;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Auto-Spin Feature Flag
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -513,8 +567,9 @@ async function writeMcpConfig(configPath: string): Promise<void> {
   const socketPath = process.env.RDV_SOCKET_PATH || "/tmp/rdv/next.sock";
   const isProduction = process.env.NODE_ENV === "production";
 
-  // Path to the MCP server script (relative to project root)
-  const projectRoot = join(__dirname, "..", "..");
+  // Path to the MCP server script
+  // Use RDV_PROJECT_ROOT env var or fall back to cwd (more reliable than __dirname in Next.js)
+  const projectRoot = process.env.RDV_PROJECT_ROOT || process.cwd();
   const mcpServerPath = join(projectRoot, "scripts", "mcp-server.mjs");
 
   const config = {

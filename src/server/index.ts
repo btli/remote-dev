@@ -6,6 +6,7 @@ import {
   shutdownMCPServer,
 } from "../mcp/index";
 import { initializeMonitoring, stopAllMonitoring } from "../services/monitoring-service";
+import { initializeOrchestrators } from "../services/orchestrator-bootstrap-service";
 import { workerManager } from "../services/workers/worker-manager";
 import { createTaskMonitorWorker } from "../services/workers/task-monitor-worker";
 import { createKnowledgeRefreshWorker } from "../services/workers/knowledge-refresh-worker";
@@ -45,6 +46,15 @@ async function startServer() {
   } catch (error) {
     console.error("[Server] Failed to initialize orchestrator monitoring:", error);
     // Don't fail server startup if monitoring fails
+  }
+
+  // Bootstrap orchestrators for users with active sessions
+  try {
+    await initializeOrchestrators();
+    console.log("[Server] Orchestrators bootstrapped");
+  } catch (error) {
+    console.error("[Server] Failed to bootstrap orchestrators:", error);
+    // Don't fail server startup if bootstrap fails
   }
 
   // Register and start background workers
