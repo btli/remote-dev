@@ -560,12 +560,12 @@ function formatEventMessage(event: {
  * Write .mcp.json configuration for orchestrator MCP access.
  *
  * Uses stdio transport which bypasses Cloudflare auth.
- * In production, uses Unix socket; in dev, uses HTTP.
+ * Prefers Unix socket if it exists, otherwise falls back to HTTP.
  */
 async function writeMcpConfig(configPath: string): Promise<void> {
-  // Detect production mode via socket path
+  // Check for Unix socket (production mode)
   const socketPath = process.env.RDV_SOCKET_PATH || "/tmp/rdv/next.sock";
-  const isProduction = process.env.NODE_ENV === "production";
+  const useSocket = existsSync(socketPath);
 
   // Path to the MCP server script
   // Use RDV_PROJECT_ROOT env var or fall back to cwd (more reliable than __dirname in Next.js)
@@ -577,7 +577,7 @@ async function writeMcpConfig(configPath: string): Promise<void> {
       "remote-dev": {
         command: "node",
         args: [mcpServerPath],
-        env: isProduction
+        env: useSocket
           ? {
               SOCKET_PATH: socketPath,
             }
