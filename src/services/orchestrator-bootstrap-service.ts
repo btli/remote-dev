@@ -70,12 +70,18 @@ export interface BootstrapFolderInput {
  *
  * This ensures Master Control exists for all users with active sessions,
  * and wakes any existing orchestrators that should be running.
+ *
+ * First cleans up stale orchestrator records (where terminal session is closed).
  */
 export async function initializeOrchestrators(): Promise<void> {
   console.log("[Bootstrap] Initializing orchestrators on startup...");
 
   try {
-    // Find all users with active non-orchestrator sessions
+    // Step 1: Clean up stale orchestrator records
+    // Find orchestrators whose terminal sessions are closed/inactive
+    await cleanupStaleOrchestrators();
+
+    // Step 2: Find all users with active non-orchestrator sessions
     const usersWithSessions = await db
       .selectDistinct({ userId: terminalSessions.userId })
       .from(terminalSessions)
@@ -112,6 +118,66 @@ export async function initializeOrchestrators(): Promise<void> {
   } catch (error) {
     console.error("[Bootstrap] Failed to initialize orchestrators:", error);
     throw error;
+  }
+}
+
+/**
+ * Clean up stale orchestrator records.
+ *
+ * Finds orchestrator records whose terminal sessions are closed/inactive
+ * and deletes them so fresh ones can be created.
+ */
+async function cleanupStaleOrchestrators(): Promise<void> {
+  console.log("[Bootstrap] Cleaning up stale orchestrator records...");
+
+  try {
+    // Find all orchestrators
+    const allOrchestrators = await db
+      .select({
+        id: orchestratorSessions.id,
+        sessionId: orchestratorSessions.sessionId,
+        type: orchestratorSessions.type,
+      })
+      .from(orchestratorSessions);
+
+    let cleanedCount = 0;
+
+    for (const orc of allOrchestrators) {
+      // Check if the terminal session exists and is active
+      const sessions = await db
+        .select({ status: terminalSessions.status, tmuxSessionName: terminalSessions.tmuxSessionName })
+        .from(terminalSessions)
+        .where(eq(terminalSessions.id, orc.sessionId))
+        .limit(1);
+
+      const session = sessions[0];
+
+      // Delete orchestrator if:
+      // 1. Terminal session doesn't exist, OR
+      // 2. Terminal session is closed/suspended
+      const isStale = !session || session.status === "closed" || session.status === "suspended";
+
+      // Also check if tmux session actually exists
+      let tmuxExists = false;
+      if (session?.tmuxSessionName) {
+        tmuxExists = await TmuxService.sessionExists(session.tmuxSessionName);
+      }
+
+      if (isStale || !tmuxExists) {
+        console.log(`[Bootstrap] Removing stale ${orc.type} orchestrator: ${orc.id}`);
+        await db.delete(orchestratorSessions).where(eq(orchestratorSessions.id, orc.id));
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      console.log(`[Bootstrap] Cleaned up ${cleanedCount} stale orchestrator records`);
+    } else {
+      console.log("[Bootstrap] No stale orchestrator records found");
+    }
+  } catch (error) {
+    console.error("[Bootstrap] Failed to cleanup stale orchestrators:", error);
+    // Don't throw - allow initialization to continue
   }
 }
 
