@@ -13,8 +13,22 @@
 import { InvalidValueError } from "../errors/DomainError";
 import { randomUUID } from "crypto";
 
-// rdv-{uuid} pattern: rdv- followed by 36 character UUID
-const TMUX_NAME_PATTERN = /^rdv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Allowed tmux session name patterns:
+// - rdv-{uuid} - Original pattern for web UI sessions
+// - rdv-session-{uuid} - Sessions created via rdv CLI
+// - rdv-task-{uuid} - Task sessions from rdv CLI
+// - rdv-folder-{uuid} - Folder orchestrator sessions
+// - rdv-master-control - Master Control orchestrator
+const RDV_SESSION_PATTERNS = [
+  /^rdv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^rdv-session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^rdv-task-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^rdv-folder-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+];
+const SPECIAL_NAMES = ["rdv-master-control"];
+const TMUX_NAME_PATTERN = (value: string): boolean =>
+  RDV_SESSION_PATTERNS.some((pattern) => pattern.test(value)) ||
+  SPECIAL_NAMES.includes(value);
 const PREFIX = "rdv-";
 
 export class TmuxSessionName {
@@ -33,7 +47,7 @@ export class TmuxSessionName {
       );
     }
 
-    if (!TMUX_NAME_PATTERN.test(value)) {
+    if (!TMUX_NAME_PATTERN(value)) {
       throw new InvalidValueError(
         "TmuxSessionName",
         value,
@@ -68,6 +82,14 @@ export class TmuxSessionName {
 
   /** Extract the UUID portion (session ID) */
   getSessionId(): string {
+    // Handle different prefixes: rdv-, rdv-session-, rdv-task-, rdv-folder-
+    const prefixes = ["rdv-session-", "rdv-task-", "rdv-folder-", "rdv-"];
+    for (const prefix of prefixes) {
+      if (this.value.startsWith(prefix)) {
+        return this.value.slice(prefix.length);
+      }
+    }
+    // Fallback for special names
     return this.value.slice(PREFIX.length);
   }
 

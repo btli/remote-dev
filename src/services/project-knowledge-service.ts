@@ -269,56 +269,84 @@ export class ProjectKnowledgeService {
   }
 
   /**
-   * Detect tech stack from folder contents.
+   * Detect tech stack from folder contents using ProjectMetadataService.
+   * This provides comprehensive detection of languages, frameworks, and tools.
    */
   private async detectTechStack(folderPath: string): Promise<string[]> {
-    const { execFile } = await import("child_process");
-    const { promisify } = await import("util");
-    const execFileAsync = promisify(execFile);
-
-    const techStack: string[] = [];
-
     try {
-      // Check for common config files
-      const { stdout: files } = await execFileAsync("ls", ["-a", folderPath]);
-      const fileList = files.split("\n").map((f) => f.trim().toLowerCase());
+      const { ProjectMetadataService } = await import("./project-metadata-service");
+      const metadataService = new ProjectMetadataService();
+      const result = await metadataService.detect(folderPath);
 
-      // JavaScript/TypeScript ecosystem
-      if (fileList.includes("package.json")) {
-        techStack.push("node");
-        if (fileList.includes("tsconfig.json")) techStack.push("typescript");
-        if (fileList.includes("next.config.js") || fileList.includes("next.config.mjs") || fileList.includes("next.config.ts")) {
-          techStack.push("next.js");
-        }
-        if (fileList.includes("vite.config.ts") || fileList.includes("vite.config.js")) {
-          techStack.push("vite");
-        }
+      const techStack: string[] = [];
+
+      // Add primary language
+      if (result.primaryLanguage) {
+        techStack.push(result.primaryLanguage);
       }
 
-      // Python ecosystem
-      if (fileList.includes("pyproject.toml") || fileList.includes("setup.py")) {
-        techStack.push("python");
-        if (fileList.includes("requirements.txt")) techStack.push("pip");
+      // Add framework
+      if (result.framework) {
+        techStack.push(result.framework);
       }
 
-      // Rust
-      if (fileList.includes("cargo.toml")) techStack.push("rust");
-
-      // Go
-      if (fileList.includes("go.mod")) techStack.push("go");
-
-      // Docker
-      if (fileList.includes("dockerfile") || fileList.includes("docker-compose.yml")) {
-        techStack.push("docker");
+      // Add package manager
+      if (result.packageManager) {
+        techStack.push(result.packageManager);
       }
 
-      // Git
-      if (fileList.includes(".git")) techStack.push("git");
+      // Add common indicators
+      if (result.hasDocker) techStack.push("docker");
+      if (result.git) techStack.push("git");
+      if (result.hasTypeScript) techStack.push("typescript");
+
+      // Add test framework
+      if (result.testFramework?.framework) {
+        techStack.push(result.testFramework.framework);
+      }
+
+      return techStack;
     } catch {
-      // Folder might not exist yet
+      // Fallback to empty if detection fails
+      return [];
+    }
+  }
+
+  /**
+   * Refresh tech stack for existing project knowledge.
+   * Re-detects the tech stack from the folder and updates the knowledge.
+   */
+  async refreshTechStack(
+    knowledgeId: string,
+    folderPath: string
+  ): Promise<ProjectKnowledge | null> {
+    const knowledge = await this.repository.findById(knowledgeId);
+    if (!knowledge) {
+      return null;
     }
 
-    return techStack;
+    const techStack = await this.detectTechStack(folderPath);
+    const updated = knowledge.updateTechStack(techStack).markScanned();
+    await this.repository.save(updated);
+    return updated;
+  }
+
+  /**
+   * Refresh tech stack by folder ID.
+   */
+  async refreshTechStackByFolderId(
+    folderId: string,
+    folderPath: string
+  ): Promise<ProjectKnowledge | null> {
+    const knowledge = await this.repository.findByFolderId(folderId);
+    if (!knowledge) {
+      return null;
+    }
+
+    const techStack = await this.detectTechStack(folderPath);
+    const updated = knowledge.updateTechStack(techStack).markScanned();
+    await this.repository.save(updated);
+    return updated;
   }
 
   /**
