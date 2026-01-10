@@ -51,6 +51,10 @@ const sessionList = createTool({
         projectPath: s.projectPath,
         folderId: s.folderId,
         worktreeBranch: s.worktreeBranch,
+        // Session type fields
+        agentProvider: s.agentProvider,
+        isOrchestratorSession: s.isOrchestratorSession,
+        profileId: s.profileId,
         lastActivityAt: s.lastActivityAt,
         createdAt: s.createdAt,
       })),
@@ -89,6 +93,15 @@ const sessionCreate = createTool({
       .string()
       .optional()
       .describe("Base branch for worktree creation"),
+    agentProvider: z
+      .enum(["claude", "codex", "gemini", "opencode", "none"])
+      .optional()
+      .describe("Agent provider: claude, codex, gemini, opencode, or none for shell sessions"),
+    profileId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe("Agent profile ID for environment isolation"),
   }),
   handler: async (input, context) => {
     // Generate a default name if not provided
@@ -102,6 +115,8 @@ const sessionCreate = createTool({
       createWorktree: input.createWorktree,
       featureDescription: input.featureDescription,
       baseBranch: input.baseBranch,
+      agentProvider: input.agentProvider,
+      profileId: input.profileId,
     });
 
     return successResult({
@@ -113,6 +128,8 @@ const sessionCreate = createTool({
         status: session.status,
         projectPath: session.projectPath,
         worktreeBranch: session.worktreeBranch,
+        agentProvider: session.agentProvider,
+        profileId: session.profileId,
       },
       hint: `Use session_execute with sessionId "${session.id}" to run commands.`,
     });
@@ -157,6 +174,10 @@ const sessionGet = createTool({
         folderId: session.folderId,
         worktreeBranch: session.worktreeBranch,
         repository: session.repository,
+        // Session type fields
+        agentProvider: session.agentProvider,
+        isOrchestratorSession: session.isOrchestratorSession,
+        profileId: session.profileId,
         lastActivityAt: session.lastActivityAt,
         createdAt: session.createdAt,
       },

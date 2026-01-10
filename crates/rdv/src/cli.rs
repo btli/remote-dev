@@ -259,12 +259,16 @@ pub enum SessionAction {
         /// Folder path
         folder: String,
 
-        /// Agent to use (claude, codex, gemini, opencode)
+        /// Agent to use (claude, codex, gemini, opencode, none)
         #[arg(short, long, default_value = "claude")]
         agent: String,
 
-        /// Create worktree for isolation
+        /// Spawn a shell session instead of an agent session
         #[arg(short, long)]
+        shell: bool,
+
+        /// Create worktree for isolation
+        #[arg(short = 'W', long)]
         worktree: bool,
 
         /// Branch name for worktree

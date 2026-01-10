@@ -21,10 +21,11 @@ pub async fn execute(cmd: SessionCommand, config: &Config) -> Result<()> {
         SessionAction::Spawn {
             folder,
             agent,
+            shell,
             worktree,
             branch,
             name,
-        } => spawn(&folder, &agent, worktree, branch.as_deref(), name.as_deref(), config).await,
+        } => spawn(&folder, &agent, shell, worktree, branch.as_deref(), name.as_deref(), config).await,
         SessionAction::List { folder, all } => list(folder.as_deref(), all, config).await,
         SessionAction::Attach { session_id } => attach(&session_id, config).await,
         SessionAction::Inject { session_id, context } => {
@@ -49,6 +50,7 @@ fn resolve_folder_path(folder: &str) -> PathBuf {
 async fn spawn(
     folder: &str,
     agent: &str,
+    shell: bool,
     worktree: bool,
     branch: Option<&str>,
     name: Option<&str>,
@@ -57,9 +59,17 @@ async fn spawn(
     let folder_path = resolve_folder_path(folder);
     let folder_path_str = folder_path.to_string_lossy().to_string();
 
-    println!("{}", "Spawning task session...".cyan());
+    // Determine if this is a shell or agent session
+    let is_shell = shell || agent == "none";
+    let agent_provider = if is_shell { "none" } else { agent };
+
+    println!("{}", "Spawning session...".cyan());
     println!("  Folder: {:?}", folder_path);
-    println!("  Agent: {}", agent);
+    if is_shell {
+        println!("  Type: {} (shell)", "🖥️".cyan());
+    } else {
+        println!("  Type: {} (agent: {})", "🤖".blue(), agent);
+    }
     if worktree {
         println!("  Worktree: yes");
         if let Some(b) = branch {
@@ -68,16 +78,23 @@ async fn spawn(
     }
 
     // Generate session name
-    let short_id = &uuid::Uuid::new_v4().to_string()[..8];
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let short_id = &session_id[..8];
     let session_display_name = name.unwrap_or_else(|| {
         folder_path
             .file_name()
             .map(|n| n.to_str().unwrap_or("session"))
             .unwrap_or("session")
     });
-    let tmux_session_name = format!("rdv-task-{}-{}", session_display_name, short_id);
+    let tmux_session_name = format!("rdv-session-{}", &session_id);
 
-    let agent_cmd = config.agent_command(agent).unwrap_or(agent);
+    // Determine command to run
+    let command = if is_shell {
+        None // Shell session - just spawn a shell
+    } else {
+        let agent_cmd = config.agent_command(agent).unwrap_or(agent);
+        Some(agent_cmd.to_string())
+    };
 
     // TODO: Create worktree if requested
     if worktree {
@@ -87,22 +104,56 @@ async fn spawn(
         );
     }
 
-    // Create tmux session directly (direct SQLite)
-    // The web app will detect and track the session
+    // Create tmux session
     // Task sessions close on exit - user can respawn via UI if needed
     tmux::create_session(&tmux::CreateSessionConfig {
         session_name: tmux_session_name.clone(),
-        working_directory: Some(folder_path_str),
-        command: Some(agent_cmd.to_string()),
+        working_directory: Some(folder_path_str.clone()),
+        command,
         auto_respawn: false,
     })?;
 
-    println!("{}", "✓ Session spawned".green());
-    println!("  tmux Session: {}", tmux_session_name);
+    // Create session in database
+    if let Ok(db) = Database::open() {
+        if let Ok(Some(user)) = db.get_default_user() {
+            // Find or create folder for the project path
+            let folder_id = db.list_folders(&user.id).ok()
+                .and_then(|folders| {
+                    folders.iter()
+                        .find(|f| f.name == folder_path_str || f.name.ends_with(session_display_name))
+                        .map(|f| f.id.clone())
+                });
+
+            let new_session = crate::db::NewSession {
+                user_id: user.id.clone(),
+                name: session_display_name.to_string(),
+                tmux_session_name: tmux_session_name.clone(),
+                project_path: Some(folder_path_str.clone()),
+                folder_id,
+                agent_provider: Some(agent_provider.to_string()),
+                is_orchestrator_session: false,
+            };
+
+            match db.create_session(&new_session) {
+                Ok(id) => {
+                    println!("  {} Session registered in database", "✓".green());
+                    println!("  ID: {}", &id[..8]);
+                }
+                Err(e) => {
+                    println!("  {} Database: {}", "⚠".yellow(), e);
+                }
+            }
+        }
+    }
+
+    let session_type = if is_shell { "shell" } else { "agent" };
+    println!("{}", format!("✓ {} session spawned", session_type).green());
+    println!("  tmux: {}", tmux_session_name);
+    println!("  name: {}", session_display_name);
     println!();
     println!(
         "  Run `rdv session attach {}` to connect",
-        tmux_session_name
+        short_id
     );
 
     Ok(())
@@ -141,14 +192,18 @@ async fn list(folder: Option<&str>, all: bool, _config: &Config) -> Result<()> {
             } else {
                 "detached".yellow()
             };
-            let session_type = if session.name.contains("-master-") {
-                "master"
+            // Determine session type from tmux name pattern
+            let (icon, session_type) = if session.name.contains("-master-") {
+                ("🧠", "master")
             } else if session.name.contains("-folder-") {
-                "folder"
+                ("🧠", "folder")
+            } else if session.name.contains("-task-") || session.name.contains("-session-") {
+                // Could be agent or shell - check database for more info
+                ("📦", "task")
             } else {
-                "task"
+                ("🖥️ ", "shell")
             };
-            println!("    {} ({}) [{}]", session.name, status, session_type);
+            println!("    {} {} ({}) [{}]", icon, session.name, status, session_type);
         }
     }
 
@@ -194,17 +249,28 @@ async fn list(folder: Option<&str>, all: bool, _config: &Config) -> Result<()> {
                         "closed" => "closed".red(),
                         _ => session.status.normal(),
                     };
-                    let agent = session.agent_provider.as_deref().unwrap_or("unknown");
+
+                    // Determine session type icon
+                    let (icon, type_label) = if session.is_orchestrator_session {
+                        ("🧠", "orch")
+                    } else {
+                        match session.agent_provider.as_deref() {
+                            Some("none") | None => ("🖥️ ", "shell"),
+                            Some(agent) => ("🤖", agent),
+                        }
+                    };
+
                     let id_short = if session.id.len() >= 8 {
                         &session.id[..8]
                     } else {
                         &session.id
                     };
                     println!(
-                        "    {} ({}) [{}] - {}",
+                        "    {} {} ({}) [{}] - {}",
+                        icon,
                         id_short,
                         status,
-                        agent,
+                        type_label,
                         session.name
                     );
                 }
