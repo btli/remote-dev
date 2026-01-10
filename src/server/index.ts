@@ -3,10 +3,6 @@ import { homedir } from "os";
 import { join } from "path";
 import { createTerminalServer } from "./terminal";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator";
-import {
-  initializeMCPServer,
-  shutdownMCPServer,
-} from "../mcp/index";
 import { initializeMonitoring, stopAllMonitoring } from "../services/monitoring-service";
 import { initializeOrchestrators } from "../services/orchestrator-bootstrap-service";
 import { workerManager } from "../services/workers/worker-manager";
@@ -24,7 +20,8 @@ const DEFAULT_TERMINAL_SOCKET = join(REMOTE_DEV_DIR, "run", "terminal.sock");
 // Support both port and socket modes (socket takes precedence)
 const TERMINAL_SOCKET = process.env.TERMINAL_SOCKET || (process.env.NODE_ENV === "production" ? DEFAULT_TERMINAL_SOCKET : undefined);
 const TERMINAL_PORT = parseInt(process.env.TERMINAL_PORT || "6002");
-const MCP_ENABLED = process.env.MCP_ENABLED === "true";
+
+// MCP server is now handled by rdv-server (Rust) - run with: rdv-server --mcp
 
 async function startServer() {
   // Start the terminal WebSocket server (socket mode takes precedence)
@@ -75,17 +72,6 @@ async function startServer() {
     // Don't fail server startup if workers fail
   }
 
-  // Start MCP server if enabled
-  if (MCP_ENABLED) {
-    try {
-      await initializeMCPServer();
-      console.error("[Server] MCP server started on stdio");
-    } catch (error) {
-      console.error("[Server] Failed to start MCP server:", error);
-      // Don't fail server startup if MCP fails
-    }
-  }
-
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     console.log(`\n[Server] ${signal} received, shutting down gracefully...`);
@@ -104,16 +90,6 @@ async function startServer() {
       console.log("[Server] Background workers stopped");
     } catch (error) {
       console.error("[Server] Error stopping background workers:", error);
-    }
-
-    // Shutdown MCP server if enabled
-    if (MCP_ENABLED) {
-      try {
-        await shutdownMCPServer();
-        console.error("[Server] MCP server stopped");
-      } catch (error) {
-        console.error("[Server] Error stopping MCP server:", error);
-      }
     }
 
     try {
