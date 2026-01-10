@@ -117,3 +117,14 @@ export function textResult(text: string): ToolResult {
     ],
   };
 }
+
+/**
+ * Create an error result with a message and optional code.
+ */
+export function errorResult(message: string, code?: string): ToolResult {
+  const error = new Error(message);
+  if (code) {
+    (error as Error & { code?: string }).code = code;
+  }
+  return formatError(error);
+}

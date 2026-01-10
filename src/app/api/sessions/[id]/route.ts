@@ -8,6 +8,7 @@ import * as ScheduleService from "@/services/schedule-service";
 import { notifySessionJobsRemoved } from "@/lib/scheduler-client";
 import { getFolderPreferences } from "@/services/preferences-service";
 import { SessionEndAnalysisService, type SessionEndType } from "@/services/session-end-analysis-service";
+import { getEpisodicMemory } from "@/services/episodic-memory-service";
 import { container } from "@/infrastructure/container";
 import type { UpdateSessionInput, SessionStatus } from "@/types/session";
 import { resolve } from "path";
@@ -130,6 +131,43 @@ async function extractLearnings(params: {
 
     // Save updated knowledge
     await container.projectKnowledgeRepository.save(updated);
+
+    // Also store as Episode in Episodic Memory for vector search
+    try {
+      const episodicMemory = getEpisodicMemory(folderId);
+
+      // Create episode from analysis
+      const recordingId = episodicMemory.startRecording(
+        sessionId,
+        folderId,
+        analysis.summary,
+        agentProvider
+      );
+
+      // Complete the recording with reflection from analysis
+      await episodicMemory.completeRecording(
+        recordingId,
+        analysis.outcome === "success" || analysis.outcome === "completed",
+        analysis.summary,
+        {
+          whatWorked: analysis.learnings
+            .filter(l => l.confidence > 0.7)
+            .map(l => l.description),
+          whatFailed: analysis.issues.map(i => i.description),
+          keyInsights: analysis.improvements.map(i => `${i.title}: ${i.description}`),
+          wouldDoDifferently: analysis.improvements
+            .filter(i => i.action)
+            .map(i => i.action)
+            .join("; ") || undefined,
+        },
+        analysis.issues.map(i => i.type)
+      );
+
+      console.log(`[Learning] Stored episode for session ${sessionId}`);
+    } catch (episodeError) {
+      // Don't fail if episode storage fails
+      console.warn(`[Learning] Failed to store episode for session ${sessionId}:`, episodeError);
+    }
 
     console.log(
       `[Learning] Extracted ${analysis.learnings.length} learnings, ` +

@@ -9,6 +9,7 @@ import { folderTools } from "./folder-tools";
 import { orchestratorTools } from "./orchestrator-tools";
 import { metadataTools } from "./metadata-tools";
 import { taskTools } from "./task-tools";
+import { learningTools } from "./learning-tools";
 import type { RegisteredTool } from "../types";
 
 /**
@@ -39,6 +40,9 @@ import type { RegisteredTool } from "../types";
  * Metadata Tools:
  * - project_metadata_get, project_metadata_enrich, project_metadata_detect
  * - project_metadata_list, project_metadata_refresh_stale
+ *
+ * Learning Tools:
+ * - knowledge_add, knowledge_update, knowledge_delete
  */
 export const allTools: RegisteredTool[] = [
   ...sessionTools,
@@ -47,6 +51,7 @@ export const allTools: RegisteredTool[] = [
   ...orchestratorTools,
   ...taskTools,
   ...metadataTools,
+  ...learningTools,
 ];
 
 /**
