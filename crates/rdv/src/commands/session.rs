@@ -89,12 +89,12 @@ async fn spawn(
 
     // Create tmux session directly (direct SQLite)
     // The web app will detect and track the session
-    // Task sessions don't use remain_on_exit - they're not auto-respawned
+    // Task sessions close on exit - user can respawn via UI if needed
     tmux::create_session(&tmux::CreateSessionConfig {
         session_name: tmux_session_name.clone(),
         working_directory: Some(folder_path_str),
         command: Some(agent_cmd.to_string()),
-        remain_on_exit: false,
+        auto_respawn: false,
     })?;
 
     println!("{}", "✓ Session spawned".green());

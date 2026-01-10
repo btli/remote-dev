@@ -66,23 +66,76 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
   });
 }
 
+export interface CreateSessionOptions {
+  /** Unique session name (e.g., "rdv-abc123") */
+  sessionName: string;
+  /** Working directory for the session */
+  cwd?: string;
+  /**
+   * Command to run as the session process.
+   * If provided, this runs directly as the tmux session process (no shell).
+   * If not provided, starts a shell and uses startupCommand via sendKeys.
+   */
+  command?: string;
+  /**
+   * @deprecated Use `command` instead for native process spawning.
+   * Legacy: Command to inject via sendKeys after shell starts.
+   */
+  startupCommand?: string;
+  /** Environment variables to set for the session */
+  env?: Record<string, string>;
+  /**
+   * @deprecated Use `env` instead with native command spawning.
+   * Legacy: Shell environment variables to export via sendKeys.
+   */
+  shellEnv?: Record<string, string>;
+  /** tmux history-limit (scrollback buffer, default: 50000) */
+  historyLimit?: number;
+  /** Auto-respawn process when it exits (for orchestrators, default: false) */
+  autoRespawn?: boolean;
+}
+
 /**
  * Create a new tmux session
- * @param sessionName - Unique session name (e.g., "rdv-abc123")
- * @param cwd - Working directory for the session
- * @param startupCommand - Optional command to run after session creation
- * @param env - Optional environment variables to set for the session
- * @param shellEnv - Optional shell environment variables to export
- * @param historyLimit - Optional tmux history-limit (scrollback buffer, default: 50000)
+ *
+ * Preferred approach: Pass `command` to run it directly as the session process.
+ * This uses tmux's native process spawning (no shell injection).
+ *
+ * Legacy approach: Omit `command` to start a shell, then use `startupCommand`
+ * and `shellEnv` which are injected via sendKeys.
  */
 export async function createSession(
-  sessionName: string,
+  sessionNameOrOptions: string | CreateSessionOptions,
   cwd?: string,
   startupCommand?: string,
   env?: Record<string, string>,
   shellEnv?: Record<string, string>,
   historyLimit: number = 50000
 ): Promise<void> {
+  // Support both old signature and new options object
+  const options: CreateSessionOptions =
+    typeof sessionNameOrOptions === "string"
+      ? {
+          sessionName: sessionNameOrOptions,
+          cwd,
+          startupCommand,
+          env,
+          shellEnv,
+          historyLimit,
+        }
+      : sessionNameOrOptions;
+
+  const {
+    sessionName,
+    cwd: optCwd,
+    command,
+    startupCommand: optStartupCommand,
+    env: optEnv,
+    shellEnv: optShellEnv,
+    historyLimit: optHistoryLimit = 50000,
+    autoRespawn = false,
+  } = options;
+
   // Check if session already exists
   if (await sessionExists(sessionName)) {
     throw new TmuxServiceError(
@@ -99,13 +152,19 @@ export async function createSession(
   ];
 
   // Set working directory
-  if (cwd) {
-    args.push("-c", cwd);
+  if (optCwd) {
+    args.push("-c", optCwd);
+  }
+
+  // Native command spawning: pass command directly to tmux new-session
+  // This runs the command as the process, not via shell injection
+  if (command) {
+    args.push(command);
   }
 
   // Build execution options with environment overlay
   // Cast to NodeJS.ProcessEnv since execFile merges with process.env
-  const execOptions = env ? { env: env as NodeJS.ProcessEnv } : undefined;
+  const execOptions = optEnv ? { env: optEnv as NodeJS.ProcessEnv } : undefined;
 
   try {
     await execFile("tmux", args, execOptions);
@@ -127,25 +186,40 @@ export async function createSession(
       "-t",
       sessionName,
       "history-limit",
-      String(historyLimit),
+      String(optHistoryLimit),
     ]);
 
-    // Inject shell environment variables BEFORE startup command
-    // These are exported in the shell session so they're available to all commands
-    if (shellEnv && Object.keys(shellEnv).length > 0) {
-      const exports = Object.entries(shellEnv)
-        .map(([key, value]) => {
-          // SECURITY: Escape single quotes to prevent shell injection
-          const escapedValue = value.replace(/'/g, "'\\''");
-          return `export ${key}='${escapedValue}'`;
-        })
-        .join("; ");
-      await sendKeys(sessionName, exports);
+    // Auto-respawn: Set up pane-died hook to automatically restart the process
+    // This respawns immediately when process exits - no dead panes, no polling
+    if (autoRespawn) {
+      await execFile("tmux", [
+        "set-hook",
+        "-t",
+        sessionName,
+        "pane-died",
+        "respawn-pane -k",
+      ]);
     }
 
-    // Execute startup command if provided
-    if (startupCommand && startupCommand.trim()) {
-      await sendKeys(sessionName, startupCommand.trim());
+    // Legacy path: If no native command was provided, use shell injection
+    if (!command) {
+      // Inject shell environment variables BEFORE startup command
+      // These are exported in the shell session so they're available to all commands
+      if (optShellEnv && Object.keys(optShellEnv).length > 0) {
+        const exports = Object.entries(optShellEnv)
+          .map(([key, value]) => {
+            // SECURITY: Escape single quotes to prevent shell injection
+            const escapedValue = value.replace(/'/g, "'\\''");
+            return `export ${key}='${escapedValue}'`;
+          })
+          .join("; ");
+        await sendKeys(sessionName, exports);
+      }
+
+      // Execute startup command if provided
+      if (optStartupCommand && optStartupCommand.trim()) {
+        await sendKeys(sessionName, optStartupCommand.trim());
+      }
     }
   } catch (error) {
     throw new TmuxServiceError(
@@ -361,6 +435,119 @@ export async function capturePane(sessionName: string): Promise<string> {
     throw new TmuxServiceError(
       `Failed to capture pane: ${(error as Error).message}`,
       "CAPTURE_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
+ * Check if the pane in a session is dead (process exited but pane remains).
+ * This is used with remain-on-exit to detect when a process has exited.
+ *
+ * @param sessionName - Tmux session name
+ * @returns true if the pane exists but its process has exited
+ */
+export async function isPaneDead(sessionName: string): Promise<boolean> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    const { stdout } = await execFile("tmux", [
+      "list-panes",
+      "-t",
+      sessionName,
+      "-F",
+      "#{pane_dead}",
+    ]);
+    // pane_dead is "1" if dead, "0" if alive
+    return stdout.trim() === "1";
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to check pane status: ${(error as Error).message}`,
+      "PANE_STATUS_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
+ * Respawn a dead pane with a new command.
+ * Used to restart a process after it exits when remain-on-exit is enabled.
+ *
+ * @param sessionName - Tmux session name
+ * @param command - Optional command to run (if not provided, uses original command)
+ */
+export async function respawnPane(
+  sessionName: string,
+  command?: string
+): Promise<void> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    const args = ["respawn-pane", "-t", sessionName, "-k"];
+    if (command) {
+      args.push(command);
+    }
+    await execFile("tmux", args);
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to respawn pane: ${(error as Error).message}`,
+      "RESPAWN_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+export interface PaneStatus {
+  sessionName: string;
+  isDead: boolean;
+  pid: number | null;
+}
+
+/**
+ * Get detailed pane status for a session.
+ *
+ * @param sessionName - Tmux session name
+ * @returns Pane status including dead state and PID
+ */
+export async function getPaneStatus(sessionName: string): Promise<PaneStatus> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    const { stdout } = await execFile("tmux", [
+      "list-panes",
+      "-t",
+      sessionName,
+      "-F",
+      "#{pane_dead}:#{pane_pid}",
+    ]);
+    const parts = stdout.trim().split(":");
+    const isDead = parts[0] === "1";
+    const pid = parts[1] ? parseInt(parts[1], 10) : null;
+
+    return {
+      sessionName,
+      isDead,
+      pid: Number.isNaN(pid) ? null : pid,
+    };
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to get pane status: ${(error as Error).message}`,
+      "PANE_STATUS_FAILED",
       (error as Error).message
     );
   }

@@ -265,12 +265,12 @@ async fn start(path: &str, foreground: bool, config: &Config) -> Result<()> {
     }
 
     // Create tmux session with agent
-    // Enable remain_on_exit so monitor can respawn if agent exits
+    // Enable auto_respawn so agent restarts immediately if it exits
     tmux::create_session(&tmux::CreateSessionConfig {
         session_name: session_name.clone(),
         working_directory: Some(folder_path_str),
         command: Some(agent_cmd.to_string()),
-        remain_on_exit: true, // Keep pane alive for respawning
+        auto_respawn: true, // Restart agent on exit via pane-died hook
     })?;
 
     println!("{}", "✓ Folder orchestrator started".green());

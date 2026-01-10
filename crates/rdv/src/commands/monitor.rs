@@ -6,7 +6,6 @@
 //! - Compares with previous hash to detect stalls
 //! - Generates insights for stalled sessions
 //! - Updates session activity in database (heartbeats)
-//! - **Respawns dead orchestrator panes** (supervisor mode)
 //!
 //! Integration with Next.js MonitoringService:
 //! - Uses direct SQLite database access for state persistence
@@ -18,10 +17,8 @@
 //! - Confidence score: 0.7 + (0.05 × extra_minutes_beyond_threshold)
 //! - Confidence reduced by 50% if buffer has < 5 lines
 //!
-//! Orchestrator respawn logic:
-//! - Checks for dead panes (process exited but pane remains via remain-on-exit)
-//! - Respawns with appropriate agent command (claude, codex, gemini, opencode)
-//! - Provides crash recovery for orchestrator sessions
+//! Note: Orchestrator auto-respawn is handled by tmux pane-died hook,
+//! not by this monitor. See tmux::CreateSessionConfig::auto_respawn.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -280,63 +277,11 @@ async fn run_monitoring_loop(interval: u64, config: &Config) -> Result<()> {
             sessions.iter().map(|s| s.name.clone()).collect();
         state.sessions.retain(|name, _| existing_names.contains(name));
 
-        // ─────────────────────────────────────────────────────────────────
-        // Orchestrator Supervisor: Check for dead panes and respawn
-        // ─────────────────────────────────────────────────────────────────
-        let orchestrator_sessions: Vec<_> = sessions
-            .iter()
-            .filter(|s| {
-                s.name.starts_with("rdv-master-") || s.name.starts_with("rdv-control-")
-            })
-            .collect();
-
-        for orch_session in orchestrator_sessions {
-            match check_and_respawn_orchestrator(&orch_session.name, config) {
-                Ok(respawned) => {
-                    if respawned {
-                        println!(
-                            "  {} Respawned orchestrator: {}",
-                            "↻".cyan(),
-                            orch_session.name
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!(
-                        "  {} Failed to check/respawn {}: {}",
-                        "✗".red(),
-                        orch_session.name,
-                        e
-                    );
-                }
-            }
-        }
-
         state.last_check = Some(now);
         state.save(config)?;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
     }
-}
-
-/// Check if an orchestrator pane is dead and respawn if needed.
-/// Returns true if the pane was respawned.
-fn check_and_respawn_orchestrator(session_name: &str, config: &Config) -> Result<bool> {
-    // Check if pane is dead
-    if !tmux::is_pane_dead(session_name)? {
-        return Ok(false);
-    }
-
-    // Determine which agent to use based on session type
-    // Master control and folder controls use the default agent
-    let agent_cmd = config
-        .agent_command(&config.agents.default)
-        .unwrap_or("claude");
-
-    // Respawn the pane with the agent command
-    tmux::respawn_pane(session_name, Some(agent_cmd))?;
-
-    Ok(true)
 }
 
 #[derive(Debug)]

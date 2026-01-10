@@ -354,12 +354,12 @@ async fn execute_task(task_id: &str, config: &Config) -> Result<()> {
 
     println!("  {} Spawning session...", "→".cyan());
 
-    // Task sessions don't use remain_on_exit - they're not auto-respawned
+    // Task sessions close on exit - user can respawn via UI if needed
     tmux::create_session(&tmux::CreateSessionConfig {
         session_name: session_name.clone(),
         working_directory: Some(working_dir),
         command: Some(agent_cmd.to_string()),
-        remain_on_exit: false,
+        auto_respawn: false,
     })?;
 
     // Inject context

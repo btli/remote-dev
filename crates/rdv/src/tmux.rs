@@ -100,16 +100,17 @@ pub fn create_session(config: &CreateSessionConfig) -> RdvResult<()> {
         return Err(TmuxError::CommandFailed(stderr.to_string()).into());
     }
 
-    // Enable remain-on-exit so the pane stays when the process exits
-    // This allows us to detect dead panes and respawn them
-    if config.remain_on_exit {
+    // Auto-respawn: Set up pane-died hook to automatically restart the process
+    // This respawns immediately when process exits - no dead panes, no polling
+    if config.auto_respawn {
+        // The hook runs respawn-pane with the original command when the pane dies
         let _ = Command::new("tmux")
             .args([
-                "set-option",
+                "set-hook",
                 "-t",
                 &config.session_name,
-                "remain-on-exit",
-                "on",
+                "pane-died",
+                "respawn-pane -k",
             ])
             .output();
     }
@@ -328,8 +329,9 @@ pub struct CreateSessionConfig {
     pub session_name: String,
     pub working_directory: Option<String>,
     pub command: Option<String>,
-    /// Keep pane alive when process exits (for respawning)
-    pub remain_on_exit: bool,
+    /// Auto-respawn process when it exits (for orchestrators)
+    /// Uses tmux pane-died hook - no dead panes, immediate restart
+    pub auto_respawn: bool,
 }
 
 #[cfg(test)]
