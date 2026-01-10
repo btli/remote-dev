@@ -17,7 +17,7 @@
  */
 
 import { spawn, spawnSync } from "bun";
-import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 
 const PROJECT_ROOT = join(import.meta.dir, "..");
@@ -26,7 +26,10 @@ const NEXT_PID_FILE = join(PID_DIR, "next.pid");
 const TERMINAL_PID_FILE = join(PID_DIR, "terminal.pid");
 const MODE_FILE = join(PID_DIR, "mode");
 const STANDALONE_DIR = join(PROJECT_ROOT, ".next", "standalone");
-const SOCKET_DIR = "/tmp/rdv";
+
+// Standard directory for all Remote Dev runtime files
+const REMOTE_DEV_DIR = process.env.REMOTE_DEV_DIR || join(process.env.HOME || "~", ".remote-dev");
+const SOCKET_DIR = join(REMOTE_DEV_DIR, "run");
 
 const CONFIG = {
   dev: {
@@ -37,7 +40,7 @@ const CONFIG = {
   },
   prod: {
     type: "socket" as const,
-    nextSocket: join(SOCKET_DIR, "next.sock"),
+    nextSocket: join(SOCKET_DIR, "nextjs.sock"),
     terminalSocket: join(SOCKET_DIR, "terminal.sock"),
     nextCmd: ["node", "scripts/standalone-server.js"],
   },
@@ -92,6 +95,21 @@ function prepareStandalone(): void {
   if (existsSync(publicSrc) && !existsSync(publicDest)) {
     console.log("Linking public files for standalone mode...");
     symlinkSync(publicSrc, publicDest);
+  }
+
+  // Copy native module libraries that Next.js standalone doesn't include
+  // onnxruntime-node requires the dylib to be in the same directory as the .node file
+  const onnxruntimeSrc = join(
+    PROJECT_ROOT,
+    "node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/libonnxruntime.1.21.0.dylib"
+  );
+  const onnxruntimeDest = join(
+    STANDALONE_DIR,
+    "node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/libonnxruntime.1.21.0.dylib"
+  );
+  if (existsSync(onnxruntimeSrc) && !existsSync(onnxruntimeDest)) {
+    console.log("Copying onnxruntime native library for standalone mode...");
+    copyFileSync(onnxruntimeSrc, onnxruntimeDest);
   }
 }
 
@@ -324,13 +342,13 @@ async function start(mode: Mode): Promise<void> {
     cleanupSocket(config.nextSocket);
     cleanupSocket(config.terminalSocket);
 
-    // Use standalone database for both processes in prod mode
-    const prodDatabaseUrl = `file:${join(STANDALONE_DIR, "sqlite.db")}`;
+    // Use project root database for both dev and prod (shared database)
+    const prodDatabaseUrl = `file:${join(PROJECT_ROOT, "sqlite.db")}`;
 
     console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode (Unix sockets)`);
     console.log(`  Next.js:  ${config.nextSocket}`);
     console.log(`  Terminal: ${config.terminalSocket}`);
-    console.log(`  Database: ${join(STANDALONE_DIR, "sqlite.db")}\n`);
+    console.log(`  Database: ${join(PROJECT_ROOT, "sqlite.db")}\n`);
 
     // Start terminal server first
     const terminalProc = await startServer(

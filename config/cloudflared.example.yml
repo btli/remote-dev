@@ -1,0 +1,57 @@
+# Cloudflared Tunnel Configuration for Remote Dev
+#
+# This configuration file routes traffic to Remote Dev via Unix sockets.
+# Copy this to ~/.cloudflared/config.yml and update the tunnel ID.
+#
+# Prerequisites:
+# 1. Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/
+# 2. Authenticate: cloudflared login
+# 3. Create a tunnel: cloudflared tunnel create remote-dev
+# 4. Configure DNS: cloudflared tunnel route dns <TUNNEL_ID> remote-dev.yourdomain.com
+# 5. Start: cloudflared tunnel run
+#
+# Socket Paths (default):
+# - Next.js: ~/.remote-dev/run/nextjs.sock
+# - Terminal: ~/.remote-dev/run/terminal.sock (WebSocket server)
+#
+# Traffic Flow:
+# Browser → Cloudflare → cloudflared → Next.js (Unix socket)
+#                                        ↓
+#                              rdv-server (REST API)
+#                              Terminal Server (WebSocket)
+
+# Replace with your tunnel ID from 'cloudflared tunnel list'
+tunnel: YOUR_TUNNEL_ID
+
+# Credentials file (auto-generated during tunnel creation)
+credentials-file: ~/.cloudflared/YOUR_TUNNEL_ID.json
+
+# Ingress rules determine how traffic is routed
+ingress:
+  # WebSocket terminal connections (order matters - more specific first)
+  # Note: cloudflared handles WebSocket upgrade automatically
+  - hostname: remote-dev.yourdomain.com
+    path: /ws/terminal/*
+    service: unix:~/.remote-dev/run/terminal.sock
+    originRequest:
+      # WebSocket settings
+      noTLSVerify: true
+      connectTimeout: 10s
+      tcpKeepAlive: 30s
+
+  # All other traffic goes to Next.js (UI + API proxy)
+  - hostname: remote-dev.yourdomain.com
+    service: unix:~/.remote-dev/run/nextjs.sock
+    originRequest:
+      noTLSVerify: true
+      connectTimeout: 10s
+
+  # Catch-all rule (required by cloudflared)
+  - service: http_status:404
+
+# Optional: Logging configuration
+# loglevel: info
+# log-file: /var/log/cloudflared.log
+
+# Optional: Metrics server for monitoring
+# metrics: localhost:9090
