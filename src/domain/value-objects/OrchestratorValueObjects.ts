@@ -43,6 +43,7 @@ export const ORCHESTRATOR_TYPES: readonly OrchestratorType[] = [
  * Valid orchestrator statuses
  */
 export const ORCHESTRATOR_STATUSES: readonly OrchestratorStatus[] = [
+  "pending_bootstrap",
   "idle",
   "analyzing",
   "acting",
@@ -137,9 +138,10 @@ export function isSubOrchestratorType(type: OrchestratorType): boolean {
 
 /**
  * Check if orchestrator status indicates active monitoring.
+ * Note: pending_bootstrap is not active (waiting for bootstrap to complete)
  */
 export function isActiveStatus(status: OrchestratorStatus): boolean {
-  return status !== "paused";
+  return status !== "paused" && status !== "pending_bootstrap";
 }
 
 /**
@@ -229,6 +231,7 @@ export function getOrchestratorTypeLabel(type: OrchestratorType): string {
  */
 export function getOrchestratorStatusLabel(status: OrchestratorStatus): string {
   const labels: Record<OrchestratorStatus, string> = {
+    pending_bootstrap: "Pending Bootstrap",
     idle: "Idle",
     analyzing: "Analyzing",
     acting: "Acting",

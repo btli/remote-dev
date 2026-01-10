@@ -12,6 +12,7 @@ use rdv_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::{info, warn};
 
 use crate::middleware::AuthContext;
 use crate::state::AppState;
@@ -117,6 +118,7 @@ pub async fn create_session(
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionResponse>), (StatusCode, String)> {
     let user_id = auth.user_id();
+    let is_orchestrator = req.is_orchestrator_session.unwrap_or(false);
 
     // Generate tmux session name (we'll use the DB-generated ID)
     let temp_tmux_name = format!("rdv-{}", &uuid::Uuid::new_v4().to_string()[..8]);
@@ -142,17 +144,26 @@ pub async fn create_session(
         user_id: user_id.to_string(),
         name: req.name.clone(),
         tmux_session_name: temp_tmux_name,
-        project_path: req.project_path,
-        folder_id: req.folder_id,
+        project_path: req.project_path.clone(),
+        folder_id: req.folder_id.clone(),
         worktree_branch: req.worktree_branch,
         agent_provider: req.agent_provider,
-        is_orchestrator_session: req.is_orchestrator_session.unwrap_or(false),
+        is_orchestrator_session: is_orchestrator,
     };
 
     let session_id = state
         .db
         .create_session(&new_session)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Auto-init Master Control for non-orchestrator sessions
+    // This ensures orchestration is available when the first session is created
+    if !is_orchestrator {
+        if let Err(e) = ensure_master_control(&state, user_id).await {
+            // Log error but don't fail session creation
+            warn!("Failed to ensure Master Control for user {}: {}", user_id, e);
+        }
+    }
 
     // Fetch the created session
     let session = state
@@ -162,6 +173,46 @@ pub async fn create_session(
         .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
 
     Ok((StatusCode::CREATED, Json(SessionResponse::from(session))))
+}
+
+/// Ensure Master Control orchestrator exists for a user.
+///
+/// If no Master Control exists, creates a "pending_bootstrap" orchestrator record.
+/// The actual bootstrap (CLAUDE.md, start Claude) happens via TypeScript on server startup.
+async fn ensure_master_control(state: &AppState, user_id: &str) -> Result<(), String> {
+    // Check if Master Control already exists
+    match state.db.get_master_orchestrator(user_id) {
+        Ok(Some(_)) => {
+            // Master Control exists, nothing to do
+            Ok(())
+        }
+        Ok(None) => {
+            // No Master Control - create a pending orchestrator record
+            info!("Creating pending Master Control for user {}", user_id);
+
+            let orchestrator_id = uuid::Uuid::new_v4().to_string();
+
+            // Create orchestrator with session_id = None and status = "pending_bootstrap"
+            // TypeScript's initializeOrchestrators() will detect this and complete bootstrap
+            state.db.create_orchestrator_simple(
+                &orchestrator_id,
+                user_id,
+                None,  // folder_id (None for master)
+                None,  // session_id (None - will be linked after bootstrap)
+                "master",
+                30,    // monitoring_interval
+                300,   // stall_threshold
+            ).map_err(|e| e.to_string())?;
+
+            // Update status to pending_bootstrap
+            state.db.update_orchestrator_status(&orchestrator_id, "pending_bootstrap")
+                .map_err(|e| e.to_string())?;
+
+            info!("Created pending Master Control orchestrator: {}", &orchestrator_id[..8]);
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to check Master Control: {}", e)),
+    }
 }
 
 /// Get a session by ID

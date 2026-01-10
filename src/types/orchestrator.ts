@@ -21,14 +21,16 @@ export const OrchestratorTypeSchema = z.enum(["master", "sub_orchestrator"]);
 
 /**
  * Orchestrator Status
+ * - pending_bootstrap: Created by rdv-server, waiting for TypeScript to complete bootstrap
  * - idle: Not currently analyzing (waiting for next poll)
  * - analyzing: Currently examining sessions
  * - acting: Performing interventions
  * - paused: Monitoring paused by user
  */
-export type OrchestratorStatus = "idle" | "analyzing" | "acting" | "paused";
+export type OrchestratorStatus = "pending_bootstrap" | "idle" | "analyzing" | "acting" | "paused";
 
 export const OrchestratorStatusSchema = z.enum([
+  "pending_bootstrap",
   "idle",
   "analyzing",
   "acting",

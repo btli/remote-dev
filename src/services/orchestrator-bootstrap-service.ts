@@ -109,10 +109,13 @@ export interface BootstrapFolderInput {
 /**
  * Initialize orchestrators on server startup.
  *
- * This ensures Master Control exists for all users with active sessions,
- * and wakes any existing orchestrators that should be running.
+ * This handles:
+ * 1. Cleaning up stale orchestrator records (where terminal session is closed)
+ * 2. Bootstrapping "pending_bootstrap" orchestrators created by rdv-server
+ * 3. Waking existing orchestrators that should be running
  *
- * First cleans up stale orchestrator records (where terminal session is closed).
+ * Note: rdv-server now creates "pending_bootstrap" orchestrators when the first
+ * session is created. This function completes their bootstrap.
  */
 export async function initializeOrchestrators(): Promise<void> {
   console.log("[Bootstrap] Initializing orchestrators on startup...");
@@ -122,7 +125,10 @@ export async function initializeOrchestrators(): Promise<void> {
     // Find orchestrators whose terminal sessions are closed/inactive
     await cleanupStaleOrchestrators();
 
-    // Step 2: Find all users with active non-orchestrator sessions
+    // Step 2: Bootstrap pending orchestrators (created by rdv-server)
+    await bootstrapPendingOrchestrators();
+
+    // Step 3: Find all users with active non-orchestrator sessions
     const usersWithSessions = await db
       .selectDistinct({ userId: terminalSessions.userId })
       .from(terminalSessions)
@@ -137,15 +143,15 @@ export async function initializeOrchestrators(): Promise<void> {
 
     for (const { userId } of usersWithSessions) {
       try {
-        // Check if Master Control exists
+        // Check if Master Control exists (and is fully bootstrapped)
         const existingMaster = await container.orchestratorRepository.findMasterByUserId(userId);
 
         if (!existingMaster) {
           console.log(`[Bootstrap] Creating Master Control for user ${userId}...`);
           const result = await bootstrapMasterControl({ userId });
           console.log(`[Bootstrap] Created Master Control: ${result.orchestratorId}`);
-        } else {
-          // Wake existing Master Control if dormant
+        } else if (existingMaster.status !== "pending_bootstrap") {
+          // Wake existing Master Control if dormant (skip pending ones, they're handled above)
           console.log(`[Bootstrap] Waking existing Master Control: ${existingMaster.id}`);
           await wakeOrchestrator(existingMaster.id);
         }
@@ -160,6 +166,203 @@ export async function initializeOrchestrators(): Promise<void> {
     console.error("[Bootstrap] Failed to initialize orchestrators:", error);
     throw error;
   }
+}
+
+/**
+ * Bootstrap pending orchestrators.
+ *
+ * rdv-server creates orchestrator records with status "pending_bootstrap"
+ * when the first session is created for a user. This function completes
+ * the bootstrap by creating the terminal session, CLAUDE.md, and starting Claude.
+ */
+async function bootstrapPendingOrchestrators(): Promise<void> {
+  console.log("[Bootstrap] Checking for pending orchestrators...");
+
+  try {
+    // Find all orchestrators with status "pending_bootstrap"
+    const pendingOrchestrators = await db
+      .select()
+      .from(orchestratorSessions)
+      .where(eq(orchestratorSessions.status, "pending_bootstrap"));
+
+    if (pendingOrchestrators.length === 0) {
+      console.log("[Bootstrap] No pending orchestrators found");
+      return;
+    }
+
+    console.log(`[Bootstrap] Found ${pendingOrchestrators.length} pending orchestrator(s)`);
+
+    for (const orc of pendingOrchestrators) {
+      try {
+        if (orc.type === "master") {
+          console.log(`[Bootstrap] Completing bootstrap for Master Control: ${orc.id.slice(0, 8)}`);
+          await completeMasterControlBootstrap(orc);
+        } else if (orc.type === "sub_orchestrator" && orc.scopeId) {
+          console.log(`[Bootstrap] Completing bootstrap for Folder Control: ${orc.id.slice(0, 8)}`);
+          await completeFolderControlBootstrap(orc);
+        } else {
+          console.warn(`[Bootstrap] Unknown orchestrator type: ${orc.type}`);
+        }
+      } catch (error) {
+        console.error(`[Bootstrap] Failed to complete bootstrap for orchestrator ${orc.id}:`, error);
+        // Continue with other orchestrators
+      }
+    }
+  } catch (error) {
+    console.error("[Bootstrap] Failed to check pending orchestrators:", error);
+    // Don't throw - allow other initialization to continue
+  }
+}
+
+/**
+ * Complete bootstrap for a pending Master Control orchestrator.
+ *
+ * Creates terminal session, CLAUDE.md, MCP config, and starts Claude.
+ */
+async function completeMasterControlBootstrap(orc: typeof orchestratorSessions.$inferSelect): Promise<void> {
+  const { userId } = orc;
+
+  // Get user's Master Control directory setting
+  const settings = await db
+    .select({ masterControlDirectory: userSettings.masterControlDirectory })
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId))
+    .limit(1);
+
+  const workDir = settings[0]?.masterControlDirectory || DEFAULT_MASTER_CONTROL_DIR;
+  const configDir = join(workDir, ".claude");
+
+  // Ensure directory exists
+  if (!existsSync(workDir)) {
+    await mkdir(workDir, { recursive: true });
+  }
+
+  // Create terminal session for the orchestrator
+  const session = await SessionService.createSession(userId, {
+    name: "Master Control",
+    projectPath: workDir,
+    isOrchestratorSession: true,
+    agentProvider: "claude",
+    tmuxSessionName: "rdv-master-control",
+  });
+
+  // Generate and write CLAUDE.md
+  const claudeMdPath = join(configDir, "CLAUDE.md");
+  const instructions = generateOrchestratorInstructions({
+    type: "master",
+    customInstructions: orc.customInstructions ?? undefined,
+    availableTools: [
+      "session_list",
+      "session_analyze",
+      "session_send_input",
+      "session_get_insights",
+      "orchestrator_status",
+      "project_metadata_detect",
+    ],
+  });
+
+  await mkdir(configDir, { recursive: true });
+  await writeFile(claudeMdPath, instructions, "utf-8");
+
+  // Write MCP config
+  const mcpConfigPath = join(configDir, ".mcp.json");
+  await writeMcpConfig(mcpConfigPath);
+
+  // Link session to orchestrator and update status
+  await db
+    .update(orchestratorSessions)
+    .set({
+      sessionId: session.id,
+      status: "idle",
+      updatedAt: new Date(),
+    })
+    .where(eq(orchestratorSessions.id, orc.id));
+
+  // Start Claude Code
+  await startClaudeInSession(session.tmuxSessionName, workDir);
+
+  console.log(`[Bootstrap] Completed Master Control bootstrap: ${orc.id.slice(0, 8)} -> session ${session.id.slice(0, 8)}`);
+}
+
+/**
+ * Complete bootstrap for a pending Folder Control orchestrator.
+ *
+ * Creates terminal session, CLAUDE.md, MCP config, and starts Claude.
+ */
+async function completeFolderControlBootstrap(orc: typeof orchestratorSessions.$inferSelect): Promise<void> {
+  const { userId, scopeId } = orc;
+
+  if (!scopeId) {
+    throw new Error("Folder Control orchestrator missing scopeId (folderId)");
+  }
+
+  // Get folder info
+  const folders = await db
+    .select()
+    .from(sessionFolders)
+    .where(and(eq(sessionFolders.id, scopeId), eq(sessionFolders.userId, userId)))
+    .limit(1);
+
+  const folder = folders[0];
+  if (!folder) {
+    throw new Error(`Folder ${scopeId} not found`);
+  }
+
+  const projectPath = folder.path || process.env.HOME || "/tmp";
+  const configDir = join(projectPath, ".claude");
+
+  // Get project knowledge
+  const projectKnowledge = await container.projectKnowledgeRepository.findByFolderId(scopeId);
+
+  // Create terminal session
+  const session = await SessionService.createSession(userId, {
+    name: `${folder.name} Control`,
+    projectPath,
+    folderId: scopeId,
+    isOrchestratorSession: true,
+    agentProvider: "claude",
+  });
+
+  // Generate and write CLAUDE.md
+  const claudeMdPath = join(configDir, "CLAUDE.md");
+  const instructions = generateOrchestratorInstructions({
+    type: "folder",
+    folderName: folder.name,
+    projectPath,
+    projectKnowledge: projectKnowledge || undefined,
+    customInstructions: orc.customInstructions ?? undefined,
+    availableTools: [
+      "session_list",
+      "session_analyze",
+      "session_send_input",
+      "session_get_insights",
+      "orchestrator_status",
+      "project_metadata_detect",
+      "session_agent_info",
+    ],
+  });
+
+  await mkdir(configDir, { recursive: true });
+  await writeFile(claudeMdPath, instructions, "utf-8");
+
+  // Write MCP config
+  const mcpConfigPath = join(configDir, ".mcp.json");
+  await writeMcpConfig(mcpConfigPath);
+
+  // Link session to orchestrator and update status
+  await db
+    .update(orchestratorSessions)
+    .set({
+      sessionId: session.id,
+      status: "idle",
+      updatedAt: new Date(),
+    })
+    .where(eq(orchestratorSessions.id, orc.id));
+
+  // Start Claude Code
+  await startClaudeInSession(session.tmuxSessionName, projectPath);
+
+  console.log(`[Bootstrap] Completed Folder Control bootstrap: ${orc.id.slice(0, 8)} -> session ${session.id.slice(0, 8)}`);
 }
 
 /**

@@ -160,6 +160,7 @@ export const sessionFolders = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     parentId: text("parent_id"),
     name: text("name").notNull(),
+    path: text("path"), // Filesystem path for folder-based orchestration
     collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
