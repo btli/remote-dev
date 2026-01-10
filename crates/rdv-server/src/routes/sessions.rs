@@ -8,6 +8,7 @@ use axum::{
 };
 use rdv_core::{
     db::types::{NewSession, Session},
+    learning,
     tmux,
     worktree,
 };
@@ -308,6 +309,12 @@ pub async fn close_session(
         return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
     }
 
+    // Extract learnings from session BEFORE killing tmux (so we can still capture scrollback)
+    // Only extract for agent sessions (not orchestrator sessions)
+    if !session.is_orchestrator_session {
+        extract_session_learnings(&session);
+    }
+
     // Kill tmux session
     let _ = tmux::kill_session(&session.tmux_session_name);
 
@@ -346,6 +353,55 @@ pub async fn close_session(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Extract learnings from a session before closing.
+///
+/// Captures scrollback from tmux and extracts patterns/learnings.
+fn extract_session_learnings(session: &Session) {
+    let short_id = &session.id[..8.min(session.id.len())];
+
+    // Capture scrollback from tmux
+    let scrollback = match tmux::capture_pane(&session.tmux_session_name, Some(2000)) {
+        Ok(content) => content,
+        Err(e) => {
+            warn!("Failed to capture scrollback for session {}: {}", short_id, e);
+            return;
+        }
+    };
+
+    // Skip if too short (likely no meaningful content)
+    if scrollback.lines().count() < 10 {
+        info!(
+            "Skipping learning extraction for session {} - scrollback too short",
+            short_id
+        );
+        return;
+    }
+
+    // Determine project path for storage
+    let project_path = session.project_path.as_ref().map(std::path::Path::new);
+
+    // Extract learnings
+    match learning::extract_session_learnings(
+        &session.id,
+        &scrollback,
+        project_path,
+        true, // save transcript
+    ) {
+        Ok(result) => {
+            info!(
+                "Learning extraction for session {}: {} learnings, transcript={}, knowledge={}",
+                short_id,
+                result.learnings_count,
+                result.transcript_saved,
+                result.knowledge_updated
+            );
+        }
+        Err(e) => {
+            warn!("Failed to extract learnings for session {}: {}", short_id, e);
+        }
+    }
 }
 
 /// Suspend a session

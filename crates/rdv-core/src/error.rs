@@ -8,7 +8,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Core error types for rdv operations
 #[derive(Error, Debug)]
 pub enum Error {
-    // Database errors
+    // Database errors (only available with db feature)
+    #[cfg(feature = "db")]
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
 
@@ -20,6 +21,16 @@ pub enum Error {
 
     #[error("No user found in database")]
     NoUser,
+
+    // API/Client errors
+    #[error("Resource not found: {0}")]
+    NotFound(String),
+
+    #[error("API error: {0}")]
+    Api(String),
+
+    #[error("Server unavailable: {0}")]
+    ServerUnavailable(String),
 
     // tmux errors
     #[error("tmux not found. Install tmux to use Remote Dev.")]
@@ -71,6 +82,9 @@ pub enum Error {
     // Serialization errors
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
 
     // Generic errors
     #[error("{0}")]

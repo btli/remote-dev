@@ -78,11 +78,10 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 /**
  * DELETE /api/sessions/:id - Close a session
  *
- * Proxies to rdv-server. Worktree cleanup and learning extraction
- * are handled by rdv-server.
- *
- * TODO: Move worktree cleanup to rdv-server (remote-dev-y9fv)
- * TODO: Move learning extraction to rdv-server (remote-dev-o35q)
+ * Proxies to rdv-server. The following cleanup is handled by rdv-server:
+ * - Learning extraction (transcript capture and pattern analysis)
+ * - Worktree cleanup (git worktree remove)
+ * - tmux session termination
  */
 export const DELETE = withAuth(async (request, { userId, params }) => {
   const response = await proxyToRdvServer(request, userId, {

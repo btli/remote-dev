@@ -11,6 +11,7 @@
 //! - **orchestrator**: Monitoring and intervention
 //! - **auth**: Token-based authentication
 //! - **mcp**: Model Context Protocol support
+//! - **learning**: Learning extraction and knowledge management
 
 pub mod auth;
 #[cfg(feature = "client")]
@@ -18,6 +19,7 @@ pub mod client;
 #[cfg(feature = "db")]
 pub mod db;
 pub mod error;
+pub mod learning;
 pub mod mcp;
 pub mod orchestrator;
 pub mod session;
