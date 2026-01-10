@@ -3,6 +3,7 @@ import { parseJsonBody } from "@/lib/api";
 import { db } from "@/db";
 import { orchestratorSessions, terminalSessions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
+import { wakeOrchestrator, notifyOrchestrator } from "@/services/orchestrator-bootstrap-service";
 
 /**
  * Agent Event Types
@@ -162,6 +163,7 @@ export async function POST(request: Request) {
     masterOrchestrator = masterOrcs[0] || null;
 
     // Update folder orchestrator activity (primary handler)
+    // Wake and notify the orchestrator Claude Code session
     if (folderOrchestrator) {
       await db
         .update(orchestratorSessions)
@@ -170,6 +172,19 @@ export async function POST(request: Request) {
           updatedAt: new Date(),
         })
         .where(eq(orchestratorSessions.id, folderOrchestrator.id));
+
+      // Wake and notify the folder orchestrator (async, don't block response)
+      wakeOrchestrator(folderOrchestrator.id).then(() =>
+        notifyOrchestrator(folderOrchestrator.id, {
+          type: payload.event,
+          sessionId: session.id,
+          sessionName: session.name ?? undefined,
+          agent: payload.agent,
+          context: payload.context,
+        })
+      ).catch((err) =>
+        console.error(`[AgentEvent] Failed to notify folder orchestrator:`, err)
+      );
 
       console.log(`[AgentEvent] Routed to folder orchestrator: ${folderOrchestrator.id}`);
     }
@@ -185,6 +200,22 @@ export async function POST(request: Request) {
         })
         .where(eq(orchestratorSessions.id, masterOrchestrator.id));
 
+      // Wake and notify Master Control for escalation (async, don't block response)
+      wakeOrchestrator(masterOrchestrator.id).then(() =>
+        notifyOrchestrator(masterOrchestrator.id, {
+          type: payload.event,
+          sessionId: session.id,
+          sessionName: session.name ?? undefined,
+          agent: payload.agent,
+          context: {
+            ...payload.context,
+            escalatedFrom: folderOrchestrator?.id,
+          },
+        })
+      ).catch((err) =>
+        console.error(`[AgentEvent] Failed to notify Master Control:`, err)
+      );
+
       console.log(`[AgentEvent] Escalated to Master Control: ${payload.event}`);
     }
 
@@ -197,7 +228,34 @@ export async function POST(request: Request) {
     });
 
     // Handle specific event types
+    let intelligenceResult = null;
+
     switch (payload.event) {
+      case "task_complete": {
+        // Agent completed a task - analyze session and extract knowledge
+        // This is the core intelligence feature
+        if (session.tmuxSessionName && session.projectPath) {
+          try {
+            const { processTaskComplete } = await import("@/services/orchestrator-intelligence-service");
+
+            const orchestratorType = folderOrchestrator ? "folder" : "master";
+
+            intelligenceResult = await processTaskComplete(
+              session.id,
+              session.tmuxSessionName,
+              session.projectPath,
+              payload.agent,
+              orchestratorType
+            );
+
+            console.log(`[AgentEvent] Intelligence analysis:`, intelligenceResult);
+          } catch (error) {
+            console.error(`[AgentEvent] Intelligence analysis failed:`, error);
+          }
+        }
+        break;
+      }
+
       case "session_end":
         // Agent session ended - could generate insight if unexpected
         console.log(`[AgentEvent] Agent ${payload.agent} session ended: ${payload.reason}`);
@@ -214,7 +272,6 @@ export async function POST(request: Request) {
         break;
 
       case "heartbeat":
-      case "task_complete":
       case "session_start":
       default:
         // Normal activity - just update timestamps (already done above)
@@ -231,6 +288,7 @@ export async function POST(request: Request) {
         masterOrchestrator: shouldEscalate ? masterOrchestrator?.id : null,
         escalated: shouldEscalate && !!masterOrchestrator,
       },
+      intelligence: intelligenceResult,
     });
 
   } catch (error) {

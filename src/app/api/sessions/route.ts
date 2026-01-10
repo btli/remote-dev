@@ -123,6 +123,19 @@ export const POST = withApiAuth(async (request, { userId }) => {
         // Log error but don't fail session creation
         console.error("[API] Failed to initialize master orchestrator:", error);
       }
+
+      // Auto-spin Folder Control for folder sessions (fire-and-forget)
+      if (body.folderId && validatedPath) {
+        import("@/services/orchestrator-bootstrap-service").then(({ autoSpinFolderControl }) => {
+          autoSpinFolderControl({
+            userId,
+            folderId: body.folderId!,
+            projectPath: validatedPath!,
+          }).catch((error) => {
+            console.error("[API] Auto-spin Folder Control failed:", error);
+          });
+        });
+      }
     }
 
     // Auto-enrich project metadata for folder sessions with a project path
