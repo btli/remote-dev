@@ -6,104 +6,183 @@
  * to Master Control when needed.
  *
  * Hierarchy: Agent Hooks → Folder Orchestrator → Master Control
+ *
+ * IMPORTANT: Hooks are DYNAMIC - they detect the current tmux session at runtime
+ * rather than using hardcoded session/folder IDs. This allows:
+ * - Project-wide hook installation
+ * - Session independence (same hooks work for any session in the project)
+ * - Automatic routing based on tmux session name lookup
  */
 
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { writeFile, readFile, mkdir } from "fs/promises";
+import { writeFile, readFile, mkdir, chmod } from "fs/promises";
 import { existsSync } from "fs";
-import { join, dirname } from "path";
-
-const execFileAsync = promisify(execFile);
+import { join } from "path";
 
 export type AgentProvider = "claude" | "codex" | "gemini" | "opencode";
-
-interface HookConfig {
-  provider: AgentProvider;
-  configPath: string;
-  hookScript?: string;
-  pluginCode?: string;
-}
 
 /**
  * Get the base URL for the orchestrator API
  * In development, this is localhost. In production, could be configurable.
  */
 function getOrchestratorBaseUrl(): string {
-  return process.env.ORCHESTRATOR_URL || "http://localhost:3000";
+  return process.env.ORCHESTRATOR_URL || "http://localhost:6001";
+}
+
+/**
+ * Generate the orchestrator notify script (Node.js)
+ *
+ * More elegant than shell scripts:
+ * - Native JSON handling (no escaping issues)
+ * - Native HTTP (no curl dependency)
+ * - Unix socket support for production
+ * - Cross-platform compatible
+ */
+function generateNotifyScript(projectPath: string): string {
+  const baseUrl = getOrchestratorBaseUrl();
+
+  return `#!/usr/bin/env node
+/**
+ * Orchestrator Notification Script (Node.js)
+ *
+ * Usage: node orchestrator-notify.mjs <event> <agent> [reason]
+ * Events: heartbeat, task_complete, session_end, session_start, error, stalled
+ * Agents: claude, codex, gemini, opencode
+ *
+ * Environment:
+ *   SOCKET_PATH - Unix socket path (production, takes precedence)
+ *   ORCHESTRATOR_URL - HTTP URL (development fallback)
+ */
+
+import { execFileSync } from 'child_process';
+import http from 'http';
+
+const [,, event = 'heartbeat', agent = 'claude', reason = ''] = process.argv;
+
+// Configuration - socket takes precedence over URL
+const SOCKET_PATH = process.env.SOCKET_PATH;
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || '${baseUrl}';
+const PROJECT_PATH = '${projectPath}';
+
+function getTmuxSession() {
+  if (!process.env.TMUX) return null;
+  try {
+    return execFileSync('tmux', ['display-message', '-p', '#S'], {
+      encoding: 'utf-8',
+      timeout: 2000
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function sendNotification(payload) {
+  const data = JSON.stringify(payload);
+  const path = '/api/orchestrators/agent-event';
+
+  let options;
+  if (SOCKET_PATH) {
+    // Unix socket mode (production)
+    options = {
+      socketPath: SOCKET_PATH,
+      path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data)
+      },
+      timeout: 5000
+    };
+  } else {
+    // HTTP mode (development)
+    const url = new URL(path, ORCHESTRATOR_URL);
+    options = {
+      hostname: url.hostname,
+      port: url.port || 80,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data)
+      },
+      timeout: 5000
+    };
+  }
+
+  const req = http.request(options);
+  req.on('error', () => {});
+  req.write(data);
+  req.end();
+}
+
+const payload = {
+  event,
+  agent,
+  tmuxSessionName: getTmuxSession(),
+  timestamp: new Date().toISOString(),
+  reason,
+  context: {
+    cwd: process.cwd(),
+    projectPath: PROJECT_PATH
+  }
+};
+
+sendNotification(payload);
+process.exit(0);
+`;
 }
 
 /**
  * Generate Claude Code hook configuration
  *
- * Claude Code uses JSON hooks in ~/.claude/settings.json
+ * Claude Code uses JSON hooks in .claude/settings.local.json (project-level)
  * Events: Stop, SessionEnd, PostToolUse
+ *
+ * Uses the new matcher-based format (Claude Code 2024+):
+ * Each hook entry has a "matcher" (can be empty to match all) and "hooks" array
+ *
+ * Uses the notify script for dynamic tmux session detection
  */
-export function generateClaudeCodeHooks(
-  sessionId: string,
-  folderId: string
-): object {
-  const baseUrl = getOrchestratorBaseUrl();
+export function generateClaudeCodeHooks(projectPath: string): object {
+  const notifyScript = join(projectPath, ".claude", "orchestrator-notify.mjs");
 
   return {
     hooks: {
       // Report when agent completes a response (task_complete)
       Stop: [
         {
-          type: "command",
-          command: [
-            "curl",
-            "-s",
-            "-X", "POST",
-            `${baseUrl}/api/orchestrators/agent-event`,
-            "-H", "Content-Type: application/json",
-            "-d", JSON.stringify({
-              event: "task_complete",
-              agent: "claude",
-              sessionId,
-              folderId,
-            }),
+          matcher: {},
+          hooks: [
+            {
+              type: "command",
+              command: ["node", notifyScript, "task_complete", "claude"],
+            },
           ],
         },
       ],
       // Report when session ends
       SessionEnd: [
         {
-          type: "command",
-          command: [
-            "curl",
-            "-s",
-            "-X", "POST",
-            `${baseUrl}/api/orchestrators/agent-event`,
-            "-H", "Content-Type: application/json",
-            "-d", JSON.stringify({
-              event: "session_end",
-              agent: "claude",
-              sessionId,
-              folderId,
-            }),
+          matcher: {},
+          hooks: [
+            {
+              type: "command",
+              command: ["node", notifyScript, "session_end", "claude"],
+            },
           ],
         },
       ],
-      // Heartbeat on tool use
-      PostToolUse: [
-        {
-          type: "command",
-          command: [
-            "curl",
-            "-s",
-            "-X", "POST",
-            `${baseUrl}/api/orchestrators/agent-event`,
-            "-H", "Content-Type: application/json",
-            "-d", JSON.stringify({
-              event: "heartbeat",
-              agent: "claude",
-              sessionId,
-              folderId,
-            }),
-          ],
-        },
-      ],
+      // Heartbeat on tool use (disabled by default - too noisy)
+      // PostToolUse: [
+      //   {
+      //     matcher: {},
+      //     hooks: [
+      //       {
+      //         type: "command",
+      //         command: ["node", notifyScript, "heartbeat", "claude"],
+      //       },
+      //     ],
+      //   },
+      // ],
     },
   };
 }
@@ -111,14 +190,13 @@ export function generateClaudeCodeHooks(
 /**
  * Generate Gemini CLI hook configuration
  *
- * Gemini uses JSON hooks in ~/.gemini/settings.json (similar to Claude)
+ * Gemini uses JSON hooks in .gemini/settings.json (project-level)
  * Events: SessionEnd, AfterAgent
+ *
+ * Uses the notify script for dynamic tmux session detection
  */
-export function generateGeminiHooks(
-  sessionId: string,
-  folderId: string
-): object {
-  const baseUrl = getOrchestratorBaseUrl();
+export function generateGeminiHooks(projectPath: string): object {
+  const notifyScript = join(projectPath, ".claude", "orchestrator-notify.mjs");
 
   return {
     hooks: {
@@ -126,24 +204,14 @@ export function generateGeminiHooks(
       AfterAgent: [
         {
           type: "command",
-          command: `curl -s -X POST ${baseUrl}/api/orchestrators/agent-event -H 'Content-Type: application/json' -d '${JSON.stringify({
-            event: "task_complete",
-            agent: "gemini",
-            sessionId,
-            folderId,
-          })}'`,
+          command: `node ${notifyScript} task_complete gemini`,
         },
       ],
       // Report when session ends
       SessionEnd: [
         {
           type: "command",
-          command: `curl -s -X POST ${baseUrl}/api/orchestrators/agent-event -H 'Content-Type: application/json' -d '${JSON.stringify({
-            event: "session_end",
-            agent: "gemini",
-            sessionId,
-            folderId,
-          })}'`,
+          command: `node ${notifyScript} session_end gemini`,
         },
       ],
     },
@@ -151,25 +219,89 @@ export function generateGeminiHooks(
 }
 
 /**
- * Generate Codex notify script
+ * Generate Codex notify script wrapper
  *
- * Codex uses a notify script configured in ~/.codex/config.toml
- * The script receives JSON as an argument
+ * Codex uses a notify script configured in .codex/config.toml
+ * The script receives JSON as an argument, which we forward to the orchestrator
+ * Supports both Unix socket (production) and HTTP (development)
  */
-export function generateCodexNotifyScript(
-  sessionId: string,
-  folderId: string
-): string {
+export function generateCodexNotifyWrapper(projectPath: string): string {
   const baseUrl = getOrchestratorBaseUrl();
 
   return `#!/usr/bin/env python3
 """
-Codex notification script for Remote Dev orchestrator.
+Codex notification wrapper for Remote Dev orchestrator.
 Receives events from Codex CLI and forwards to folder orchestrator.
+Dynamically detects tmux session for proper routing.
+
+Environment:
+  SOCKET_PATH - Unix socket path (production, takes precedence)
+  ORCHESTRATOR_URL - HTTP URL (development fallback)
 """
 import json
+import os
+import socket
+import subprocess
 import sys
-import urllib.request
+from datetime import datetime, timezone
+from http.client import HTTPConnection
+
+
+class UnixHTTPConnection(HTTPConnection):
+    """HTTP connection over Unix socket."""
+    def __init__(self, socket_path, timeout=5):
+        super().__init__('localhost', timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
+
+
+def get_tmux_session():
+    """Get current tmux session name if running in tmux."""
+    if not os.environ.get('TMUX'):
+        return None
+    try:
+        result = subprocess.run(
+            ['tmux', 'display-message', '-p', '#S'],
+            capture_output=True, text=True, timeout=2
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def send_notification(notification):
+    """Send notification via Unix socket or HTTP."""
+    socket_path = os.environ.get('SOCKET_PATH')
+    data = json.dumps(notification).encode('utf-8')
+    path = '/api/orchestrators/agent-event'
+
+    try:
+        if socket_path:
+            # Unix socket mode (production)
+            conn = UnixHTTPConnection(socket_path)
+        else:
+            # HTTP mode (development)
+            url = os.environ.get('ORCHESTRATOR_URL', '${baseUrl}')
+            host = url.replace('http://', '').replace('https://', '').split('/')[0]
+            if ':' in host:
+                host, port = host.split(':')
+                conn = HTTPConnection(host, int(port), timeout=5)
+            else:
+                conn = HTTPConnection(host, 80, timeout=5)
+
+        conn.request('POST', path, body=data, headers={
+            'Content-Type': 'application/json',
+            'Content-Length': str(len(data))
+        })
+        conn.getresponse()
+        conn.close()
+    except Exception:
+        pass  # Don't block Codex on notification failure
+
 
 def main():
     if len(sys.argv) < 2:
@@ -194,22 +326,17 @@ def main():
     notification = {
         'event': orchestrator_event,
         'agent': 'codex',
-        'sessionId': '${sessionId}',
-        'folderId': '${folderId}',
+        'tmuxSessionName': get_tmux_session(),
+        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'context': {
+            'cwd': os.getcwd(),
+            'projectPath': '${projectPath}',
             'lastMessage': payload.get('last-assistant-message', '')[:500]
         }
     }
 
-    try:
-        req = urllib.request.Request(
-            '${baseUrl}/api/orchestrators/agent-event',
-            data=json.dumps(notification).encode('utf-8'),
-            headers={'Content-Type': 'application/json'}
-        )
-        urllib.request.urlopen(req, timeout=5)
-    except Exception:
-        pass  # Don't block Codex on notification failure
+    send_notification(notification)
+
 
 if __name__ == '__main__':
     main()
@@ -229,17 +356,77 @@ notify = ["python3", "${notifyScriptPath}"]
  * Generate OpenCode plugin
  *
  * OpenCode uses TypeScript plugins in .opencode/plugin/
+ * Dynamically detects tmux session for proper routing
+ * Supports both Unix socket (production) and HTTP (development)
  */
-export function generateOpenCodePlugin(
-  sessionId: string,
-  folderId: string
-): string {
+export function generateOpenCodePlugin(projectPath: string): string {
   const baseUrl = getOrchestratorBaseUrl();
 
   return `/**
  * OpenCode orchestrator notification plugin.
  * Reports session events to Remote Dev folder orchestrator.
+ * Dynamically detects tmux session for proper routing.
+ *
+ * Environment:
+ *   SOCKET_PATH - Unix socket path (production, takes precedence)
+ *   ORCHESTRATOR_URL - HTTP URL (development fallback)
  */
+import { execFileSync } from 'child_process';
+import http from 'http';
+
+const SOCKET_PATH = process.env.SOCKET_PATH;
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || '${baseUrl}';
+const PROJECT_PATH = '${projectPath}';
+
+function getTmuxSession(): string | null {
+  if (!process.env.TMUX) return null;
+  try {
+    return execFileSync('tmux', ['display-message', '-p', '#S'], { encoding: 'utf-8' }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Send notification via Unix socket or HTTP
+ */
+function sendNotification(notification: object): void {
+  const data = JSON.stringify(notification);
+  const path = '/api/orchestrators/agent-event';
+
+  let options: http.RequestOptions;
+  if (SOCKET_PATH) {
+    // Unix socket mode (production)
+    options = {
+      socketPath: SOCKET_PATH,
+      path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    };
+  } else {
+    // HTTP mode (development)
+    const url = new URL(path, ORCHESTRATOR_URL);
+    options = {
+      hostname: url.hostname,
+      port: url.port || 80,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    };
+  }
+
+  const req = http.request(options);
+  req.on('error', () => {}); // Silently ignore errors
+  req.write(data);
+  req.end();
+}
+
 export const OrchestratorNotifier = async (context) => {
   return {
     event: async ({ event }) => {
@@ -256,23 +443,16 @@ export const OrchestratorNotifier = async (context) => {
       const notification = {
         event: orchestratorEvent,
         agent: 'opencode',
-        sessionId: '${sessionId}',
-        folderId: '${folderId}',
+        tmuxSessionName: getTmuxSession(),
         timestamp: new Date().toISOString(),
         context: {
+          cwd: process.cwd(),
+          projectPath: PROJECT_PATH,
           filesModified: event.properties?.filesModified || 0,
         },
       };
 
-      try {
-        await fetch('${baseUrl}/api/orchestrators/agent-event', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(notification),
-        });
-      } catch (e) {
-        // Don't block OpenCode on notification failure
-      }
+      sendNotification(notification);
     },
   };
 };
@@ -280,15 +460,36 @@ export const OrchestratorNotifier = async (context) => {
 }
 
 /**
+ * Install the orchestrator notify script (Node.js version)
+ * This is shared by all agent hooks - more elegant than shell scripts
+ */
+async function installNotifyScript(projectPath: string): Promise<string> {
+  const claudeDir = join(projectPath, ".claude");
+  const scriptPath = join(claudeDir, "orchestrator-notify.mjs");
+
+  await mkdir(claudeDir, { recursive: true });
+
+  const script = generateNotifyScript(projectPath);
+  await writeFile(scriptPath, script);
+  await chmod(scriptPath, 0o755);
+
+  return scriptPath;
+}
+
+/**
  * Install hooks for a specific agent in a project directory
+ *
+ * Hooks are DYNAMIC - they detect the current tmux session at runtime
+ * and report to the orchestrator via the shared notify script.
  */
 export async function installAgentHooks(
   provider: AgentProvider,
-  projectPath: string,
-  sessionId: string,
-  folderId: string
+  projectPath: string
 ): Promise<{ success: boolean; message: string; configPath?: string }> {
   try {
+    // First, ensure the notify script is installed (shared by all agents)
+    const notifyScriptPath = await installNotifyScript(projectPath);
+
     switch (provider) {
       case "claude": {
         // Install project-level hooks in .claude/settings.local.json
@@ -297,10 +498,10 @@ export async function installAgentHooks(
 
         await mkdir(claudeDir, { recursive: true });
 
-        const hooks = generateClaudeCodeHooks(sessionId, folderId);
+        const hooks = generateClaudeCodeHooks(projectPath);
 
         // Merge with existing config if present
-        let existingConfig = {};
+        let existingConfig: Record<string, unknown> = {};
         if (existsSync(configPath)) {
           try {
             const content = await readFile(configPath, "utf-8");
@@ -319,7 +520,7 @@ export async function installAgentHooks(
 
         return {
           success: true,
-          message: "Claude Code hooks installed",
+          message: `Claude Code hooks installed (notify script: ${notifyScriptPath})`,
           configPath,
         };
       }
@@ -331,9 +532,9 @@ export async function installAgentHooks(
 
         await mkdir(geminiDir, { recursive: true });
 
-        const hooks = generateGeminiHooks(sessionId, folderId);
+        const hooks = generateGeminiHooks(projectPath);
 
-        let existingConfig = {};
+        let existingConfig: Record<string, unknown> = {};
         if (existsSync(configPath)) {
           try {
             const content = await readFile(configPath, "utf-8");
@@ -366,8 +567,9 @@ export async function installAgentHooks(
         await mkdir(codexDir, { recursive: true });
 
         // Write notify script
-        const script = generateCodexNotifyScript(sessionId, folderId);
-        await writeFile(scriptPath, script, { mode: 0o755 });
+        const script = generateCodexNotifyWrapper(projectPath);
+        await writeFile(scriptPath, script);
+        await chmod(scriptPath, 0o755);
 
         // Append to config.toml (or create)
         const configSnippet = generateCodexConfig(scriptPath);
@@ -394,7 +596,7 @@ export async function installAgentHooks(
 
         await mkdir(pluginDir, { recursive: true });
 
-        const plugin = generateOpenCodePlugin(sessionId, folderId);
+        const plugin = generateOpenCodePlugin(projectPath);
         await writeFile(pluginPath, plugin);
 
         return {
@@ -417,6 +619,25 @@ export async function installAgentHooks(
       message: `Failed to install hooks: ${message}`,
     };
   }
+}
+
+/**
+ * Install hooks for all supported agents in a project
+ */
+export async function installAllAgentHooks(
+  projectPath: string
+): Promise<{ success: boolean; results: Record<AgentProvider, { success: boolean; message: string }> }> {
+  const providers: AgentProvider[] = ["claude", "codex", "gemini", "opencode"];
+  const results: Record<AgentProvider, { success: boolean; message: string }> = {} as Record<AgentProvider, { success: boolean; message: string }>;
+
+  let allSuccess = true;
+  for (const provider of providers) {
+    const result = await installAgentHooks(provider, projectPath);
+    results[provider] = { success: result.success, message: result.message };
+    if (!result.success) allSuccess = false;
+  }
+
+  return { success: allSuccess, results };
 }
 
 /**
