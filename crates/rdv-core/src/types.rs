@@ -725,7 +725,7 @@ pub struct NoteFilter {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// SDK Insight type for categorization (distinct from orchestrator insights)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 #[serde(rename_all = "snake_case")]

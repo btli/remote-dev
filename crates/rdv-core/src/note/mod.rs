@@ -47,9 +47,11 @@
 //! let summary = service.summarize_session(session_id)?;
 //! ```
 
+mod extraction;
 mod service;
 mod summary;
 
+pub use extraction::*;
 pub use service::*;
 pub use summary::*;
 
