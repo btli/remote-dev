@@ -2394,7 +2394,22 @@ export const sdkMetaAgentOptimizationJobs = sqliteTable(
 );
 
 /**
+ * Note type for categorization.
+ */
+export type NoteType =
+  | "observation"     // User observation or note
+  | "decision"        // Decision made during work
+  | "gotcha"          // Pitfall or issue discovered
+  | "pattern"         // Pattern identified
+  | "question"        // Unanswered question
+  | "todo"            // Action item
+  | "reference";      // Reference to external resource
+
+/**
  * SDK Notes - User notes for the note-taking service.
+ *
+ * Notes capture observations, decisions, and insights during coding sessions.
+ * Supports tagging, embeddings for semantic search, and rich context.
  */
 export const sdkNotes = sqliteTable(
   "sdk_note",
@@ -2411,14 +2426,29 @@ export const sdkNotes = sqliteTable(
     folderId: text("folder_id").references(() => sessionFolders.id, {
       onDelete: "set null",
     }),
+    // Note classification
+    type: text("type").$type<NoteType>().notNull().default("observation"),
     // Note content
+    title: text("title"),  // Optional short title
     content: text("content").notNull(),
     // Tags (JSON array)
     tagsJson: text("tags_json").notNull().default("[]"),
+    // Context information (JSON object)
+    // Contains: file paths, line numbers, code snippets, task description, etc.
+    contextJson: text("context_json").default("{}"),
     // Embedding ID for semantic search
     embeddingId: text("embedding_id"),
+    // Priority (higher = more important, for knowledge consolidation)
+    priority: real("priority").default(0.5),
+    // Whether this note is pinned
+    pinned: integer("pinned", { mode: "boolean" }).default(false),
+    // Whether this note has been archived
+    archived: integer("archived", { mode: "boolean" }).default(false),
     // Timestamps
     createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
   },
@@ -2426,5 +2456,139 @@ export const sdkNotes = sqliteTable(
     index("sdk_note_user_idx").on(table.userId),
     index("sdk_note_session_idx").on(table.sessionId),
     index("sdk_note_folder_idx").on(table.folderId),
+    index("sdk_note_type_idx").on(table.userId, table.type),
+    index("sdk_note_embedding_idx").on(table.embeddingId),
+    index("sdk_note_priority_idx").on(table.userId, table.priority),
+    index("sdk_note_archived_idx").on(table.userId, table.archived),
+  ]
+);
+
+/**
+ * Insight type for categorization.
+ */
+export type InsightType =
+  | "convention"       // Code style, naming, structure convention
+  | "pattern"          // Recurring solution or approach
+  | "anti_pattern"     // Something to avoid
+  | "skill"            // Reusable capability or technique
+  | "gotcha"           // Common pitfall or error
+  | "best_practice"    // Recommended approach
+  | "dependency"       // Dependency relationship or requirement
+  | "performance";     // Performance insight
+
+/**
+ * Insight applicability scope.
+ */
+export type InsightApplicability =
+  | "session"      // Only applies to current session
+  | "folder"       // Applies to current folder/project
+  | "global"       // Applies across all projects
+  | "language"     // Applies to specific programming language
+  | "framework";   // Applies to specific framework
+
+/**
+ * SDK Insights - Extracted learnings from notes and sessions.
+ *
+ * Insights are consolidated knowledge extracted from notes, session analysis,
+ * and user feedback. They can be automatically applied to future sessions
+ * based on relevance and confidence.
+ */
+export const sdkInsights = sqliteTable(
+  "sdk_insight",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    // Insight classification
+    type: text("type").$type<InsightType>().notNull(),
+    applicability: text("applicability").$type<InsightApplicability>().notNull().default("folder"),
+    // Insight content
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    // Specific applicability context (e.g., "typescript", "react", etc.)
+    applicabilityContext: text("applicability_context"),
+    // Source notes that contributed to this insight (JSON array of note IDs)
+    sourceNotesJson: text("source_notes_json").notNull().default("[]"),
+    // Source sessions (JSON array of session IDs)
+    sourceSessionsJson: text("source_sessions_json").default("[]"),
+    // Confidence score (0.0 to 1.0)
+    confidence: real("confidence").notNull().default(0.5),
+    // How many times this insight has been applied
+    applicationCount: integer("application_count").default(0),
+    // Feedback score (average of user ratings, -1.0 to 1.0)
+    feedbackScore: real("feedback_score").default(0.0),
+    // Embedding ID for semantic search
+    embeddingId: text("embedding_id"),
+    // Whether this insight is verified by user
+    verified: integer("verified", { mode: "boolean" }).default(false),
+    // Whether this insight is active (can be applied)
+    active: integer("active", { mode: "boolean" }).default(true),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    // When insight was last applied
+    lastAppliedAt: integer("last_applied_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("sdk_insight_user_idx").on(table.userId),
+    index("sdk_insight_folder_idx").on(table.folderId),
+    index("sdk_insight_type_idx").on(table.userId, table.type),
+    index("sdk_insight_applicability_idx").on(table.userId, table.applicability),
+    index("sdk_insight_confidence_idx").on(table.userId, table.confidence),
+    index("sdk_insight_active_idx").on(table.userId, table.active),
+    index("sdk_insight_embedding_idx").on(table.embeddingId),
+    index("sdk_insight_app_context_idx").on(table.applicabilityContext),
+  ]
+);
+
+/**
+ * SDK Insight Applications - Track when insights are applied to sessions.
+ *
+ * Helps measure insight effectiveness and collect feedback.
+ */
+export const sdkInsightApplications = sqliteTable(
+  "sdk_insight_application",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    insightId: text("insight_id")
+      .notNull()
+      .references(() => sdkInsights.id, { onDelete: "cascade" }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => terminalSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // How the insight was applied
+    applicationMethod: text("application_method")
+      .$type<"automatic" | "suggested" | "manual">()
+      .notNull(),
+    // User feedback on application (-1, 0, or 1)
+    feedback: integer("feedback"),
+    // Optional feedback comment
+    feedbackComment: text("feedback_comment"),
+    // Timestamps
+    appliedAt: integer("applied_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    feedbackAt: integer("feedback_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("sdk_insight_app_insight_idx").on(table.insightId),
+    index("sdk_insight_app_session_idx").on(table.sessionId),
+    index("sdk_insight_app_user_idx").on(table.userId),
+    index("sdk_insight_app_feedback_idx").on(table.insightId, table.feedback),
   ]
 );
