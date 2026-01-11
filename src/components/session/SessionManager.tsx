@@ -18,6 +18,7 @@ import { PRsModal } from "@/components/github/PRsModal";
 import { ProjectKnowledgeModal } from "@/components/knowledge";
 import { MetaAgentOptimizationModal } from "@/components/meta-agent/MetaAgentOptimizationModal";
 import { MemoryPanel, MemoryBrowser } from "@/components/memory";
+import { NotesSidebar } from "@/components/notes";
 import type { MemoryQueryResult } from "@/hooks/useSessionMemory";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -149,6 +150,54 @@ function getServerMemoryPanelWidth() {
   return 280;
 }
 
+// Notes panel localStorage persistence
+function subscribeToNotesPanelCollapsed(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "notes-panel-collapsed") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("notes-panel-collapsed-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("notes-panel-collapsed-change", handler);
+  };
+}
+
+function subscribeToNotesPanelWidth(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "notes-panel-width") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("notes-panel-width-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("notes-panel-width-change", handler);
+  };
+}
+
+function getNotesPanelCollapsed() {
+  return localStorage.getItem("notes-panel-collapsed") !== "false"; // Default collapsed
+}
+
+function getNotesPanelWidth() {
+  const saved = localStorage.getItem("notes-panel-width");
+  if (saved) {
+    const width = parseInt(saved, 10);
+    if (!isNaN(width) && width >= 200 && width <= 500) return width;
+  }
+  return 320;
+}
+
+function getServerNotesPanelCollapsed() {
+  return true; // Default collapsed on server
+}
+
+function getServerNotesPanelWidth() {
+  return 320;
+}
+
 interface SessionManagerProps {
   isGitHubConnected?: boolean;
 }
@@ -222,6 +271,24 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   //   localStorage.setItem("memory-panel-width", String(width));
   //   window.dispatchEvent(new CustomEvent("memory-panel-width-change"));
   // }, []);
+
+  // Notes panel state (localStorage persisted)
+  const notesPanelCollapsed = useSyncExternalStore(
+    subscribeToNotesPanelCollapsed,
+    getNotesPanelCollapsed,
+    getServerNotesPanelCollapsed
+  );
+
+  const notesPanelWidth = useSyncExternalStore(
+    subscribeToNotesPanelWidth,
+    getNotesPanelWidth,
+    getServerNotesPanelWidth
+  );
+
+  const setNotesPanelCollapsed = useCallback((collapsed: boolean) => {
+    localStorage.setItem("notes-panel-collapsed", String(collapsed));
+    window.dispatchEvent(new CustomEvent("notes-panel-collapsed-change"));
+  }, []);
 
   // Track mobile state for responsive sidebar behavior
   useEffect(() => {
@@ -1626,6 +1693,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               </div>
             </div>
           </div>
+          )}
+
+          {/* Notes Panel - visible on desktop when sessions exist */}
+          {!isMobile && activeSessions.length > 0 && (
+            <NotesSidebar
+              sessionId={activeSessionId}
+              folderId={activeSessions.find((s) => s.id === activeSessionId)?.folderId ?? null}
+              collapsed={notesPanelCollapsed}
+              onCollapsedChange={setNotesPanelCollapsed}
+              width={notesPanelWidth}
+            />
           )}
 
           {/* Memory Panel - visible on desktop when sessions exist */}
