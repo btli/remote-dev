@@ -44,6 +44,7 @@ mod types;
 mod traits;
 mod agent;
 mod generators;
+mod benchmark;
 
 pub mod migrations;
 
@@ -68,4 +69,11 @@ pub use generators::{
     create_config_generator,
     ClaudeConfigGenerator, CodexConfigGenerator,
     GeminiConfigGenerator, OpenCodeConfigGenerator,
+};
+
+// Re-export benchmark framework
+pub use benchmark::{
+    MockBenchmarkExecutor, PatternBasedExecutor,
+    BenchmarkBuilder, BenchmarkAnalyzer, BenchmarkSummary,
+    run_benchmark,
 };
