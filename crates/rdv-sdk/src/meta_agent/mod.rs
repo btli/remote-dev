@@ -45,6 +45,7 @@ mod traits;
 mod agent;
 mod generators;
 mod benchmark;
+mod refinement;
 
 pub mod migrations;
 
@@ -76,4 +77,10 @@ pub use benchmark::{
     MockBenchmarkExecutor, PatternBasedExecutor,
     BenchmarkBuilder, BenchmarkAnalyzer, BenchmarkSummary,
     run_benchmark,
+};
+
+// Re-export refinement strategies
+pub use refinement::{
+    RuleBasedStrategy, ScoreBasedStrategy, CompositeStrategy,
+    create_refinement_strategy,
 };
