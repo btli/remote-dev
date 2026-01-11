@@ -41,6 +41,8 @@ describe("Hierarchical Memory System", () => {
   const testUserId = randomUUID();
   const testSessionId: string | null = null; // Avoid FK constraint
   const testFolderId: string | null = null; // Avoid FK constraint
+  // Fake session ID for ScrollbackSnapshot tests (type requires string, not null)
+  const fakeSessionIdForScrollback = randomUUID();
 
   // For tests that need real session/folder, we'll use existing data
   let existingSessionId: string | null = null;
@@ -606,7 +608,7 @@ describe("Hierarchical Memory System", () => {
     it("should detect error patterns in scrollback", () => {
       // Use content that matches specific patterns before generic "error:"
       const scrollback: ScrollbackSnapshot = {
-        sessionId: testSessionId,
+        sessionId: fakeSessionIdForScrollback,
         content: `
           npm run build
           > Building...
@@ -631,7 +633,7 @@ describe("Hierarchical Memory System", () => {
       // "Generic Error" matches before specific patterns if line contains "error:"
       // Use content that matches specific patterns directly
       const scrollback: ScrollbackSnapshot = {
-        sessionId: testSessionId,
+        sessionId: fakeSessionIdForScrollback,
         content: `
           Permission denied: /etc/passwd
           command not found: docker
@@ -655,7 +657,7 @@ describe("Hierarchical Memory System", () => {
 
     it("should store detected patterns from scrollback", async () => {
       const scrollback: ScrollbackSnapshot = {
-        sessionId: testSessionId,
+        sessionId: fakeSessionIdForScrollback,
         content: "Error: Connection refused to localhost:5432",
         hash: "hash-123",
         timestamp: new Date(),

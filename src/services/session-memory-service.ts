@@ -38,7 +38,7 @@ export class SessionMemoryError extends Error {
  */
 export interface StoreMemoryInput {
   userId: string;
-  sessionId: string;
+  sessionId?: string | null;
   folderId?: string | null;
   tier: MemoryTierType;
   contentType: MemoryContentType;
@@ -184,7 +184,7 @@ export async function storeSessionMemory(input: StoreMemoryInput): Promise<strin
  */
 export async function storeErrorObservation(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   folderId: string | null,
   errorContent: string,
   metadata?: {
@@ -212,7 +212,7 @@ export async function storeErrorObservation(
  */
 export async function storePatternObservation(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   folderId: string | null,
   pattern: string,
   patternName: string,
@@ -236,7 +236,7 @@ export async function storePatternObservation(
  */
 export async function storeGotcha(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   folderId: string | null,
   gotcha: string,
   description: string
@@ -269,7 +269,7 @@ export async function storeGotcha(
  */
 export async function getRelevantMemoriesForSession(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   folderId: string | null,
   limit: number = 20
 ): Promise<MemoryEntry[]> {
@@ -284,7 +284,7 @@ export async function getRelevantMemoriesForSession(
 
   // Get session and folder memories
   const sessionCondition = or(
-    eq(sdkMemoryEntries.sessionId, sessionId),
+    sessionId ? eq(sdkMemoryEntries.sessionId, sessionId) : undefined,
     folderId ? eq(sdkMemoryEntries.folderId, folderId) : undefined,
     eq(sdkMemoryEntries.tier, "long_term") // Always include long-term
   );
@@ -413,7 +413,7 @@ function mapToMemoryEntry(row: typeof sdkMemoryEntries.$inferSelect): MemoryEntr
  */
 export async function getInsightContext(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   folderId: string | null
 ): Promise<InsightContext> {
   const [relevantMemories, previousPatterns, knownGotchas, sessionHistory] =
@@ -437,9 +437,14 @@ export async function getInsightContext(
  */
 async function getSessionHistoryMemories(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   limit: number = 10
 ): Promise<MemoryEntry[]> {
+  // If no sessionId, return empty array
+  if (!sessionId) {
+    return [];
+  }
+
   const entries = await db
     .select()
     .from(sdkMemoryEntries)
@@ -550,7 +555,7 @@ export function analyzeScrollbackForPatterns(
  */
 export async function processScrollbackForMemory(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   folderId: string | null,
   scrollback: ScrollbackSnapshot
 ): Promise<string[]> {
@@ -593,7 +598,7 @@ export async function processScrollbackForMemory(
  */
 export async function onSessionStart(
   userId: string,
-  sessionId: string,
+  sessionId: string | null,
   folderId: string | null,
   context: {
     projectPath?: string;
@@ -634,8 +639,13 @@ export async function onSessionStart(
  */
 export async function onSessionClose(
   userId: string,
-  sessionId: string
+  sessionId: string | null
 ): Promise<number> {
+  // If no sessionId, nothing to promote
+  if (!sessionId) {
+    return 0;
+  }
+
   // Find high-value working memories from this session
   const candidates = await db
     .select()
