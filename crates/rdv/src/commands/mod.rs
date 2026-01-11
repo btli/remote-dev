@@ -16,6 +16,7 @@ pub mod master;
 pub mod meta;
 pub mod monitor;
 pub mod note;
+pub mod notes;
 pub mod nudge;
 pub mod peek;
 pub mod session;

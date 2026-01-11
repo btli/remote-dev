@@ -45,6 +45,9 @@ pub enum Commands {
     /// Quick note capture (convenience for memory operations)
     Note(NoteCommand),
 
+    /// Structured note-taking system (add, search, summarize, insights)
+    Notes(NotesCommand),
+
     /// Project knowledge base (conventions, patterns, skills, gotchas)
     Knowledge(KnowledgeCommand),
 
@@ -661,6 +664,258 @@ impl NoteType {
             NoteType::Observation => "observation",
             NoteType::Warning => "warning",
             NoteType::Decision => "decision",
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notes Commands (structured note-taking with insights)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct NotesCommand {
+    #[command(subcommand)]
+    pub action: NotesAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NotesAction {
+    /// Add a new note
+    Add {
+        /// Note content
+        content: String,
+
+        /// Note type (observation, decision, gotcha, pattern, question, todo, reference)
+        #[arg(short, long, default_value = "observation")]
+        r#type: SdkNoteType,
+
+        /// Optional title
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Tags for categorization
+        #[arg(short = 'T', long = "tag", action = clap::ArgAction::Append)]
+        tags: Vec<String>,
+
+        /// Session ID to link note to
+        #[arg(short, long)]
+        session: Option<String>,
+
+        /// Folder ID or path to link note to
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Priority (0.0 - 1.0, higher = more important)
+        #[arg(short, long)]
+        priority: Option<f64>,
+
+        /// Pin this note
+        #[arg(long)]
+        pin: bool,
+    },
+
+    /// Search notes
+    Search {
+        /// Search query
+        query: String,
+
+        /// Filter by note type
+        #[arg(short, long)]
+        r#type: Option<SdkNoteType>,
+
+        /// Filter by tag
+        #[arg(short = 'T', long)]
+        tag: Option<String>,
+
+        /// Filter by folder
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Include archived notes
+        #[arg(long)]
+        include_archived: bool,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// List notes
+    List {
+        /// Filter by note type
+        #[arg(short, long)]
+        r#type: Option<SdkNoteType>,
+
+        /// Filter by folder
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Only show pinned notes
+        #[arg(long)]
+        pinned: bool,
+
+        /// Include archived notes
+        #[arg(long)]
+        include_archived: bool,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Show a specific note
+    Show {
+        /// Note ID
+        id: String,
+    },
+
+    /// Update a note
+    Update {
+        /// Note ID
+        id: String,
+
+        /// New content
+        #[arg(long)]
+        content: Option<String>,
+
+        /// New title
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Add tags
+        #[arg(long = "add-tag", action = clap::ArgAction::Append)]
+        add_tags: Vec<String>,
+
+        /// Remove tags
+        #[arg(long = "remove-tag", action = clap::ArgAction::Append)]
+        remove_tags: Vec<String>,
+
+        /// New priority
+        #[arg(long)]
+        priority: Option<f64>,
+
+        /// Pin the note
+        #[arg(long)]
+        pin: bool,
+
+        /// Unpin the note
+        #[arg(long)]
+        unpin: bool,
+
+        /// Archive the note
+        #[arg(long)]
+        archive: bool,
+
+        /// Unarchive the note
+        #[arg(long)]
+        unarchive: bool,
+    },
+
+    /// Delete a note
+    Delete {
+        /// Note ID
+        id: String,
+
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Summarize session notes
+    Summarize {
+        /// Session ID to summarize
+        session: String,
+    },
+
+    /// View or extract insights from notes
+    Insights {
+        /// Folder ID to extract insights from
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Extract new insights from notes
+        #[arg(long)]
+        extract: bool,
+
+        /// Minimum confidence to show
+        #[arg(long)]
+        min_confidence: Option<f64>,
+
+        /// Filter by insight type
+        #[arg(short, long)]
+        r#type: Option<SdkInsightType>,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+}
+
+/// Note types for the note-taking system
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum SdkNoteType {
+    /// General observation
+    Observation,
+    /// Decision made
+    Decision,
+    /// Warning or gotcha
+    Gotcha,
+    /// Pattern identified
+    Pattern,
+    /// Unanswered question
+    Question,
+    /// Action item
+    Todo,
+    /// Reference to external resource
+    Reference,
+}
+
+impl SdkNoteType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SdkNoteType::Observation => "observation",
+            SdkNoteType::Decision => "decision",
+            SdkNoteType::Gotcha => "gotcha",
+            SdkNoteType::Pattern => "pattern",
+            SdkNoteType::Question => "question",
+            SdkNoteType::Todo => "todo",
+            SdkNoteType::Reference => "reference",
+        }
+    }
+}
+
+/// Insight types for extracted knowledge
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum SdkInsightType {
+    /// Code convention
+    Convention,
+    /// Recurring pattern
+    Pattern,
+    /// Anti-pattern to avoid
+    AntiPattern,
+    /// Reusable skill
+    Skill,
+    /// Common pitfall
+    Gotcha,
+    /// Best practice
+    BestPractice,
+    /// Dependency info
+    Dependency,
+    /// Performance insight
+    Performance,
+}
+
+impl SdkInsightType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SdkInsightType::Convention => "convention",
+            SdkInsightType::Pattern => "pattern",
+            SdkInsightType::AntiPattern => "anti_pattern",
+            SdkInsightType::Skill => "skill",
+            SdkInsightType::Gotcha => "gotcha",
+            SdkInsightType::BestPractice => "best_practice",
+            SdkInsightType::Dependency => "dependency",
+            SdkInsightType::Performance => "performance",
         }
     }
 }
