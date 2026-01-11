@@ -1,0 +1,106 @@
+[
+  {
+    "name": "commit_message",
+    "display_name": "Generate Commit Message",
+    "description": "Generate a conventional commit message from staged changes",
+    "category": "git",
+    "template": "Based on the following git diff, generate a conventional commit message.\n\nCommit types: feat, fix, docs, style, refactor, test, chore, perf, ci, build\n\nGit diff:\n```\n{{diff}}\n```\n\n{{#if context}}Additional context: {{context}}{{/if}}\n\nGenerate a commit message in this format:\n<type>(<scope>): <description>\n\n<body>\n\nCo-Authored-By: {{author}}",
+    "variables": [
+      {
+        "name": "diff",
+        "description": "The git diff of staged changes",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "context",
+        "description": "Additional context about the changes",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "author",
+        "description": "Co-author attribution",
+        "type": "string",
+        "required": false,
+        "default": "Claude <noreply@anthropic.com>"
+      }
+    ],
+    "tags": ["git", "commit", "conventional-commits"],
+    "examples": [
+      {
+        "description": "Generate commit for a bug fix",
+        "input": {
+          "diff": "- const x = null\n+ const x = defaultValue ?? null",
+          "context": "Fixed null pointer exception"
+        }
+      }
+    ]
+  },
+  {
+    "name": "pr_description",
+    "display_name": "Generate PR Description",
+    "description": "Generate a pull request description from branch changes",
+    "category": "git",
+    "template": "Generate a pull request description for the following changes.\n\nBranch: {{branch}}\nBase: {{base}}\n\nCommit messages:\n{{commits}}\n\nFiles changed:\n{{files}}\n\n{{#if summary}}Summary: {{summary}}{{/if}}\n\nGenerate a PR description with:\n## Summary\n<brief description>\n\n## Changes\n<bullet list of changes>\n\n## Testing\n<how to test>\n\n## Checklist\n- [ ] Tests added/updated\n- [ ] Documentation updated\n- [ ] No breaking changes",
+    "variables": [
+      {
+        "name": "branch",
+        "description": "Feature branch name",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "base",
+        "description": "Base branch (e.g., main)",
+        "type": "string",
+        "required": false,
+        "default": "main"
+      },
+      {
+        "name": "commits",
+        "description": "List of commit messages",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "files",
+        "description": "List of changed files",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "summary",
+        "description": "Optional high-level summary",
+        "type": "string",
+        "required": false
+      }
+    ],
+    "tags": ["git", "pull-request", "documentation"],
+    "examples": []
+  },
+  {
+    "name": "code_review",
+    "display_name": "Code Review Assistant",
+    "description": "Provide code review feedback on git diff",
+    "category": "git",
+    "template": "Review the following code changes and provide constructive feedback.\n\nFocus areas: {{focus_areas}}\n\nDiff:\n```\n{{diff}}\n```\n\nProvide feedback in these categories:\n1. **Critical Issues** - Bugs, security vulnerabilities, breaking changes\n2. **Improvements** - Performance, readability, maintainability suggestions\n3. **Nitpicks** - Style, naming conventions (optional)\n4. **Positive Feedback** - What was done well\n\nBe specific with line references where applicable.",
+    "variables": [
+      {
+        "name": "diff",
+        "description": "The git diff to review",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "focus_areas",
+        "description": "Areas to focus review on",
+        "type": "string",
+        "required": false,
+        "default": "correctness, security, performance, readability"
+      }
+    ],
+    "tags": ["git", "code-review", "quality"],
+    "examples": []
+  }
+]

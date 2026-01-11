@@ -1,0 +1,40 @@
+{
+  "id": "dependency-analyzer",
+  "name": "Dependency Analyzer",
+  "version": "1.0.0",
+  "description": "Analyze project dependencies for outdated packages, security vulnerabilities, and upgrade paths",
+  "author": "Remote Dev Team",
+  "license": "MIT",
+  "homepage": "https://github.com/btli/remote-dev",
+  "repository": "https://github.com/btli/remote-dev",
+  "keywords": ["dependencies", "security", "npm", "cargo", "pip", "outdated"],
+  "sdk_version": "0.1.0",
+  "capabilities": ["tools", "prompts"],
+  "permissions": ["command:execute", "file:read"],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "check_security": {
+        "type": "boolean",
+        "description": "Enable security vulnerability scanning",
+        "default": true
+      },
+      "include_dev": {
+        "type": "boolean",
+        "description": "Include dev dependencies in analysis",
+        "default": true
+      },
+      "severity_threshold": {
+        "type": "string",
+        "enum": ["low", "moderate", "high", "critical"],
+        "description": "Minimum severity to report",
+        "default": "moderate"
+      }
+    }
+  },
+  "default_config": {
+    "check_security": true,
+    "include_dev": true,
+    "severity_threshold": "moderate"
+  }
+}

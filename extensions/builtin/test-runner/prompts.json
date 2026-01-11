@@ -1,0 +1,130 @@
+[
+  {
+    "name": "generate_test",
+    "display_name": "Generate Test",
+    "description": "Generate unit tests for given code",
+    "category": "testing",
+    "template": "Generate comprehensive unit tests for the following code.\n\nFramework: {{framework}}\nLanguage: {{language}}\n\nCode to test:\n```{{language}}\n{{code}}\n```\n\n{{#if existing_tests}}Existing tests (avoid duplication):\n```{{language}}\n{{existing_tests}}\n```{{/if}}\n\nRequirements:\n- Test all public functions/methods\n- Include edge cases and error conditions\n- Use descriptive test names\n- Follow {{framework}} best practices\n- Aim for high coverage\n\n{{#if focus}}Focus on: {{focus}}{{/if}}",
+    "variables": [
+      {
+        "name": "code",
+        "description": "The code to generate tests for",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "framework",
+        "description": "Test framework (jest, vitest, pytest, etc.)",
+        "type": "string",
+        "required": false,
+        "default": "vitest"
+      },
+      {
+        "name": "language",
+        "description": "Programming language",
+        "type": "string",
+        "required": false,
+        "default": "typescript"
+      },
+      {
+        "name": "existing_tests",
+        "description": "Existing test code to avoid duplication",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "focus",
+        "description": "Specific areas to focus testing on",
+        "type": "string",
+        "required": false
+      }
+    ],
+    "tags": ["testing", "code-generation", "unit-tests"],
+    "examples": []
+  },
+  {
+    "name": "fix_failing_test",
+    "display_name": "Fix Failing Test",
+    "description": "Analyze and suggest fixes for failing tests",
+    "category": "testing",
+    "template": "A test is failing. Analyze and suggest a fix.\n\nTest code:\n```{{language}}\n{{test_code}}\n```\n\nImplementation being tested:\n```{{language}}\n{{implementation}}\n```\n\nError message:\n```\n{{error}}\n```\n\n{{#if stack_trace}}Stack trace:\n```\n{{stack_trace}}\n```{{/if}}\n\nDetermine:\n1. Is the test correct and the implementation buggy?\n2. Is the implementation correct and the test needs updating?\n3. Are both partially correct and need adjustment?\n\nProvide a specific fix with code.",
+    "variables": [
+      {
+        "name": "test_code",
+        "description": "The failing test code",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "implementation",
+        "description": "The implementation being tested",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "error",
+        "description": "The error message",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "stack_trace",
+        "description": "Full stack trace if available",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "language",
+        "description": "Programming language",
+        "type": "string",
+        "required": false,
+        "default": "typescript"
+      }
+    ],
+    "tags": ["testing", "debugging", "fix"],
+    "examples": []
+  },
+  {
+    "name": "improve_coverage",
+    "display_name": "Improve Test Coverage",
+    "description": "Suggest additional tests to improve coverage",
+    "category": "testing",
+    "template": "Analyze the coverage report and suggest tests to improve coverage.\n\nCurrent coverage: {{coverage_percent}}%\nTarget coverage: {{target_percent}}%\n\nUncovered code:\n```{{language}}\n{{uncovered_code}}\n```\n\nExisting tests:\n```{{language}}\n{{existing_tests}}\n```\n\nGenerate additional tests that:\n1. Cover the uncovered lines\n2. Test edge cases\n3. Don't duplicate existing tests\n4. Follow project conventions\n\nPrioritize tests that increase coverage most efficiently.",
+    "variables": [
+      {
+        "name": "coverage_percent",
+        "description": "Current coverage percentage",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "target_percent",
+        "description": "Target coverage percentage",
+        "type": "string",
+        "required": false,
+        "default": "80"
+      },
+      {
+        "name": "uncovered_code",
+        "description": "Code that lacks test coverage",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "existing_tests",
+        "description": "Existing test code",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "language",
+        "description": "Programming language",
+        "type": "string",
+        "required": false,
+        "default": "typescript"
+      }
+    ],
+    "tags": ["testing", "coverage", "code-generation"],
+    "examples": []
+  }
+]

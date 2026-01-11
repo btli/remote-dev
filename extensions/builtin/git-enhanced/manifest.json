@@ -1,0 +1,33 @@
+{
+  "id": "git-enhanced",
+  "name": "Git Enhanced",
+  "version": "1.0.0",
+  "description": "Enhanced Git tools for code review, commit analysis, and repository insights",
+  "author": "Remote Dev Team",
+  "license": "MIT",
+  "homepage": "https://github.com/btli/remote-dev",
+  "repository": "https://github.com/btli/remote-dev",
+  "keywords": ["git", "version-control", "code-review", "commits"],
+  "sdk_version": "0.1.0",
+  "capabilities": ["tools", "prompts"],
+  "permissions": ["command:execute", "file:read"],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "default_remote": {
+        "type": "string",
+        "description": "Default remote name",
+        "default": "origin"
+      },
+      "max_commits": {
+        "type": "integer",
+        "description": "Maximum commits to analyze",
+        "default": 100
+      }
+    }
+  },
+  "default_config": {
+    "default_remote": "origin",
+    "max_commits": 100
+  }
+}

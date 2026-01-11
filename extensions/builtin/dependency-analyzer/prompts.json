@@ -1,0 +1,115 @@
+[
+  {
+    "name": "upgrade_plan",
+    "display_name": "Dependency Upgrade Plan",
+    "description": "Create a safe, prioritized upgrade plan for outdated dependencies",
+    "category": "dependencies",
+    "template": "Create a safe upgrade plan for the following outdated dependencies.\n\nPackage Manager: {{manager}}\nProject: {{project_name}}\n\nOutdated packages:\n{{#each outdated}}\n- {{name}}: {{current}} → {{latest}} ({{#if breaking}}BREAKING{{else}}safe{{/if}})\n{{/each}}\n\n{{#if vulnerabilities}}Security vulnerabilities to address:\n{{#each vulnerabilities}}\n- {{package}}: {{severity}} - {{title}}\n{{/each}}{{/if}}\n\nCreate an upgrade plan that:\n1. Prioritizes security fixes\n2. Groups compatible updates together\n3. Identifies breaking changes requiring code modifications\n4. Suggests testing strategy for each group\n5. Provides rollback instructions\n\n{{#if constraints}}Constraints: {{constraints}}{{/if}}",
+    "variables": [
+      {
+        "name": "outdated",
+        "description": "List of outdated packages with version info",
+        "type": "array",
+        "required": true
+      },
+      {
+        "name": "manager",
+        "description": "Package manager (npm, bun, cargo, etc.)",
+        "type": "string",
+        "required": false,
+        "default": "npm"
+      },
+      {
+        "name": "project_name",
+        "description": "Name of the project",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "vulnerabilities",
+        "description": "Known security vulnerabilities",
+        "type": "array",
+        "required": false
+      },
+      {
+        "name": "constraints",
+        "description": "Any constraints on upgrades (e.g., must maintain Node 18 compatibility)",
+        "type": "string",
+        "required": false
+      }
+    ],
+    "tags": ["dependencies", "upgrade", "planning"],
+    "examples": []
+  },
+  {
+    "name": "vulnerability_report",
+    "display_name": "Security Vulnerability Report",
+    "description": "Generate a comprehensive security vulnerability report",
+    "category": "dependencies",
+    "template": "Generate a security vulnerability report for this project.\n\nProject: {{project_name}}\nScan Date: {{scan_date}}\n\nVulnerabilities found:\n{{#each vulnerabilities}}\n## {{severity}}: {{title}}\n- Package: {{package}}\n- CVE: {{cve}}\n- Vulnerable: {{vulnerable_versions}}\n- Patched: {{patched_versions}}\n- Details: {{url}}\n\n{{/each}}\n\nGenerate a report that includes:\n1. Executive summary with risk assessment\n2. Prioritized remediation steps\n3. Impact analysis for each vulnerability\n4. Recommended patches or workarounds\n5. Timeline recommendations\n\n{{#if compliance}}Compliance requirements: {{compliance}}{{/if}}",
+    "variables": [
+      {
+        "name": "vulnerabilities",
+        "description": "List of vulnerabilities from security audit",
+        "type": "array",
+        "required": true
+      },
+      {
+        "name": "project_name",
+        "description": "Name of the project",
+        "type": "string",
+        "required": true
+      },
+      {
+        "name": "scan_date",
+        "description": "Date of the security scan",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "compliance",
+        "description": "Compliance requirements (SOC2, HIPAA, etc.)",
+        "type": "string",
+        "required": false
+      }
+    ],
+    "tags": ["security", "vulnerabilities", "compliance"],
+    "examples": []
+  },
+  {
+    "name": "dependency_cleanup",
+    "display_name": "Dependency Cleanup",
+    "description": "Suggest unused or redundant dependencies to remove",
+    "category": "dependencies",
+    "template": "Analyze the project dependencies and suggest cleanup opportunities.\n\nPackage Manager: {{manager}}\n\nAll dependencies:\n{{#each dependencies}}\n- {{name}}@{{version}} ({{type}})\n{{/each}}\n\n{{#if imports}}Import analysis:\n```\n{{imports}}\n```{{/if}}\n\n{{#if bundle_analysis}}Bundle size analysis:\n{{bundle_analysis}}{{/if}}\n\nIdentify:\n1. Potentially unused dependencies (not imported anywhere)\n2. Redundant dependencies (functionality duplicated)\n3. Dependencies that could be dev-only\n4. Large dependencies with lighter alternatives\n5. Deprecated packages to replace\n\nFor each suggestion, explain:\n- Why it's recommended\n- Potential risks of removal\n- How to verify it's safe to remove",
+    "variables": [
+      {
+        "name": "dependencies",
+        "description": "List of all dependencies",
+        "type": "array",
+        "required": true
+      },
+      {
+        "name": "manager",
+        "description": "Package manager",
+        "type": "string",
+        "required": false,
+        "default": "npm"
+      },
+      {
+        "name": "imports",
+        "description": "Import analysis from the codebase",
+        "type": "string",
+        "required": false
+      },
+      {
+        "name": "bundle_analysis",
+        "description": "Bundle size analysis results",
+        "type": "string",
+        "required": false
+      }
+    ],
+    "tags": ["dependencies", "cleanup", "optimization"],
+    "examples": []
+  }
+]

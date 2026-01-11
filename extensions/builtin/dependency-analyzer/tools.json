@@ -1,0 +1,272 @@
+[
+  {
+    "name": "detect_package_manager",
+    "display_name": "Detect Package Manager",
+    "description": "Auto-detect the package manager used in a project based on lock files and config",
+    "category": "dependencies",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "manager": {
+          "type": "string",
+          "enum": ["npm", "yarn", "pnpm", "bun", "pip", "uv", "cargo", "go", "composer", "unknown"]
+        },
+        "lock_file": { "type": "string" },
+        "config_file": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["file:read"],
+    "examples": [
+      {
+        "description": "Detect package manager in a Node.js project",
+        "input": { "path": "/workspace/my-app" },
+        "output": {
+          "manager": "bun",
+          "lock_file": "bun.lockb",
+          "config_file": "package.json",
+          "version": "1.1.0"
+        }
+      }
+    ]
+  },
+  {
+    "name": "list_dependencies",
+    "display_name": "List Dependencies",
+    "description": "List all project dependencies with version information",
+    "category": "dependencies",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        },
+        "include_dev": {
+          "type": "boolean",
+          "description": "Include development dependencies",
+          "default": true
+        },
+        "depth": {
+          "type": "integer",
+          "description": "Depth of transitive dependencies to include (0 = direct only)",
+          "default": 0
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "version": { "type": "string" },
+              "type": { "type": "string", "enum": ["production", "development", "peer", "optional"] },
+              "direct": { "type": "boolean" }
+            }
+          }
+        },
+        "total": { "type": "integer" },
+        "production_count": { "type": "integer" },
+        "dev_count": { "type": "integer" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["file:read", "command:execute"],
+    "examples": []
+  },
+  {
+    "name": "check_outdated",
+    "display_name": "Check Outdated",
+    "description": "Check for outdated dependencies with available updates",
+    "category": "dependencies",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        },
+        "include_dev": {
+          "type": "boolean",
+          "description": "Include development dependencies",
+          "default": true
+        },
+        "major_only": {
+          "type": "boolean",
+          "description": "Only show major version updates",
+          "default": false
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "outdated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "current": { "type": "string" },
+              "wanted": { "type": "string" },
+              "latest": { "type": "string" },
+              "type": { "type": "string" },
+              "breaking": { "type": "boolean" },
+              "changelog_url": { "type": "string" }
+            }
+          }
+        },
+        "total_outdated": { "type": "integer" },
+        "major_updates": { "type": "integer" },
+        "minor_updates": { "type": "integer" },
+        "patch_updates": { "type": "integer" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute"],
+    "examples": [
+      {
+        "description": "Check for outdated packages",
+        "input": { "path": "/workspace/my-app" },
+        "output": {
+          "outdated": [
+            {
+              "name": "react",
+              "current": "18.2.0",
+              "wanted": "18.3.0",
+              "latest": "19.0.0",
+              "type": "production",
+              "breaking": true,
+              "changelog_url": "https://github.com/facebook/react/releases"
+            }
+          ],
+          "total_outdated": 1,
+          "major_updates": 1,
+          "minor_updates": 0,
+          "patch_updates": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "security_audit",
+    "display_name": "Security Audit",
+    "description": "Scan dependencies for known security vulnerabilities",
+    "category": "dependencies",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "moderate", "high", "critical"],
+          "description": "Minimum severity to report",
+          "default": "moderate"
+        },
+        "fix": {
+          "type": "boolean",
+          "description": "Attempt to auto-fix vulnerabilities",
+          "default": false
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "vulnerabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "package": { "type": "string" },
+              "severity": { "type": "string" },
+              "title": { "type": "string" },
+              "cve": { "type": "string" },
+              "vulnerable_versions": { "type": "string" },
+              "patched_versions": { "type": "string" },
+              "recommendation": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "total": { "type": "integer" },
+        "critical": { "type": "integer" },
+        "high": { "type": "integer" },
+        "moderate": { "type": "integer" },
+        "low": { "type": "integer" },
+        "fixable": { "type": "integer" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": true,
+    "permissions": ["command:execute"],
+    "examples": []
+  },
+  {
+    "name": "dependency_graph",
+    "display_name": "Dependency Graph",
+    "description": "Generate a dependency graph showing relationships between packages",
+    "category": "dependencies",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        },
+        "package": {
+          "type": "string",
+          "description": "Focus on a specific package (show what depends on it)"
+        },
+        "depth": {
+          "type": "integer",
+          "description": "Maximum depth of graph",
+          "default": 3
+        },
+        "format": {
+          "type": "string",
+          "enum": ["tree", "json", "dot"],
+          "description": "Output format",
+          "default": "tree"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "graph": { "type": "string" },
+        "nodes": { "type": "integer" },
+        "edges": { "type": "integer" },
+        "circular": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Circular dependency paths"
+        }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute"],
+    "examples": []
+  }
+]

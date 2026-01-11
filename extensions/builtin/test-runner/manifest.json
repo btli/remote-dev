@@ -1,0 +1,39 @@
+{
+  "id": "test-runner",
+  "name": "Test Runner",
+  "version": "1.0.0",
+  "description": "Universal test runner with framework detection, coverage analysis, and result formatting",
+  "author": "Remote Dev Team",
+  "license": "MIT",
+  "homepage": "https://github.com/btli/remote-dev",
+  "repository": "https://github.com/btli/remote-dev",
+  "keywords": ["testing", "jest", "vitest", "pytest", "cargo-test", "coverage"],
+  "sdk_version": "0.1.0",
+  "capabilities": ["tools", "prompts"],
+  "permissions": ["command:execute", "file:read"],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "timeout_ms": {
+        "type": "integer",
+        "description": "Test execution timeout in milliseconds",
+        "default": 300000
+      },
+      "coverage_threshold": {
+        "type": "number",
+        "description": "Minimum coverage percentage to pass",
+        "default": 80
+      },
+      "parallel": {
+        "type": "boolean",
+        "description": "Run tests in parallel when supported",
+        "default": true
+      }
+    }
+  },
+  "default_config": {
+    "timeout_ms": 300000,
+    "coverage_threshold": 80,
+    "parallel": true
+  }
+}

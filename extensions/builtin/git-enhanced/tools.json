@@ -1,0 +1,206 @@
+[
+  {
+    "name": "git_status_enhanced",
+    "display_name": "Git Status Enhanced",
+    "description": "Get detailed Git status including staged, unstaged, and untracked files with diff statistics",
+    "category": "git",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Repository path (defaults to current directory)"
+        },
+        "include_ignored": {
+          "type": "boolean",
+          "description": "Include ignored files",
+          "default": false
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "branch": { "type": "string" },
+        "staged": { "type": "array", "items": { "type": "object" } },
+        "unstaged": { "type": "array", "items": { "type": "object" } },
+        "untracked": { "type": "array", "items": { "type": "string" } },
+        "ahead": { "type": "integer" },
+        "behind": { "type": "integer" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute"],
+    "examples": [
+      {
+        "description": "Get status of current repository",
+        "input": {},
+        "output": {
+          "branch": "main",
+          "staged": [{"file": "src/main.rs", "status": "modified", "additions": 10, "deletions": 5}],
+          "unstaged": [],
+          "untracked": ["temp.txt"],
+          "ahead": 2,
+          "behind": 0
+        }
+      }
+    ]
+  },
+  {
+    "name": "git_diff_summary",
+    "display_name": "Git Diff Summary",
+    "description": "Generate a human-readable summary of changes between commits or branches",
+    "category": "git",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Base commit/branch (e.g., 'HEAD~5', 'main')"
+        },
+        "to": {
+          "type": "string",
+          "description": "Target commit/branch (defaults to HEAD)"
+        },
+        "path": {
+          "type": "string",
+          "description": "Limit diff to specific path"
+        }
+      },
+      "required": ["from"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "files_changed": { "type": "integer" },
+        "insertions": { "type": "integer" },
+        "deletions": { "type": "integer" },
+        "summary": { "type": "string" },
+        "files": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute"],
+    "examples": [
+      {
+        "description": "Compare current branch with main",
+        "input": { "from": "main" },
+        "output": {
+          "files_changed": 5,
+          "insertions": 150,
+          "deletions": 30,
+          "summary": "5 files changed, 150 insertions(+), 30 deletions(-)",
+          "files": []
+        }
+      }
+    ]
+  },
+  {
+    "name": "git_commit_analyzer",
+    "display_name": "Git Commit Analyzer",
+    "description": "Analyze commit history to identify patterns, frequent contributors, and hotspots",
+    "category": "git",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Repository path"
+        },
+        "since": {
+          "type": "string",
+          "description": "Start date (ISO format or relative like '30 days ago')"
+        },
+        "until": {
+          "type": "string",
+          "description": "End date"
+        },
+        "author": {
+          "type": "string",
+          "description": "Filter by author"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum commits to analyze",
+          "default": 100
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "total_commits": { "type": "integer" },
+        "contributors": { "type": "array", "items": { "type": "object" } },
+        "hotspots": { "type": "array", "items": { "type": "object" } },
+        "commit_frequency": { "type": "object" },
+        "average_files_per_commit": { "type": "number" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute"],
+    "examples": [
+      {
+        "description": "Analyze last 30 days of commits",
+        "input": { "since": "30 days ago" },
+        "output": {
+          "total_commits": 45,
+          "contributors": [{"name": "dev1", "commits": 30}],
+          "hotspots": [{"file": "src/main.rs", "changes": 15}],
+          "commit_frequency": {"Mon": 10, "Tue": 8},
+          "average_files_per_commit": 2.5
+        }
+      }
+    ]
+  },
+  {
+    "name": "git_branch_compare",
+    "display_name": "Git Branch Compare",
+    "description": "Compare two branches showing divergence, merge conflicts potential, and file-level differences",
+    "category": "git",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "type": "string",
+          "description": "Base branch (e.g., 'main')"
+        },
+        "compare": {
+          "type": "string",
+          "description": "Branch to compare (defaults to current branch)"
+        }
+      },
+      "required": ["base"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "commits_ahead": { "type": "integer" },
+        "commits_behind": { "type": "integer" },
+        "can_fast_forward": { "type": "boolean" },
+        "potential_conflicts": { "type": "array", "items": { "type": "string" } },
+        "unique_files_base": { "type": "array", "items": { "type": "string" } },
+        "unique_files_compare": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute"],
+    "examples": [
+      {
+        "description": "Compare feature branch with main",
+        "input": { "base": "main" },
+        "output": {
+          "commits_ahead": 5,
+          "commits_behind": 2,
+          "can_fast_forward": false,
+          "potential_conflicts": ["src/config.ts"],
+          "unique_files_base": ["hotfix.txt"],
+          "unique_files_compare": ["feature.ts"]
+        }
+      }
+    ]
+  }
+]

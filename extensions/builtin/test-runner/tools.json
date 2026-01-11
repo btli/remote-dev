@@ -1,0 +1,251 @@
+[
+  {
+    "name": "detect_test_framework",
+    "display_name": "Detect Test Framework",
+    "description": "Auto-detect the test framework used in a project based on config files and dependencies",
+    "category": "testing",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "framework": {
+          "type": "string",
+          "enum": ["jest", "vitest", "mocha", "pytest", "cargo-test", "go-test", "rspec", "unknown"]
+        },
+        "config_file": { "type": "string" },
+        "run_command": { "type": "string" },
+        "coverage_command": { "type": "string" },
+        "test_pattern": { "type": "string" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["file:read"],
+    "examples": [
+      {
+        "description": "Detect framework in a Node.js project",
+        "input": { "path": "/workspace/my-app" },
+        "output": {
+          "framework": "vitest",
+          "config_file": "vitest.config.ts",
+          "run_command": "bun test",
+          "coverage_command": "bun test --coverage",
+          "test_pattern": "**/*.test.ts"
+        }
+      }
+    ]
+  },
+  {
+    "name": "run_tests",
+    "display_name": "Run Tests",
+    "description": "Execute tests with optional filtering, coverage, and custom arguments",
+    "category": "testing",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Test file pattern or specific test name"
+        },
+        "coverage": {
+          "type": "boolean",
+          "description": "Enable coverage reporting",
+          "default": false
+        },
+        "watch": {
+          "type": "boolean",
+          "description": "Run in watch mode",
+          "default": false
+        },
+        "verbose": {
+          "type": "boolean",
+          "description": "Enable verbose output",
+          "default": false
+        },
+        "framework": {
+          "type": "string",
+          "description": "Override detected framework"
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional arguments to pass"
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "success": { "type": "boolean" },
+        "total": { "type": "integer" },
+        "passed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "skipped": { "type": "integer" },
+        "duration_ms": { "type": "integer" },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "lines": { "type": "number" },
+            "functions": { "type": "number" },
+            "branches": { "type": "number" },
+            "statements": { "type": "number" }
+          }
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "test": { "type": "string" },
+              "error": { "type": "string" },
+              "file": { "type": "string" },
+              "line": { "type": "integer" }
+            }
+          }
+        },
+        "output": { "type": "string" }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute"],
+    "examples": [
+      {
+        "description": "Run all tests with coverage",
+        "input": { "coverage": true },
+        "output": {
+          "success": true,
+          "total": 50,
+          "passed": 48,
+          "failed": 0,
+          "skipped": 2,
+          "duration_ms": 5432,
+          "coverage": {
+            "lines": 85.5,
+            "functions": 90.0,
+            "branches": 78.2,
+            "statements": 86.1
+          },
+          "failures": [],
+          "output": ""
+        }
+      }
+    ]
+  },
+  {
+    "name": "analyze_test_failures",
+    "display_name": "Analyze Test Failures",
+    "description": "Parse test output to extract structured failure information with suggestions",
+    "category": "testing",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "output": {
+          "type": "string",
+          "description": "Raw test output to analyze"
+        },
+        "framework": {
+          "type": "string",
+          "description": "Test framework (for parser selection)"
+        }
+      },
+      "required": ["output"]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "test_name": { "type": "string" },
+              "file": { "type": "string" },
+              "line": { "type": "integer" },
+              "error_type": { "type": "string" },
+              "message": { "type": "string" },
+              "expected": { "type": "string" },
+              "actual": { "type": "string" },
+              "stack_trace": { "type": "string" },
+              "suggestion": { "type": "string" }
+            }
+          }
+        },
+        "summary": { "type": "string" }
+      }
+    },
+    "is_async": false,
+    "has_side_effects": false,
+    "permissions": [],
+    "examples": []
+  },
+  {
+    "name": "coverage_report",
+    "display_name": "Coverage Report",
+    "description": "Generate detailed coverage report with uncovered lines and improvement suggestions",
+    "category": "testing",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Project directory path"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["summary", "detailed", "json"],
+          "description": "Report format",
+          "default": "summary"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Minimum coverage threshold",
+          "default": 80
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "overall": {
+          "type": "object",
+          "properties": {
+            "lines": { "type": "number" },
+            "functions": { "type": "number" },
+            "branches": { "type": "number" },
+            "statements": { "type": "number" }
+          }
+        },
+        "meets_threshold": { "type": "boolean" },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "file": { "type": "string" },
+              "coverage": { "type": "number" },
+              "uncovered_lines": { "type": "array", "items": { "type": "integer" } }
+            }
+          }
+        },
+        "suggestions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "is_async": true,
+    "has_side_effects": false,
+    "permissions": ["command:execute", "file:read"],
+    "examples": []
+  }
+]
