@@ -4,6 +4,7 @@ pub mod folders;
 pub mod health;
 pub mod hooks;
 pub mod knowledge;
+pub mod memory;
 pub mod orchestrators;
 pub mod sessions;
 pub mod tokens;
@@ -14,6 +15,11 @@ use std::sync::Arc;
 
 use crate::middleware::auth_middleware;
 use crate::state::AppState;
+
+/// Parse content type from string
+pub fn parse_content_type(s: &str) -> Option<rdv_core::memory::ContentType> {
+    rdv_core::memory::ContentType::from_str(s)
+}
 
 /// Create the main router with all routes
 pub fn create_router(state: Arc<AppState>) -> Router {
@@ -27,6 +33,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(worktrees::router())
         .merge(orchestrators::router())
         .merge(knowledge::router())
+        .merge(memory::router())
         .merge(hooks::router())
         .merge(tokens::router())
         .layer(middleware::from_fn_with_state(
