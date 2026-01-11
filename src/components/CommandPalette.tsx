@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   CommandDialog,
   CommandInput,
@@ -9,6 +9,7 @@ import {
   CommandGroup,
   CommandItem,
   CommandShortcut,
+  CommandSeparator,
 } from "@/components/ui/command";
 import {
   Terminal,
@@ -27,7 +28,17 @@ import {
   Square,
   Brain,
   Bot,
+  Clock,
+  Database,
+  Eye,
+  Trash2,
+  Lightbulb,
+  AlertTriangle,
+  CheckSquare,
+  HelpCircle,
+  Bell,
 } from "lucide-react";
+import { useSessionMemory, type MemoryQueryResult, type MemoryTier } from "@/hooks/useSessionMemory";
 
 interface CommandAction {
   id: string;
@@ -37,6 +48,42 @@ interface CommandAction {
   group: string;
   onSelect: () => void;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory Content Type Icons
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CONTENT_TYPE_ICONS: Record<string, React.ElementType> = {
+  "note:todo": CheckSquare,
+  "note:reminder": Bell,
+  "note:question": HelpCircle,
+  "note:observation": Eye,
+  "note:warning": AlertTriangle,
+  "note:decision": CheckSquare,
+  "insight:convention": Lightbulb,
+  "insight:pattern": Lightbulb,
+  "insight:gotcha": AlertTriangle,
+  "insight:skill": Lightbulb,
+  "insight:tool": Lightbulb,
+  context: Brain,
+  task_context: Brain,
+  error: AlertTriangle,
+  discovery: Eye,
+  reference: Database,
+  project: Database,
+};
+
+const TIER_ICONS: Record<MemoryTier, React.ElementType> = {
+  short_term: Clock,
+  working: Brain,
+  long_term: Database,
+};
+
+const TIER_COLORS: Record<MemoryTier, string> = {
+  short_term: "text-yellow-500",
+  working: "text-blue-500",
+  long_term: "text-green-500",
+};
 
 interface CommandPaletteProps {
   onNewSession: () => void;
@@ -55,6 +102,8 @@ interface CommandPaletteProps {
   onStopRecording?: () => void;
   onViewRecordings?: () => void;
   onReinitOrchestrator?: () => void;
+  onOpenMemoryBrowser?: () => void;
+  onViewMemory?: (memory: MemoryQueryResult) => void;
   activeSessionId?: string | null;
   activeFolderId?: string | null;
   isSplitMode?: boolean;
@@ -78,12 +127,37 @@ export function CommandPalette({
   onStopRecording,
   onViewRecordings,
   onReinitOrchestrator,
+  onOpenMemoryBrowser,
+  onViewMemory,
   activeSessionId,
   activeFolderId,
   isSplitMode,
   isRecording,
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Memory search integration
+  const {
+    allMemories,
+    loading: memoriesLoading,
+    pinToWorking,
+    promoteToLongTerm,
+    deleteMemory,
+  } = useSessionMemory({
+    sessionId: activeSessionId ?? null,
+    folderId: activeFolderId ?? null,
+    query: searchQuery.length >= 2 ? searchQuery : undefined,
+    autoFetch: open,
+    pollInterval: 0, // Don't poll, just search on demand
+    limit: 10,
+  });
+
+  // Filter memories based on search query (minimum 2 chars)
+  const filteredMemories = useMemo(() => {
+    if (searchQuery.length < 2) return [];
+    return allMemories.slice(0, 5); // Show max 5 memories in palette
+  }, [allMemories, searchQuery]);
 
   // Listen for keyboard shortcut
   useEffect(() => {
@@ -99,10 +173,40 @@ export function CommandPalette({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const runAction = useCallback((action: () => void) => {
-    setOpen(false);
-    action();
+  // Handle open state change and reset search when closing
+  const handleOpenChange = useCallback((newOpen: boolean) => {
+    setOpen(newOpen);
+    if (!newOpen) {
+      setSearchQuery("");
+    }
   }, []);
+
+  const runAction = useCallback((action: () => void) => {
+    handleOpenChange(false);
+    action();
+  }, [handleOpenChange]);
+
+  // Memory quick actions
+  const handleViewMemory = useCallback((memory: MemoryQueryResult) => {
+    handleOpenChange(false);
+    onViewMemory?.(memory);
+  }, [handleOpenChange, onViewMemory]);
+
+  const handlePinMemory = useCallback(async (memory: MemoryQueryResult) => {
+    await pinToWorking(memory.id);
+    handleOpenChange(false);
+  }, [handleOpenChange, pinToWorking]);
+
+  const handlePromoteMemory = useCallback(async (memory: MemoryQueryResult) => {
+    const name = memory.name || memory.description?.slice(0, 50) || "Memory";
+    await promoteToLongTerm(memory.id, name);
+    handleOpenChange(false);
+  }, [handleOpenChange, promoteToLongTerm]);
+
+  const handleDeleteMemory = useCallback(async (memory: MemoryQueryResult) => {
+    await deleteMemory(memory.id);
+    handleOpenChange(false);
+  }, [handleOpenChange, deleteMemory]);
 
   const actions: CommandAction[] = [
     // Sessions
@@ -267,6 +371,18 @@ export function CommandPalette({
           },
         ]
       : []),
+    // Memory
+    ...(onOpenMemoryBrowser
+      ? [
+          {
+            id: "open-memory-browser",
+            label: "Browse Memory",
+            icon: <Brain className="w-4 h-4" />,
+            group: "Memory",
+            onSelect: () => runAction(onOpenMemoryBrowser),
+          },
+        ]
+      : []),
     // Refresh
     ...(onRefreshSessions
       ? [
@@ -293,11 +409,75 @@ export function CommandPalette({
     {} as Record<string, CommandAction[]>
   );
 
+  // Helper to get memory icon
+  const getMemoryIcon = (memory: MemoryQueryResult) => {
+    const ContentIcon = CONTENT_TYPE_ICONS[memory.contentType] || Brain;
+    const TierIcon = TIER_ICONS[memory.tier];
+    const tierColor = TIER_COLORS[memory.tier];
+    return (
+      <div className="flex items-center gap-1">
+        <TierIcon className={`w-3 h-3 ${tierColor}`} />
+        <ContentIcon className="w-4 h-4" />
+      </div>
+    );
+  };
+
   return (
-    <CommandDialog open={open} onOpenChange={setOpen} showCloseButton={false}>
-      <CommandInput placeholder="Type a command or search..." />
+    <CommandDialog open={open} onOpenChange={handleOpenChange} showCloseButton={false}>
+      <CommandInput
+        placeholder="Type a command or search memories..."
+        value={searchQuery}
+        onValueChange={setSearchQuery}
+      />
       <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
+        <CommandEmpty>
+          {memoriesLoading ? "Searching..." : "No results found."}
+        </CommandEmpty>
+
+        {/* Memory search results - show when searching */}
+        {filteredMemories.length > 0 && (
+          <>
+            <CommandGroup heading="Memories">
+              {filteredMemories.map((memory) => (
+                <CommandItem
+                  key={memory.id}
+                  value={`memory-${memory.id}-${memory.name || memory.content.slice(0, 20)}`}
+                  onSelect={() => handleViewMemory(memory)}
+                  className="flex-col items-start"
+                >
+                  <div className="flex items-center gap-2 w-full">
+                    {getMemoryIcon(memory)}
+                    <span className="flex-1 truncate">
+                      {memory.name || memory.description || memory.content.slice(0, 50)}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {memory.tier.replace("_", "-")}
+                    </span>
+                  </div>
+                  {memory.description && memory.name && (
+                    <span className="text-xs text-muted-foreground ml-6 truncate w-full">
+                      {memory.description.slice(0, 60)}
+                    </span>
+                  )}
+                </CommandItem>
+              ))}
+              {/* Quick actions for memory */}
+              {filteredMemories.length > 0 && onOpenMemoryBrowser && (
+                <CommandItem
+                  value="view-all-memories"
+                  onSelect={() => runAction(onOpenMemoryBrowser)}
+                  className="justify-center text-muted-foreground"
+                >
+                  <Eye className="w-4 h-4 mr-2" />
+                  View all memories...
+                </CommandItem>
+              )}
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        )}
+
+        {/* Regular command groups */}
         {Object.entries(groups).map(([group, groupActions]) => (
           <CommandGroup key={group} heading={group}>
             {groupActions.map((action) => (

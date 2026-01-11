@@ -16,7 +16,8 @@ import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { IssuesModal } from "@/components/github/IssuesModal";
 import { PRsModal } from "@/components/github/PRsModal";
 import { ProjectKnowledgeModal } from "@/components/knowledge";
-import { MemoryPanel } from "@/components/memory";
+import { MemoryPanel, MemoryBrowser } from "@/components/memory";
+import type { MemoryQueryResult } from "@/hooks/useSessionMemory";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
@@ -242,6 +243,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
   const [isRecordingsModalOpen, setIsRecordingsModalOpen] = useState(false);
   const [isSaveRecordingModalOpen, setIsSaveRecordingModalOpen] = useState(false);
+  const [isMemoryBrowserOpen, setIsMemoryBrowserOpen] = useState(false);
+  const [selectedMemory, setSelectedMemory] = useState<MemoryQueryResult | null>(null);
   const [mobileEditingName, setMobileEditingName] = useState<string | null>(null);
 
   // Recording state
@@ -1663,6 +1666,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             ? () => handleReinitOrchestrator(activeProject.folderId!)
             : undefined
         }
+        onOpenMemoryBrowser={() => setIsMemoryBrowserOpen(true)}
+        onViewMemory={(memory) => {
+          setSelectedMemory(memory);
+          setIsMemoryBrowserOpen(true);
+        }}
         activeSessionId={activeSessionId}
         activeFolderId={activeProject.folderId}
         isSplitMode={isSplitMode}
@@ -1686,6 +1694,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <RecordingsModal
         open={isRecordingsModalOpen}
         onOpenChange={setIsRecordingsModalOpen}
+      />
+
+      {/* Memory Browser Modal */}
+      <MemoryBrowser
+        open={isMemoryBrowserOpen}
+        onClose={() => {
+          setIsMemoryBrowserOpen(false);
+          setSelectedMemory(null);
+        }}
       />
 
       {/* Save Recording Modal */}
