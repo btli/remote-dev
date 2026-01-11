@@ -608,4 +608,188 @@ mod tests {
         let mcp_result = MCPToolAdapter::to_mcp_result(error_output);
         assert_eq!(mcp_result.is_error, Some(true));
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Hot-Reload Functionality Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_hot_reload_update_handler() {
+        let router = DynamicToolRouter::new();
+        let tool = create_test_tool();
+
+        // Register with initial handler
+        let initial_handler: ToolHandler = Arc::new(|_| {
+            Box::pin(async move {
+                ToolOutput {
+                    data: json!({"version": "v1"}),
+                    success: true,
+                    error: None,
+                    duration_ms: 0,
+                    side_effects: vec![],
+                }
+            })
+        });
+
+        router.register_tool_with_handler("hot-ext", tool, initial_handler).await.unwrap();
+
+        // Call with initial handler
+        let input = ToolInput {
+            args: json!({}),
+            context: ToolContext {
+                session_id: None,
+                user_id: "user-1".to_string(),
+                folder_id: None,
+                task_id: None,
+                metadata: HashMap::new(),
+            },
+        };
+
+        let output = router.call_tool("hot-ext:test_tool", input.clone()).await.unwrap();
+        assert_eq!(output.data["version"], "v1");
+
+        // Update to new handler (hot-reload)
+        let updated_handler: ToolHandler = Arc::new(|_| {
+            Box::pin(async move {
+                ToolOutput {
+                    data: json!({"version": "v2"}),
+                    success: true,
+                    error: None,
+                    duration_ms: 0,
+                    side_effects: vec![],
+                }
+            })
+        });
+
+        router.set_handler("hot-ext:test_tool", updated_handler).await.unwrap();
+
+        // Call with updated handler
+        let output = router.call_tool("hot-ext:test_tool", input).await.unwrap();
+        assert_eq!(output.data["version"], "v2");
+    }
+
+    #[tokio::test]
+    async fn test_hot_reload_unregister_extension_tools() {
+        let router = DynamicToolRouter::new();
+
+        // Register multiple tools for one extension
+        let mut tool1 = create_test_tool();
+        tool1.name = "tool_a".to_string();
+        let mut tool2 = create_test_tool();
+        tool2.name = "tool_b".to_string();
+
+        router.register_tools("hot-ext", vec![tool1, tool2]).await.unwrap();
+        assert_eq!(router.tool_count().await, 2);
+
+        // Unregister all tools for that extension (simulating hot-reload)
+        let removed = router.unregister_extension("hot-ext").await.unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(router.tool_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_hot_reload_tools_by_extension() {
+        let router = DynamicToolRouter::new();
+
+        // Register tools for two extensions
+        let mut tool1 = create_test_tool();
+        tool1.name = "tool_1".to_string();
+        let mut tool2 = create_test_tool();
+        tool2.name = "tool_2".to_string();
+
+        router.register_tools("ext-a", vec![tool1]).await.unwrap();
+        router.register_tools("ext-b", vec![tool2]).await.unwrap();
+
+        // Get tools by extension
+        let ext_a_tools = router.tools_by_extension("ext-a").await;
+        assert_eq!(ext_a_tools.len(), 1);
+        assert_eq!(ext_a_tools[0].name, "tool_1");
+
+        let ext_b_tools = router.tools_by_extension("ext-b").await;
+        assert_eq!(ext_b_tools.len(), 1);
+        assert_eq!(ext_b_tools[0].name, "tool_2");
+    }
+
+    #[tokio::test]
+    async fn test_hot_reload_unregister_single_tool() {
+        let router = DynamicToolRouter::new();
+
+        let mut tool1 = create_test_tool();
+        tool1.name = "keep_me".to_string();
+        let mut tool2 = create_test_tool();
+        tool2.name = "remove_me".to_string();
+
+        router.register_tools("ext", vec![tool1, tool2]).await.unwrap();
+        assert_eq!(router.tool_count().await, 2);
+
+        // Unregister single tool
+        let removed = router.unregister_tool("ext:remove_me").await.unwrap();
+        assert_eq!(removed.name, "remove_me");
+        assert_eq!(router.tool_count().await, 1);
+        assert!(router.has_tool("ext:keep_me").await);
+        assert!(!router.has_tool("ext:remove_me").await);
+    }
+
+    #[tokio::test]
+    async fn test_call_tool_without_handler() {
+        let router = DynamicToolRouter::new();
+        let tool = create_test_tool();
+
+        // Register tool WITHOUT handler
+        router.register_tools("ext", vec![tool]).await.unwrap();
+
+        let input = ToolInput {
+            args: json!({}),
+            context: ToolContext {
+                session_id: None,
+                user_id: "user-1".to_string(),
+                folder_id: None,
+                task_id: None,
+                metadata: HashMap::new(),
+            },
+        };
+
+        // Calling should fail gracefully
+        let result = router.call_tool("ext:test_tool", input).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_call_nonexistent_tool() {
+        let router = DynamicToolRouter::new();
+
+        let input = ToolInput {
+            args: json!({}),
+            context: ToolContext {
+                session_id: None,
+                user_id: "user-1".to_string(),
+                folder_id: None,
+                task_id: None,
+                metadata: HashMap::new(),
+            },
+        };
+
+        let result = router.call_tool("nonexistent:tool", input).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_set_handler_nonexistent_fails() {
+        let router = DynamicToolRouter::new();
+
+        let handler: ToolHandler = Arc::new(|_| {
+            Box::pin(async move {
+                ToolOutput {
+                    data: json!({}),
+                    success: true,
+                    error: None,
+                    duration_ms: 0,
+                    side_effects: vec![],
+                }
+            })
+        });
+
+        let result = router.set_handler("nonexistent:tool", handler).await;
+        assert!(result.is_err());
+    }
 }
