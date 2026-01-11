@@ -386,3 +386,394 @@ pub struct CLITokenValidation {
     pub key_hash: String,
     pub expires_at: Option<i64>,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDK Memory Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Memory tier for hierarchical working memory
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryTier {
+    ShortTerm,
+    Working,
+    LongTerm,
+}
+
+impl std::fmt::Display for MemoryTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryTier::ShortTerm => write!(f, "short_term"),
+            MemoryTier::Working => write!(f, "working"),
+            MemoryTier::LongTerm => write!(f, "long_term"),
+        }
+    }
+}
+
+impl std::str::FromStr for MemoryTier {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "short_term" => Ok(MemoryTier::ShortTerm),
+            "working" => Ok(MemoryTier::Working),
+            "long_term" => Ok(MemoryTier::LongTerm),
+            _ => Err(format!("Invalid memory tier: {}", s)),
+        }
+    }
+}
+
+/// Memory entry in the hierarchical working memory system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryEntry {
+    pub id: String,
+    pub user_id: String,
+    pub session_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub tier: String,
+    pub content_type: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub content: String,
+    pub content_hash: String,
+    pub embedding_id: Option<String>,
+    pub task_id: Option<String>,
+    pub priority: Option<i32>,
+    pub confidence: Option<f64>,
+    pub relevance: Option<f64>,
+    pub ttl_seconds: Option<i32>,
+    pub access_count: i32,
+    pub last_accessed_at: i64,
+    pub source_sessions_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub expires_at: Option<i64>,
+}
+
+/// Input for creating a new memory entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewMemoryEntry {
+    pub user_id: String,
+    pub session_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub tier: String,
+    pub content_type: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub content: String,
+    pub task_id: Option<String>,
+    pub priority: Option<i32>,
+    pub confidence: Option<f64>,
+    pub relevance: Option<f64>,
+    pub ttl_seconds: Option<i32>,
+    pub metadata_json: Option<String>,
+}
+
+/// Filter criteria for querying memory entries
+#[derive(Debug, Clone, Default)]
+pub struct MemoryQueryFilter {
+    pub user_id: String,
+    pub session_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub tier: Option<String>,
+    pub content_type: Option<String>,
+    pub task_id: Option<String>,
+    pub min_relevance: Option<f64>,
+    pub min_confidence: Option<f64>,
+    pub limit: Option<usize>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDK Note Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Note entry for the note-taking service
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Note {
+    pub id: String,
+    pub user_id: String,
+    pub session_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub content: String,
+    pub tags_json: String,
+    pub embedding_id: Option<String>,
+    pub created_at: i64,
+}
+
+/// Input for creating a new note
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewNote {
+    pub user_id: String,
+    pub session_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub content: String,
+    pub tags: Vec<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDK Extension Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Extension state in the extension registry
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtensionState {
+    Unloaded,
+    Loading,
+    Loaded,
+    Error,
+    Disabled,
+}
+
+impl std::fmt::Display for ExtensionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExtensionState::Unloaded => write!(f, "unloaded"),
+            ExtensionState::Loading => write!(f, "loading"),
+            ExtensionState::Loaded => write!(f, "loaded"),
+            ExtensionState::Error => write!(f, "error"),
+            ExtensionState::Disabled => write!(f, "disabled"),
+        }
+    }
+}
+
+impl std::str::FromStr for ExtensionState {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "unloaded" => Ok(ExtensionState::Unloaded),
+            "loading" => Ok(ExtensionState::Loading),
+            "loaded" => Ok(ExtensionState::Loaded),
+            "error" => Ok(ExtensionState::Error),
+            "disabled" => Ok(ExtensionState::Disabled),
+            _ => Err(format!("Invalid extension state: {}", s)),
+        }
+    }
+}
+
+/// SDK Extension in the extension registry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Extension {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub author: Option<String>,
+    pub license: Option<String>,
+    pub repository: Option<String>,
+    pub extension_type: String,
+    pub remote_dev_version: String,
+    pub main_path: String,
+    pub state: String,
+    pub error: Option<String>,
+    pub permissions_json: String,
+    pub config_schema_json: Option<String>,
+    pub config_values_json: String,
+    pub dependencies_json: String,
+    pub loaded_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for creating a new extension
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewExtension {
+    pub user_id: String,
+    pub name: String,
+    pub version: String,
+    pub description: Option<String>,
+    pub author: Option<String>,
+    pub license: Option<String>,
+    pub repository: Option<String>,
+    pub extension_type: String,
+    pub remote_dev_version: String,
+    pub main_path: String,
+    pub permissions: Vec<String>,
+    pub config_schema: Option<serde_json::Value>,
+    pub dependencies: std::collections::HashMap<String, String>,
+}
+
+/// Extension tool registered by an extension
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionTool {
+    pub id: String,
+    pub extension_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: String,
+    pub input_schema_json: String,
+    pub output_schema_json: Option<String>,
+    pub permissions_json: String,
+    pub examples_json: String,
+    pub is_dangerous: bool,
+    pub timeout_ms: Option<i32>,
+    pub execution_count: i32,
+    pub last_executed_at: Option<i64>,
+    pub created_at: i64,
+}
+
+/// Input for creating a new extension tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewExtensionTool {
+    pub extension_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub output_schema: Option<serde_json::Value>,
+    pub permissions: Vec<String>,
+    pub examples: Vec<serde_json::Value>,
+    pub is_dangerous: bool,
+    pub timeout_ms: Option<i32>,
+}
+
+/// Extension prompt template registered by an extension
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionPrompt {
+    pub id: String,
+    pub extension_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: String,
+    pub template: String,
+    pub variables_json: String,
+    pub category: Option<String>,
+    pub tags_json: String,
+    pub usage_count: i32,
+    pub last_used_at: Option<i64>,
+    pub created_at: i64,
+}
+
+/// Input for creating a new extension prompt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewExtensionPrompt {
+    pub extension_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: String,
+    pub template: String,
+    pub variables: Vec<serde_json::Value>,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDK Meta-Agent Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Meta-agent configuration for generating agent configurations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaAgentConfig {
+    pub id: String,
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub name: String,
+    pub provider: String,
+    pub version: i32,
+    pub task_spec_json: String,
+    pub project_context_json: String,
+    pub system_prompt: String,
+    pub instructions_file: String,
+    pub mcp_config_json: Option<String>,
+    pub tool_config_json: Option<String>,
+    pub memory_config_json: Option<String>,
+    pub metadata_json: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for creating a new meta-agent config
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewMetaAgentConfig {
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub name: String,
+    pub provider: String,
+    pub task_spec: serde_json::Value,
+    pub project_context: serde_json::Value,
+    pub system_prompt: String,
+    pub instructions_file: String,
+    pub mcp_config: Option<serde_json::Value>,
+    pub tool_config: Option<serde_json::Value>,
+    pub memory_config: Option<serde_json::Value>,
+    pub metadata: serde_json::Value,
+}
+
+/// Meta-agent benchmark definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaAgentBenchmark {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub task_spec_json: String,
+    pub test_cases_json: String,
+    pub success_criteria_json: String,
+    pub timeout_seconds: i32,
+    pub run_count: i32,
+    pub last_run_at: Option<i64>,
+    pub created_at: i64,
+}
+
+/// Input for creating a new meta-agent benchmark
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewMetaAgentBenchmark {
+    pub user_id: String,
+    pub name: String,
+    pub task_spec: serde_json::Value,
+    pub test_cases: Vec<serde_json::Value>,
+    pub success_criteria: serde_json::Value,
+    pub timeout_seconds: Option<i32>,
+}
+
+/// Meta-agent benchmark result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaAgentBenchmarkResult {
+    pub id: String,
+    pub benchmark_id: String,
+    pub config_id: String,
+    pub user_id: String,
+    pub score: f64,
+    pub passed: bool,
+    pub duration_ms: i32,
+    pub test_results_json: String,
+    pub errors_json: String,
+    pub warnings_json: String,
+    pub files_modified_json: String,
+    pub commands_executed_json: String,
+    pub raw_output: Option<String>,
+    pub executed_at: i64,
+}
+
+/// Input for creating a new benchmark result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewMetaAgentBenchmarkResult {
+    pub benchmark_id: String,
+    pub config_id: String,
+    pub user_id: String,
+    pub score: f64,
+    pub passed: bool,
+    pub duration_ms: i32,
+    pub test_results: serde_json::Value,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+    pub files_modified: Vec<String>,
+    pub commands_executed: Vec<String>,
+    pub raw_output: Option<String>,
+}

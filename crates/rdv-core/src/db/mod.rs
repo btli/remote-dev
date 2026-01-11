@@ -1640,4 +1640,1049 @@ impl Database {
 
         Ok(token)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Memory Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new memory entry
+    pub fn create_memory_entry(&self, entry: &NewMemoryEntry) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Calculate content hash
+        let content_hash = format!("{:x}", md5::compute(&entry.content));
+
+        // Calculate expires_at if TTL is set
+        let expires_at = entry.ttl_seconds.map(|ttl| now + (ttl as i64 * 1000));
+
+        conn.execute(
+            "INSERT INTO sdk_memory_entry
+             (id, user_id, session_id, folder_id, tier, content_type, name, description,
+              content, content_hash, task_id, priority, confidence, relevance,
+              ttl_seconds, access_count, last_accessed_at, metadata_json,
+              created_at, updated_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0, ?16, ?17, ?16, ?16, ?18)",
+            params![
+                id,
+                entry.user_id,
+                entry.session_id,
+                entry.folder_id,
+                entry.tier,
+                entry.content_type,
+                entry.name,
+                entry.description,
+                entry.content,
+                content_hash,
+                entry.task_id,
+                entry.priority.unwrap_or(0),
+                entry.confidence.unwrap_or(0.5),
+                entry.relevance.unwrap_or(0.5),
+                entry.ttl_seconds,
+                now,
+                entry.metadata_json,
+                expires_at,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get memory entry by ID
+    pub fn get_memory_entry(&self, id: &str) -> Result<Option<MemoryEntry>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let entry = conn
+            .query_row(
+                "SELECT id, user_id, session_id, folder_id, tier, content_type, name, description,
+                        content, content_hash, embedding_id, task_id, priority, confidence, relevance,
+                        ttl_seconds, access_count, last_accessed_at, source_sessions_json, metadata_json,
+                        created_at, updated_at, expires_at
+                 FROM sdk_memory_entry WHERE id = ?1",
+                params![id],
+                Self::map_memory_entry,
+            )
+            .optional()?;
+        Ok(entry)
+    }
+
+    /// List memory entries with filters
+    pub fn list_memory_entries(&self, filter: &MemoryQueryFilter) -> Result<Vec<MemoryEntry>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Build dynamic query
+        let mut query = String::from(
+            "SELECT id, user_id, session_id, folder_id, tier, content_type, name, description,
+                    content, content_hash, embedding_id, task_id, priority, confidence, relevance,
+                    ttl_seconds, access_count, last_accessed_at, source_sessions_json, metadata_json,
+                    created_at, updated_at, expires_at
+             FROM sdk_memory_entry
+             WHERE user_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![
+            Box::new(filter.user_id.clone()),
+            Box::new(now),
+        ];
+
+        if let Some(ref sid) = filter.session_id {
+            query.push_str(" AND session_id = ?");
+            params_vec.push(Box::new(sid.clone()));
+        }
+        if let Some(ref fid) = filter.folder_id {
+            query.push_str(" AND folder_id = ?");
+            params_vec.push(Box::new(fid.clone()));
+        }
+        if let Some(ref tier) = filter.tier {
+            query.push_str(" AND tier = ?");
+            params_vec.push(Box::new(tier.clone()));
+        }
+        if let Some(ref ct) = filter.content_type {
+            query.push_str(" AND content_type = ?");
+            params_vec.push(Box::new(ct.clone()));
+        }
+        if let Some(ref tid) = filter.task_id {
+            query.push_str(" AND task_id = ?");
+            params_vec.push(Box::new(tid.clone()));
+        }
+        if let Some(min_rel) = filter.min_relevance {
+            query.push_str(" AND relevance >= ?");
+            params_vec.push(Box::new(min_rel));
+        }
+        if let Some(min_conf) = filter.min_confidence {
+            query.push_str(" AND confidence >= ?");
+            params_vec.push(Box::new(min_conf));
+        }
+
+        query.push_str(" ORDER BY relevance DESC, last_accessed_at DESC");
+
+        if let Some(limit) = filter.limit {
+            query.push_str(&format!(" LIMIT {}", limit));
+        }
+
+        let mut stmt = conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let entries = stmt
+            .query_map(params_refs.as_slice(), Self::map_memory_entry)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(entries)
+    }
+
+    /// Update memory entry (for promoting between tiers, updating relevance, etc.)
+    pub fn update_memory_entry(
+        &self,
+        id: &str,
+        tier: Option<&str>,
+        relevance: Option<f64>,
+        confidence: Option<f64>,
+        priority: Option<i32>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        if let Some(t) = tier {
+            conn.execute(
+                "UPDATE sdk_memory_entry SET tier = ?1, updated_at = ?2 WHERE id = ?3",
+                params![t, now, id],
+            )?;
+        }
+        if let Some(r) = relevance {
+            conn.execute(
+                "UPDATE sdk_memory_entry SET relevance = ?1, updated_at = ?2 WHERE id = ?3",
+                params![r, now, id],
+            )?;
+        }
+        if let Some(c) = confidence {
+            conn.execute(
+                "UPDATE sdk_memory_entry SET confidence = ?1, updated_at = ?2 WHERE id = ?3",
+                params![c, now, id],
+            )?;
+        }
+        if let Some(p) = priority {
+            conn.execute(
+                "UPDATE sdk_memory_entry SET priority = ?1, updated_at = ?2 WHERE id = ?3",
+                params![p, now, id],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Increment access count and update last_accessed_at
+    pub fn touch_memory_entry(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        conn.execute(
+            "UPDATE sdk_memory_entry SET access_count = access_count + 1, last_accessed_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+
+        Ok(())
+    }
+
+    /// Delete memory entry
+    pub fn delete_memory_entry(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute("DELETE FROM sdk_memory_entry WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    /// Delete expired memory entries
+    pub fn cleanup_expired_memory(&self) -> Result<usize> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let rows = conn.execute(
+            "DELETE FROM sdk_memory_entry WHERE expires_at IS NOT NULL AND expires_at <= ?1",
+            params![now],
+        )?;
+
+        Ok(rows)
+    }
+
+    /// Get memory statistics for a user
+    pub fn get_memory_stats(&self, user_id: &str) -> Result<std::collections::HashMap<String, i64>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let mut stats = std::collections::HashMap::new();
+
+        // Count by tier
+        let mut stmt = conn.prepare(
+            "SELECT tier, COUNT(*) FROM sdk_memory_entry
+             WHERE user_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)
+             GROUP BY tier",
+        )?;
+        let tier_counts: Vec<(String, i64)> = stmt
+            .query_map(params![user_id, now], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        for (tier, count) in tier_counts {
+            stats.insert(tier, count);
+        }
+
+        // Total count
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sdk_memory_entry WHERE user_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+            params![user_id, now],
+            |row| row.get(0),
+        )?;
+        stats.insert("total".to_string(), total);
+
+        Ok(stats)
+    }
+
+    fn map_memory_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
+        Ok(MemoryEntry {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            session_id: row.get(2)?,
+            folder_id: row.get(3)?,
+            tier: row.get(4)?,
+            content_type: row.get(5)?,
+            name: row.get(6)?,
+            description: row.get(7)?,
+            content: row.get(8)?,
+            content_hash: row.get(9)?,
+            embedding_id: row.get(10)?,
+            task_id: row.get(11)?,
+            priority: row.get(12)?,
+            confidence: row.get(13)?,
+            relevance: row.get(14)?,
+            ttl_seconds: row.get(15)?,
+            access_count: row.get(16)?,
+            last_accessed_at: row.get(17)?,
+            source_sessions_json: row.get(18)?,
+            metadata_json: row.get(19)?,
+            created_at: row.get(20)?,
+            updated_at: row.get(21)?,
+            expires_at: row.get(22)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Note Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new note
+    pub fn create_note(&self, note: &NewNote) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let tags_json = serde_json::to_string(&note.tags)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO sdk_note (id, user_id, session_id, folder_id, content, tags_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                note.user_id,
+                note.session_id,
+                note.folder_id,
+                note.content,
+                tags_json,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get note by ID
+    pub fn get_note(&self, id: &str) -> Result<Option<Note>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let note = conn
+            .query_row(
+                "SELECT id, user_id, session_id, folder_id, content, tags_json, embedding_id, created_at
+                 FROM sdk_note WHERE id = ?1",
+                params![id],
+                Self::map_note,
+            )
+            .optional()?;
+        Ok(note)
+    }
+
+    /// List notes for a user
+    pub fn list_notes(
+        &self,
+        user_id: &str,
+        session_id: Option<&str>,
+        folder_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        let mut query = String::from(
+            "SELECT id, user_id, session_id, folder_id, content, tags_json, embedding_id, created_at
+             FROM sdk_note WHERE user_id = ?1",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id.to_string())];
+
+        if let Some(sid) = session_id {
+            query.push_str(" AND session_id = ?");
+            params_vec.push(Box::new(sid.to_string()));
+        }
+        if let Some(fid) = folder_id {
+            query.push_str(" AND folder_id = ?");
+            params_vec.push(Box::new(fid.to_string()));
+        }
+
+        query.push_str(" ORDER BY created_at DESC");
+
+        if let Some(l) = limit {
+            query.push_str(&format!(" LIMIT {}", l));
+        }
+
+        let mut stmt = conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let notes = stmt
+            .query_map(params_refs.as_slice(), Self::map_note)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(notes)
+    }
+
+    /// Search notes by tag
+    pub fn search_notes_by_tag(&self, user_id: &str, tag: &str) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let tag_pattern = format!("%\"{}\"%" , tag);
+
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, session_id, folder_id, content, tags_json, embedding_id, created_at
+             FROM sdk_note WHERE user_id = ?1 AND tags_json LIKE ?2
+             ORDER BY created_at DESC",
+        )?;
+
+        let notes = stmt
+            .query_map(params![user_id, tag_pattern], Self::map_note)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(notes)
+    }
+
+    /// Delete note
+    pub fn delete_note(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute("DELETE FROM sdk_note WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    fn map_note(row: &rusqlite::Row) -> rusqlite::Result<Note> {
+        Ok(Note {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            session_id: row.get(2)?,
+            folder_id: row.get(3)?,
+            content: row.get(4)?,
+            tags_json: row.get(5)?,
+            embedding_id: row.get(6)?,
+            created_at: row.get(7)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Extension Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new extension
+    pub fn create_extension(&self, ext: &NewExtension) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let permissions_json = serde_json::to_string(&ext.permissions)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let config_schema_json = ext.config_schema.as_ref().map(|v| v.to_string());
+        let dependencies_json = serde_json::to_string(&ext.dependencies)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO sdk_extension
+             (id, user_id, name, version, description, author, license, repository,
+              type, remote_dev_version, main_path, state, permissions_json,
+              config_schema_json, config_values_json, dependencies_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'unloaded', ?12, ?13, '{}', ?14, ?15, ?15)",
+            params![
+                id,
+                ext.user_id,
+                ext.name,
+                ext.version,
+                ext.description,
+                ext.author,
+                ext.license,
+                ext.repository,
+                ext.extension_type,
+                ext.remote_dev_version,
+                ext.main_path,
+                permissions_json,
+                config_schema_json,
+                dependencies_json,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get extension by ID
+    pub fn get_extension(&self, id: &str) -> Result<Option<Extension>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let ext = conn
+            .query_row(
+                "SELECT id, user_id, name, version, description, author, license, repository,
+                        type, remote_dev_version, main_path, state, error, permissions_json,
+                        config_schema_json, config_values_json, dependencies_json, loaded_at,
+                        created_at, updated_at
+                 FROM sdk_extension WHERE id = ?1",
+                params![id],
+                Self::map_extension,
+            )
+            .optional()?;
+        Ok(ext)
+    }
+
+    /// List extensions for a user
+    pub fn list_extensions(&self, user_id: &str, state: Option<&str>) -> Result<Vec<Extension>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        let (query, params_vec): (String, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(s) = state {
+            (
+                "SELECT id, user_id, name, version, description, author, license, repository,
+                        type, remote_dev_version, main_path, state, error, permissions_json,
+                        config_schema_json, config_values_json, dependencies_json, loaded_at,
+                        created_at, updated_at
+                 FROM sdk_extension WHERE user_id = ?1 AND state = ?2
+                 ORDER BY name".to_string(),
+                vec![Box::new(user_id.to_string()), Box::new(s.to_string())],
+            )
+        } else {
+            (
+                "SELECT id, user_id, name, version, description, author, license, repository,
+                        type, remote_dev_version, main_path, state, error, permissions_json,
+                        config_schema_json, config_values_json, dependencies_json, loaded_at,
+                        created_at, updated_at
+                 FROM sdk_extension WHERE user_id = ?1
+                 ORDER BY name".to_string(),
+                vec![Box::new(user_id.to_string())],
+            )
+        };
+
+        let mut stmt = conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let extensions = stmt
+            .query_map(params_refs.as_slice(), Self::map_extension)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(extensions)
+    }
+
+    /// Update extension state
+    pub fn update_extension_state(&self, id: &str, state: &str, error: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let loaded_at = if state == "loaded" { Some(now) } else { None };
+
+        conn.execute(
+            "UPDATE sdk_extension SET state = ?1, error = ?2, loaded_at = ?3, updated_at = ?4 WHERE id = ?5",
+            params![state, error, loaded_at, now, id],
+        )?;
+
+        Ok(())
+    }
+
+    /// Delete extension
+    pub fn delete_extension(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute("DELETE FROM sdk_extension WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    fn map_extension(row: &rusqlite::Row) -> rusqlite::Result<Extension> {
+        Ok(Extension {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            name: row.get(2)?,
+            version: row.get(3)?,
+            description: row.get(4)?,
+            author: row.get(5)?,
+            license: row.get(6)?,
+            repository: row.get(7)?,
+            extension_type: row.get(8)?,
+            remote_dev_version: row.get(9)?,
+            main_path: row.get(10)?,
+            state: row.get(11)?,
+            error: row.get(12)?,
+            permissions_json: row.get(13)?,
+            config_schema_json: row.get(14)?,
+            config_values_json: row.get(15)?,
+            dependencies_json: row.get(16)?,
+            loaded_at: row.get(17)?,
+            created_at: row.get(18)?,
+            updated_at: row.get(19)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Extension Tool Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new extension tool
+    pub fn create_extension_tool(&self, tool: &NewExtensionTool) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let input_schema_json = tool.input_schema.to_string();
+        let output_schema_json = tool.output_schema.as_ref().map(|v| v.to_string());
+        let permissions_json = serde_json::to_string(&tool.permissions)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let examples_json = serde_json::to_string(&tool.examples)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO sdk_extension_tool
+             (id, extension_id, user_id, name, description, input_schema_json, output_schema_json,
+              permissions_json, examples_json, is_dangerous, timeout_ms, execution_count, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)",
+            params![
+                id,
+                tool.extension_id,
+                tool.user_id,
+                tool.name,
+                tool.description,
+                input_schema_json,
+                output_schema_json,
+                permissions_json,
+                examples_json,
+                tool.is_dangerous,
+                tool.timeout_ms,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// List tools for an extension
+    pub fn list_extension_tools(&self, extension_id: &str) -> Result<Vec<ExtensionTool>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, extension_id, user_id, name, description, input_schema_json, output_schema_json,
+                    permissions_json, examples_json, is_dangerous, timeout_ms, execution_count,
+                    last_executed_at, created_at
+             FROM sdk_extension_tool WHERE extension_id = ?1
+             ORDER BY name",
+        )?;
+
+        let tools = stmt
+            .query_map(params![extension_id], Self::map_extension_tool)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(tools)
+    }
+
+    /// Increment execution count for a tool
+    pub fn increment_tool_execution(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        conn.execute(
+            "UPDATE sdk_extension_tool SET execution_count = execution_count + 1, last_executed_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+
+        Ok(())
+    }
+
+    fn map_extension_tool(row: &rusqlite::Row) -> rusqlite::Result<ExtensionTool> {
+        Ok(ExtensionTool {
+            id: row.get(0)?,
+            extension_id: row.get(1)?,
+            user_id: row.get(2)?,
+            name: row.get(3)?,
+            description: row.get(4)?,
+            input_schema_json: row.get(5)?,
+            output_schema_json: row.get(6)?,
+            permissions_json: row.get(7)?,
+            examples_json: row.get(8)?,
+            is_dangerous: row.get(9)?,
+            timeout_ms: row.get(10)?,
+            execution_count: row.get(11)?,
+            last_executed_at: row.get(12)?,
+            created_at: row.get(13)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Extension Prompt Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new extension prompt
+    pub fn create_extension_prompt(&self, prompt: &NewExtensionPrompt) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let variables_json = serde_json::to_string(&prompt.variables)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let tags_json = serde_json::to_string(&prompt.tags)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO sdk_extension_prompt
+             (id, extension_id, user_id, name, description, template, variables_json,
+              category, tags_json, usage_count, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
+            params![
+                id,
+                prompt.extension_id,
+                prompt.user_id,
+                prompt.name,
+                prompt.description,
+                prompt.template,
+                variables_json,
+                prompt.category,
+                tags_json,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// List prompts for an extension
+    pub fn list_extension_prompts(&self, extension_id: &str) -> Result<Vec<ExtensionPrompt>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, extension_id, user_id, name, description, template, variables_json,
+                    category, tags_json, usage_count, last_used_at, created_at
+             FROM sdk_extension_prompt WHERE extension_id = ?1
+             ORDER BY name",
+        )?;
+
+        let prompts = stmt
+            .query_map(params![extension_id], Self::map_extension_prompt)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(prompts)
+    }
+
+    /// Increment usage count for a prompt
+    pub fn increment_prompt_usage(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        conn.execute(
+            "UPDATE sdk_extension_prompt SET usage_count = usage_count + 1, last_used_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+
+        Ok(())
+    }
+
+    fn map_extension_prompt(row: &rusqlite::Row) -> rusqlite::Result<ExtensionPrompt> {
+        Ok(ExtensionPrompt {
+            id: row.get(0)?,
+            extension_id: row.get(1)?,
+            user_id: row.get(2)?,
+            name: row.get(3)?,
+            description: row.get(4)?,
+            template: row.get(5)?,
+            variables_json: row.get(6)?,
+            category: row.get(7)?,
+            tags_json: row.get(8)?,
+            usage_count: row.get(9)?,
+            last_used_at: row.get(10)?,
+            created_at: row.get(11)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Meta-Agent Config Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new meta-agent config
+    pub fn create_meta_agent_config(&self, config: &NewMetaAgentConfig) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let task_spec_json = config.task_spec.to_string();
+        let project_context_json = config.project_context.to_string();
+        let mcp_config_json = config.mcp_config.as_ref().map(|v| v.to_string());
+        let tool_config_json = config.tool_config.as_ref().map(|v| v.to_string());
+        let memory_config_json = config.memory_config.as_ref().map(|v| v.to_string());
+        let metadata_json = config.metadata.to_string();
+
+        conn.execute(
+            "INSERT INTO sdk_meta_agent_config
+             (id, user_id, folder_id, name, provider, version, task_spec_json, project_context_json,
+              system_prompt, instructions_file, mcp_config_json, tool_config_json, memory_config_json,
+              metadata_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
+            params![
+                id,
+                config.user_id,
+                config.folder_id,
+                config.name,
+                config.provider,
+                task_spec_json,
+                project_context_json,
+                config.system_prompt,
+                config.instructions_file,
+                mcp_config_json,
+                tool_config_json,
+                memory_config_json,
+                metadata_json,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get meta-agent config by ID
+    pub fn get_meta_agent_config(&self, id: &str) -> Result<Option<MetaAgentConfig>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let config = conn
+            .query_row(
+                "SELECT id, user_id, folder_id, name, provider, version, task_spec_json,
+                        project_context_json, system_prompt, instructions_file, mcp_config_json,
+                        tool_config_json, memory_config_json, metadata_json, created_at, updated_at
+                 FROM sdk_meta_agent_config WHERE id = ?1",
+                params![id],
+                Self::map_meta_agent_config,
+            )
+            .optional()?;
+        Ok(config)
+    }
+
+    /// List meta-agent configs for a user
+    pub fn list_meta_agent_configs(
+        &self,
+        user_id: &str,
+        folder_id: Option<&str>,
+        provider: Option<&str>,
+    ) -> Result<Vec<MetaAgentConfig>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        let mut query = String::from(
+            "SELECT id, user_id, folder_id, name, provider, version, task_spec_json,
+                    project_context_json, system_prompt, instructions_file, mcp_config_json,
+                    tool_config_json, memory_config_json, metadata_json, created_at, updated_at
+             FROM sdk_meta_agent_config WHERE user_id = ?1",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id.to_string())];
+
+        if let Some(fid) = folder_id {
+            query.push_str(" AND folder_id = ?");
+            params_vec.push(Box::new(fid.to_string()));
+        }
+        if let Some(p) = provider {
+            query.push_str(" AND provider = ?");
+            params_vec.push(Box::new(p.to_string()));
+        }
+
+        query.push_str(" ORDER BY updated_at DESC");
+
+        let mut stmt = conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let configs = stmt
+            .query_map(params_refs.as_slice(), Self::map_meta_agent_config)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(configs)
+    }
+
+    /// Delete meta-agent config
+    pub fn delete_meta_agent_config(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute("DELETE FROM sdk_meta_agent_config WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    fn map_meta_agent_config(row: &rusqlite::Row) -> rusqlite::Result<MetaAgentConfig> {
+        Ok(MetaAgentConfig {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            folder_id: row.get(2)?,
+            name: row.get(3)?,
+            provider: row.get(4)?,
+            version: row.get(5)?,
+            task_spec_json: row.get(6)?,
+            project_context_json: row.get(7)?,
+            system_prompt: row.get(8)?,
+            instructions_file: row.get(9)?,
+            mcp_config_json: row.get(10)?,
+            tool_config_json: row.get(11)?,
+            memory_config_json: row.get(12)?,
+            metadata_json: row.get(13)?,
+            created_at: row.get(14)?,
+            updated_at: row.get(15)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Meta-Agent Benchmark Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new benchmark
+    pub fn create_meta_agent_benchmark(&self, benchmark: &NewMetaAgentBenchmark) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let task_spec_json = benchmark.task_spec.to_string();
+        let test_cases_json = serde_json::to_string(&benchmark.test_cases)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let success_criteria_json = benchmark.success_criteria.to_string();
+
+        conn.execute(
+            "INSERT INTO sdk_meta_agent_benchmark
+             (id, user_id, name, task_spec_json, test_cases_json, success_criteria_json,
+              timeout_seconds, run_count, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)",
+            params![
+                id,
+                benchmark.user_id,
+                benchmark.name,
+                task_spec_json,
+                test_cases_json,
+                success_criteria_json,
+                benchmark.timeout_seconds.unwrap_or(300),
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get benchmark by ID
+    pub fn get_meta_agent_benchmark(&self, id: &str) -> Result<Option<MetaAgentBenchmark>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let benchmark = conn
+            .query_row(
+                "SELECT id, user_id, name, task_spec_json, test_cases_json, success_criteria_json,
+                        timeout_seconds, run_count, last_run_at, created_at
+                 FROM sdk_meta_agent_benchmark WHERE id = ?1",
+                params![id],
+                Self::map_meta_agent_benchmark,
+            )
+            .optional()?;
+        Ok(benchmark)
+    }
+
+    /// List benchmarks for a user
+    pub fn list_meta_agent_benchmarks(&self, user_id: &str) -> Result<Vec<MetaAgentBenchmark>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, task_spec_json, test_cases_json, success_criteria_json,
+                    timeout_seconds, run_count, last_run_at, created_at
+             FROM sdk_meta_agent_benchmark WHERE user_id = ?1
+             ORDER BY created_at DESC",
+        )?;
+
+        let benchmarks = stmt
+            .query_map(params![user_id], Self::map_meta_agent_benchmark)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(benchmarks)
+    }
+
+    /// Increment run count for a benchmark
+    pub fn increment_benchmark_run(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        conn.execute(
+            "UPDATE sdk_meta_agent_benchmark SET run_count = run_count + 1, last_run_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+
+        Ok(())
+    }
+
+    fn map_meta_agent_benchmark(row: &rusqlite::Row) -> rusqlite::Result<MetaAgentBenchmark> {
+        Ok(MetaAgentBenchmark {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            name: row.get(2)?,
+            task_spec_json: row.get(3)?,
+            test_cases_json: row.get(4)?,
+            success_criteria_json: row.get(5)?,
+            timeout_seconds: row.get(6)?,
+            run_count: row.get(7)?,
+            last_run_at: row.get(8)?,
+            created_at: row.get(9)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Meta-Agent Benchmark Result Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new benchmark result
+    pub fn create_benchmark_result(&self, result: &NewMetaAgentBenchmarkResult) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let test_results_json = result.test_results.to_string();
+        let errors_json = serde_json::to_string(&result.errors)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let warnings_json = serde_json::to_string(&result.warnings)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let files_modified_json = serde_json::to_string(&result.files_modified)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let commands_executed_json = serde_json::to_string(&result.commands_executed)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO sdk_meta_agent_benchmark_result
+             (id, benchmark_id, config_id, user_id, score, passed, duration_ms, test_results_json,
+              errors_json, warnings_json, files_modified_json, commands_executed_json, raw_output, executed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                id,
+                result.benchmark_id,
+                result.config_id,
+                result.user_id,
+                result.score,
+                result.passed,
+                result.duration_ms,
+                test_results_json,
+                errors_json,
+                warnings_json,
+                files_modified_json,
+                commands_executed_json,
+                result.raw_output,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get benchmark result by ID
+    pub fn get_benchmark_result(&self, id: &str) -> Result<Option<MetaAgentBenchmarkResult>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let result = conn
+            .query_row(
+                "SELECT id, benchmark_id, config_id, user_id, score, passed, duration_ms,
+                        test_results_json, errors_json, warnings_json, files_modified_json,
+                        commands_executed_json, raw_output, executed_at
+                 FROM sdk_meta_agent_benchmark_result WHERE id = ?1",
+                params![id],
+                Self::map_benchmark_result,
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    /// List results for a benchmark
+    pub fn list_benchmark_results(
+        &self,
+        benchmark_id: &str,
+        config_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<MetaAgentBenchmarkResult>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        let mut query = String::from(
+            "SELECT id, benchmark_id, config_id, user_id, score, passed, duration_ms,
+                    test_results_json, errors_json, warnings_json, files_modified_json,
+                    commands_executed_json, raw_output, executed_at
+             FROM sdk_meta_agent_benchmark_result WHERE benchmark_id = ?1",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(benchmark_id.to_string())];
+
+        if let Some(cid) = config_id {
+            query.push_str(" AND config_id = ?");
+            params_vec.push(Box::new(cid.to_string()));
+        }
+
+        query.push_str(" ORDER BY executed_at DESC");
+
+        if let Some(l) = limit {
+            query.push_str(&format!(" LIMIT {}", l));
+        }
+
+        let mut stmt = conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let results = stmt
+            .query_map(params_refs.as_slice(), Self::map_benchmark_result)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    fn map_benchmark_result(row: &rusqlite::Row) -> rusqlite::Result<MetaAgentBenchmarkResult> {
+        Ok(MetaAgentBenchmarkResult {
+            id: row.get(0)?,
+            benchmark_id: row.get(1)?,
+            config_id: row.get(2)?,
+            user_id: row.get(3)?,
+            score: row.get(4)?,
+            passed: row.get(5)?,
+            duration_ms: row.get(6)?,
+            test_results_json: row.get(7)?,
+            errors_json: row.get(8)?,
+            warnings_json: row.get(9)?,
+            files_modified_json: row.get(10)?,
+            commands_executed_json: row.get(11)?,
+            raw_output: row.get(12)?,
+            executed_at: row.get(13)?,
+        })
+    }
 }
