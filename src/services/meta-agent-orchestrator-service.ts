@@ -26,7 +26,6 @@ import type {
   TaskSpec,
   ProjectContext,
   AgentConfig,
-  BenchmarkResult,
   RefinementSuggestion,
   OptimizationResult,
 } from "@/sdk/types/meta-agent";
@@ -87,6 +86,37 @@ export interface ConfigUpdateResult {
   error?: string;
 }
 
+/**
+ * Config version snapshot for tracking and rollback
+ */
+export interface ConfigVersionSnapshot {
+  id: string;
+  sessionId: string;
+  folderId: string | null;
+  configId: string;
+  version: number;
+  content: string;
+  provider: string;
+  score: number | null;
+  createdAt: Date;
+  isRolledBack: boolean;
+  rollbackReason?: string;
+}
+
+/**
+ * Performance tracking for config versions
+ */
+export interface PerformanceTracker {
+  sessionId: string;
+  configVersionId: string;
+  stallCount: number;
+  errorCount: number;
+  successCount: number;
+  avgResponseTime: number | null;
+  lastActivityAt: Date;
+  degradationDetected: boolean;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // In-memory tracking (in production, use database)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,6 +124,16 @@ export interface ConfigUpdateResult {
 const optimizationRecords = new Map<string, OptimizationRecord>();
 const sessionOptimizationCooldown = new Map<string, Date>();
 const OPTIMIZATION_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between optimizations
+
+// Config version tracking
+const configVersionSnapshots = new Map<string, ConfigVersionSnapshot>();
+const sessionConfigVersions = new Map<string, string[]>(); // sessionId -> [versionId1, versionId2, ...]
+const performanceTrackers = new Map<string, PerformanceTracker>();
+
+// Degradation thresholds
+const DEGRADATION_STALL_THRESHOLD = 3; // 3 stalls after config change = degradation
+const DEGRADATION_ERROR_THRESHOLD = 5; // 5 errors after config change = degradation
+const ROLLBACK_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes between rollbacks
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Functions
@@ -110,7 +150,7 @@ export async function triggerOptimizationForStalledSession(
   userId: string,
   analysis?: SessionAnalysis
 ): Promise<OptimizationRecord | null> {
-  const { sessionId, sessionName, folderId, stalledMinutes } = stalledSession;
+  const { sessionId, sessionName, folderId } = stalledSession;
 
   // Check cooldown to avoid over-optimization
   const lastOptimization = sessionOptimizationCooldown.get(sessionId);
@@ -266,7 +306,7 @@ export async function triggerOptimizationForErrorPatterns(
  */
 export function generateRefinementSuggestionsFromAnalysis(
   analysis: SessionAnalysis,
-  currentConfig: AgentConfig
+  _currentConfig: AgentConfig // Reserved for future config-aware suggestions
 ): RefinementSuggestion[] {
   const suggestions: RefinementSuggestion[] = [];
   const timestamp = Date.now();
@@ -340,7 +380,8 @@ export function generateRefinementSuggestionsFromAnalysis(
 export async function applyConfigToSession(
   sessionId: string,
   config: AgentConfig,
-  userId: string
+  userId: string,
+  score?: number
 ): Promise<ConfigUpdateResult> {
   // Get session
   const session = await db
@@ -382,6 +423,18 @@ export async function applyConfigToSession(
     // Import fs dynamically (server-side only)
     const fs = await import("fs/promises");
     const { existsSync } = await import("fs");
+
+    // Create snapshot of current config BEFORE applying changes
+    const snapshot = await createConfigSnapshot(
+      sessionId,
+      sessionData.folderId,
+      config.id,
+      config.provider,
+      score ?? null
+    );
+    if (snapshot) {
+      changes.push(`Created config snapshot v${snapshot.version}`);
+    }
 
     // Read existing config
     let existingContent = "";
@@ -525,7 +578,7 @@ function buildTaskSpecFromAnalysis(
 async function buildProjectContext(
   session: { projectPath: string | null; folderId: string | null; agentProvider: string | null },
   folderId: string | null,
-  userId: string
+  _userId: string // Reserved for user-specific context in future
 ): Promise<ProjectContext> {
   const context: ProjectContext = {
     projectPath: session.projectPath || "/tmp",
@@ -626,7 +679,12 @@ async function runOptimizationAsync(
 
     // Apply the optimized config if we got a good result
     if (result.finalScore >= 0.7 && result.config) {
-      const applyResult = await applyConfigToSession(record.sessionId, result.config, userId);
+      const applyResult = await applyConfigToSession(
+        record.sessionId,
+        result.config,
+        userId,
+        result.finalScore
+      );
       record.configApplied = applyResult.success;
     }
 
@@ -712,8 +770,22 @@ export async function onStalledSessionDetected(
   stalledSession: StalledSession,
   userId: string
 ): Promise<void> {
+  const { sessionId, stalledMinutes } = stalledSession;
+
+  // Record stall event for performance tracking
+  recordPerformanceEvent(sessionId, "stall");
+
+  // Check for auto-rollback on performance degradation
+  const rolledBack = await checkAndAutoRollback(sessionId, userId);
+  if (rolledBack) {
+    console.log(
+      `[MetaAgentOrchestrator] Auto-rolled back config for ${sessionId} due to degradation`
+    );
+    return; // Don't trigger optimization after rollback
+  }
+
   // Only trigger optimization if session has been stalled for a significant time
-  if (stalledSession.stalledMinutes < 10) {
+  if (stalledMinutes < 10) {
     return;
   }
 
@@ -745,9 +817,378 @@ export async function onTaskCompleteAnalysis(
   userId: string,
   analysis: SessionAnalysis
 ): Promise<void> {
-  // Check if there were many unfixed errors
+  // Record error events for performance tracking
+  for (let i = 0; i < analysis.errorsEncountered.length; i++) {
+    recordPerformanceEvent(sessionId, "error");
+  }
+
+  // Record success events for fixed errors
+  for (let i = 0; i < analysis.errorsFixes.length; i++) {
+    recordPerformanceEvent(sessionId, "success");
+  }
+
+  // Check for auto-rollback on performance degradation
+  const rolledBack = await checkAndAutoRollback(sessionId, userId);
+  if (rolledBack) {
+    console.log(
+      `[MetaAgentOrchestrator] Auto-rolled back config for ${sessionId} due to errors`
+    );
+    return;
+  }
+
+  // Check if there were many unfixed errors - trigger optimization
   const unfixedErrors = analysis.errorsEncountered.length - analysis.errorsFixes.length;
   if (unfixedErrors >= 3) {
     await triggerOptimizationForErrorPatterns(sessionId, userId, analysis);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Config Version Tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create a snapshot of the current config before applying changes
+ */
+export async function createConfigSnapshot(
+  sessionId: string,
+  folderId: string | null,
+  configId: string,
+  provider: string,
+  score: number | null
+): Promise<ConfigVersionSnapshot | null> {
+  // Get session to find project path
+  const session = await db
+    .select()
+    .from(terminalSessions)
+    .where(eq(terminalSessions.id, sessionId))
+    .limit(1);
+
+  if (session.length === 0 || !session[0].projectPath) {
+    return null;
+  }
+
+  const configFileName = getConfigFileName(provider);
+  const configPath = `${session[0].projectPath}/${configFileName}`;
+
+  try {
+    const fs = await import("fs/promises");
+    const { existsSync } = await import("fs");
+
+    let content = "";
+    if (existsSync(configPath)) {
+      content = await fs.readFile(configPath, "utf-8");
+    }
+
+    // Get existing versions for this session
+    const existingVersions = sessionConfigVersions.get(sessionId) || [];
+    const version = existingVersions.length + 1;
+
+    const snapshot: ConfigVersionSnapshot = {
+      id: `snapshot-${sessionId}-${Date.now()}`,
+      sessionId,
+      folderId,
+      configId,
+      version,
+      content,
+      provider,
+      score,
+      createdAt: new Date(),
+      isRolledBack: false,
+    };
+
+    // Store snapshot
+    configVersionSnapshots.set(snapshot.id, snapshot);
+
+    // Update session version list
+    existingVersions.push(snapshot.id);
+    sessionConfigVersions.set(sessionId, existingVersions);
+
+    // Initialize performance tracker for this version
+    performanceTrackers.set(snapshot.id, {
+      sessionId,
+      configVersionId: snapshot.id,
+      stallCount: 0,
+      errorCount: 0,
+      successCount: 0,
+      avgResponseTime: null,
+      lastActivityAt: new Date(),
+      degradationDetected: false,
+    });
+
+    console.log(
+      `[MetaAgentOrchestrator] Created config snapshot v${version} for session ${sessionId}`
+    );
+
+    return snapshot;
+  } catch (error) {
+    console.error("[MetaAgentOrchestrator] Failed to create config snapshot:", error);
+    return null;
+  }
+}
+
+/**
+ * Record performance event for the current config version
+ */
+export function recordPerformanceEvent(
+  sessionId: string,
+  eventType: "stall" | "error" | "success",
+  responseTimeMs?: number
+): void {
+  // Get current version for session
+  const versionIds = sessionConfigVersions.get(sessionId) || [];
+  if (versionIds.length === 0) {
+    return; // No tracked versions
+  }
+
+  const currentVersionId = versionIds[versionIds.length - 1];
+  const tracker = performanceTrackers.get(currentVersionId);
+  if (!tracker) {
+    return;
+  }
+
+  // Update counters
+  switch (eventType) {
+    case "stall":
+      tracker.stallCount++;
+      break;
+    case "error":
+      tracker.errorCount++;
+      break;
+    case "success":
+      tracker.successCount++;
+      break;
+  }
+
+  // Update avg response time
+  if (responseTimeMs !== undefined) {
+    if (tracker.avgResponseTime === null) {
+      tracker.avgResponseTime = responseTimeMs;
+    } else {
+      // Running average
+      tracker.avgResponseTime = (tracker.avgResponseTime + responseTimeMs) / 2;
+    }
+  }
+
+  tracker.lastActivityAt = new Date();
+
+  // Check for degradation
+  if (
+    tracker.stallCount >= DEGRADATION_STALL_THRESHOLD ||
+    tracker.errorCount >= DEGRADATION_ERROR_THRESHOLD
+  ) {
+    tracker.degradationDetected = true;
+    console.warn(
+      `[MetaAgentOrchestrator] Degradation detected for session ${sessionId}: ` +
+        `${tracker.stallCount} stalls, ${tracker.errorCount} errors`
+    );
+  }
+}
+
+/**
+ * Check if the current config version is degraded and should be rolled back
+ */
+export function shouldRollback(sessionId: string): boolean {
+  const versionIds = sessionConfigVersions.get(sessionId) || [];
+  if (versionIds.length < 2) {
+    // Need at least 2 versions to rollback
+    return false;
+  }
+
+  const currentVersionId = versionIds[versionIds.length - 1];
+  const tracker = performanceTrackers.get(currentVersionId);
+  if (!tracker) {
+    return false;
+  }
+
+  return tracker.degradationDetected;
+}
+
+/**
+ * Rollback to the previous config version
+ */
+export async function rollbackConfig(
+  sessionId: string,
+  userId: string,
+  reason: string
+): Promise<{ success: boolean; rolledBackTo: number | null; error?: string }> {
+  const versionIds = sessionConfigVersions.get(sessionId) || [];
+  if (versionIds.length < 2) {
+    return {
+      success: false,
+      rolledBackTo: null,
+      error: "No previous version to rollback to",
+    };
+  }
+
+  // Get current and previous versions
+  const currentVersionId = versionIds[versionIds.length - 1];
+  const previousVersionId = versionIds[versionIds.length - 2];
+
+  const currentSnapshot = configVersionSnapshots.get(currentVersionId);
+  const previousSnapshot = configVersionSnapshots.get(previousVersionId);
+
+  if (!currentSnapshot || !previousSnapshot) {
+    return {
+      success: false,
+      rolledBackTo: null,
+      error: "Config snapshots not found",
+    };
+  }
+
+  // Get session
+  const session = await db
+    .select()
+    .from(terminalSessions)
+    .where(
+      and(eq(terminalSessions.id, sessionId), eq(terminalSessions.userId, userId))
+    )
+    .limit(1);
+
+  if (session.length === 0 || !session[0].projectPath) {
+    return {
+      success: false,
+      rolledBackTo: null,
+      error: "Session not found or no project path",
+    };
+  }
+
+  const configFileName = getConfigFileName(previousSnapshot.provider);
+  const configPath = `${session[0].projectPath}/${configFileName}`;
+
+  try {
+    const fs = await import("fs/promises");
+
+    // Write previous config content
+    await fs.writeFile(configPath, previousSnapshot.content, "utf-8");
+
+    // Mark current version as rolled back
+    currentSnapshot.isRolledBack = true;
+    currentSnapshot.rollbackReason = reason;
+
+    // Remove current version from active list (keep in snapshots for history)
+    versionIds.pop();
+    sessionConfigVersions.set(sessionId, versionIds);
+
+    // Reset performance tracker for previous version
+    const previousTracker = performanceTrackers.get(previousVersionId);
+    if (previousTracker) {
+      previousTracker.stallCount = 0;
+      previousTracker.errorCount = 0;
+      previousTracker.degradationDetected = false;
+      previousTracker.lastActivityAt = new Date();
+    }
+
+    console.log(
+      `[MetaAgentOrchestrator] Rolled back ${sessionId} from v${currentSnapshot.version} to v${previousSnapshot.version}: ${reason}`
+    );
+
+    return {
+      success: true,
+      rolledBackTo: previousSnapshot.version,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error("[MetaAgentOrchestrator] Rollback failed:", error);
+    return {
+      success: false,
+      rolledBackTo: null,
+      error: errorMsg,
+    };
+  }
+}
+
+/**
+ * Get config version history for a session
+ */
+export function getConfigVersionHistory(sessionId: string): ConfigVersionSnapshot[] {
+  const versionIds = sessionConfigVersions.get(sessionId) || [];
+  const snapshots: ConfigVersionSnapshot[] = [];
+
+  for (const id of versionIds) {
+    const snapshot = configVersionSnapshots.get(id);
+    if (snapshot) {
+      snapshots.push(snapshot);
+    }
+  }
+
+  return snapshots;
+}
+
+/**
+ * Get performance correlation data for config versions
+ */
+export function getPerformanceCorrelation(
+  sessionId: string
+): Array<{
+  version: number;
+  configId: string;
+  score: number | null;
+  stallCount: number;
+  errorCount: number;
+  successCount: number;
+  degraded: boolean;
+}> {
+  const versionIds = sessionConfigVersions.get(sessionId) || [];
+  const correlation: Array<{
+    version: number;
+    configId: string;
+    score: number | null;
+    stallCount: number;
+    errorCount: number;
+    successCount: number;
+    degraded: boolean;
+  }> = [];
+
+  for (const id of versionIds) {
+    const snapshot = configVersionSnapshots.get(id);
+    const tracker = performanceTrackers.get(id);
+
+    if (snapshot) {
+      correlation.push({
+        version: snapshot.version,
+        configId: snapshot.configId,
+        score: snapshot.score,
+        stallCount: tracker?.stallCount || 0,
+        errorCount: tracker?.errorCount || 0,
+        successCount: tracker?.successCount || 0,
+        degraded: tracker?.degradationDetected || false,
+      });
+    }
+  }
+
+  return correlation;
+}
+
+/**
+ * Auto-rollback check - call this from stall detection to trigger automatic rollback
+ */
+export async function checkAndAutoRollback(
+  sessionId: string,
+  userId: string
+): Promise<boolean> {
+  if (!shouldRollback(sessionId)) {
+    return false;
+  }
+
+  // Check rollback cooldown
+  const lastRollbackKey = `rollback-${sessionId}`;
+  const lastRollback = sessionOptimizationCooldown.get(lastRollbackKey);
+  if (lastRollback && Date.now() - lastRollback.getTime() < ROLLBACK_COOLDOWN_MS) {
+    console.log(`[MetaAgentOrchestrator] Skipping auto-rollback for ${sessionId} - in cooldown`);
+    return false;
+  }
+
+  const result = await rollbackConfig(
+    sessionId,
+    userId,
+    "Auto-rollback due to performance degradation"
+  );
+
+  if (result.success) {
+    sessionOptimizationCooldown.set(lastRollbackKey, new Date());
+    return true;
+  }
+
+  return false;
 }
