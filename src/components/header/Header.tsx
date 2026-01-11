@@ -8,6 +8,7 @@
 
 import { GitHubStatusIcon } from "./GitHubStatusIcon";
 import { SecretsStatusButton } from "./SecretsStatusButton";
+import { MemoryStatusButton } from "./MemoryStatusButton";
 import { HeaderUserMenu } from "./HeaderUserMenu";
 import { AppearanceModeToggleCompact } from "@/components/appearance";
 import { GitHubMaintenanceModal } from "@/components/github/GitHubMaintenanceModal";
@@ -50,6 +51,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
               onClick={openModal}
             />
             <SecretsStatusButton />
+            <MemoryStatusButton />
             <AppearanceModeToggleCompact />
           </div>
 
