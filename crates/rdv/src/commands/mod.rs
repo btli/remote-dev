@@ -9,6 +9,7 @@ pub mod folder;
 pub mod insights;
 pub mod learn;
 pub mod mail;
+pub mod memory;
 pub mod master;
 pub mod monitor;
 pub mod nudge;

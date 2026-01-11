@@ -1,14 +1,27 @@
 //! Shared types for rdv-core.
 //!
 //! These types are used by both the API client and the database layer.
+//!
+//! # TypeScript Type Generation
+//!
+//! Enable the `ts-types` feature to generate TypeScript definitions:
+//!
+//! ```bash
+//! cargo test --features ts-types export_bindings
+//! ```
 
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "ts-types")]
+use ts_rs::TS;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity Types
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct User {
     pub id: String,
     pub name: Option<String>,
@@ -16,6 +29,8 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Session {
     pub id: String,
     pub user_id: String,
@@ -32,6 +47,8 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Folder {
     pub id: String,
     pub user_id: String,
@@ -47,6 +64,8 @@ pub struct Folder {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Orchestrator {
     pub id: String,
     pub session_id: String,
@@ -66,6 +85,8 @@ pub struct Orchestrator {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct StalledSession {
     pub session_id: String,
     pub session_name: String,
@@ -81,6 +102,8 @@ pub struct StalledSession {
 
 /// Input for creating a new terminal session
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct NewSession {
     pub user_id: String,
     pub name: String,
@@ -94,6 +117,8 @@ pub struct NewSession {
 
 /// Input for creating a new folder
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct NewFolder {
     pub user_id: String,
     pub name: String,
@@ -102,6 +127,8 @@ pub struct NewFolder {
 
 /// Input for creating a new orchestrator
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct NewOrchestrator {
     pub session_id: String,
     pub user_id: String,
@@ -119,6 +146,8 @@ pub struct NewOrchestrator {
 
 /// Orchestrator insight
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Insight {
     pub id: String,
     pub orchestrator_id: String,
@@ -137,6 +166,8 @@ pub struct Insight {
 
 /// Input for creating a new insight
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct NewInsight {
     pub orchestrator_id: String,
     pub session_id: Option<String>,
@@ -150,6 +181,8 @@ pub struct NewInsight {
 
 /// Orchestrator for REST responses (simpler structure)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct OrchestratorSimple {
     pub id: String,
     pub user_id: String,
@@ -165,6 +198,8 @@ pub struct OrchestratorSimple {
 
 /// Insight counts by severity for an orchestrator
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct InsightCounts {
     pub total: u32,
     pub unresolved: u32,
@@ -176,6 +211,8 @@ pub struct InsightCounts {
 
 /// Audit log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct AuditLog {
     pub id: String,
     pub orchestrator_id: String,
@@ -187,6 +224,8 @@ pub struct AuditLog {
 
 /// GitHub repository (cached from GitHub API)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct GitHubRepository {
     pub id: String,
     pub user_id: String,
@@ -207,6 +246,8 @@ pub struct GitHubRepository {
 
 /// Project knowledge metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectKnowledgeMetadata {
     pub project_name: Option<String>,
@@ -220,6 +261,8 @@ pub struct ProjectKnowledgeMetadata {
 
 /// Convention entry in project knowledge
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct Convention {
     pub id: String,
@@ -233,6 +276,8 @@ pub struct Convention {
 
 /// Learned pattern in project knowledge
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct LearnedPattern {
     pub id: String,
@@ -248,6 +293,8 @@ pub struct LearnedPattern {
 
 /// Skill definition in project knowledge
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDefinition {
     pub id: String,
@@ -264,6 +311,8 @@ pub struct SkillDefinition {
 
 /// Step within a skill
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct SkillStep {
     pub description: String,
@@ -272,6 +321,8 @@ pub struct SkillStep {
 
 /// Tool definition in project knowledge
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
     pub id: String,
@@ -287,6 +338,8 @@ pub struct ToolDefinition {
 
 /// Tool implementation details
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolImplementation {
     #[serde(rename = "type")]
@@ -296,10 +349,14 @@ pub struct ToolImplementation {
 
 /// Agent performance metrics
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct AgentPerformance(pub std::collections::HashMap<String, std::collections::HashMap<String, TaskMetrics>>);
 
 /// Task metrics for an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskMetrics {
     pub success_rate: f64,
@@ -309,6 +366,8 @@ pub struct TaskMetrics {
 
 /// Project knowledge for a folder
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectKnowledge {
     pub id: String,
@@ -328,6 +387,8 @@ pub struct ProjectKnowledge {
 
 /// Input for creating new project knowledge
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct NewProjectKnowledge {
     pub folder_id: String,
     pub user_id: String,
@@ -339,6 +400,8 @@ pub struct NewProjectKnowledge {
 
 /// CLI token for programmatic API access
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct CLIToken {
     pub id: String,
@@ -356,6 +419,8 @@ pub struct CLIToken {
 
 /// Input for creating a new CLI token
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewCLIToken {
     pub user_id: String,
@@ -366,6 +431,8 @@ pub struct NewCLIToken {
 
 /// Response when creating a CLI token (includes the raw key, shown only once)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct CLITokenCreateResponse {
     pub id: String,
@@ -379,6 +446,8 @@ pub struct CLITokenCreateResponse {
 
 /// CLI token for validation (includes hash for comparison)
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct CLITokenValidation {
     pub id: String,
     pub user_id: String,
@@ -393,6 +462,8 @@ pub struct CLITokenValidation {
 
 /// Memory tier for hierarchical working memory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryTier {
     ShortTerm,
@@ -424,6 +495,8 @@ impl std::str::FromStr for MemoryTier {
 
 /// Memory entry in the hierarchical working memory system
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryEntry {
     pub id: String,
@@ -453,6 +526,8 @@ pub struct MemoryEntry {
 
 /// Input for creating a new memory entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewMemoryEntry {
     pub user_id: String,
@@ -473,6 +548,8 @@ pub struct NewMemoryEntry {
 
 /// Filter criteria for querying memory entries
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 pub struct MemoryQueryFilter {
     pub user_id: String,
     pub session_id: Option<String>,
@@ -491,6 +568,8 @@ pub struct MemoryQueryFilter {
 
 /// Note entry for the note-taking service
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
     pub id: String,
@@ -505,6 +584,8 @@ pub struct Note {
 
 /// Input for creating a new note
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewNote {
     pub user_id: String,
@@ -520,6 +601,8 @@ pub struct NewNote {
 
 /// Extension state in the extension registry
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum ExtensionState {
     Unloaded,
@@ -557,6 +640,8 @@ impl std::str::FromStr for ExtensionState {
 
 /// SDK Extension in the extension registry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct Extension {
     pub id: String,
@@ -583,6 +668,8 @@ pub struct Extension {
 
 /// Input for creating a new extension
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewExtension {
     pub user_id: String,
@@ -602,6 +689,8 @@ pub struct NewExtension {
 
 /// Extension tool registered by an extension
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionTool {
     pub id: String,
@@ -622,6 +711,8 @@ pub struct ExtensionTool {
 
 /// Input for creating a new extension tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewExtensionTool {
     pub extension_id: String,
@@ -638,6 +729,8 @@ pub struct NewExtensionTool {
 
 /// Extension prompt template registered by an extension
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionPrompt {
     pub id: String,
@@ -656,6 +749,8 @@ pub struct ExtensionPrompt {
 
 /// Input for creating a new extension prompt
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewExtensionPrompt {
     pub extension_id: String,
@@ -674,6 +769,8 @@ pub struct NewExtensionPrompt {
 
 /// Meta-agent configuration for generating agent configurations
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct MetaAgentConfig {
     pub id: String,
@@ -696,6 +793,8 @@ pub struct MetaAgentConfig {
 
 /// Input for creating a new meta-agent config
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewMetaAgentConfig {
     pub user_id: String,
@@ -714,6 +813,8 @@ pub struct NewMetaAgentConfig {
 
 /// Meta-agent benchmark definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct MetaAgentBenchmark {
     pub id: String,
@@ -730,6 +831,8 @@ pub struct MetaAgentBenchmark {
 
 /// Input for creating a new meta-agent benchmark
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewMetaAgentBenchmark {
     pub user_id: String,
@@ -742,6 +845,8 @@ pub struct NewMetaAgentBenchmark {
 
 /// Meta-agent benchmark result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct MetaAgentBenchmarkResult {
     pub id: String,
@@ -762,6 +867,8 @@ pub struct MetaAgentBenchmarkResult {
 
 /// Input for creating a new benchmark result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
 #[serde(rename_all = "camelCase")]
 pub struct NewMetaAgentBenchmarkResult {
     pub benchmark_id: String,

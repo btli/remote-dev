@@ -39,6 +39,9 @@ pub enum Commands {
     /// Self-improvement and learning commands
     Learn(LearnCommand),
 
+    /// Hierarchical memory system (store, recall, forget)
+    Memory(MemoryCommand),
+
     /// Mail system (inter-agent messages)
     Mail(MailCommand),
 
@@ -474,6 +477,119 @@ pub enum LearnAction {
         /// Filter by folder
         #[arg(short, long)]
         folder: Option<String>,
+    },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct MemoryCommand {
+    #[command(subcommand)]
+    pub action: MemoryAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MemoryAction {
+    /// Store something in memory
+    Remember {
+        /// Content to remember
+        content: String,
+
+        /// Memory tier: short, working, or long (default: short)
+        #[arg(short, long)]
+        tier: Option<String>,
+
+        /// Time-to-live in seconds (short-term only)
+        #[arg(long)]
+        ttl: Option<i32>,
+
+        /// Tags for categorization
+        #[arg(short = 'T', long = "tag", action = clap::ArgAction::Append)]
+        tags: Vec<String>,
+
+        /// Content type (command, observation, pattern, convention, etc.)
+        #[arg(short = 'c', long, default_value = "observation")]
+        content_type: String,
+
+        /// Name for the memory (working/long-term)
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// Description for the memory (working/long-term)
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+
+    /// Recall memories matching criteria
+    Recall {
+        /// Filter by tier (short, working, long)
+        #[arg(short, long)]
+        tier: Option<String>,
+
+        /// Filter by content type
+        #[arg(short = 'c', long)]
+        content_type: Option<String>,
+
+        /// Minimum relevance score (0.0 - 1.0)
+        #[arg(short = 'r', long)]
+        min_relevance: Option<f64>,
+
+        /// Maximum results (default: 20)
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+
+        /// Include text search query
+        #[arg(short, long)]
+        query: Option<String>,
+    },
+
+    /// Forget (delete) memories
+    Forget {
+        /// Specific memory ID to delete
+        #[arg(short, long)]
+        id: Option<String>,
+
+        /// Delete all memories matching tier
+        #[arg(short, long)]
+        all: bool,
+
+        /// Tier to clear (with --all)
+        #[arg(short, long)]
+        tier: Option<String>,
+
+        /// Cleanup expired entries
+        #[arg(long)]
+        expired: bool,
+    },
+
+    /// List memories with filters
+    List {
+        /// Filter by tier
+        #[arg(short, long)]
+        tier: Option<String>,
+
+        /// Filter by content type
+        #[arg(short = 'c', long)]
+        content_type: Option<String>,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Show memory statistics
+    Stats,
+
+    /// Promote a memory to a higher tier
+    Promote {
+        /// Memory ID to promote
+        id: String,
+
+        /// Target tier (working or long)
+        #[arg(short, long)]
+        tier: String,
     },
 }
 

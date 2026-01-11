@@ -12,8 +12,13 @@ name = "rdv"
 path = "src/main.rs"
 
 [dependencies]
-# Core library (client only - NO direct DB access)
-rdv-core = { path = "../rdv-core", default-features = true, features = ["client"] }
+# Core library (client + direct DB access for hybrid approach)
+# - client: HTTP API for server-specific ops (sessions, tmux, WebSocket)
+# - db: Direct SQLite access for local ops (memory, learning, knowledge)
+rdv-core = { path = "../rdv-core", default-features = true, features = ["client", "db"] }
+
+# SDK for direct memory and extension access (no server needed)
+rdv-sdk = { path = "../rdv-sdk", default-features = true }
 
 # CLI framework
 clap.workspace = true

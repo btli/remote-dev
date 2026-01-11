@@ -30,6 +30,7 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "bun run src/db/seed.ts",
     "db:migrate-orchestrators": "bun run scripts/migrate-orchestrators.ts",
+    "types:generate": "cd crates && cargo test --features ts-types -p rdv-core export_bindings -- --nocapture",
     "terminal:build": "bun build src/server/index.ts --outdir dist-terminal --target node --external node-pty --external better-sqlite3 --sourcemap",
     "electron:build": "tsc -p electron/tsconfig.json",
     "electron:dev": "bun run electron:build && concurrently --kill-others -n next,term,electron -c blue,green,yellow \"bun run dev:next\" \"bun run dev:terminal\" \"electron .\"",

@@ -13,8 +13,11 @@ memory = []
 meta-agent = []
 extensions = []
 embeddings = ["fastembed"]
+ts-types = ["ts-rs"]
 
 [dependencies]
+# TypeScript type generation (optional)
+ts-rs = { version = "10", optional = true, features = ["chrono-impl", "uuid-impl", "serde-compat"] }
 # Core dependencies
 rdv-core = { path = "../rdv-core", features = ["db"] }
 

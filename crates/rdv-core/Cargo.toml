@@ -11,6 +11,7 @@ description = "Core library for Remote Dev - shared logic between CLI and server
 default = ["client"]
 client = ["dep:reqwest", "dep:hyper-util", "dep:hyper", "dep:http-body-util"]
 db = ["dep:rusqlite"]
+ts-types = ["dep:ts-rs"]
 
 [dependencies]
 # Async runtime
@@ -47,6 +48,9 @@ dirs.workspace = true
 md5.workspace = true
 base64.workspace = true
 rand.workspace = true
+
+# TypeScript type generation (optional)
+ts-rs = { version = "10", optional = true, features = ["chrono-impl", "uuid-impl", "serde-compat", "serde-json-impl"] }
 
 [dev-dependencies]
 tempfile.workspace = true

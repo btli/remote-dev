@@ -1,7 +1,10 @@
 //! rdv - Remote Dev Orchestration CLI
 //!
 //! Multi-agent coordination with self-improvement capabilities.
-//! Connects to rdv-server via Unix socket for all database operations.
+//!
+//! Uses a hybrid approach for database operations:
+//! - Direct SDK access for: memory, learning, knowledge (no server needed)
+//! - HTTP API via rdv-server for: sessions, tmux, orchestrators (require server)
 
 use anyhow::Result;
 use clap::Parser;
@@ -10,6 +13,7 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 mod cli;
 mod commands;
 mod config;
+mod database;
 mod error;
 mod tmux;
 
@@ -37,6 +41,7 @@ async fn main() -> Result<()> {
         Commands::Session(cmd) => commands::session::execute(cmd, &config).await,
         Commands::Monitor(cmd) => commands::monitor::execute(cmd, &config).await,
         Commands::Learn(cmd) => commands::learn::execute(cmd, &config).await,
+        Commands::Memory(cmd) => commands::memory::execute(cmd, &config),
         Commands::Mail(cmd) => commands::mail::execute(cmd, &config).await,
         Commands::Nudge { session_id, message } => {
             commands::nudge::execute(&session_id, &message, &config).await
