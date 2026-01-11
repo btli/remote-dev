@@ -462,8 +462,9 @@ describe("SDK Performance Benchmarks", () => {
             complexity: 3,
             type: "feature",
           },
-          workingMemory: [],
-          relevantFiles: [],
+          state: "in_progress",
+          activeFiles: [],
+          notes: [],
           startedAt: new Date(),
         });
       }, BENCHMARK_ITERATIONS);
@@ -488,8 +489,9 @@ describe("SDK Performance Benchmarks", () => {
           complexity: 2,
           type: "test",
         },
-        workingMemory: [],
-        relevantFiles: [],
+        state: "in_progress",
+        activeFiles: [],
+        notes: [],
         startedAt: new Date(),
       });
 
@@ -639,8 +641,9 @@ describe("SDK Performance Benchmarks", () => {
             complexity: 3,
             type: "feature",
           },
-          workingMemory: [],
-          relevantFiles: [],
+          state: "in_progress",
+          activeFiles: [],
+          notes: [],
           startedAt: new Date(),
         });
 
