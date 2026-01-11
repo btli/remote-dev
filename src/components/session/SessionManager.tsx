@@ -16,6 +16,7 @@ import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { IssuesModal } from "@/components/github/IssuesModal";
 import { PRsModal } from "@/components/github/PRsModal";
 import { ProjectKnowledgeModal } from "@/components/knowledge";
+import { MemoryPanel } from "@/components/memory";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
@@ -98,6 +99,54 @@ function getServerSidebarWidth() {
   return 220;
 }
 
+// Memory panel localStorage persistence
+function subscribeToMemoryPanelCollapsed(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "memory-panel-collapsed") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("memory-panel-collapsed-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("memory-panel-collapsed-change", handler);
+  };
+}
+
+function subscribeToMemoryPanelWidth(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "memory-panel-width") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("memory-panel-width-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("memory-panel-width-change", handler);
+  };
+}
+
+function getMemoryPanelCollapsed() {
+  return localStorage.getItem("memory-panel-collapsed") !== "false"; // Default collapsed
+}
+
+function getMemoryPanelWidth() {
+  const saved = localStorage.getItem("memory-panel-width");
+  if (saved) {
+    const width = parseInt(saved, 10);
+    if (!isNaN(width) && width >= 200 && width <= 500) return width;
+  }
+  return 280;
+}
+
+function getServerMemoryPanelCollapsed() {
+  return true; // Default collapsed on server
+}
+
+function getServerMemoryPanelWidth() {
+  return 280;
+}
+
 interface SessionManagerProps {
   isGitHubConnected?: boolean;
 }
@@ -147,6 +196,30 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     localStorage.setItem("sidebar-width", String(width));
     window.dispatchEvent(new CustomEvent("sidebar-width-change"));
   }, []);
+
+  // Memory panel state (localStorage persisted)
+  const memoryPanelCollapsed = useSyncExternalStore(
+    subscribeToMemoryPanelCollapsed,
+    getMemoryPanelCollapsed,
+    getServerMemoryPanelCollapsed
+  );
+
+  const memoryPanelWidth = useSyncExternalStore(
+    subscribeToMemoryPanelWidth,
+    getMemoryPanelWidth,
+    getServerMemoryPanelWidth
+  );
+
+  const setMemoryPanelCollapsed = useCallback((collapsed: boolean) => {
+    localStorage.setItem("memory-panel-collapsed", String(collapsed));
+    window.dispatchEvent(new CustomEvent("memory-panel-collapsed-change"));
+  }, []);
+
+  // Note: Memory panel width change handler available if resize is implemented later
+  // const setMemoryPanelWidth = useCallback((width: number) => {
+  //   localStorage.setItem("memory-panel-width", String(width));
+  //   window.dispatchEvent(new CustomEvent("memory-panel-width-change"));
+  // }, []);
 
   // Track mobile state for responsive sidebar behavior
   useEffect(() => {
@@ -1371,44 +1444,46 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
         )}
 
-        {/* Empty state when no sessions */}
-        {!loading && activeSessions.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center max-w-md mx-auto px-4">
-              <div className="relative p-8 rounded-2xl bg-card/50 backdrop-blur-xl border border-border shadow-2xl">
-                <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-primary/10 via-transparent to-accent/10 pointer-events-none" />
-                <div className="relative mx-auto w-16 h-16 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mb-6">
-                  <TerminalIcon className="w-8 h-8 text-primary" />
-                </div>
-                <h2 className="relative text-2xl font-semibold text-foreground mb-3">
-                  No Active Sessions
-                </h2>
-                <p className="relative text-muted-foreground mb-6">
-                  Press <kbd className="px-2 py-1 bg-muted rounded text-xs">⌘↵</kbd> to
-                  create a new terminal session, or use the wizard for more options.
-                </p>
-                <div className="flex gap-3 justify-center">
-                  <Button
-                    onClick={handleQuickNewSession}
-                    className="relative bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Quick Terminal
-                  </Button>
-                  <Button
-                    onClick={handleOpenWizard}
-                    variant="outline"
-                    className="border-border text-muted-foreground hover:bg-accent/50"
-                  >
-                    Advanced...
-                  </Button>
+        {/* Main content row - contains terminal and memory panel */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Empty state when no sessions */}
+          {!loading && activeSessions.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-md mx-auto px-4">
+                <div className="relative p-8 rounded-2xl bg-card/50 backdrop-blur-xl border border-border shadow-2xl">
+                  <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-primary/10 via-transparent to-accent/10 pointer-events-none" />
+                  <div className="relative mx-auto w-16 h-16 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mb-6">
+                    <TerminalIcon className="w-8 h-8 text-primary" />
+                  </div>
+                  <h2 className="relative text-2xl font-semibold text-foreground mb-3">
+                    No Active Sessions
+                  </h2>
+                  <p className="relative text-muted-foreground mb-6">
+                    Press <kbd className="px-2 py-1 bg-muted rounded text-xs">⌘↵</kbd> to
+                    create a new terminal session, or use the wizard for more options.
+                  </p>
+                  <div className="flex gap-3 justify-center">
+                    <Button
+                      onClick={handleQuickNewSession}
+                      className="relative bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Quick Terminal
+                    </Button>
+                    <Button
+                      onClick={handleOpenWizard}
+                      variant="outline"
+                      className="border-border text-muted-foreground hover:bg-accent/50"
+                    >
+                      Advanced...
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ) : (
-          /* Terminal Container */
-          <div className="flex-1 p-3 overflow-hidden">
+          ) : (
+            /* Terminal Container */
+            <div className="flex-1 p-3 overflow-hidden">
             <div className="h-full relative rounded-xl overflow-hidden">
               {/* Gradient border effect */}
               <div className="absolute inset-0 rounded-xl p-[1px] bg-gradient-to-br from-primary/30 via-transparent to-accent/30">
@@ -1515,7 +1590,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               </div>
             </div>
           </div>
-        )}
+          )}
+
+          {/* Memory Panel - visible on desktop when sessions exist */}
+          {!isMobile && activeSessions.length > 0 && (
+            <MemoryPanel
+              sessionId={activeSessionId}
+              folderId={activeSessions.find((s) => s.id === activeSessionId)?.folderId ?? null}
+              collapsed={memoryPanelCollapsed}
+              onCollapsedChange={setMemoryPanelCollapsed}
+              width={memoryPanelWidth}
+            />
+          )}
+        </div>
       </div>
 
       {/* New Session Wizard */}

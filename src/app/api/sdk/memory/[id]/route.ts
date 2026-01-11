@@ -81,6 +81,13 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     if (body.relevance !== undefined) updates.relevance = body.relevance;
     if (body.name !== undefined) updates.name = body.name;
     if (body.description !== undefined) updates.description = body.description;
+    if (body.ttlSeconds !== undefined) {
+      updates.ttlSeconds = body.ttlSeconds;
+      // Recompute expiresAt when TTL changes
+      updates.expiresAt = body.ttlSeconds
+        ? new Date(Date.now() + body.ttlSeconds * 1000)
+        : null;
+    }
     if (body.metadata !== undefined)
       updates.metadataJson = JSON.stringify(body.metadata);
 

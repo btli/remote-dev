@@ -620,6 +620,7 @@ Features:
 | `CommandInjectionDialog.tsx` | Confirm command injection dialog |
 | `AuditLogSidebar.tsx` | View orchestrator audit trail |
 | `SidebarOrchestratorStatus.tsx` | Folder sidebar orchestrator status widget |
+| `MemoryPanel.tsx` | Session memory panel with tier-based organization and quick actions |
 
 ### State Management
 
