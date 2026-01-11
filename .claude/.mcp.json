@@ -1,13 +1,9 @@
 {
   "mcpServers": {
     "remote-dev": {
-      "command": "node",
-      "args": [
-        "/Users/bryanli/Projects/btli/remote-dev/scripts/mcp-server.mjs"
-      ],
-      "env": {
-        "SOCKET_PATH": "/tmp/rdv/next.sock"
-      }
+      "command": "/Users/bryanli/Projects/btli/remote-dev/crates/target/release/rdv-server",
+      "args": ["--mcp"],
+      "env": {}
     }
   }
 }

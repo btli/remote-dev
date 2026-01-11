@@ -485,7 +485,7 @@ function stop(mode?: Mode): void {
   // Stop by PID file first
   let stoppedNext = stopProcess(NEXT_PID_FILE, "Next.js");
   let stoppedTerminal = stopProcess(TERMINAL_PID_FILE, "Terminal Server");
-  let stoppedRdvServer = stopProcess(RDV_SERVER_PID_FILE, "rdv-server");
+  const stoppedRdvServer = stopProcess(RDV_SERVER_PID_FILE, "rdv-server");
 
   const targetMode = mode || getRunningMode();
 

@@ -211,7 +211,7 @@ export async function createSession(
   const isAgentSession = input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent;
 
   // Inject memory context for agent sessions
-  let memoryContextEnv: Record<string, string> = {};
+  const memoryContextEnv: Record<string, string> = {};
   if (isAgentSession && workingPath) {
     try {
       const { injectContextForSession } = await import("./session-context-injection-service");

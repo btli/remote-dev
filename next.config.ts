@@ -2,7 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  serverExternalPackages: ["@libsql/client"],
+  serverExternalPackages: [
+    "@libsql/client",
+    "@huggingface/transformers",
+    "@lancedb/lancedb",
+    "onnxruntime-node",
+  ],
   turbopack: {
     root: process.cwd(),
   },

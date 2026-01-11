@@ -3,6 +3,16 @@
     "next-devtools": {
       "command": "npx",
       "args": ["-y", "next-devtools-mcp@latest"]
+    },
+    "remote-dev": {
+      "command": "node",
+      "args": ["scripts/mcp-server.mjs"],
+      "env": {
+        "REMOTE_DEV_URL": "http://localhost:6001"
+      }
     }
+  },
+  "_comments": {
+    "socket_example": "For production with Unix sockets, use: SOCKET_PATH=/path/to/remote-dev.sock"
   }
 }
