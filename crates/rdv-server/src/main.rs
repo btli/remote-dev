@@ -89,6 +89,14 @@ async fn main() -> anyhow::Result<()> {
         warn!("Failed to register SDK tools: {}", e);
     }
 
+    // Register meta-agent tools
+    if let Err(e) = mcp::register_meta_agent_tools(
+        state.extension_router(),
+        Arc::clone(&state.db),
+    ).await {
+        warn!("Failed to register meta-agent tools: {}", e);
+    }
+
     // Load CLI tokens from database
     load_cli_tokens(&state).await?;
 
@@ -291,6 +299,14 @@ async fn run_mcp_server() -> anyhow::Result<()> {
         Arc::clone(&state.db),
     ).await {
         warn!("Failed to register SDK tools: {}", e);
+    }
+
+    // Register meta-agent tools
+    if let Err(e) = mcp::register_meta_agent_tools(
+        state.extension_router(),
+        Arc::clone(&state.db),
+    ).await {
+        warn!("Failed to register meta-agent tools: {}", e);
     }
 
     // Create MCP server
