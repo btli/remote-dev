@@ -42,6 +42,8 @@ async fn main() -> Result<()> {
         Commands::Monitor(cmd) => commands::monitor::execute(cmd, &config).await,
         Commands::Learn(cmd) => commands::learn::execute(cmd, &config).await,
         Commands::Memory(cmd) => commands::memory::execute(cmd, &config),
+        Commands::Note(cmd) => commands::note::execute(cmd, &config),
+        Commands::Knowledge(cmd) => commands::knowledge::execute(cmd, &config),
         Commands::Mail(cmd) => commands::mail::execute(cmd, &config).await,
         Commands::Nudge { session_id, message } => {
             commands::nudge::execute(&session_id, &message, &config).await

@@ -42,6 +42,12 @@ pub enum Commands {
     /// Hierarchical memory system (store, recall, forget)
     Memory(MemoryCommand),
 
+    /// Quick note capture (convenience for memory operations)
+    Note(NoteCommand),
+
+    /// Project knowledge base (conventions, patterns, skills, gotchas)
+    Knowledge(KnowledgeCommand),
+
     /// Mail system (inter-agent messages)
     Mail(MailCommand),
 
@@ -591,6 +597,206 @@ pub enum MemoryAction {
         #[arg(short, long)]
         tier: String,
     },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Note Commands (convenience wrappers for memory)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct NoteCommand {
+    /// Note content
+    pub content: String,
+
+    /// Note type
+    #[arg(short, long, default_value = "observation")]
+    pub r#type: NoteType,
+
+    /// Priority level (1-5, lower is higher priority)
+    #[arg(short, long)]
+    pub priority: Option<i32>,
+
+    /// Time-to-live in seconds (default: 1 hour)
+    #[arg(long)]
+    pub ttl: Option<i32>,
+
+    /// Tags for categorization
+    #[arg(short = 'T', long = "tag", action = clap::ArgAction::Append)]
+    pub tags: Vec<String>,
+
+    /// Folder path (for folder-scoped notes)
+    #[arg(short, long)]
+    pub folder: Option<String>,
+}
+
+/// Note types for quick capture
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum NoteType {
+    /// TODO item to action
+    Todo,
+    /// Reminder for later
+    Reminder,
+    /// Question to investigate
+    Question,
+    /// General observation
+    Observation,
+    /// Warning or gotcha
+    Warning,
+    /// Decision made
+    Decision,
+}
+
+impl NoteType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NoteType::Todo => "todo",
+            NoteType::Reminder => "reminder",
+            NoteType::Question => "question",
+            NoteType::Observation => "observation",
+            NoteType::Warning => "warning",
+            NoteType::Decision => "decision",
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Knowledge Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct KnowledgeCommand {
+    #[command(subcommand)]
+    pub action: KnowledgeAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum KnowledgeAction {
+    /// Add knowledge to the project knowledge base
+    Add {
+        /// Knowledge type
+        #[arg(short, long)]
+        r#type: KnowledgeType,
+
+        /// Name/title for the knowledge
+        name: String,
+
+        /// Description or content
+        description: String,
+
+        /// Folder path (for folder-scoped knowledge)
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Confidence score (0.0 - 1.0)
+        #[arg(short, long)]
+        confidence: Option<f64>,
+
+        /// Source of the knowledge
+        #[arg(short, long)]
+        source: Option<String>,
+
+        /// Tags for categorization
+        #[arg(short = 'T', long = "tag", action = clap::ArgAction::Append)]
+        tags: Vec<String>,
+    },
+
+    /// List knowledge entries
+    List {
+        /// Filter by type
+        #[arg(short, long)]
+        r#type: Option<KnowledgeType>,
+
+        /// Filter by folder
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Maximum results
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Show details of a knowledge entry
+    Show {
+        /// Knowledge ID
+        id: String,
+    },
+
+    /// Update a knowledge entry
+    Update {
+        /// Knowledge ID
+        id: String,
+
+        /// New description
+        #[arg(short, long)]
+        description: Option<String>,
+
+        /// New confidence score
+        #[arg(short, long)]
+        confidence: Option<f64>,
+
+        /// Add tags
+        #[arg(short = 'T', long = "tag", action = clap::ArgAction::Append)]
+        add_tags: Vec<String>,
+    },
+
+    /// Remove a knowledge entry
+    Remove {
+        /// Knowledge ID
+        id: String,
+
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Import knowledge from CLAUDE.md or similar config
+    Import {
+        /// Path to file (defaults to CLAUDE.md in current dir)
+        #[arg(default_value = "CLAUDE.md")]
+        path: String,
+
+        /// Dry run (show what would be imported)
+        #[arg(short, long)]
+        dry_run: bool,
+    },
+
+    /// Export knowledge to a file
+    Export {
+        /// Output path
+        #[arg(default_value = "knowledge.json")]
+        path: String,
+
+        /// Filter by folder
+        #[arg(short, long)]
+        folder: Option<String>,
+    },
+}
+
+/// Knowledge types for the project knowledge base
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum KnowledgeType {
+    /// Coding conventions and standards
+    Convention,
+    /// Common patterns and solutions
+    Pattern,
+    /// Reusable skills/techniques
+    Skill,
+    /// Tools and automation
+    Tool,
+    /// Known pitfalls and warnings
+    Gotcha,
+}
+
+impl KnowledgeType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KnowledgeType::Convention => "convention",
+            KnowledgeType::Pattern => "pattern",
+            KnowledgeType::Skill => "skill",
+            KnowledgeType::Tool => "tool",
+            KnowledgeType::Gotcha => "gotcha",
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
