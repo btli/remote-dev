@@ -1,0 +1,47 @@
+[package]
+name = "rdv-sdk"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Remote Dev SDK - Hierarchical memory, meta-agent, and extension system"
+
+[features]
+default = ["memory", "meta-agent", "extensions"]
+memory = []
+meta-agent = []
+extensions = []
+
+[dependencies]
+# Core dependencies
+rdv-core = { path = "../rdv-core", features = ["db"] }
+
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Database
+rusqlite.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Time & UUID
+chrono.workspace = true
+uuid.workspace = true
+
+# Utilities
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio-test.workspace = true

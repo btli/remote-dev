@@ -1951,3 +1951,416 @@ export const projectKnowledge = sqliteTable(
     index("project_knowledge_scanned_idx").on(table.lastScannedAt),
   ]
 );
+
+// =============================================================================
+// SDK Memory Tables (Hierarchical Working Memory)
+// =============================================================================
+
+/**
+ * Memory tier type for hierarchical memory system.
+ */
+export type MemoryTierType = "short_term" | "working" | "long_term";
+
+/**
+ * Memory content type for categorizing entries.
+ */
+export type MemoryContentType =
+  | "command"
+  | "tool_result"
+  | "observation"
+  | "file_context"
+  | "hypothesis"
+  | "plan"
+  | "convention"
+  | "pattern"
+  | "gotcha"
+  | "skill";
+
+/**
+ * SDK Memory Entries - Three-tier hierarchical working memory.
+ *
+ * Based on the Confucius Code Agent (CCA) paper architecture:
+ * - short_term: Recent commands, tool results, observations (TTL-based)
+ * - working: Current task context, active files, hypotheses (task-scoped)
+ * - long_term: Project knowledge, conventions, learned patterns (permanent)
+ */
+export const sdkMemoryEntries = sqliteTable(
+  "sdk_memory_entry",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    // Memory tier
+    tier: text("tier").$type<MemoryTierType>().notNull(),
+    // Content type within tier
+    contentType: text("content_type").$type<MemoryContentType>().notNull(),
+    // Human-readable name (for long_term entries)
+    name: text("name"),
+    // Description (for long_term entries)
+    description: text("description"),
+    // Main content
+    content: text("content").notNull(),
+    // Content hash for deduplication (SHA-256)
+    contentHash: text("content_hash").notNull(),
+    // Embedding ID for semantic search (external vector store reference)
+    embeddingId: text("embedding_id"),
+    // Task association (for working memory)
+    taskId: text("task_id"),
+    // Priority (for working memory, higher = more important)
+    priority: integer("priority").default(0),
+    // Confidence score (0.0-1.0)
+    confidence: real("confidence").default(0.5),
+    // Relevance score (calculated, 0.0-1.0)
+    relevance: real("relevance").default(0.5),
+    // TTL in seconds (for short_term, null = no expiry)
+    ttlSeconds: integer("ttl_seconds"),
+    // Access tracking
+    accessCount: integer("access_count").notNull().default(0),
+    lastAccessedAt: integer("last_accessed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    // Source sessions (JSON array of session IDs for long_term)
+    sourceSessionsJson: text("source_sessions_json"),
+    // Metadata (JSON object for tier-specific data)
+    metadataJson: text("metadata_json"),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    // Expiry timestamp (calculated from TTL)
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    // Primary indexes for retrieval
+    index("sdk_memory_user_tier_idx").on(table.userId, table.tier),
+    index("sdk_memory_folder_tier_idx").on(table.folderId, table.tier),
+    index("sdk_memory_session_idx").on(table.sessionId),
+    index("sdk_memory_task_idx").on(table.taskId),
+    // Content type filtering
+    index("sdk_memory_content_type_idx").on(table.userId, table.contentType),
+    // Expiry-based pruning
+    index("sdk_memory_expires_idx").on(table.expiresAt),
+    // Content deduplication
+    index("sdk_memory_hash_idx").on(table.contentHash),
+    // Relevance sorting
+    index("sdk_memory_relevance_idx").on(table.userId, table.tier, table.relevance),
+  ]
+);
+
+/**
+ * SDK Extensions - Registered extension manifests.
+ * Extensions provide tools, prompts, memory providers, and UI components.
+ */
+export const sdkExtensions = sqliteTable(
+  "sdk_extension",
+  {
+    id: text("id").primaryKey(), // Extension ID from manifest
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Extension metadata
+    name: text("name").notNull(),
+    version: text("version").notNull(),
+    description: text("description"),
+    author: text("author"),
+    license: text("license"),
+    repository: text("repository"),
+    // Extension type
+    type: text("type")
+      .$type<"tool" | "prompt" | "memory" | "ui" | "composite">()
+      .notNull(),
+    // Required Remote Dev version (semver)
+    remoteDevVersion: text("remote_dev_version").notNull(),
+    // Entry point path
+    mainPath: text("main_path").notNull(),
+    // Extension state
+    state: text("state")
+      .$type<"unloaded" | "loading" | "loaded" | "error" | "disabled">()
+      .notNull()
+      .default("unloaded"),
+    // Error message if state is error
+    error: text("error"),
+    // Permissions (JSON array of ExtensionPermission)
+    permissionsJson: text("permissions_json").notNull().default("[]"),
+    // Config schema (JSON Schema)
+    configSchemaJson: text("config_schema_json"),
+    // Current config values (JSON)
+    configValuesJson: text("config_values_json").notNull().default("{}"),
+    // Dependencies (JSON: { extensionId: version })
+    dependenciesJson: text("dependencies_json").notNull().default("{}"),
+    // Load timestamp
+    loadedAt: integer("loaded_at", { mode: "timestamp_ms" }),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_extension_user_idx").on(table.userId),
+    index("sdk_extension_type_idx").on(table.userId, table.type),
+    index("sdk_extension_state_idx").on(table.userId, table.state),
+  ]
+);
+
+/**
+ * SDK Extension Tools - Tools provided by extensions.
+ */
+export const sdkExtensionTools = sqliteTable(
+  "sdk_extension_tool",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    extensionId: text("extension_id")
+      .notNull()
+      .references(() => sdkExtensions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Tool definition
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    // Input/output schemas (JSON Schema)
+    inputSchemaJson: text("input_schema_json").notNull(),
+    outputSchemaJson: text("output_schema_json"),
+    // Permissions required (JSON array)
+    permissionsJson: text("permissions_json").notNull().default("[]"),
+    // Examples (JSON array of ToolExample)
+    examplesJson: text("examples_json").notNull().default("[]"),
+    // Flags
+    isDangerous: integer("is_dangerous", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    timeoutMs: integer("timeout_ms"),
+    // Usage statistics
+    executionCount: integer("execution_count").notNull().default(0),
+    lastExecutedAt: integer("last_executed_at", { mode: "timestamp_ms" }),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_extension_tool_ext_idx").on(table.extensionId),
+    index("sdk_extension_tool_user_idx").on(table.userId),
+    uniqueIndex("sdk_extension_tool_name_idx").on(table.extensionId, table.name),
+  ]
+);
+
+/**
+ * SDK Extension Prompts - Prompt templates provided by extensions.
+ */
+export const sdkExtensionPrompts = sqliteTable(
+  "sdk_extension_prompt",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    extensionId: text("extension_id")
+      .notNull()
+      .references(() => sdkExtensions.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Prompt definition
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    template: text("template").notNull(),
+    // Variables (JSON array of PromptVariable)
+    variablesJson: text("variables_json").notNull().default("[]"),
+    // Organization
+    category: text("category"),
+    tagsJson: text("tags_json").notNull().default("[]"),
+    // Usage statistics
+    usageCount: integer("usage_count").notNull().default(0),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_extension_prompt_ext_idx").on(table.extensionId),
+    index("sdk_extension_prompt_user_idx").on(table.userId),
+    uniqueIndex("sdk_extension_prompt_name_idx").on(table.extensionId, table.name),
+    index("sdk_extension_prompt_category_idx").on(table.userId, table.category),
+  ]
+);
+
+/**
+ * SDK Meta-Agent Configs - Generated agent configurations.
+ */
+export const sdkMetaAgentConfigs = sqliteTable(
+  "sdk_meta_agent_config",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    // Config metadata
+    name: text("name").notNull(),
+    provider: text("provider")
+      .$type<"claude" | "codex" | "gemini" | "opencode">()
+      .notNull(),
+    version: integer("version").notNull().default(1),
+    // Task this was generated for (JSON)
+    taskSpecJson: text("task_spec_json").notNull(),
+    // Project context used (JSON)
+    projectContextJson: text("project_context_json").notNull(),
+    // Generated content
+    systemPrompt: text("system_prompt").notNull(),
+    instructionsFile: text("instructions_file").notNull(),
+    // Nested configs (JSON)
+    mcpConfigJson: text("mcp_config_json"),
+    toolConfigJson: text("tool_config_json"),
+    memoryConfigJson: text("memory_config_json"),
+    // Generation metadata (JSON)
+    metadataJson: text("metadata_json").notNull(),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_meta_agent_config_user_idx").on(table.userId),
+    index("sdk_meta_agent_config_folder_idx").on(table.folderId),
+    index("sdk_meta_agent_config_provider_idx").on(table.userId, table.provider),
+  ]
+);
+
+/**
+ * SDK Meta-Agent Benchmarks - Benchmark definitions for testing configs.
+ */
+export const sdkMetaAgentBenchmarks = sqliteTable(
+  "sdk_meta_agent_benchmark",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Benchmark metadata
+    name: text("name").notNull(),
+    // Task spec (JSON)
+    taskSpecJson: text("task_spec_json").notNull(),
+    // Test cases (JSON array)
+    testCasesJson: text("test_cases_json").notNull(),
+    // Success criteria (JSON)
+    successCriteriaJson: text("success_criteria_json").notNull(),
+    // Timeout
+    timeoutSeconds: integer("timeout_seconds").notNull().default(300),
+    // Usage tracking
+    runCount: integer("run_count").notNull().default(0),
+    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_meta_agent_benchmark_user_idx").on(table.userId),
+  ]
+);
+
+/**
+ * SDK Meta-Agent Benchmark Results - Results from running benchmarks.
+ */
+export const sdkMetaAgentBenchmarkResults = sqliteTable(
+  "sdk_meta_agent_benchmark_result",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    benchmarkId: text("benchmark_id")
+      .notNull()
+      .references(() => sdkMetaAgentBenchmarks.id, { onDelete: "cascade" }),
+    configId: text("config_id")
+      .notNull()
+      .references(() => sdkMetaAgentConfigs.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Results
+    score: real("score").notNull(),
+    passed: integer("passed", { mode: "boolean" }).notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    // Detailed results (JSON)
+    testResultsJson: text("test_results_json").notNull(),
+    errorsJson: text("errors_json").notNull().default("[]"),
+    warningsJson: text("warnings_json").notNull().default("[]"),
+    // Artifacts
+    filesModifiedJson: text("files_modified_json").notNull().default("[]"),
+    commandsExecutedJson: text("commands_executed_json").notNull().default("[]"),
+    rawOutput: text("raw_output"),
+    // Timestamp
+    executedAt: integer("executed_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_benchmark_result_benchmark_idx").on(table.benchmarkId),
+    index("sdk_benchmark_result_config_idx").on(table.configId),
+    index("sdk_benchmark_result_user_idx").on(table.userId),
+    index("sdk_benchmark_result_score_idx").on(table.benchmarkId, table.score),
+  ]
+);
+
+/**
+ * SDK Notes - User notes for the note-taking service.
+ */
+export const sdkNotes = sqliteTable(
+  "sdk_note",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    // Note content
+    content: text("content").notNull(),
+    // Tags (JSON array)
+    tagsJson: text("tags_json").notNull().default("[]"),
+    // Embedding ID for semantic search
+    embeddingId: text("embedding_id"),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_note_user_idx").on(table.userId),
+    index("sdk_note_session_idx").on(table.sessionId),
+    index("sdk_note_folder_idx").on(table.folderId),
+  ]
+);

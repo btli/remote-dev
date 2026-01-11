@@ -4,6 +4,7 @@ members = [
     "rdv-core",
     "rdv",
     "rdv-server",
+    "rdv-sdk",
 ]
 
 [workspace.package]
