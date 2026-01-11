@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
         Commands::Insights(cmd) => commands::insights::execute(cmd, &config).await,
         Commands::Ext(cmd) => commands::ext::execute(cmd, &config),
         Commands::Status { json } => commands::status::execute(json, &config).await,
+        Commands::Meta(cmd) => commands::meta::execute(cmd, &config).await,
         Commands::Version => {
             println!("rdv {}", env!("CARGO_PKG_VERSION"));
             Ok(())

@@ -84,6 +84,9 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Meta-agent configuration optimization (BUILD → TEST → IMPROVE)
+    Meta(MetaCommand),
+
     /// Show version
     Version,
 }
@@ -996,5 +999,85 @@ pub enum ExtAction {
         /// Include example prompt
         #[arg(long)]
         with_prompt: bool,
+    },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Meta-Agent Commands (BUILD → TEST → IMPROVE)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct MetaCommand {
+    #[command(subcommand)]
+    pub action: MetaAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MetaAction {
+    /// Run BUILD → TEST → IMPROVE optimization loop
+    Optimize {
+        /// Task description to optimize for
+        task: String,
+
+        /// Agent provider (claude, codex, gemini, opencode)
+        #[arg(short, long)]
+        provider: Option<String>,
+
+        /// Maximum iterations
+        #[arg(short = 'i', long, default_value = "3")]
+        iterations: Option<i32>,
+
+        /// Target score (0.0-1.0)
+        #[arg(short, long)]
+        target_score: Option<f64>,
+
+        /// Run asynchronously (returns job ID)
+        #[arg(short, long)]
+        r#async: bool,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Dry run (don't apply changes)
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Benchmark configuration effectiveness
+    Benchmark {
+        /// Configuration ID to benchmark
+        config_id: String,
+
+        /// Number of benchmark runs
+        #[arg(short, long, default_value = "3")]
+        runs: Option<i32>,
+    },
+
+    /// Get config suggestions based on context
+    Suggest {
+        /// Context description (e.g., "TypeScript React project with testing issues")
+        context: String,
+
+        /// Agent provider to target suggestions for
+        #[arg(short, long)]
+        provider: Option<String>,
+
+        /// Project path (defaults to current directory)
+        #[arg(long)]
+        project_path: Option<String>,
+    },
+
+    /// Check optimization job status
+    Status {
+        /// Job ID to check
+        job_id: String,
+    },
+
+    /// View optimization history
+    History {
+        /// Maximum entries to show
+        #[arg(short, long, default_value = "10")]
+        limit: Option<i32>,
     },
 }

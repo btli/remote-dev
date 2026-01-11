@@ -270,19 +270,23 @@ impl ApiClient {
     // HTTP Helpers (Unix Socket)
     // ─────────────────────────────────────────────────────────────────────────
 
-    async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+    /// Make a GET request
+    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
         self.request("GET", path, Option::<()>::None).await
     }
 
-    async fn post<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
+    /// Make a POST request with a JSON body
+    pub async fn post<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
         self.request("POST", path, Some(body)).await
     }
 
-    async fn patch<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
+    /// Make a PATCH request with a JSON body
+    pub async fn patch<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
         self.request("PATCH", path, Some(body)).await
     }
 
-    async fn delete(&self, path: &str) -> Result<()> {
+    /// Make a DELETE request
+    pub async fn delete(&self, path: &str) -> Result<()> {
         let _: serde_json::Value = self.request("DELETE", path, Option::<()>::None).await?;
         Ok(())
     }

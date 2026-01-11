@@ -13,6 +13,7 @@ pub mod learn;
 pub mod mail;
 pub mod memory;
 pub mod master;
+pub mod meta;
 pub mod monitor;
 pub mod note;
 pub mod nudge;
