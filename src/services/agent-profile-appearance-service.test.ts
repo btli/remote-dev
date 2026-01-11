@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "bun:test";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyMock = ReturnType<typeof vi.fn<any>>;
 
 // Mock the database module
 vi.mock("@/db", () => ({
@@ -57,7 +60,7 @@ describe("AgentProfileAppearanceService", () => {
 
   describe("getProfileAppearance", () => {
     it("returns profile appearance settings when found", async () => {
-      (db.query.profileAppearanceSettings.findFirst as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findFirst as AnyMock).mockResolvedValue(
         mockAppearanceRecord
       );
 
@@ -79,7 +82,7 @@ describe("AgentProfileAppearanceService", () => {
     });
 
     it("returns null when no settings found", async () => {
-      (db.query.profileAppearanceSettings.findFirst as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findFirst as AnyMock).mockResolvedValue(
         undefined
       );
 
@@ -91,7 +94,7 @@ describe("AgentProfileAppearanceService", () => {
 
   describe("getProfileAppearanceById", () => {
     it("returns profile appearance by profile ID only", async () => {
-      (db.query.profileAppearanceSettings.findFirst as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findFirst as AnyMock).mockResolvedValue(
         mockAppearanceRecord
       );
 
@@ -102,7 +105,7 @@ describe("AgentProfileAppearanceService", () => {
     });
 
     it("returns null when not found", async () => {
-      (db.query.profileAppearanceSettings.findFirst as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findFirst as AnyMock).mockResolvedValue(
         undefined
       );
 
@@ -115,7 +118,7 @@ describe("AgentProfileAppearanceService", () => {
   describe("updateProfileAppearance", () => {
     it("updates existing appearance settings", async () => {
       // First call returns existing record
-      (db.query.profileAppearanceSettings.findFirst as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findFirst as AnyMock).mockResolvedValue(
         mockAppearanceRecord
       );
 
@@ -128,7 +131,7 @@ describe("AgentProfileAppearanceService", () => {
           })),
         })),
       }));
-      (db.update as Mock).mockImplementation(
+      (db.update as AnyMock).mockImplementation(
         mockUpdate as unknown as typeof db.update
       );
 
@@ -142,7 +145,7 @@ describe("AgentProfileAppearanceService", () => {
 
     it("creates new settings when none exist", async () => {
       // First call returns null (no existing settings)
-      (db.query.profileAppearanceSettings.findFirst as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findFirst as AnyMock).mockResolvedValue(
         undefined
       );
 
@@ -151,7 +154,7 @@ describe("AgentProfileAppearanceService", () => {
           returning: vi.fn().mockResolvedValue([mockAppearanceRecord]),
         })),
       }));
-      (db.insert as Mock).mockImplementation(
+      (db.insert as AnyMock).mockImplementation(
         mockInsert as unknown as typeof db.insert
       );
 
@@ -164,7 +167,7 @@ describe("AgentProfileAppearanceService", () => {
     });
 
     it("applies default values when creating new settings", async () => {
-      (db.query.profileAppearanceSettings.findFirst as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findFirst as AnyMock).mockResolvedValue(
         undefined
       );
 
@@ -182,7 +185,7 @@ describe("AgentProfileAppearanceService", () => {
           };
         }),
       }));
-      (db.insert as Mock).mockImplementation(
+      (db.insert as AnyMock).mockImplementation(
         mockInsert as unknown as typeof db.insert
       );
 
@@ -197,7 +200,7 @@ describe("AgentProfileAppearanceService", () => {
       const mockDelete = vi.fn(() => ({
         where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
       }));
-      (db.delete as Mock).mockImplementation(
+      (db.delete as AnyMock).mockImplementation(
         mockDelete as unknown as typeof db.delete
       );
 
@@ -211,7 +214,7 @@ describe("AgentProfileAppearanceService", () => {
       const mockDelete = vi.fn(() => ({
         where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
       }));
-      (db.delete as Mock).mockImplementation(
+      (db.delete as AnyMock).mockImplementation(
         mockDelete as unknown as typeof db.delete
       );
 
@@ -223,7 +226,7 @@ describe("AgentProfileAppearanceService", () => {
 
   describe("getAllProfileAppearances", () => {
     it("returns all profile appearances for a user", async () => {
-      (db.query.profileAppearanceSettings.findMany as Mock).mockResolvedValue([
+      (db.query.profileAppearanceSettings.findMany as AnyMock).mockResolvedValue([
         mockAppearanceRecord,
         { ...mockAppearanceRecord, id: "appearance-456", profileId: "profile-789" },
       ]);
@@ -236,7 +239,7 @@ describe("AgentProfileAppearanceService", () => {
     });
 
     it("returns empty array when no appearances found", async () => {
-      (db.query.profileAppearanceSettings.findMany as Mock).mockResolvedValue(
+      (db.query.profileAppearanceSettings.findMany as AnyMock).mockResolvedValue(
         []
       );
 

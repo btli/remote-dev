@@ -61,7 +61,7 @@ vi.mock("@/db", () => ({
 // Mock port-registry-service
 vi.mock("@/services/port-registry-service", () => ({
   syncPortRegistry: vi.fn(),
-  validatePorts: vi.fn().mockResolvedValue({ valid: true, conflicts: [] }),
+  validatePorts: vi.fn().mockResolvedValue({ hasConflicts: false, conflicts: [] }),
   deletePortsForFolder: vi.fn(),
 }));
 
@@ -76,11 +76,13 @@ vi.mock("@/lib/preferences", () => ({
   },
   resolvePreferences: vi.fn((userSettings, folderChain) => ({
     ...userSettings,
-    folderChain,
+    folderId: folderChain.length > 0 ? folderChain[folderChain.length - 1]?.folderId : null,
+    folderName: folderChain.length > 0 ? folderChain[folderChain.length - 1]?.folderName : null,
+    source: {},
   })),
   buildAncestryChain: vi.fn((folderId, prefsMap, foldersMap) => {
     // Simple mock implementation
-    const chain = [];
+    const chain: Array<{ folderId: string; folderName: string }> = [];
     let currentId = folderId;
     while (currentId) {
       const folder = foldersMap.get(currentId);
@@ -436,7 +438,7 @@ describe("PreferencesService", () => {
       });
 
       expect(result.preferences.startupCommand).toBe("npm start");
-      expect(result.portValidation.valid).toBe(true);
+      expect(result.portValidation.hasConflicts).toBe(false);
     });
 
     it("creates new preferences when none exist", async () => {
@@ -535,7 +537,7 @@ describe("PreferencesService", () => {
       const result = await getResolvedPreferences("user-456");
 
       expect(result).toBeDefined();
-      expect(result.folderChain).toEqual([]);
+      expect(result.folderId).toBeNull();
     });
 
     it("resolves preferences with folder hierarchy", async () => {

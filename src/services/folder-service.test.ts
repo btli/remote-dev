@@ -469,7 +469,7 @@ describe("FolderService", () => {
         })),
       };
 
-      (db.transaction as AnyMock).mockImplementation(async (callback) => {
+      (db.transaction as AnyMock).mockImplementation(async (callback: (tx: typeof txMock) => Promise<void>) => {
         await callback(txMock);
       });
 
@@ -480,10 +480,9 @@ describe("FolderService", () => {
     });
 
     it("handles empty folder list", async () => {
-      (db.transaction as AnyMock).mockImplementation(async (callback) => {
-        await callback({
-          update: vi.fn(),
-        });
+      const emptyTxMock = { update: vi.fn() };
+      (db.transaction as AnyMock).mockImplementation(async (callback: (tx: typeof emptyTxMock) => Promise<void>) => {
+        await callback(emptyTxMock);
       });
 
       await reorderFolders("user-456", []);

@@ -31,8 +31,7 @@ describe("Orchestrator + Session Integration", () => {
         userId: "user-123",
         name: "Test Session",
         projectPath: "/home/user/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       // Create orchestrator that monitors this session
       const orchestrator = Orchestrator.createMaster({
@@ -52,8 +51,7 @@ describe("Orchestrator + Session Integration", () => {
         userId: "user-123",
         name: "Stalled Session",
         projectPath: "/home/user/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       const orchestrator = Orchestrator.createMaster({
         userId: "user-123",
@@ -69,7 +67,7 @@ describe("Orchestrator + Session Integration", () => {
         message: `Session "${session.name}" appears stalled`,
         context: {
           sessionName: session.name,
-          lastActivity: new Date().toISOString(),
+          lastActivity: new Date(),
           minutesStalled: 5,
         },
         suggestedActions: [
@@ -99,8 +97,7 @@ describe("Orchestrator + Session Integration", () => {
         userId: "user-123",
         name: "Target Session",
         projectPath: "/home/user/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       const orchestrator = Orchestrator.createMaster({
         userId: "user-123",
@@ -134,16 +131,14 @@ describe("Orchestrator + Session Integration", () => {
         userId: "user-123",
         name: "In-Folder Session",
         projectPath: "/home/user/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-        folderId: folder.id,
+                folderId: folder.id,
       });
 
       const sessionOutsideFolder = Session.create({
         userId: "user-123",
         name: "Outside Session",
         projectPath: "/home/user/other",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       // Create folder sub-orchestrator
       const subOrchestrator = Orchestrator.createSubOrchestrator({
@@ -185,8 +180,7 @@ describe("Orchestrator + Session Integration", () => {
         userId: "user-123",
         name: "Lifecycle Test",
         projectPath: "/home/user/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       expect(session.status.isActive()).toBe(true);
 
@@ -213,8 +207,7 @@ describe("Orchestrator + Session Integration", () => {
         userId: "user-123",
         name: "Error Session",
         projectPath: "/home/user/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       // Simulate error detection
       const insight = OrchestratorInsight.create({
@@ -320,16 +313,14 @@ describe("Folder Hierarchy Integration", () => {
         userId: "user-123",
         name: "Frontend Dev",
         projectPath: "/project/frontend",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-        folderId: frontendFolder.id,
+                folderId: frontendFolder.id,
       });
 
       const backendSession = Session.create({
         userId: "user-123",
         name: "Backend Dev",
         projectPath: "/project/backend",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-        folderId: backendFolder.id,
+                folderId: backendFolder.id,
       });
 
       expect(frontendSession.folderId).toBe(frontendFolder.id);
@@ -348,15 +339,13 @@ describe("TmuxSessionName Integration", () => {
         userId: "user-123",
         name: "Session 1",
         projectPath: "/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       const session2 = Session.create({
         userId: "user-123",
         name: "Session 2",
         projectPath: "/project",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-      });
+              });
 
       expect(session1.tmuxSessionName.toString()).not.toBe(session2.tmuxSessionName.toString());
       expect(session1.tmuxSessionName.toString()).toMatch(/^rdv-/);
@@ -515,8 +504,7 @@ describe("End-to-End Workflow Integration", () => {
         userId: "user-123",
         name: "Development Session",
         projectPath: "/home/user/dev",
-        tmuxSessionName: TmuxSessionName.generate().toString(),
-        folderId: folder.id,
+                folderId: folder.id,
       });
 
       // 2. Create master orchestrator

@@ -295,7 +295,7 @@ describe("ApiKeyService", () => {
       expect(result[0].name).toBe("Test Key");
       expect(result[1].name).toBe("Second Key");
       // Should not include keyHash
-      expect((result[0] as Record<string, unknown>).keyHash).toBeUndefined();
+      expect((result[0] as unknown as Record<string, unknown>).keyHash).toBeUndefined();
     });
 
     it("returns empty array when no keys", async () => {
