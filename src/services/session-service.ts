@@ -210,6 +210,29 @@ export async function createSession(
   // - Terminal sessions: Start a plain shell, optionally with startupCommand injection
   const isAgentSession = input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent;
 
+  // Inject memory context for agent sessions
+  let memoryContextEnv: Record<string, string> = {};
+  if (isAgentSession && workingPath) {
+    try {
+      const { injectContextForSession } = await import("./session-context-injection-service");
+      const contextResult = await injectContextForSession(
+        userId,
+        input.folderId ?? null,
+        workingPath
+      );
+      if (contextResult.stats.totalMemories > 0) {
+        // Add context env var to be passed to agent
+        memoryContextEnv[contextResult.envVar.name] = contextResult.envVar.value;
+        console.log(
+          `[SessionService] Injected memory context: ${contextResult.stats.totalMemories} memories at ${contextResult.contextFilePath}`
+        );
+      }
+    } catch (error) {
+      // Don't block session creation on context injection failure
+      console.warn("[SessionService] Failed to inject memory context:", error);
+    }
+  }
+
   // Create the tmux session
   try {
     if (isAgentSession) {
@@ -220,7 +243,7 @@ export async function createSession(
         sessionName: tmuxSessionName,
         cwd: workingPath ?? undefined,
         command: agentCommand || undefined,
-        env: profileEnv,
+        env: { ...profileEnv, ...memoryContextEnv },
         autoRespawn: input.isOrchestratorSession ?? false, // Orchestrators auto-respawn
       });
     } else {
