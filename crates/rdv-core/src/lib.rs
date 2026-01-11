@@ -13,6 +13,7 @@
 //! - **mcp**: Model Context Protocol support
 //! - **learning**: Learning extraction and knowledge management
 //! - **project**: Project detection and metadata
+//! - **memory**: Hierarchical working memory system
 
 pub mod auth;
 #[cfg(feature = "client")]
@@ -21,6 +22,8 @@ pub mod client;
 pub mod db;
 pub mod error;
 pub mod learning;
+#[cfg(feature = "db")]
+pub mod memory;
 pub mod mcp;
 pub mod orchestrator;
 pub mod project;
