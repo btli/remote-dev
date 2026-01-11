@@ -2,7 +2,8 @@
 //!
 //! Provides REST API endpoints for the hierarchical memory system:
 //! - GET/POST /memory - Query and store memories
-//! - GET /memory/search - Semantic search across memories
+//! - GET /memory/search - Text-based search across memories
+//! - POST /memory/semantic-search - Semantic search using embeddings
 //! - POST /memory/consolidate - Trigger memory consolidation
 //! - GET /memory/stats - Memory usage statistics
 
@@ -21,12 +22,16 @@ use std::sync::Arc;
 use crate::middleware::AuthContext;
 use crate::state::AppState;
 
+#[cfg(feature = "embeddings")]
+use rdv_sdk::memory::embeddings::{embedding_service, EmbeddingService};
+
 /// Create memory router
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/memory", get(list_memories).post(store_memory))
         .route("/memory/{id}", get(get_memory).delete(delete_memory))
         .route("/memory/search", get(search_memories))
+        .route("/memory/semantic-search", post(semantic_search))
         .route("/memory/consolidate", post(consolidate_memories))
         .route("/memory/stats", get(get_stats))
 }
@@ -76,6 +81,51 @@ pub struct SearchMemoriesQuery {
     pub folder_id: Option<String>,
     pub min_score: Option<f64>,
     pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticSearchRequest {
+    /// The natural language query to search for
+    pub query: String,
+    /// Optional session scope
+    pub session_id: Option<String>,
+    /// Optional folder scope
+    pub folder_id: Option<String>,
+    /// Filter by memory tiers
+    pub tiers: Option<Vec<String>>,
+    /// Filter by content types
+    pub content_types: Option<Vec<String>>,
+    /// Minimum similarity score (0-1, default: 0.3)
+    pub min_similarity: Option<f64>,
+    /// Maximum number of results (default: 20)
+    pub limit: Option<usize>,
+    /// Include expired short-term entries
+    pub include_expired: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticSearchResult {
+    pub memory: MemoryResponse,
+    /// Combined relevance score (0-1)
+    pub score: f64,
+    /// Semantic similarity component (0-1)
+    pub semantic_score: f64,
+    /// Tier weight component
+    pub tier_weight: f64,
+    /// Content type weight component
+    pub type_weight: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticSearchResponse {
+    pub results: Vec<SemanticSearchResult>,
+    pub query: String,
+    pub total: usize,
+    /// Whether semantic search was used (vs fallback)
+    pub semantic: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,6 +484,241 @@ pub async fn search_memories(
         results,
         query: query.query,
         total,
+    }))
+}
+
+/// Semantic search using embeddings
+///
+/// Uses the rdv-sdk's embedding service to compute semantic similarity
+/// between the query and stored memories. Falls back to text matching
+/// if embeddings feature is not enabled.
+#[cfg(feature = "embeddings")]
+pub async fn semantic_search(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<SemanticSearchRequest>,
+) -> Result<Json<SemanticSearchResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Build filter for database query
+    let filter = MemoryQueryFilter {
+        user_id: user_id.to_string(),
+        session_id: req.session_id.clone(),
+        folder_id: req.folder_id.clone(),
+        tier: req.tiers.as_ref().and_then(|t| t.first().cloned()),
+        content_type: req.content_types.as_ref().and_then(|t| t.first().cloned()),
+        limit: Some(req.limit.unwrap_or(20) * 5), // Fetch more for re-ranking
+        ..Default::default()
+    };
+
+    // Fetch candidate memories
+    let memories = state
+        .db
+        .list_memory_entries(&filter)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if memories.is_empty() {
+        return Ok(Json(SemanticSearchResponse {
+            results: vec![],
+            query: req.query,
+            total: 0,
+            semantic: true,
+        }));
+    }
+
+    // Generate query embedding
+    let query_embedding = embedding_service()
+        .embed(&req.query)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let min_similarity = req.min_similarity.unwrap_or(0.3);
+    let limit = req.limit.unwrap_or(20);
+
+    // Score each memory using semantic similarity
+    let mut results: Vec<SemanticSearchResult> = Vec::new();
+
+    for entry in memories {
+        // Generate embedding for memory content
+        let content_embedding = match embedding_service().embed(&entry.content).await {
+            Ok(emb) => emb,
+            Err(_) => continue, // Skip if embedding fails
+        };
+
+        // Compute cosine similarity
+        let semantic_score = EmbeddingService::cosine_similarity(
+            &query_embedding.vector,
+            &content_embedding.vector,
+        );
+
+        // Normalize to 0-1 range
+        let semantic_score = EmbeddingService::normalize_similarity(semantic_score);
+
+        // Skip if below threshold
+        if (semantic_score as f64) < min_similarity {
+            continue;
+        }
+
+        // Tier weight
+        let tier_weight = match entry.tier.as_str() {
+            "long_term" => 1.0,
+            "working" => 0.8,
+            "short_term" => 0.6,
+            _ => 0.5,
+        };
+
+        // Content type weight
+        let type_weight = match entry.content_type.as_str() {
+            "gotcha" => 1.0,
+            "pattern" => 0.9,
+            "convention" => 0.85,
+            "skill" => 0.8,
+            "plan" => 0.75,
+            "hypothesis" => 0.7,
+            "observation" => 0.6,
+            "file_context" => 0.5,
+            "command" => 0.45,
+            "tool_result" => 0.4,
+            _ => 0.5,
+        };
+
+        // Combined score: 50% semantic, 20% tier, 15% type, 15% baseline
+        let score = (semantic_score as f64) * 0.5
+            + tier_weight * 0.2
+            + type_weight * 0.15
+            + 0.5 * 0.15;
+
+        results.push(SemanticSearchResult {
+            memory: entry.into(),
+            score,
+            semantic_score: semantic_score as f64,
+            tier_weight,
+            type_weight,
+        });
+    }
+
+    // Sort by score descending
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Apply limit
+    results.truncate(limit);
+
+    // Update access counts for returned results
+    for result in &results {
+        let _ = state.db.touch_memory_entry(&result.memory.id);
+    }
+
+    let total = results.len();
+
+    Ok(Json(SemanticSearchResponse {
+        results,
+        query: req.query,
+        total,
+        semantic: true,
+    }))
+}
+
+/// Semantic search fallback when embeddings feature is disabled
+#[cfg(not(feature = "embeddings"))]
+pub async fn semantic_search(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<SemanticSearchRequest>,
+) -> Result<Json<SemanticSearchResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    // Fall back to text-based search
+    let filter = MemoryQueryFilter {
+        user_id: user_id.to_string(),
+        session_id: req.session_id,
+        folder_id: req.folder_id,
+        tier: req.tiers.and_then(|t| t.first().cloned()),
+        content_type: req.content_types.and_then(|t| t.first().cloned()),
+        limit: req.limit,
+        ..Default::default()
+    };
+
+    let memories = state
+        .db
+        .list_memory_entries(&filter)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Simple text matching for scoring
+    let query_lower = req.query.to_lowercase();
+    let query_words: Vec<&str> = query_lower.split_whitespace().filter(|w| w.len() > 2).collect();
+
+    let min_sim = req.min_similarity.unwrap_or(0.3);
+
+    let mut results: Vec<SemanticSearchResult> = memories
+        .into_iter()
+        .map(|entry| {
+            let content_lower = entry.content.to_lowercase();
+            let name_lower = entry.name.as_deref().unwrap_or("").to_lowercase();
+
+            // Calculate match score
+            let mut keyword_score: f64 = 0.0;
+            for word in &query_words {
+                if content_lower.contains(word) {
+                    keyword_score += 0.2;
+                }
+                if name_lower.contains(word) {
+                    keyword_score += 0.3;
+                }
+            }
+            let keyword_score = keyword_score.min(1.0);
+
+            // Tier weight
+            let tier_weight = match entry.tier.as_str() {
+                "long_term" => 1.0,
+                "working" => 0.8,
+                "short_term" => 0.6,
+                _ => 0.5,
+            };
+
+            // Content type weight
+            let type_weight = match entry.content_type.as_str() {
+                "gotcha" => 1.0,
+                "pattern" => 0.9,
+                "convention" => 0.85,
+                "skill" => 0.8,
+                "plan" => 0.75,
+                "hypothesis" => 0.7,
+                "observation" => 0.6,
+                "file_context" => 0.5,
+                "command" => 0.45,
+                "tool_result" => 0.4,
+                _ => 0.5,
+            };
+
+            // Combined score (same formula as SDK)
+            let score = keyword_score * 0.5 + tier_weight * 0.2 + type_weight * 0.15 + 0.5 * 0.15;
+
+            SemanticSearchResult {
+                memory: entry.into(),
+                score,
+                semantic_score: keyword_score, // Use keyword score as proxy
+                tier_weight,
+                type_weight,
+            }
+        })
+        .filter(|r| r.semantic_score >= min_sim)
+        .collect();
+
+    // Sort by score descending
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Apply limit
+    if let Some(limit) = req.limit {
+        results.truncate(limit);
+    }
+
+    let total = results.len();
+
+    Ok(Json(SemanticSearchResponse {
+        results,
+        query: req.query,
+        total,
+        semantic: false, // Not using real semantic search
     }))
 }
 

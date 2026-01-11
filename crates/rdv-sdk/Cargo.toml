@@ -12,6 +12,7 @@ default = ["memory", "meta-agent", "extensions"]
 memory = []
 meta-agent = []
 extensions = []
+embeddings = ["fastembed"]
 
 [dependencies]
 # Core dependencies
@@ -41,6 +42,9 @@ uuid.workspace = true
 # Utilities
 sha2.workspace = true
 hex.workspace = true
+
+# Embeddings (optional)
+fastembed = { version = "4", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

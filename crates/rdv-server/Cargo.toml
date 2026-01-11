@@ -11,9 +11,16 @@ description = "Remote Dev backend server - REST API and WebSocket over unix sock
 name = "rdv-server"
 path = "src/main.rs"
 
+[features]
+default = []
+embeddings = ["rdv-sdk/embeddings"]
+
 [dependencies]
 # Core library (with database support)
 rdv-core = { path = "../rdv-core", features = ["db"] }
+
+# SDK for memory and embeddings
+rdv-sdk = { path = "../rdv-sdk" }
 
 # Async runtime
 tokio.workspace = true

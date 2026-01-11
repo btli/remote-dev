@@ -440,6 +440,194 @@ impl MemoryStore {
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
+    // Semantic Search
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// Semantic search across memory tiers using embeddings
+    ///
+    /// Generates an embedding for the query, then computes similarity against
+    /// all candidate memories. Results are scored using:
+    /// - 50% semantic similarity
+    /// - 20% tier weight (long_term > working > short_term)
+    /// - 15% content type weight (gotcha > pattern > ...)
+    /// - 15% stored relevance/confidence
+    #[cfg(feature = "embeddings")]
+    pub async fn semantic_search(
+        &self,
+        query: super::types::SemanticSearchQuery,
+    ) -> SDKResult<Vec<super::types::SemanticSearchResult>> {
+        use super::embeddings::{embedding_service, EmbeddingService};
+        use super::types::SemanticSearchResult;
+
+        // 1. Generate query embedding
+        let query_embedding = embedding_service().embed(&query.query).await?;
+
+        // 2. Fetch candidate memories from database
+        let candidates = self.fetch_semantic_candidates(&query).await?;
+
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 3. Generate embeddings for candidates and compute scores
+        let mut results: Vec<SemanticSearchResult> = Vec::new();
+
+        for (id, content, tier, content_type) in candidates {
+            // Generate embedding for candidate content
+            let content_embedding = match embedding_service().embed(&content).await {
+                Ok(emb) => emb,
+                Err(_) => continue, // Skip if embedding fails
+            };
+
+            // Compute cosine similarity
+            let semantic_score = EmbeddingService::cosine_similarity(
+                &query_embedding.vector,
+                &content_embedding.vector,
+            );
+
+            // Normalize to 0-1 range
+            let semantic_score = EmbeddingService::normalize_similarity(semantic_score);
+
+            // Skip if below threshold
+            if semantic_score < query.min_similarity as f32 {
+                continue;
+            }
+
+            // Get weights
+            let tier_weight = tier.weight();
+            let type_weight = content_type.weight();
+
+            // Compute combined score
+            // 50% semantic, 20% tier, 15% type, 15% baseline
+            let score = (semantic_score as f64) * 0.5
+                + tier_weight * 0.2
+                + type_weight * 0.15
+                + 0.5 * 0.15; // baseline relevance
+
+            // Fetch full entry
+            if let Some(entry) = self.get(&id).await? {
+                results.push(SemanticSearchResult {
+                    entry,
+                    score,
+                    semantic_score: semantic_score as f64,
+                    tier_weight,
+                    type_weight,
+                });
+            }
+        }
+
+        // 4. Sort by score descending
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        // 5. Limit results
+        results.truncate(query.limit);
+
+        // 6. Update access counts
+        for result in &results {
+            let _ = self.record_access(result.entry.id()).await;
+        }
+
+        Ok(results)
+    }
+
+    /// Semantic search fallback for when embeddings feature is disabled
+    #[cfg(not(feature = "embeddings"))]
+    pub async fn semantic_search(
+        &self,
+        _query: super::types::SemanticSearchQuery,
+    ) -> SDKResult<Vec<super::types::SemanticSearchResult>> {
+        Err(SDKError::memory(
+            "Semantic search requires embeddings feature. Compile with --features embeddings",
+        ))
+    }
+
+    /// Fetch candidate entries for semantic search
+    async fn fetch_semantic_candidates(
+        &self,
+        query: &super::types::SemanticSearchQuery,
+    ) -> SDKResult<Vec<(String, String, MemoryTier, MemoryContentType)>> {
+        let db = self.db.read().await;
+
+        // Build SQL with filters
+        let mut sql = String::from(
+            "SELECT id, content, tier, content_type FROM sdk_memory_entries WHERE user_id = ?"
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(query.user_id.clone())];
+
+        // Scope: session includes folder + long_term
+        if let Some(ref session_id) = query.session_id {
+            if let Some(ref folder_id) = query.folder_id {
+                sql.push_str(" AND (session_id = ? OR folder_id = ? OR tier = 'long_term')");
+                params_vec.push(Box::new(session_id.clone()));
+                params_vec.push(Box::new(folder_id.clone()));
+            } else {
+                sql.push_str(" AND (session_id = ? OR tier = 'long_term')");
+                params_vec.push(Box::new(session_id.clone()));
+            }
+        } else if let Some(ref folder_id) = query.folder_id {
+            sql.push_str(" AND (folder_id = ? OR folder_id IS NULL OR tier = 'long_term')");
+            params_vec.push(Box::new(folder_id.clone()));
+        }
+
+        // Filter by tiers
+        if let Some(ref tiers) = query.tiers {
+            if !tiers.is_empty() {
+                let placeholders: Vec<&str> = tiers.iter().map(|_| "?").collect();
+                sql.push_str(&format!(" AND tier IN ({})", placeholders.join(",")));
+                for tier in tiers {
+                    params_vec.push(Box::new(tier.as_str().to_string()));
+                }
+            }
+        }
+
+        // Filter by content types
+        if let Some(ref types) = query.content_types {
+            if !types.is_empty() {
+                let placeholders: Vec<&str> = types.iter().map(|_| "?").collect();
+                sql.push_str(&format!(" AND content_type IN ({})", placeholders.join(",")));
+                for ct in types {
+                    params_vec.push(Box::new(ct.as_str().to_string()));
+                }
+            }
+        }
+
+        // Exclude expired (unless requested)
+        if !query.include_expired {
+            sql.push_str(
+                " AND (tier != 'short_term' OR id IN (SELECT id FROM sdk_short_term_entries WHERE expires_at > ?))"
+            );
+            params_vec.push(Box::new(chrono::Utc::now().timestamp_millis()));
+        }
+
+        // Fetch more candidates than needed for re-ranking
+        let fetch_limit = query.limit.saturating_mul(5).min(200);
+        sql.push_str(&format!(" LIMIT {}", fetch_limit));
+
+        // Execute query
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = db.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+
+        let mut candidates = Vec::new();
+        for row in rows {
+            let (id, content, tier_str, type_str) = row?;
+            let tier = MemoryTier::from_str(&tier_str).unwrap_or(MemoryTier::ShortTerm);
+            let content_type = MemoryContentType::from_str(&type_str).unwrap_or(MemoryContentType::Observation);
+            candidates.push((id, content, tier, content_type));
+        }
+
+        Ok(candidates)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────────
 

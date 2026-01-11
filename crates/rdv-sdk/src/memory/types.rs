@@ -301,6 +301,91 @@ pub struct MemoryQuery {
     pub include_expired: bool,
 }
 
+/// Semantic search query with embedding-based similarity
+#[derive(Debug, Clone)]
+pub struct SemanticSearchQuery {
+    /// Natural language query text
+    pub query: String,
+    /// User ID (required)
+    pub user_id: String,
+    /// Optional folder scope
+    pub folder_id: Option<String>,
+    /// Optional session scope (searches session + folder + long_term)
+    pub session_id: Option<String>,
+    /// Filter by memory tiers
+    pub tiers: Option<Vec<MemoryTier>>,
+    /// Filter by content types
+    pub content_types: Option<Vec<MemoryContentType>>,
+    /// Minimum similarity score (0-1, default: 0.3)
+    pub min_similarity: f64,
+    /// Maximum results (default: 20)
+    pub limit: usize,
+    /// Include expired short-term entries
+    pub include_expired: bool,
+}
+
+impl Default for SemanticSearchQuery {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            user_id: String::new(),
+            folder_id: None,
+            session_id: None,
+            tiers: None,
+            content_types: None,
+            min_similarity: 0.3,
+            limit: 20,
+            include_expired: false,
+        }
+    }
+}
+
+/// Semantic search result with similarity scoring
+#[derive(Debug, Clone)]
+pub struct SemanticSearchResult {
+    /// Memory entry
+    pub entry: MemoryEntry,
+    /// Combined relevance score (0-1)
+    pub score: f64,
+    /// Semantic similarity component (0-1)
+    pub semantic_score: f64,
+    /// Tier weight component
+    pub tier_weight: f64,
+    /// Content type weight component
+    pub type_weight: f64,
+}
+
+impl MemoryTier {
+    /// Get weight for semantic search scoring
+    /// Long-term memories are more valuable (proven patterns)
+    pub fn weight(&self) -> f64 {
+        match self {
+            Self::LongTerm => 1.0,
+            Self::Working => 0.8,
+            Self::ShortTerm => 0.6,
+        }
+    }
+}
+
+impl MemoryContentType {
+    /// Get weight for semantic search scoring
+    /// Gotchas and patterns are most actionable
+    pub fn weight(&self) -> f64 {
+        match self {
+            Self::Gotcha => 1.0,
+            Self::Pattern => 0.9,
+            Self::Convention => 0.85,
+            Self::Skill => 0.8,
+            Self::Plan => 0.75,
+            Self::Hypothesis => 0.7,
+            Self::Observation => 0.6,
+            Self::FileContext => 0.5,
+            Self::Command => 0.45,
+            Self::ToolResult => 0.4,
+        }
+    }
+}
+
 /// Result from memory retrieval
 #[derive(Debug, Clone)]
 pub struct MemoryResult {

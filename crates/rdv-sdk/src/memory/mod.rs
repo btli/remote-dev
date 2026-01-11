@@ -17,6 +17,7 @@
 mod types;
 mod store;
 mod hierarchical;
+pub mod embeddings;
 
 pub mod migrations;
 
@@ -27,6 +28,7 @@ pub use types::{
     ShortTermMetadata, WorkingMetadata, LongTermMetadata,
     LongTermApplicability, StoreMemoryInput, MemoryQuery,
     MemoryResult, ConsolidationResult, PruneOptions, MemoryStats,
+    SemanticSearchQuery, SemanticSearchResult,
 };
 
 pub use store::MemoryStore;

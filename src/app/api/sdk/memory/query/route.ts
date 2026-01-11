@@ -2,6 +2,8 @@
  * SDK Memory Query API
  *
  * Provides advanced query operations for memory retrieval.
+ * When rdv-server is available, uses semantic search with embeddings.
+ * Falls back to text-based search when rdv-server is unavailable.
  */
 
 import { NextResponse } from "next/server";
@@ -9,15 +11,52 @@ import { db } from "@/db";
 import { sdkMemoryEntries } from "@/db/schema";
 import { eq, and, or, gte, desc, isNull, inArray } from "drizzle-orm";
 import { withApiAuth } from "@/lib/api";
+import { callRdvServer, isRdvServerAvailable } from "@/lib/rdv-proxy";
+
+// Types for rdv-server semantic search response
+interface SemanticSearchResult {
+  memory: {
+    id: string;
+    tier: string;
+    contentType: string;
+    content: string;
+    name?: string;
+    description?: string;
+    sessionId?: string;
+    folderId?: string;
+    taskId?: string;
+    accessCount: number;
+    relevance?: number;
+    confidence?: number;
+    createdAt: number;
+    updatedAt: number;
+    expiresAt?: number;
+  };
+  score: number;
+  semanticScore: number;
+  tierWeight: number;
+  typeWeight: number;
+}
+
+interface SemanticSearchResponse {
+  results: SemanticSearchResult[];
+  query: string;
+  total: number;
+  semantic: boolean;
+}
 
 /**
  * POST /api/sdk/memory/query - Advanced memory query
+ *
+ * When rdv-server is available, proxies to semantic search endpoint.
+ * Falls back to local text-based search when rdv-server is unavailable.
  */
 export const POST = withApiAuth(async (request, { userId }) => {
   try {
     const body = await request.json();
     const {
       query,
+      sessionId,
       folderId,
       taskId,
       tiers,
@@ -26,7 +65,56 @@ export const POST = withApiAuth(async (request, { userId }) => {
       limit = 50,
     } = body;
 
-    // Build query conditions
+    // Try semantic search via rdv-server first
+    if (query && typeof query === "string" && query.trim()) {
+      const rdvAvailable = await isRdvServerAvailable();
+
+      if (rdvAvailable) {
+        // Use rdv-server's semantic search
+        const rdvResult = await callRdvServer<SemanticSearchResponse>(
+          "POST",
+          "/memory/semantic-search",
+          userId,
+          {
+            query,
+            sessionId,
+            folderId,
+            tiers,
+            contentTypes,
+            minSimilarity: minScore,
+            limit,
+            includeExpired: false,
+          }
+        );
+
+        if ("data" in rdvResult && rdvResult.data) {
+          // Convert rdv-server response to our format
+          const results = rdvResult.data.results.map((r) => ({
+            id: r.memory.id,
+            tier: r.memory.tier,
+            contentType: r.memory.contentType,
+            content: r.memory.content,
+            name: r.memory.name,
+            description: r.memory.description,
+            score: r.score,
+            semanticScore: r.semanticScore,
+            tierWeight: r.tierWeight,
+            typeWeight: r.typeWeight,
+            confidence: r.memory.confidence,
+            accessCount: r.memory.accessCount,
+            createdAt: new Date(r.memory.createdAt),
+            lastAccessedAt: new Date(r.memory.updatedAt),
+            semantic: rdvResult.data.semantic,
+          }));
+
+          return NextResponse.json(results);
+        }
+        // Fall through to local search if rdv-server fails
+        console.warn("[memory/query] rdv-server semantic search failed, falling back to local search");
+      }
+    }
+
+    // Fallback: Local text-based search
     const conditions = [eq(sdkMemoryEntries.userId, userId)];
 
     // Exclude expired entries
@@ -71,7 +159,6 @@ export const POST = withApiAuth(async (request, { userId }) => {
       .limit(limit);
 
     // If query string provided, do simple text matching and score adjustment
-    // TODO: Integrate with embeddings for semantic search
     if (query && typeof query === "string" && query.trim()) {
       const queryLower = query.toLowerCase();
       const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 2);
@@ -118,6 +205,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       createdAt: entry.createdAt,
       lastAccessedAt: entry.lastAccessedAt,
       metadata: entry.metadataJson ? JSON.parse(entry.metadataJson) : undefined,
+      semantic: false, // Local search is not semantic
     }));
 
     return NextResponse.json(results);
