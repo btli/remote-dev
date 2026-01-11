@@ -495,11 +495,13 @@ export async function processTaskComplete(
   tmuxSessionName: string,
   projectPath: string,
   agent: string,
-  orchestratorType: "master" | "folder"
+  orchestratorType: "master" | "folder",
+  userId?: string
 ): Promise<{
   analyzed: boolean;
   configUpdated: boolean;
   patternsFound: number;
+  optimizationTriggered: boolean;
   message: string;
 }> {
   try {
@@ -513,6 +515,7 @@ export async function processTaskComplete(
         analyzed: true,
         configUpdated: false,
         patternsFound: 0,
+        optimizationTriggered: false,
         message: "Session analyzed but no significant patterns detected",
       };
     }
@@ -523,10 +526,26 @@ export async function processTaskComplete(
     // Step 3: For Master Control, check for cross-project patterns
     // (This would require maintaining state across calls - simplified for now)
 
+    // Step 4: Check if meta-agent optimization should be triggered
+    let optimizationTriggered = false;
+    if (userId) {
+      const unfixedErrors = analysis.errorsEncountered.length - analysis.errorsFixes.length;
+      if (unfixedErrors >= 3) {
+        try {
+          const { onTaskCompleteAnalysis } = await import("./meta-agent-orchestrator-service");
+          await onTaskCompleteAnalysis(sessionId, userId, analysis);
+          optimizationTriggered = true;
+        } catch (error) {
+          console.warn("[IntelligenceService] Failed to trigger meta-agent optimization:", error);
+        }
+      }
+    }
+
     return {
       analyzed: true,
       configUpdated: configResult.updated,
       patternsFound: totalKnowledge,
+      optimizationTriggered,
       message: configResult.message,
     };
   } catch (error) {
@@ -535,6 +554,7 @@ export async function processTaskComplete(
       analyzed: false,
       configUpdated: false,
       patternsFound: 0,
+      optimizationTriggered: false,
       message: `Analysis failed: ${message}`,
     };
   }

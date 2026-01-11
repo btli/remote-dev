@@ -23,6 +23,7 @@ import { scrollbackMonitor } from "@/infrastructure/container";
 import type { ScrollbackSnapshot } from "@/types/orchestrator";
 import * as TmuxService from "./tmux-service";
 import { callRdvServer, isRdvServerAvailable } from "@/lib/rdv-proxy";
+import { onStalledSessionDetected } from "./meta-agent-orchestrator-service";
 
 /**
  * Error class for monitoring service operations
@@ -253,6 +254,13 @@ export function startStallChecking(
             }
           } catch (error) {
             console.warn(`[MonitoringService] Failed to process scrollback for memory:`, error);
+          }
+
+          // Trigger meta-agent optimization for significantly stalled sessions
+          try {
+            await onStalledSessionDetected(session, userId);
+          } catch (error) {
+            console.warn(`[MonitoringService] Failed to trigger meta-agent optimization:`, error);
           }
         }
       }
