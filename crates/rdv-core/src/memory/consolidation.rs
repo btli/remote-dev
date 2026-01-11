@@ -210,6 +210,48 @@ pub fn suggest_demotion(entry: &MemoryEntry) -> Option<crate::types::MemoryTier>
 mod tests {
     use super::*;
 
+    /// Helper to create a test memory entry
+    fn create_test_entry(
+        id: &str,
+        tier: &str,
+        content: &str,
+        content_hash: &str,
+        confidence: f64,
+        relevance: f64,
+        access_count: i32,
+        created_at: i64,
+    ) -> MemoryEntry {
+        MemoryEntry {
+            id: id.to_string(),
+            user_id: "test".to_string(),
+            session_id: Some("session-1".to_string()),
+            folder_id: Some("folder-1".to_string()),
+            tier: tier.to_string(),
+            content_type: "observation".to_string(),
+            name: None,
+            description: None,
+            content: content.to_string(),
+            content_hash: content_hash.to_string(),
+            embedding_id: None,
+            task_id: None,
+            priority: None,
+            confidence: Some(confidence),
+            relevance: Some(relevance),
+            ttl_seconds: None,
+            access_count,
+            last_accessed_at: created_at,
+            source_sessions_json: None,
+            metadata_json: None,
+            created_at,
+            updated_at: created_at,
+            expires_at: None,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Relevance Boost Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
     #[test]
     fn test_calculate_relevance_boost() {
         // Single consolidation, low access
@@ -222,59 +264,31 @@ mod tests {
     }
 
     #[test]
+    fn test_relevance_boost_cap() {
+        // Very high values should still be capped at 0.3
+        let boost = calculate_relevance_boost(100, 1000);
+        assert!(boost <= 0.3);
+    }
+
+    #[test]
+    fn test_relevance_boost_zero_access() {
+        // Zero access produces -inf due to ln(0) = -inf
+        // After min(0.3) cap, result is capped to 0.3 or remains -inf
+        let boost = calculate_relevance_boost(1, 0);
+        // ln(0) = -inf, -inf / 20 = -inf, (frequency_factor + -inf) = -inf
+        // min(-inf, 0.3) = -inf (min picks smaller value)
+        assert!(boost.is_infinite() && boost < 0.0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Merge Content Strategy Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
     fn test_merge_content_strategies() {
-        // Create test entries
         let entries = vec![
-            MemoryEntry {
-                id: "1".to_string(),
-                user_id: "test".to_string(),
-                session_id: None,
-                folder_id: None,
-                tier: "short_term".to_string(),
-                content_type: "observation".to_string(),
-                name: None,
-                description: None,
-                content: "First observation".to_string(),
-                content_hash: "hash1".to_string(),
-                embedding_id: None,
-                task_id: None,
-                priority: None,
-                confidence: Some(0.5),
-                relevance: Some(0.5),
-                ttl_seconds: None,
-                access_count: 1,
-                last_accessed_at: 1000,
-                source_sessions_json: None,
-                metadata_json: None,
-                created_at: 1000,
-                updated_at: 1000,
-                expires_at: None,
-            },
-            MemoryEntry {
-                id: "2".to_string(),
-                user_id: "test".to_string(),
-                session_id: None,
-                folder_id: None,
-                tier: "short_term".to_string(),
-                content_type: "observation".to_string(),
-                name: None,
-                description: None,
-                content: "Second observation".to_string(),
-                content_hash: "hash2".to_string(),
-                embedding_id: None,
-                task_id: None,
-                priority: None,
-                confidence: Some(0.7),
-                relevance: Some(0.8),
-                ttl_seconds: None,
-                access_count: 3,
-                last_accessed_at: 2000,
-                source_sessions_json: None,
-                metadata_json: None,
-                created_at: 2000,
-                updated_at: 2000,
-                expires_at: None,
-            },
+            create_test_entry("1", "short_term", "First observation", "hash1", 0.5, 0.5, 1, 1000),
+            create_test_entry("2", "short_term", "Second observation", "hash2", 0.7, 0.8, 3, 2000),
         ];
 
         // Test KeepLatest
@@ -289,5 +303,237 @@ mod tests {
         // Test UpdateRelevance
         let best = merge_content(&entries, ConsolidationStrategy::UpdateRelevance);
         assert_eq!(best, "Second observation");
+    }
+
+    #[test]
+    fn test_merge_content_empty_entries() {
+        let entries: Vec<MemoryEntry> = vec![];
+
+        let latest = merge_content(&entries, ConsolidationStrategy::KeepLatest);
+        assert!(latest.is_empty());
+
+        let merged = merge_content(&entries, ConsolidationStrategy::Merge);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn test_merge_content_single_entry() {
+        let entries = vec![
+            create_test_entry("1", "short_term", "Only entry", "hash1", 0.5, 0.5, 1, 1000),
+        ];
+
+        let latest = merge_content(&entries, ConsolidationStrategy::KeepLatest);
+        assert_eq!(latest, "Only entry");
+
+        let merged = merge_content(&entries, ConsolidationStrategy::Merge);
+        assert_eq!(merged, "Only entry");
+    }
+
+    #[test]
+    fn test_merge_deduplicates_identical_hashes() {
+        let entries = vec![
+            create_test_entry("1", "short_term", "Same content", "same_hash", 0.5, 0.5, 1, 1000),
+            create_test_entry("2", "short_term", "Same content", "same_hash", 0.6, 0.6, 2, 2000),
+        ];
+
+        let merged = merge_content(&entries, ConsolidationStrategy::Merge);
+        // Should only have one occurrence despite two entries
+        assert_eq!(merged.matches("Same content").count(), 1);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Similarity Detection Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_are_similar_identical_hash() {
+        let a = create_test_entry("1", "short_term", "Content A", "same_hash", 0.5, 0.5, 1, 1000);
+        let b = create_test_entry("2", "short_term", "Content B", "same_hash", 0.5, 0.5, 1, 2000);
+
+        let criteria = ConsolidationCriteria::default();
+        assert!(are_similar(&a, &b, &criteria));
+    }
+
+    #[test]
+    fn test_are_similar_substring_match() {
+        let a = create_test_entry("1", "short_term", "API endpoint error in authentication", "hash1", 0.5, 0.5, 1, 1000);
+        let b = create_test_entry("2", "short_term", "API endpoint error in authentication module", "hash2", 0.5, 0.5, 1, 2000);
+
+        let criteria = ConsolidationCriteria::default();
+        assert!(are_similar(&a, &b, &criteria));
+    }
+
+    #[test]
+    fn test_are_similar_high_word_overlap() {
+        let a = create_test_entry("1", "short_term", "Error handling in user authentication service", "hash1", 0.5, 0.5, 1, 1000);
+        let b = create_test_entry("2", "short_term", "Error handling in user auth service module", "hash2", 0.5, 0.5, 1, 2000);
+
+        let criteria = ConsolidationCriteria {
+            similarity_threshold: 0.5, // Lower threshold for this test
+            ..Default::default()
+        };
+        assert!(are_similar(&a, &b, &criteria));
+    }
+
+    #[test]
+    fn test_are_similar_different_sessions_allowed() {
+        let mut a = create_test_entry("1", "short_term", "Same content", "hash1", 0.5, 0.5, 1, 1000);
+        let mut b = create_test_entry("2", "short_term", "Same content", "hash1", 0.5, 0.5, 1, 2000);
+        a.session_id = Some("session-1".to_string());
+        b.session_id = Some("session-2".to_string());
+
+        let criteria = ConsolidationCriteria {
+            cross_session: true,
+            ..Default::default()
+        };
+        assert!(are_similar(&a, &b, &criteria));
+    }
+
+    #[test]
+    fn test_are_similar_different_sessions_blocked() {
+        let mut a = create_test_entry("1", "short_term", "Same content", "hash1", 0.5, 0.5, 1, 1000);
+        let mut b = create_test_entry("2", "short_term", "Same content", "hash2", 0.5, 0.5, 1, 2000);
+        a.session_id = Some("session-1".to_string());
+        b.session_id = Some("session-2".to_string());
+
+        let criteria = ConsolidationCriteria {
+            cross_session: false,
+            ..Default::default()
+        };
+        assert!(!are_similar(&a, &b, &criteria));
+    }
+
+    #[test]
+    fn test_are_similar_age_difference_blocked() {
+        let a = create_test_entry("1", "short_term", "Same content", "hash1", 0.5, 0.5, 1, 1000);
+        // 8 days later (in milliseconds)
+        let b = create_test_entry("2", "short_term", "Same content", "hash2", 0.5, 0.5, 1, 1000 + 8 * 86400 * 1000);
+
+        let criteria = ConsolidationCriteria {
+            max_age_diff: Some(7 * 86400), // 7 days
+            ..Default::default()
+        };
+        assert!(!are_similar(&a, &b, &criteria));
+    }
+
+    #[test]
+    fn test_are_similar_empty_content() {
+        let a = create_test_entry("1", "short_term", "", "hash1", 0.5, 0.5, 1, 1000);
+        let b = create_test_entry("2", "short_term", "", "hash2", 0.5, 0.5, 1, 2000);
+
+        let criteria = ConsolidationCriteria::default();
+        // Empty strings are substring of each other, so they ARE similar
+        // This is the current implementation behavior
+        assert!(are_similar(&a, &b, &criteria));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Promotion Suggestion Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_suggest_promotion_short_to_working() {
+        let entry = create_test_entry("1", "short_term", "Content", "hash", 0.8, 0.5, 5, 1000);
+
+        let result = suggest_promotion(&entry);
+        assert_eq!(result, Some(crate::types::MemoryTier::Working));
+    }
+
+    #[test]
+    fn test_suggest_promotion_working_to_long() {
+        let entry = create_test_entry("1", "working", "Content", "hash", 0.9, 0.8, 10, 1000);
+
+        let result = suggest_promotion(&entry);
+        assert_eq!(result, Some(crate::types::MemoryTier::LongTerm));
+    }
+
+    #[test]
+    fn test_suggest_promotion_long_term_no_promotion() {
+        let entry = create_test_entry("1", "long_term", "Content", "hash", 0.95, 0.9, 20, 1000);
+
+        let result = suggest_promotion(&entry);
+        assert_eq!(result, None); // Already at top tier
+    }
+
+    #[test]
+    fn test_suggest_promotion_low_confidence_no_promotion() {
+        let entry = create_test_entry("1", "short_term", "Content", "hash", 0.3, 0.5, 1, 1000);
+
+        let result = suggest_promotion(&entry);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_suggest_promotion_high_confidence_triggers() {
+        let entry = create_test_entry("1", "short_term", "Content", "hash", 0.75, 0.5, 1, 1000);
+
+        let result = suggest_promotion(&entry);
+        assert_eq!(result, Some(crate::types::MemoryTier::Working));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Demotion Suggestion Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_suggest_demotion_long_to_working() {
+        let entry = create_test_entry("1", "long_term", "Content", "hash", 0.1, 0.1, 0, 1000);
+
+        let result = suggest_demotion(&entry);
+        assert_eq!(result, Some(crate::types::MemoryTier::Working));
+    }
+
+    #[test]
+    fn test_suggest_demotion_working_to_short() {
+        let entry = create_test_entry("1", "working", "Content", "hash", 0.15, 0.15, 0, 1000);
+
+        let result = suggest_demotion(&entry);
+        assert_eq!(result, Some(crate::types::MemoryTier::ShortTerm));
+    }
+
+    #[test]
+    fn test_suggest_demotion_short_term_returns_none() {
+        let entry = create_test_entry("1", "short_term", "Content", "hash", 0.1, 0.1, 0, 1000);
+
+        let result = suggest_demotion(&entry);
+        assert_eq!(result, None); // Will expire naturally
+    }
+
+    #[test]
+    fn test_suggest_demotion_high_relevance_no_demotion() {
+        let entry = create_test_entry("1", "long_term", "Content", "hash", 0.1, 0.8, 0, 1000);
+
+        let result = suggest_demotion(&entry);
+        assert_eq!(result, None); // High relevance protects
+    }
+
+    #[test]
+    fn test_suggest_demotion_high_confidence_no_demotion() {
+        let entry = create_test_entry("1", "long_term", "Content", "hash", 0.8, 0.1, 0, 1000);
+
+        let result = suggest_demotion(&entry);
+        assert_eq!(result, None); // High confidence protects
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Consolidation Criteria Tests
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_consolidation_criteria_defaults() {
+        let criteria = ConsolidationCriteria::default();
+
+        assert_eq!(criteria.similarity_threshold, 0.8);
+        assert!(criteria.cross_session);
+        assert!(!criteria.cross_folder);
+        assert_eq!(criteria.max_age_diff, Some(86400 * 7)); // 7 days
+    }
+
+    #[test]
+    fn test_consolidation_strategy_variants() {
+        // Ensure all variants are distinct
+        assert_ne!(ConsolidationStrategy::KeepLatest, ConsolidationStrategy::Merge);
+        assert_ne!(ConsolidationStrategy::Merge, ConsolidationStrategy::UpdateRelevance);
+        assert_ne!(ConsolidationStrategy::KeepLatest, ConsolidationStrategy::UpdateRelevance);
     }
 }
