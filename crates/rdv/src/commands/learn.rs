@@ -16,11 +16,13 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use colored::Colorize;
+use rdv_core::types::{SdkInsight, SdkInsightFilter, SdkInsightType};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::cli::{LearnAction, LearnCommand};
 use crate::config::Config;
+use crate::database::{get_database, get_user_id};
 use crate::tmux;
 
 /// A learning extracted from a session transcript.
@@ -113,6 +115,13 @@ pub async fn execute(cmd: LearnCommand, config: &Config) -> Result<()> {
         LearnAction::Apply { path, dry_run } => apply(&path, dry_run, config).await,
         LearnAction::Show { path } => show(&path).await,
         LearnAction::List { r#type, folder } => list(r#type.as_deref(), folder.as_deref()).await,
+        LearnAction::Consolidate {
+            path,
+            folder,
+            min_confidence,
+            verified_only,
+            dry_run,
+        } => consolidate(&path, folder.as_deref(), min_confidence, verified_only, dry_run).await,
     }
 }
 
@@ -632,4 +641,205 @@ async fn list(type_filter: Option<&str>, folder_filter: Option<&str>) -> Result<
     }
 
     Ok(())
+}
+
+/// Convert SDK insight type to learning type string.
+fn sdk_insight_type_to_learning_type(insight_type: &SdkInsightType) -> String {
+    match insight_type {
+        SdkInsightType::Convention => "convention".to_string(),
+        SdkInsightType::Pattern => "pattern".to_string(),
+        SdkInsightType::AntiPattern => "gotcha".to_string(), // Map anti-pattern to gotcha
+        SdkInsightType::Skill => "skill".to_string(),
+        SdkInsightType::Gotcha => "gotcha".to_string(),
+        SdkInsightType::BestPractice => "pattern".to_string(), // Map best practice to pattern
+        SdkInsightType::Dependency => "tool".to_string(),      // Map dependency to tool
+        SdkInsightType::Performance => "pattern".to_string(),  // Map performance to pattern
+    }
+}
+
+/// Convert SDK insight to Learning format.
+fn sdk_insight_to_learning(insight: &SdkInsight) -> Learning {
+    // Parse source sessions from JSON
+    let source_sessions: Vec<String> = insight
+        .source_sessions_json
+        .as_ref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default();
+
+    let source_session = source_sessions.first().cloned();
+
+    // Parse source notes to extract tags
+    let _source_notes: Vec<String> = serde_json::from_str(&insight.source_notes_json).unwrap_or_default();
+    let mut tags: Vec<String> = Vec::new();
+
+    // Add applicability context as tag if present
+    if let Some(ref ctx) = insight.applicability_context {
+        tags.push(ctx.clone());
+    }
+
+    // Add insight type as tag
+    tags.push(insight.insight_type.to_string());
+
+    Learning {
+        id: insight.id.clone(),
+        learning_type: sdk_insight_type_to_learning_type(&insight.insight_type),
+        title: insight.title.clone(),
+        description: insight.description.clone(),
+        source_session,
+        source_folder: insight.folder_id.clone(),
+        confidence: insight.confidence,
+        tags,
+        created_at: DateTime::from_timestamp_millis(insight.created_at)
+            .unwrap_or_else(Utc::now),
+        validated_at: if insight.verified {
+            Some(DateTime::from_timestamp_millis(insight.updated_at)
+                .unwrap_or_else(Utc::now))
+        } else {
+            None
+        },
+        application_count: insight.application_count as u32,
+    }
+}
+
+/// Consolidate SDK insights into project knowledge.
+async fn consolidate(
+    path: &str,
+    folder_filter: Option<&str>,
+    min_confidence: f64,
+    verified_only: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let folder = resolve_path(path);
+    println!(
+        "{}",
+        format!("Consolidating SDK insights to {:?}...", folder).cyan()
+    );
+
+    if dry_run {
+        println!("  {} Dry run - no changes will be made", "→".cyan());
+    }
+
+    // Get database connection
+    let db = get_database()?;
+    let user_id = get_user_id();
+
+    // Build filter for SDK insights
+    let filter = SdkInsightFilter {
+        user_id,
+        folder_id: folder_filter.map(|s| s.to_string()),
+        insight_type: None,
+        applicability: None,
+        applicability_context: None,
+        active: Some(true), // Only active insights
+        verified: if verified_only { Some(true) } else { None },
+        min_confidence: Some(min_confidence),
+        limit: None, // Get all matching insights
+    };
+
+    // Fetch SDK insights from database
+    let insights = db.list_sdk_insights(&filter)?;
+
+    if insights.is_empty() {
+        println!("  {} No SDK insights found matching criteria", "ℹ".blue());
+        println!("  Try lowering --min-confidence or removing --verified-only");
+        return Ok(());
+    }
+
+    println!(
+        "  Found {} SDK insight(s) to consolidate",
+        insights.len()
+    );
+
+    // Load existing project knowledge
+    let mut knowledge = ProjectKnowledge::load(&folder)?;
+    let existing_ids: std::collections::HashSet<_> = knowledge
+        .learnings
+        .iter()
+        .map(|l| l.id.clone())
+        .collect();
+
+    // Convert and add new insights
+    let mut added = 0;
+    let mut skipped = 0;
+    let mut updated = 0;
+
+    for insight in &insights {
+        let learning = sdk_insight_to_learning(insight);
+
+        if existing_ids.contains(&learning.id) {
+            // Check if we should update (higher confidence or newly verified)
+            let existing = knowledge.learnings.iter_mut().find(|l| l.id == learning.id);
+            if let Some(existing_learning) = existing {
+                if learning.confidence > existing_learning.confidence
+                    || (learning.validated_at.is_some() && existing_learning.validated_at.is_none())
+                {
+                    let type_badge = learning_type_badge(&learning.learning_type);
+                    println!(
+                        "  {} {} {} ({:.0}% → {:.0}%)",
+                        "↻".yellow(),
+                        type_badge,
+                        learning.title,
+                        existing_learning.confidence * 100.0,
+                        learning.confidence * 100.0
+                    );
+                    *existing_learning = learning;
+                    updated += 1;
+                } else {
+                    skipped += 1;
+                }
+            } else {
+                skipped += 1;
+            }
+        } else {
+            // New insight
+            let type_badge = learning_type_badge(&learning.learning_type);
+            println!(
+                "  {} {} {} ({:.0}%)",
+                "+".green(),
+                type_badge,
+                learning.title,
+                learning.confidence * 100.0
+            );
+
+            if !dry_run {
+                knowledge.add_learning(learning);
+            }
+            added += 1;
+        }
+    }
+
+    println!();
+    println!(
+        "  {} {} added, {} updated, {} skipped (already present)",
+        "Summary:".cyan(),
+        added,
+        updated,
+        skipped
+    );
+
+    if !dry_run && (added > 0 || updated > 0) {
+        knowledge.save(&folder)?;
+        println!(
+            "  {} Saved to {:?}",
+            "✓".green(),
+            ProjectKnowledge::knowledge_path(&folder)
+        );
+    } else if dry_run && (added > 0 || updated > 0) {
+        println!();
+        println!("  Run without --dry-run to save these changes");
+    }
+
+    Ok(())
+}
+
+/// Get a colored badge for a learning type.
+fn learning_type_badge(learning_type: &str) -> colored::ColoredString {
+    match learning_type {
+        "convention" => "[CONV]".blue(),
+        "pattern" => "[PTRN]".green(),
+        "skill" => "[SKIL]".cyan(),
+        "tool" => "[TOOL]".magenta(),
+        "gotcha" => "[GTCH]".red(),
+        _ => format!("[{}]", learning_type).normal(),
+    }
 }

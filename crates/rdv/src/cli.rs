@@ -493,6 +493,29 @@ pub enum LearnAction {
         #[arg(short, long)]
         folder: Option<String>,
     },
+
+    /// Consolidate SDK insights into project knowledge
+    Consolidate {
+        /// Folder path
+        #[arg(default_value = ".")]
+        path: String,
+
+        /// Filter by folder ID
+        #[arg(short, long)]
+        folder: Option<String>,
+
+        /// Minimum confidence threshold (0.0 - 1.0)
+        #[arg(long, default_value = "0.5")]
+        min_confidence: f64,
+
+        /// Only include verified insights
+        #[arg(long)]
+        verified_only: bool,
+
+        /// Dry run (show changes without saving)
+        #[arg(short, long)]
+        dry_run: bool,
+    },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
