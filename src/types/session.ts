@@ -56,6 +56,9 @@ export interface CreateSessionInput {
   featureDescription?: string;  // Original feature description
   createWorktree?: boolean;     // Whether to create worktree
   baseBranch?: string;          // Base branch for new worktree
+  // Meta-agent optimization
+  optimizeConfig?: boolean;     // Run meta-agent to generate optimized config before starting
+  taskDescription?: string;     // Task description for meta-agent optimization
 }
 
 /**

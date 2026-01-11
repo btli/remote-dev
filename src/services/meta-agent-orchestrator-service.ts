@@ -1192,3 +1192,289 @@ export async function checkAndAutoRollback(
 
   return false;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session Creation Integration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Optimization result for session creation
+ */
+export interface SessionOptimizationResult {
+  success: boolean;
+  configApplied: boolean;
+  configId?: string;
+  score?: number;
+  error?: string;
+}
+
+/**
+ * Generate and apply optimized config before session starts
+ *
+ * Called by SessionService when optimizeConfig=true during session creation.
+ * Uses project context and optional task description to generate config.
+ */
+export async function optimizeConfigForNewSession(
+  userId: string,
+  projectPath: string,
+  agentProvider: string,
+  folderId: string | null,
+  taskDescription?: string
+): Promise<SessionOptimizationResult> {
+  if (!agentProvider || agentProvider === "none") {
+    return {
+      success: false,
+      configApplied: false,
+      error: "No agent provider specified",
+    };
+  }
+
+  try {
+    // Build task spec from description or generic
+    const taskId = `task-init-${Date.now()}`;
+    const task: TaskSpec = {
+      id: taskId,
+      type: "feature",
+      description: taskDescription || `Initialize and work in ${projectPath}`,
+      acceptanceCriteria: [],
+      complexity: 5,
+      relevantFiles: [],
+      constraints: [],
+    };
+
+    // Build project context
+    const context = await detectProjectContext(projectPath, folderId);
+
+    // Call the meta-agent API
+    const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+    const response = await fetch(`${baseUrl}/api/sdk/meta`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-User-Id": userId,
+      },
+      body: JSON.stringify({
+        task: {
+          id: task.id,
+          taskType: task.type,
+          description: task.description,
+          acceptanceCriteria: task.acceptanceCriteria,
+          complexity: task.complexity,
+          relevantFiles: task.relevantFiles,
+          constraints: task.constraints,
+        },
+        context: {
+          projectPath: context.projectPath,
+          projectType: context.projectType,
+          language: context.language,
+          frameworks: context.frameworks,
+          packageManager: context.packageManager,
+          testFramework: context.testFramework,
+          linter: context.linter,
+          hasCi: context.hasCI,
+          currentBranch: context.currentBranch,
+          folderId: context.folderId,
+        },
+        options: {
+          maxIterations: 2, // Faster for session creation
+          targetScore: 0.75,
+          minImprovement: 0.05,
+          timeoutSeconds: 60, // Shorter timeout
+          verbose: false,
+          dryRun: false,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        configApplied: false,
+        error: `Meta-agent API returned ${response.status}`,
+      };
+    }
+
+    const result = await response.json() as OptimizationResult & { resultId?: string };
+
+    // Apply the config if we got a good result
+    if (result.finalScore >= 0.6 && result.config) {
+      const configFileName = getConfigFileName(agentProvider);
+      const configPath = `${projectPath}/${configFileName}`;
+
+      try {
+        const fs = await import("fs/promises");
+        const { existsSync } = await import("fs");
+
+        let existingContent = "";
+        if (existsSync(configPath)) {
+          existingContent = await fs.readFile(configPath, "utf-8");
+        }
+
+        const updatedContent = mergeConfigContent(
+          existingContent,
+          result.config.instructionsFile,
+          result.config.systemPrompt
+        );
+
+        await fs.writeFile(configPath, updatedContent, "utf-8");
+
+        console.log(
+          `[MetaAgentOrchestrator] Applied optimized config for new session: ${configFileName} (score: ${result.finalScore})`
+        );
+
+        return {
+          success: true,
+          configApplied: true,
+          configId: result.config.id,
+          score: result.finalScore,
+        };
+      } catch (writeError) {
+        return {
+          success: true,
+          configApplied: false,
+          configId: result.config.id,
+          score: result.finalScore,
+          error: `Failed to write config: ${writeError}`,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      configApplied: false,
+      score: result.finalScore,
+      error: `Score too low: ${result.finalScore}`,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error("[MetaAgentOrchestrator] Session optimization failed:", error);
+    return {
+      success: false,
+      configApplied: false,
+      error: errorMsg,
+    };
+  }
+}
+
+/**
+ * Detect project context from filesystem
+ */
+async function detectProjectContext(
+  projectPath: string,
+  folderId: string | null
+): Promise<ProjectContext> {
+  const context: ProjectContext = {
+    projectPath,
+    projectType: "unknown",
+    language: "typescript",
+    frameworks: [],
+    packageManager: "npm",
+    hasCI: false,
+    folderId: folderId || undefined,
+  };
+
+  try {
+    const fs = await import("fs/promises");
+    const { existsSync } = await import("fs");
+    const path = await import("path");
+
+    // Check for package.json
+    const packageJsonPath = path.join(projectPath, "package.json");
+    if (existsSync(packageJsonPath)) {
+      try {
+        const content = await fs.readFile(packageJsonPath, "utf-8");
+        const pkg = JSON.parse(content) as {
+          dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
+          scripts?: Record<string, string>;
+        };
+
+        const allDeps = {
+          ...pkg.dependencies,
+          ...pkg.devDependencies,
+        };
+
+        // Detect frameworks
+        if (allDeps.next) {
+          context.projectType = "nextjs";
+          context.frameworks.push("next.js", "react");
+        } else if (allDeps.react) {
+          context.projectType = "react";
+          context.frameworks.push("react");
+        } else if (allDeps.vue) {
+          context.projectType = "vue";
+          context.frameworks.push("vue");
+        } else if (allDeps.express) {
+          context.projectType = "express";
+          context.frameworks.push("express");
+        }
+
+        // Detect test framework
+        if (allDeps.vitest) {
+          context.testFramework = "vitest";
+        } else if (allDeps.jest) {
+          context.testFramework = "jest";
+        }
+
+        // Detect linter
+        if (allDeps.eslint) {
+          context.linter = "eslint";
+        }
+
+        // Detect package manager from lock files
+        if (existsSync(path.join(projectPath, "bun.lockb"))) {
+          context.packageManager = "bun";
+        } else if (existsSync(path.join(projectPath, "pnpm-lock.yaml"))) {
+          context.packageManager = "pnpm";
+        } else if (existsSync(path.join(projectPath, "yarn.lock"))) {
+          context.packageManager = "yarn";
+        }
+
+        context.language = "typescript";
+        if (allDeps.typescript || existsSync(path.join(projectPath, "tsconfig.json"))) {
+          context.language = "typescript";
+        } else {
+          context.language = "javascript";
+        }
+      } catch {
+        // JSON parse failed
+      }
+    }
+
+    // Check for pyproject.toml (Python)
+    if (existsSync(path.join(projectPath, "pyproject.toml"))) {
+      context.language = "python";
+      context.packageManager = "uv";
+      if (existsSync(path.join(projectPath, "requirements.txt"))) {
+        context.packageManager = "pip";
+      }
+    }
+
+    // Check for Cargo.toml (Rust)
+    if (existsSync(path.join(projectPath, "Cargo.toml"))) {
+      context.language = "rust";
+      context.packageManager = "cargo";
+      context.projectType = "rust";
+    }
+
+    // Check for go.mod (Go)
+    if (existsSync(path.join(projectPath, "go.mod"))) {
+      context.language = "go";
+      context.packageManager = "go";
+      context.projectType = "go";
+    }
+
+    // Check for CI
+    if (
+      existsSync(path.join(projectPath, ".github", "workflows")) ||
+      existsSync(path.join(projectPath, ".gitlab-ci.yml")) ||
+      existsSync(path.join(projectPath, ".circleci"))
+    ) {
+      context.hasCI = true;
+    }
+  } catch {
+    // Filesystem access failed, return defaults
+  }
+
+  return context;
+}

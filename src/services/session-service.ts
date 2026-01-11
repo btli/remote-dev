@@ -233,6 +233,30 @@ export async function createSession(
     }
   }
 
+  // Run meta-agent optimization if requested (for agent sessions only)
+  if (input.optimizeConfig && isAgentSession && workingPath) {
+    try {
+      const { optimizeConfigForNewSession } = await import("./meta-agent-orchestrator-service");
+      const optimizationResult = await optimizeConfigForNewSession(
+        userId,
+        workingPath,
+        input.agentProvider!,
+        input.folderId ?? null,
+        input.taskDescription
+      );
+      if (optimizationResult.success && optimizationResult.configApplied) {
+        console.log(
+          `[SessionService] Meta-agent optimization applied: configId=${optimizationResult.configId}, score=${optimizationResult.score}`
+        );
+      } else if (!optimizationResult.success) {
+        console.warn(`[SessionService] Meta-agent optimization failed: ${optimizationResult.error}`);
+      }
+    } catch (error) {
+      // Don't block session creation on optimization failure
+      console.warn("[SessionService] Failed to run meta-agent optimization:", error);
+    }
+  }
+
   // Create the tmux session
   try {
     if (isAgentSession) {
