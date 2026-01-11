@@ -352,6 +352,12 @@ Located in `src/services/`:
 | `OrchestratorService` | Master Control and Folder Control management |
 | `InsightService` | Insight generation, resolution, retrieval |
 | `MonitoringService` | Automated monitoring cycles, stall detection |
+| `SessionMemoryService` | Hierarchical memory system (short-term, working, long-term) |
+| `SessionContextInjectionService` | Context injection for agent sessions |
+| `MetaAgentOrchestratorService` | Meta-agent optimization and configuration |
+| `OrchestratorBootstrapService` | Orchestrator lifecycle and Claude session management |
+| `OrchestratorIntelligenceService` | AI-powered orchestrator intelligence |
+| `EmbeddingService` | Vector embeddings for semantic memory search |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -427,6 +433,58 @@ rdv-server/src/
 - Service token auth for Next.js proxy
 - CLI token auth for rdv CLI
 - Background monitoring service
+
+### Remote Dev SDK
+
+Internal TypeScript SDK for building and extending the platform. Located in `src/sdk/`.
+
+**Architecture - Three-Perspective Design (AX/UX/DX):**
+
+| Perspective | Purpose | Components |
+|-------------|---------|------------|
+| **Agent (AX)** | AI agent interaction | Memory, Tools, Context |
+| **User (UX)** | Human interaction | Dashboard, Insights, Sessions, Knowledge |
+| **Developer (DX)** | Extension/customization | Extensions, Tool Builder, Templates, API |
+
+**Quick Start:**
+```typescript
+import { createRemoteDevSDK } from "@/sdk";
+
+const sdk = createRemoteDevSDK({
+  userId: "user-123",
+  apiBaseUrl: "http://localhost:6001",
+});
+
+await sdk.initialize();
+
+// Agent Experience (AX)
+await sdk.ax.memory.remember("Important context");
+const tools = sdk.ax.tools.getAll();
+
+// User Experience (UX)
+const sessions = await sdk.ux.sessions.getActiveSessions();
+const insights = await sdk.ux.insights.getUnread();
+
+// Developer Experience (DX)
+sdk.dx.tools.register(myCustomTool);
+
+await sdk.shutdown();
+```
+
+**Memory System:**
+- **Short-term**: Ephemeral observations (1-hour TTL)
+- **Working**: Pinned context (24-hour TTL)
+- **Long-term**: Persistent knowledge (no expiration)
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/sdk/index.ts` | Main entry point - exports `createRemoteDevSDK` |
+| `src/sdk/core/sdk.ts` | SDK factory implementation |
+| `src/sdk/types/index.ts` | Type definitions (775+ lines) |
+| `src/hooks/useSessionMemory.ts` | React hook for memory operations |
+| `src/hooks/useExtensions.ts` | React hook for extension management |
+| `src/hooks/useMetaAgent.ts` | React hook for meta-agent operations |
 
 ### rdv CLI (Rust Orchestration Tool)
 

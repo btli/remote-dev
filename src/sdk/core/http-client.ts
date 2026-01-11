@@ -28,17 +28,26 @@ export function createHttpClient(baseUrl: string): HTTPClient {
       ...options?.headers,
     };
 
-    const controller = new AbortController();
+    // Create abort controller for timeout
+    const timeoutController = new AbortController();
     const timeoutId = options?.timeoutMs
-      ? setTimeout(() => controller.abort(), options.timeoutMs)
+      ? setTimeout(() => timeoutController.abort(), options.timeoutMs)
       : null;
+
+    // Combine external signal with timeout signal using AbortSignal.any()
+    // This ensures the request aborts on whichever fires first
+    const signals: AbortSignal[] = [timeoutController.signal];
+    if (options?.signal) {
+      signals.push(options.signal);
+    }
+    const combinedSignal = AbortSignal.any(signals);
 
     try {
       const response = await fetch(url.toString(), {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
-        signal: options?.signal ?? controller.signal,
+        signal: combinedSignal,
       });
 
       if (!response.ok) {

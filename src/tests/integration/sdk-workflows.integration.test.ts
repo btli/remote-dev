@@ -566,10 +566,21 @@ describe("SDK Workflow Integration Tests", () => {
 
   describe("SDK Lifecycle", () => {
     it("should handle shutdown gracefully", async () => {
-      // Shutdown should complete without error
-      const shutdownResult = await sdk.shutdown().catch(() => "caught");
-      // Shutdown may or may not throw - the key is it doesn't crash hard
-      expect(true).toBe(true);
+      // Shutdown should complete without throwing
+      let shutdownError: Error | undefined;
+      try {
+        await sdk.shutdown();
+      } catch (error) {
+        shutdownError = error instanceof Error ? error : new Error(String(error));
+      }
+      // Verify shutdown didn't throw, or if it did, it was a known graceful error
+      if (shutdownError) {
+        // Acceptable: "Not initialized" or similar graceful shutdown messages
+        expect(shutdownError.message).toMatch(/not initialized|already shutdown|graceful/i);
+      } else {
+        // No error is the expected happy path
+        expect(shutdownError).toBeUndefined();
+      }
     });
 
     it("should track initialization state", () => {

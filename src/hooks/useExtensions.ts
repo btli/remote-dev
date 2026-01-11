@@ -454,16 +454,18 @@ export function useExtensions({
     }
   }, [autoFetch, fetchExtensions]);
 
-  // Polling
+  // Polling - always return cleanup to handle condition changes
   useEffect(() => {
     if (pollInterval > 0) {
       intervalRef.current = setInterval(fetchExtensions, pollInterval);
-      return () => {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-        }
-      };
     }
+    // Always return cleanup to clear any existing interval when deps change
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   }, [pollInterval, fetchExtensions]);
 
   // Aggregate tools, prompts, and UI components from all loaded extensions

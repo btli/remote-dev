@@ -820,3 +820,416 @@ Fonts are loaded via `@font-face` declarations in `globals.css` with:
 - `font-display: swap` for fast initial render
 - Subset-specific unicode ranges where available
 - Fallback to system monospace fonts
+
+## SDK Architecture
+
+The Remote Dev SDK provides programmatic access to all system capabilities through a **Three-Perspective Design** inspired by Confucian philosophy:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Remote Dev SDK                          │
+├─────────────────┬─────────────────┬─────────────────────────┤
+│   Agent (AX)    │    User (UX)    │    Developer (DX)       │
+├─────────────────┼─────────────────┼─────────────────────────┤
+│ • Memory        │ • Dashboard     │ • Extensions            │
+│ • Tools         │ • Insights      │ • Tool Builder          │
+│ • Context       │ • Sessions      │ • Templates             │
+│                 │ • Knowledge     │ • API                   │
+└─────────────────┴─────────────────┴─────────────────────────┘
+```
+
+### Agent Experience (AX)
+
+Optimizes how AI agents interact with the system:
+
+| Component | Purpose |
+|-----------|---------|
+| **Memory** | Hierarchical three-tier memory (short-term, working, long-term) |
+| **Tools** | Tool registry for available tools and execution |
+| **Context** | Task and project context management |
+
+### User Experience (UX)
+
+Optimizes human interaction with the system:
+
+| Component | Purpose |
+|-----------|---------|
+| **Dashboard** | Orchestrator monitoring and status |
+| **Insights** | Notification system for stall detection and suggestions |
+| **Sessions** | Session management and control |
+| **Knowledge** | Project knowledge browser |
+
+### Developer Experience (DX)
+
+Enables extension and customization:
+
+| Component | Purpose |
+|-----------|---------|
+| **Extensions** | Load/unload custom extensions |
+| **Tool Builder** | Fluent API for creating tools |
+| **Templates** | Configuration template engine |
+| **API** | Direct HTTP and programmatic access |
+
+### SDK Entry Point
+
+```typescript
+import { createRemoteDevSDK } from "@/sdk";
+
+const sdk = createRemoteDevSDK({
+  userId: "user-123",
+  apiBaseUrl: "http://localhost:6001",
+});
+
+await sdk.initialize();
+
+// Agent Experience (AX)
+await sdk.ax.memory.remember("Important context");
+const tools = sdk.ax.tools.getAll();
+
+// User Experience (UX)
+const sessions = await sdk.ux.sessions.getActiveSessions();
+const insights = await sdk.ux.insights.getUnread();
+
+// Developer Experience (DX)
+const extensions = await sdk.dx.extensions.list();
+sdk.dx.tools.register(myCustomTool);
+
+await sdk.shutdown();
+```
+
+### SDK File Structure
+
+```
+src/sdk/
+├── index.ts           # Main entry point - exports createRemoteDevSDK
+├── core/              # Core SDK implementation
+│   ├── sdk.ts         # Main SDK factory (createRemoteDevSDK)
+│   ├── config.ts      # Configuration utilities
+│   ├── http-client.ts # HTTP client for API calls
+│   └── *.test.ts      # Unit tests
+├── types/             # TypeScript type definitions
+│   ├── index.ts       # Main types (775+ lines)
+│   ├── memory.ts      # Memory system types
+│   ├── meta-agent.ts  # Meta-agent types
+│   └── extensions.ts  # Extension system types
+├── extensions/        # Extension system
+├── memory/            # Memory system
+├── meta-agent/        # Meta-agent system
+├── services/          # Service implementations
+└── utils/             # Utility functions
+```
+
+## Memory System
+
+The SDK implements a **Hierarchical Three-Tier Memory** system for agent cognition:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    Memory Hierarchy                           │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              Long-Term Memory                        │    │
+│  │  • Named, persistent knowledge                      │    │
+│  │  • No expiration                                    │    │
+│  │  • Conventions, patterns, skills, tools             │    │
+│  └──────────────────────────┬──────────────────────────┘    │
+│                             │                                │
+│  ┌──────────────────────────▼──────────────────────────┐    │
+│  │              Working Memory                          │    │
+│  │  • Pinned context for current task                  │    │
+│  │  • 24-hour TTL (extended on access)                 │    │
+│  │  • Active files, notes, decisions                   │    │
+│  └──────────────────────────┬──────────────────────────┘    │
+│                             │                                │
+│  ┌──────────────────────────▼──────────────────────────┐    │
+│  │              Short-Term Memory                       │    │
+│  │  • Ephemeral observations                           │    │
+│  │  • 1-hour TTL                                       │    │
+│  │  • Auto-consolidated or expired                     │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Memory Content Types
+
+| Type | Description |
+|------|-------------|
+| `note:todo` | Task items and action items |
+| `note:reminder` | Time-sensitive reminders |
+| `note:question` | Unresolved questions |
+| `note:observation` | General observations |
+| `note:warning` | Caution notes |
+| `note:decision` | Decision records |
+| `insight:convention` | Coding conventions |
+| `insight:pattern` | Common patterns |
+| `insight:gotcha` | Pitfalls to avoid |
+| `insight:skill` | Learned skills |
+| `insight:tool` | Tool usage knowledge |
+| `context` | Session context |
+| `task_context` | Current task context |
+| `error` | Error records |
+| `discovery` | Discovered information |
+| `reference` | Reference material |
+| `project` | Project-level knowledge |
+
+### Memory Operations
+
+```typescript
+// Store memory
+await sdk.ax.memory.remember("Important context");
+
+// Query memory with semantic search
+const relevant = await sdk.ax.memory.recall({
+  query: "authentication patterns",
+  limit: 10,
+  minScore: 0.7,
+});
+
+// Promote to long-term
+await sdk.ax.memory.promoteToLongTerm(memoryId, "Auth Pattern");
+
+// Pin to working memory
+await sdk.ax.memory.pinToWorking(memoryId);
+```
+
+## Meta-Agent System
+
+The Meta-Agent system enables **agent configuration optimization** through iterative refinement:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Meta-Agent Workflow                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+       ┌──────────────────────┼──────────────────────┐
+       │                      │                      │
+       ▼                      ▼                      ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│    BUILD     │     │     TEST     │     │   IMPROVE    │
+│              │     │              │     │              │
+│ Task + Ctx   │────▶│  Benchmark   │────▶│  Analyze &   │
+│ → Config     │     │  Execution   │     │  Refine      │
+└──────────────┘     └──────────────┘     └──────┬───────┘
+                                                  │
+                              ┌────────────────────
+                              │
+                              ▼
+                     ┌──────────────┐
+                     │   OPTIMIZE   │
+                     │              │
+                     │ Iterate until│
+                     │ target score │
+                     └──────────────┘
+```
+
+### Meta-Agent Operations
+
+```typescript
+// Build agent config from task
+const config = await sdk.services.metaAgent.build({
+  task: "Implement OAuth authentication",
+  context: projectContext,
+});
+
+// Test against benchmark
+const result = await sdk.services.metaAgent.test(config, benchmark);
+
+// Improve based on results
+const improved = await sdk.services.metaAgent.improve(config, result);
+
+// Full optimization loop
+const optimized = await sdk.services.metaAgent.optimize({
+  task,
+  context,
+  benchmark,
+  maxIterations: 3,
+  targetScore: 0.9,
+});
+```
+
+## Extension System
+
+The SDK supports runtime-loadable extensions for customization:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Extension Registry                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐       │
+│  │   Extension   │  │   Extension   │  │   Extension   │       │
+│  │     #1        │  │     #2        │  │     #3        │       │
+│  ├───────────────┤  ├───────────────┤  ├───────────────┤       │
+│  │ • Manifest    │  │ • Manifest    │  │ • Manifest    │       │
+│  │ • Tools[]     │  │ • Tools[]     │  │ • Tools[]     │       │
+│  │ • Prompts[]   │  │ • Prompts[]   │  │ • Prompts[]   │       │
+│  │ • UI Comps[]  │  │ • UI Comps[]  │  │ • UI Comps[]  │       │
+│  │ • Config      │  │ • Config      │  │ • Config      │       │
+│  └───────────────┘  └───────────────┘  └───────────────┘       │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Extension Manifest
+
+```typescript
+interface ExtensionManifest {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author?: string;
+  repository?: string;
+  permissions: ExtensionPermission[];
+  entryPoint: string;
+  config?: ExtensionConfigSchema;
+}
+
+type ExtensionPermission =
+  | "files:read"
+  | "files:write"
+  | "terminal:execute"
+  | "network:request"
+  | "memory:read"
+  | "memory:write"
+  | "ui:render";
+```
+
+### Extension Operations
+
+```typescript
+// List extensions
+const { loaded, available } = await sdk.dx.extensions.list();
+
+// Load extension
+await sdk.dx.extensions.load("my-extension");
+
+// Register custom tool
+sdk.dx.tools.register({
+  name: "my_tool",
+  description: "Custom tool",
+  inputSchema: { type: "object", properties: {...} },
+  handler: async (input) => { ... },
+});
+```
+
+## Agent Hooks System
+
+Agent hooks enable event-driven coordination between orchestrators and coding agents:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Agent Lifecycle                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+    ┌─────────────────────────┼─────────────────────────┐
+    │                         │                         │
+    ▼                         ▼                         ▼
+┌──────────┐          ┌──────────────┐          ┌──────────────┐
+│  START   │          │   WORKING    │          │    DONE      │
+│          │          │              │          │              │
+│ Emit:    │─────────▶│ Emit:        │─────────▶│ Emit:        │
+│ • init   │          │ • heartbeat  │          │ • complete   │
+│ • ready  │          │ • progress   │          │ • error      │
+└──────────┘          │ • stall      │          └──────────────┘
+                      └──────────────┘
+                             │
+                             │ Events
+                             ▼
+                    ┌──────────────────┐
+                    │   Orchestrator   │
+                    │                  │
+                    │ • Folder Control │
+                    │ • Master Control │
+                    └──────────────────┘
+```
+
+### Supported Agent Providers
+
+| Agent | CLI | Config File | Key Env Var |
+|-------|-----|-------------|-------------|
+| Claude Code | `claude` | `CLAUDE.md` | `ANTHROPIC_API_KEY` |
+| OpenAI Codex | `codex` | `AGENTS.md` | `OPENAI_API_KEY` |
+| Gemini CLI | `gemini` | `GEMINI.md` | `GOOGLE_API_KEY` |
+| OpenCode | `opencode` | `OPENCODE.md` | `OPENAI_API_KEY` |
+
+### Agent Event Flow
+
+```
+Agent (Claude/Codex/Gemini/OpenCode)
+         │
+         │ HTTP POST /api/orchestrators/agent-event
+         │ { type: "heartbeat", sessionId, context }
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Event Handler                                │
+│                                                                 │
+│  1. Update session.lastActivityAt timestamp                     │
+│  2. Route to appropriate orchestrator (Folder → Master)         │
+│  3. Generate insights if stall detected                         │
+│  4. Trigger meta-agent optimization if needed                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Orchestrator Hierarchy
+
+The orchestration system uses a **hierarchical supervision** model:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Master Control                              │
+│                                                                 │
+│  • Monitors ALL sessions for user                               │
+│  • Receives escalations from Folder Controls                    │
+│  • Cross-folder coordination                                    │
+│  • Global knowledge aggregation                                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+            ┌───────────────┼───────────────┐
+            │               │               │
+            ▼               ▼               ▼
+┌───────────────┐ ┌───────────────┐ ┌───────────────┐
+│Folder Control │ │Folder Control │ │Folder Control │
+│   Project A   │ │   Project B   │ │   Project C   │
+├───────────────┤ ├───────────────┤ ├───────────────┤
+│ • Project     │ │ • Project     │ │ • Project     │
+│   knowledge   │ │   knowledge   │ │   knowledge   │
+│ • Local hints │ │ • Local hints │ │ • Local hints │
+│ • Escalation  │ │ • Escalation  │ │ • Escalation  │
+└───────┬───────┘ └───────┬───────┘ └───────┬───────┘
+        │                 │                 │
+        ▼                 ▼                 ▼
+   [Sessions]        [Sessions]        [Sessions]
+```
+
+### Orchestrator Insights
+
+When stall detection triggers, insights are generated:
+
+```typescript
+interface OrchestratorInsight {
+  id: string;
+  orchestratorId: string;
+  sessionId: string;
+  type: "stall" | "error" | "suggestion";
+  severity: "low" | "medium" | "high" | "critical";
+  title: string;
+  description: string;
+  suggestedActions: InsightAction[];
+  context: Record<string, unknown>;
+  status: "pending" | "acknowledged" | "resolved";
+  createdAt: Date;
+  resolvedAt: Date | null;
+}
+```
+
+### Stall Detection Algorithm
+
+1. **Heartbeat Check**: Compare `lastActivityAt` against threshold (default: 5 min)
+2. **Scrollback Analysis**: Capture tmux scrollback for context
+3. **Confidence Scoring**: `0.7 + (0.05 × extra_minutes)`, reduced 50% if < 5 lines
+4. **Insight Generation**: Create actionable suggestions
+5. **Meta-Agent Trigger**: Optionally invoke meta-agent optimization

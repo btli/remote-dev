@@ -362,16 +362,18 @@ export function useSessionMemory({
     }
   }, [autoFetch, fetchMemories]);
 
-  // Polling
+  // Polling - always return cleanup to handle condition changes
   useEffect(() => {
     if (pollInterval > 0 && (sessionId || folderId)) {
       intervalRef.current = setInterval(fetchMemories, pollInterval);
-      return () => {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-        }
-      };
     }
+    // Always return cleanup to clear any existing interval when deps change
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
   }, [pollInterval, sessionId, folderId, fetchMemories]);
 
   // Compute flat list and counts
