@@ -14,6 +14,7 @@
 //! - **learning**: Learning extraction and knowledge management
 //! - **project**: Project detection and metadata
 //! - **memory**: Hierarchical working memory system
+//! - **note**: Note-taking service for AI agents
 
 pub mod auth;
 #[cfg(feature = "client")]
@@ -25,6 +26,8 @@ pub mod learning;
 #[cfg(feature = "db")]
 pub mod memory;
 pub mod mcp;
+#[cfg(feature = "db")]
+pub mod note;
 pub mod orchestrator;
 pub mod project;
 pub mod session;
@@ -107,6 +110,20 @@ mod ts_export {
         // Note types
         Note::export_all_to(output_path).expect("Failed to export Note");
         NewNote::export_all_to(output_path).expect("Failed to export NewNote");
+        NoteType::export_all_to(output_path).expect("Failed to export NoteType");
+        UpdateNote::export_all_to(output_path).expect("Failed to export UpdateNote");
+        NoteFilter::export_all_to(output_path).expect("Failed to export NoteFilter");
+
+        // SDK Insight types
+        SdkInsight::export_all_to(output_path).expect("Failed to export SdkInsight");
+        NewSdkInsight::export_all_to(output_path).expect("Failed to export NewSdkInsight");
+        SdkInsightType::export_all_to(output_path).expect("Failed to export SdkInsightType");
+        InsightApplicability::export_all_to(output_path).expect("Failed to export InsightApplicability");
+        SdkInsightFilter::export_all_to(output_path).expect("Failed to export SdkInsightFilter");
+        UpdateSdkInsight::export_all_to(output_path).expect("Failed to export UpdateSdkInsight");
+        ApplicationMethod::export_all_to(output_path).expect("Failed to export ApplicationMethod");
+        SdkInsightApplication::export_all_to(output_path).expect("Failed to export SdkInsightApplication");
+        NewSdkInsightApplication::export_all_to(output_path).expect("Failed to export NewSdkInsightApplication");
 
         // Extension types
         ExtensionState::export_all_to(output_path).expect("Failed to export ExtensionState");

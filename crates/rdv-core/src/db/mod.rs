@@ -1928,17 +1928,28 @@ impl Database {
 
         let tags_json = serde_json::to_string(&note.tags)
             .map_err(|e| Error::Serialization(e.to_string()))?;
+        let context_json = note.context
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".to_string());
 
         conn.execute(
-            "INSERT INTO sdk_note (id, user_id, session_id, folder_id, content, tags_json, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO sdk_note (id, user_id, session_id, folder_id, type, title, content, tags_json, context_json, priority, pinned, archived, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 id,
                 note.user_id,
                 note.session_id,
                 note.folder_id,
+                note.note_type.to_string(),
+                note.title,
                 note.content,
                 tags_json,
+                context_json,
+                note.priority,
+                false,  // pinned
+                false,  // archived
+                now,
                 now,
             ],
         )?;
@@ -1951,7 +1962,7 @@ impl Database {
         let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
         let note = conn
             .query_row(
-                "SELECT id, user_id, session_id, folder_id, content, tags_json, embedding_id, created_at
+                "SELECT id, user_id, session_id, folder_id, type, title, content, tags_json, context_json, embedding_id, priority, pinned, archived, created_at, updated_at
                  FROM sdk_note WHERE id = ?1",
                 params![id],
                 Self::map_note,
@@ -1960,34 +1971,41 @@ impl Database {
         Ok(note)
     }
 
-    /// List notes for a user
-    pub fn list_notes(
-        &self,
-        user_id: &str,
-        session_id: Option<&str>,
-        folder_id: Option<&str>,
-        limit: Option<usize>,
-    ) -> Result<Vec<Note>> {
+    /// List notes with filter
+    pub fn list_notes_filtered(&self, filter: &NoteFilter) -> Result<Vec<Note>> {
         let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
 
         let mut query = String::from(
-            "SELECT id, user_id, session_id, folder_id, content, tags_json, embedding_id, created_at
+            "SELECT id, user_id, session_id, folder_id, type, title, content, tags_json, context_json, embedding_id, priority, pinned, archived, created_at, updated_at
              FROM sdk_note WHERE user_id = ?1",
         );
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id.to_string())];
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(filter.user_id.clone())];
 
-        if let Some(sid) = session_id {
+        if let Some(ref sid) = filter.session_id {
             query.push_str(" AND session_id = ?");
-            params_vec.push(Box::new(sid.to_string()));
+            params_vec.push(Box::new(sid.clone()));
         }
-        if let Some(fid) = folder_id {
+        if let Some(ref fid) = filter.folder_id {
             query.push_str(" AND folder_id = ?");
-            params_vec.push(Box::new(fid.to_string()));
+            params_vec.push(Box::new(fid.clone()));
+        }
+        if let Some(ref nt) = filter.note_type {
+            query.push_str(" AND type = ?");
+            params_vec.push(Box::new(nt.to_string()));
+        }
+        if let Some(archived) = filter.archived {
+            query.push_str(" AND archived = ?");
+            params_vec.push(Box::new(archived));
+        }
+        if let Some(pinned) = filter.pinned {
+            query.push_str(" AND pinned = ?");
+            params_vec.push(Box::new(pinned));
         }
 
-        query.push_str(" ORDER BY created_at DESC");
+        // Order by pinned first, then by priority descending, then by updated_at descending
+        query.push_str(" ORDER BY pinned DESC, priority DESC, updated_at DESC");
 
-        if let Some(l) = limit {
+        if let Some(l) = filter.limit {
             query.push_str(&format!(" LIMIT {}", l));
         }
 
@@ -2001,19 +2019,114 @@ impl Database {
         Ok(notes)
     }
 
+    /// List notes for a user (backward compatible)
+    pub fn list_notes(
+        &self,
+        user_id: &str,
+        session_id: Option<&str>,
+        folder_id: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Note>> {
+        self.list_notes_filtered(&NoteFilter {
+            user_id: user_id.to_string(),
+            session_id: session_id.map(|s| s.to_string()),
+            folder_id: folder_id.map(|s| s.to_string()),
+            archived: Some(false), // By default, don't show archived notes
+            limit,
+            ..Default::default()
+        })
+    }
+
+    /// Update a note
+    pub fn update_note(&self, id: &str, update: &UpdateNote) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Build dynamic update query
+        let mut updates = vec!["updated_at = ?".to_string()];
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+
+        if let Some(ref nt) = update.note_type {
+            updates.push("type = ?".to_string());
+            params_vec.push(Box::new(nt.to_string()));
+        }
+        if let Some(ref title) = update.title {
+            updates.push("title = ?".to_string());
+            params_vec.push(Box::new(title.clone()));
+        }
+        if let Some(ref content) = update.content {
+            updates.push("content = ?".to_string());
+            params_vec.push(Box::new(content.clone()));
+        }
+        if let Some(ref tags) = update.tags {
+            let tags_json = serde_json::to_string(tags)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            updates.push("tags_json = ?".to_string());
+            params_vec.push(Box::new(tags_json));
+        }
+        if let Some(ref context) = update.context {
+            updates.push("context_json = ?".to_string());
+            params_vec.push(Box::new(context.to_string()));
+        }
+        if let Some(priority) = update.priority {
+            updates.push("priority = ?".to_string());
+            params_vec.push(Box::new(priority));
+        }
+        if let Some(pinned) = update.pinned {
+            updates.push("pinned = ?".to_string());
+            params_vec.push(Box::new(pinned));
+        }
+        if let Some(archived) = update.archived {
+            updates.push("archived = ?".to_string());
+            params_vec.push(Box::new(archived));
+        }
+
+        params_vec.push(Box::new(id.to_string()));
+
+        let query = format!(
+            "UPDATE sdk_note SET {} WHERE id = ?",
+            updates.join(", ")
+        );
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = conn.execute(&query, params_refs.as_slice())?;
+
+        Ok(rows > 0)
+    }
+
     /// Search notes by tag
     pub fn search_notes_by_tag(&self, user_id: &str, tag: &str) -> Result<Vec<Note>> {
         let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
         let tag_pattern = format!("%\"{}\"%" , tag);
 
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, session_id, folder_id, content, tags_json, embedding_id, created_at
+            "SELECT id, user_id, session_id, folder_id, type, title, content, tags_json, context_json, embedding_id, priority, pinned, archived, created_at, updated_at
              FROM sdk_note WHERE user_id = ?1 AND tags_json LIKE ?2
-             ORDER BY created_at DESC",
+             ORDER BY pinned DESC, priority DESC, updated_at DESC",
         )?;
 
         let notes = stmt
             .query_map(params![user_id, tag_pattern], Self::map_note)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(notes)
+    }
+
+    /// Search notes by content
+    pub fn search_notes_by_content(&self, user_id: &str, query: &str, limit: Option<usize>) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let search_pattern = format!("%{}%", query);
+        let limit_val = limit.unwrap_or(50);
+
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, session_id, folder_id, type, title, content, tags_json, context_json, embedding_id, priority, pinned, archived, created_at, updated_at
+             FROM sdk_note WHERE user_id = ?1 AND (content LIKE ?2 OR title LIKE ?2)
+             ORDER BY pinned DESC, priority DESC, updated_at DESC
+             LIMIT ?3",
+        )?;
+
+        let notes = stmt
+            .query_map(params![user_id, search_pattern, limit_val as i64], Self::map_note)?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(notes)
@@ -2026,16 +2139,360 @@ impl Database {
         Ok(rows > 0)
     }
 
+    /// Set embedding ID for a note
+    pub fn set_note_embedding(&self, id: &str, embedding_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let rows = conn.execute(
+            "UPDATE sdk_note SET embedding_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![embedding_id, now, id],
+        )?;
+        Ok(rows > 0)
+    }
+
     fn map_note(row: &rusqlite::Row) -> rusqlite::Result<Note> {
+        let note_type_str: String = row.get(4)?;
+        let note_type = note_type_str.parse().unwrap_or(NoteType::Observation);
+
         Ok(Note {
             id: row.get(0)?,
             user_id: row.get(1)?,
             session_id: row.get(2)?,
             folder_id: row.get(3)?,
-            content: row.get(4)?,
-            tags_json: row.get(5)?,
-            embedding_id: row.get(6)?,
-            created_at: row.get(7)?,
+            note_type,
+            title: row.get(5)?,
+            content: row.get(6)?,
+            tags_json: row.get(7)?,
+            context_json: row.get::<_, Option<String>>(8)?.unwrap_or_else(|| "{}".to_string()),
+            embedding_id: row.get(9)?,
+            priority: row.get::<_, Option<f64>>(10)?.unwrap_or(0.5),
+            pinned: row.get::<_, Option<bool>>(11)?.unwrap_or(false),
+            archived: row.get::<_, Option<bool>>(12)?.unwrap_or(false),
+            created_at: row.get(13)?,
+            updated_at: row.get::<_, Option<i64>>(14)?.unwrap_or_else(|| row.get(13).unwrap_or(0)),
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Insight Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new SDK insight
+    pub fn create_sdk_insight(&self, insight: &NewSdkInsight) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let source_notes_json = serde_json::to_string(&insight.source_notes)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+        let source_sessions_json = serde_json::to_string(&insight.source_sessions)
+            .map_err(|e| Error::Serialization(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO sdk_insight (id, user_id, folder_id, type, applicability, title, description, applicability_context, source_notes_json, source_sessions_json, confidence, application_count, feedback_score, verified, active, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, 0.0, 0, 1, ?12, ?13)",
+            params![
+                id,
+                insight.user_id,
+                insight.folder_id,
+                insight.insight_type.to_string(),
+                insight.applicability.to_string(),
+                insight.title,
+                insight.description,
+                insight.applicability_context,
+                source_notes_json,
+                source_sessions_json,
+                insight.confidence,
+                now,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get SDK insight by ID
+    pub fn get_sdk_insight(&self, id: &str) -> Result<Option<SdkInsight>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let insight = conn
+            .query_row(
+                "SELECT id, user_id, folder_id, type, applicability, title, description, applicability_context, source_notes_json, source_sessions_json, confidence, application_count, feedback_score, embedding_id, verified, active, created_at, updated_at, last_applied_at
+                 FROM sdk_insight WHERE id = ?1",
+                params![id],
+                Self::map_sdk_insight,
+            )
+            .optional()?;
+        Ok(insight)
+    }
+
+    /// List SDK insights with filter
+    pub fn list_sdk_insights(&self, filter: &SdkInsightFilter) -> Result<Vec<SdkInsight>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        let mut query = String::from(
+            "SELECT id, user_id, folder_id, type, applicability, title, description, applicability_context, source_notes_json, source_sessions_json, confidence, application_count, feedback_score, embedding_id, verified, active, created_at, updated_at, last_applied_at
+             FROM sdk_insight WHERE user_id = ?1",
+        );
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(filter.user_id.clone())];
+
+        if let Some(ref fid) = filter.folder_id {
+            query.push_str(" AND folder_id = ?");
+            params_vec.push(Box::new(fid.clone()));
+        }
+        if let Some(ref it) = filter.insight_type {
+            query.push_str(" AND type = ?");
+            params_vec.push(Box::new(it.to_string()));
+        }
+        if let Some(ref app) = filter.applicability {
+            query.push_str(" AND applicability = ?");
+            params_vec.push(Box::new(app.to_string()));
+        }
+        if let Some(ref ctx) = filter.applicability_context {
+            query.push_str(" AND applicability_context = ?");
+            params_vec.push(Box::new(ctx.clone()));
+        }
+        if let Some(active) = filter.active {
+            query.push_str(" AND active = ?");
+            params_vec.push(Box::new(active));
+        }
+        if let Some(verified) = filter.verified {
+            query.push_str(" AND verified = ?");
+            params_vec.push(Box::new(verified));
+        }
+        if let Some(min_conf) = filter.min_confidence {
+            query.push_str(" AND confidence >= ?");
+            params_vec.push(Box::new(min_conf));
+        }
+
+        query.push_str(" ORDER BY confidence DESC, application_count DESC, updated_at DESC");
+
+        if let Some(l) = filter.limit {
+            query.push_str(&format!(" LIMIT {}", l));
+        }
+
+        let mut stmt = conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let insights = stmt
+            .query_map(params_refs.as_slice(), Self::map_sdk_insight)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(insights)
+    }
+
+    /// Update an SDK insight
+    pub fn update_sdk_insight(&self, id: &str, update: &UpdateSdkInsight) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let mut updates = vec!["updated_at = ?".to_string()];
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+
+        if let Some(ref title) = update.title {
+            updates.push("title = ?".to_string());
+            params_vec.push(Box::new(title.clone()));
+        }
+        if let Some(ref desc) = update.description {
+            updates.push("description = ?".to_string());
+            params_vec.push(Box::new(desc.clone()));
+        }
+        if let Some(ref app) = update.applicability {
+            updates.push("applicability = ?".to_string());
+            params_vec.push(Box::new(app.to_string()));
+        }
+        if let Some(ref ctx) = update.applicability_context {
+            updates.push("applicability_context = ?".to_string());
+            params_vec.push(Box::new(ctx.clone()));
+        }
+        if let Some(conf) = update.confidence {
+            updates.push("confidence = ?".to_string());
+            params_vec.push(Box::new(conf));
+        }
+        if let Some(verified) = update.verified {
+            updates.push("verified = ?".to_string());
+            params_vec.push(Box::new(verified));
+        }
+        if let Some(active) = update.active {
+            updates.push("active = ?".to_string());
+            params_vec.push(Box::new(active));
+        }
+
+        params_vec.push(Box::new(id.to_string()));
+
+        let query = format!(
+            "UPDATE sdk_insight SET {} WHERE id = ?",
+            updates.join(", ")
+        );
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = conn.execute(&query, params_refs.as_slice())?;
+
+        Ok(rows > 0)
+    }
+
+    /// Increment SDK insight application count and update last_applied_at
+    pub fn record_sdk_insight_application(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let rows = conn.execute(
+            "UPDATE sdk_insight SET application_count = application_count + 1, last_applied_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Delete an SDK insight
+    pub fn delete_sdk_insight(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute("DELETE FROM sdk_insight WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    /// Set embedding ID for an SDK insight
+    pub fn set_sdk_insight_embedding(&self, id: &str, embedding_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let rows = conn.execute(
+            "UPDATE sdk_insight SET embedding_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![embedding_id, now, id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    fn map_sdk_insight(row: &rusqlite::Row) -> rusqlite::Result<SdkInsight> {
+        let insight_type_str: String = row.get(3)?;
+        let insight_type = insight_type_str.parse().map_err(|e: String| {
+            rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+        })?;
+
+        let applicability_str: String = row.get(4)?;
+        let applicability = applicability_str.parse().map_err(|e: String| {
+            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+        })?;
+
+        Ok(SdkInsight {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            folder_id: row.get(2)?,
+            insight_type,
+            applicability,
+            title: row.get(5)?,
+            description: row.get(6)?,
+            applicability_context: row.get(7)?,
+            source_notes_json: row.get(8)?,
+            source_sessions_json: row.get(9)?,
+            confidence: row.get(10)?,
+            application_count: row.get(11)?,
+            feedback_score: row.get(12)?,
+            embedding_id: row.get(13)?,
+            verified: row.get(14)?,
+            active: row.get(15)?,
+            created_at: row.get(16)?,
+            updated_at: row.get(17)?,
+            last_applied_at: row.get(18)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Insight Application Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Record an SDK insight application
+    pub fn create_sdk_insight_application(&self, app: &NewSdkInsightApplication) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        conn.execute(
+            "INSERT INTO sdk_insight_application (id, insight_id, session_id, user_id, application_method, applied_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id,
+                app.insight_id,
+                app.session_id,
+                app.user_id,
+                app.application_method.to_string(),
+                now,
+            ],
+        )?;
+
+        // Also update the insight's application count
+        self.record_sdk_insight_application(&app.insight_id)?;
+
+        Ok(id)
+    }
+
+    /// Record feedback for an SDK insight application
+    pub fn record_sdk_insight_feedback(
+        &self,
+        application_id: &str,
+        feedback: i32,
+        comment: Option<&str>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let rows = conn.execute(
+            "UPDATE sdk_insight_application SET feedback = ?1, feedback_comment = ?2, feedback_at = ?3 WHERE id = ?4",
+            params![feedback, comment, now, application_id],
+        )?;
+
+        // Also update the insight's feedback score (weighted average)
+        if rows > 0 {
+            // Get the insight_id for this application
+            let insight_id: String = conn.query_row(
+                "SELECT insight_id FROM sdk_insight_application WHERE id = ?1",
+                params![application_id],
+                |row| row.get(0),
+            )?;
+
+            // Calculate new feedback score from all applications with feedback
+            let new_score: f64 = conn.query_row(
+                "SELECT COALESCE(AVG(CAST(feedback AS REAL)), 0.0) FROM sdk_insight_application WHERE insight_id = ?1 AND feedback IS NOT NULL",
+                params![insight_id],
+                |row| row.get(0),
+            )?;
+
+            conn.execute(
+                "UPDATE sdk_insight SET feedback_score = ?1, updated_at = ?2 WHERE id = ?3",
+                params![new_score, now, insight_id],
+            )?;
+        }
+
+        Ok(rows > 0)
+    }
+
+    /// Get SDK insight applications for an insight
+    pub fn get_sdk_insight_applications(&self, insight_id: &str) -> Result<Vec<SdkInsightApplication>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, insight_id, session_id, user_id, application_method, feedback, feedback_comment, applied_at, feedback_at
+             FROM sdk_insight_application WHERE insight_id = ?1
+             ORDER BY applied_at DESC",
+        )?;
+
+        let apps = stmt
+            .query_map(params![insight_id], Self::map_sdk_insight_application)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(apps)
+    }
+
+    fn map_sdk_insight_application(row: &rusqlite::Row) -> rusqlite::Result<SdkInsightApplication> {
+        let method_str: String = row.get(4)?;
+        let application_method = method_str.parse().map_err(|e: String| {
+            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+        })?;
+
+        Ok(SdkInsightApplication {
+            id: row.get(0)?,
+            insight_id: row.get(1)?,
+            session_id: row.get(2)?,
+            user_id: row.get(3)?,
+            application_method,
+            feedback: row.get(5)?,
+            feedback_comment: row.get(6)?,
+            applied_at: row.get(7)?,
+            feedback_at: row.get(8)?,
         })
     }
 

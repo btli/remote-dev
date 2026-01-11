@@ -566,6 +566,60 @@ pub struct MemoryQueryFilter {
 // SDK Note Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Note type for categorization
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
+#[serde(rename_all = "snake_case")]
+#[derive(Hash)]
+pub enum NoteType {
+    /// User observation or note
+    #[default]
+    Observation,
+    /// Decision made during work
+    Decision,
+    /// Pitfall or issue discovered
+    Gotcha,
+    /// Pattern identified
+    Pattern,
+    /// Unanswered question
+    Question,
+    /// Action item
+    Todo,
+    /// Reference to external resource
+    Reference,
+}
+
+impl std::fmt::Display for NoteType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoteType::Observation => write!(f, "observation"),
+            NoteType::Decision => write!(f, "decision"),
+            NoteType::Gotcha => write!(f, "gotcha"),
+            NoteType::Pattern => write!(f, "pattern"),
+            NoteType::Question => write!(f, "question"),
+            NoteType::Todo => write!(f, "todo"),
+            NoteType::Reference => write!(f, "reference"),
+        }
+    }
+}
+
+impl std::str::FromStr for NoteType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "observation" => Ok(NoteType::Observation),
+            "decision" => Ok(NoteType::Decision),
+            "gotcha" => Ok(NoteType::Gotcha),
+            "pattern" => Ok(NoteType::Pattern),
+            "question" => Ok(NoteType::Question),
+            "todo" => Ok(NoteType::Todo),
+            "reference" => Ok(NoteType::Reference),
+            _ => Err(format!("Invalid note type: {}", s)),
+        }
+    }
+}
+
 /// Note entry for the note-taking service
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-types", derive(TS))]
@@ -576,10 +630,41 @@ pub struct Note {
     pub user_id: String,
     pub session_id: Option<String>,
     pub folder_id: Option<String>,
+    /// Note type for categorization
+    #[serde(rename = "type")]
+    pub note_type: NoteType,
+    /// Optional short title
+    pub title: Option<String>,
+    /// Note content
     pub content: String,
+    /// Tags as JSON array
     pub tags_json: String,
+    /// Context information (file paths, line numbers, code snippets, etc.)
+    pub context_json: String,
+    /// Embedding ID for semantic search
     pub embedding_id: Option<String>,
+    /// Priority (higher = more important)
+    pub priority: f64,
+    /// Whether this note is pinned
+    pub pinned: bool,
+    /// Whether this note has been archived
+    pub archived: bool,
+    /// Creation timestamp (milliseconds)
     pub created_at: i64,
+    /// Last update timestamp (milliseconds)
+    pub updated_at: i64,
+}
+
+impl Note {
+    /// Parse tags from JSON
+    pub fn tags(&self) -> Vec<String> {
+        serde_json::from_str(&self.tags_json).unwrap_or_default()
+    }
+
+    /// Parse context from JSON
+    pub fn context(&self) -> serde_json::Value {
+        serde_json::from_str(&self.context_json).unwrap_or(serde_json::json!({}))
+    }
 }
 
 /// Input for creating a new note
@@ -591,8 +676,337 @@ pub struct NewNote {
     pub user_id: String,
     pub session_id: Option<String>,
     pub folder_id: Option<String>,
+    #[serde(default)]
+    pub note_type: NoteType,
+    pub title: Option<String>,
     pub content: String,
+    #[serde(default)]
     pub tags: Vec<String>,
+    /// Context information (file paths, line numbers, code snippets, etc.)
+    pub context: Option<serde_json::Value>,
+    #[serde(default = "default_priority")]
+    pub priority: f64,
+}
+
+fn default_priority() -> f64 {
+    0.5
+}
+
+/// Input for updating a note
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateNote {
+    pub note_type: Option<NoteType>,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub context: Option<serde_json::Value>,
+    pub priority: Option<f64>,
+    pub pinned: Option<bool>,
+    pub archived: Option<bool>,
+}
+
+/// Filter for listing notes
+#[derive(Debug, Clone, Default)]
+pub struct NoteFilter {
+    pub user_id: String,
+    pub session_id: Option<String>,
+    pub folder_id: Option<String>,
+    pub note_type: Option<NoteType>,
+    pub archived: Option<bool>,
+    pub pinned: Option<bool>,
+    pub limit: Option<usize>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDK Insight Types (distinct from orchestrator Insight types)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// SDK Insight type for categorization (distinct from orchestrator insights)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum SdkInsightType {
+    /// Code style, naming, structure convention
+    Convention,
+    /// Recurring solution or approach
+    Pattern,
+    /// Something to avoid
+    AntiPattern,
+    /// Reusable capability or technique
+    Skill,
+    /// Common pitfall or error
+    Gotcha,
+    /// Recommended approach
+    BestPractice,
+    /// Dependency relationship or requirement
+    Dependency,
+    /// Performance insight
+    Performance,
+}
+
+impl std::fmt::Display for SdkInsightType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SdkInsightType::Convention => write!(f, "convention"),
+            SdkInsightType::Pattern => write!(f, "pattern"),
+            SdkInsightType::AntiPattern => write!(f, "anti_pattern"),
+            SdkInsightType::Skill => write!(f, "skill"),
+            SdkInsightType::Gotcha => write!(f, "gotcha"),
+            SdkInsightType::BestPractice => write!(f, "best_practice"),
+            SdkInsightType::Dependency => write!(f, "dependency"),
+            SdkInsightType::Performance => write!(f, "performance"),
+        }
+    }
+}
+
+impl std::str::FromStr for SdkInsightType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "convention" => Ok(SdkInsightType::Convention),
+            "pattern" => Ok(SdkInsightType::Pattern),
+            "anti_pattern" => Ok(SdkInsightType::AntiPattern),
+            "skill" => Ok(SdkInsightType::Skill),
+            "gotcha" => Ok(SdkInsightType::Gotcha),
+            "best_practice" => Ok(SdkInsightType::BestPractice),
+            "dependency" => Ok(SdkInsightType::Dependency),
+            "performance" => Ok(SdkInsightType::Performance),
+            _ => Err(format!("Invalid sdk insight type: {}", s)),
+        }
+    }
+}
+
+/// Insight applicability scope
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum InsightApplicability {
+    /// Only applies to current session
+    Session,
+    /// Applies to current folder/project
+    #[default]
+    Folder,
+    /// Applies across all projects
+    Global,
+    /// Applies to specific programming language
+    Language,
+    /// Applies to specific framework
+    Framework,
+}
+
+impl std::fmt::Display for InsightApplicability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InsightApplicability::Session => write!(f, "session"),
+            InsightApplicability::Folder => write!(f, "folder"),
+            InsightApplicability::Global => write!(f, "global"),
+            InsightApplicability::Language => write!(f, "language"),
+            InsightApplicability::Framework => write!(f, "framework"),
+        }
+    }
+}
+
+impl std::str::FromStr for InsightApplicability {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "session" => Ok(InsightApplicability::Session),
+            "folder" => Ok(InsightApplicability::Folder),
+            "global" => Ok(InsightApplicability::Global),
+            "language" => Ok(InsightApplicability::Language),
+            "framework" => Ok(InsightApplicability::Framework),
+            _ => Err(format!("Invalid insight applicability: {}", s)),
+        }
+    }
+}
+
+/// Extracted insight from notes and sessions (distinct from orchestrator Insight)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct SdkInsight {
+    pub id: String,
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    /// Insight type for categorization
+    #[serde(rename = "type")]
+    pub insight_type: SdkInsightType,
+    /// Applicability scope
+    pub applicability: InsightApplicability,
+    /// Short descriptive title
+    pub title: String,
+    /// Full description
+    pub description: String,
+    /// Specific applicability context (e.g., "typescript", "react")
+    pub applicability_context: Option<String>,
+    /// Source notes that contributed to this insight (JSON array of note IDs)
+    pub source_notes_json: String,
+    /// Source sessions (JSON array of session IDs)
+    pub source_sessions_json: Option<String>,
+    /// Confidence score (0.0 to 1.0)
+    pub confidence: f64,
+    /// How many times this insight has been applied
+    pub application_count: i32,
+    /// Feedback score (average of user ratings, -1.0 to 1.0)
+    pub feedback_score: f64,
+    /// Embedding ID for semantic search
+    pub embedding_id: Option<String>,
+    /// Whether this insight is verified by user
+    pub verified: bool,
+    /// Whether this insight is active (can be applied)
+    pub active: bool,
+    /// Creation timestamp (milliseconds)
+    pub created_at: i64,
+    /// Last update timestamp (milliseconds)
+    pub updated_at: i64,
+    /// When insight was last applied (milliseconds)
+    pub last_applied_at: Option<i64>,
+}
+
+impl SdkInsight {
+    /// Parse source notes from JSON
+    pub fn source_notes(&self) -> Vec<String> {
+        serde_json::from_str(&self.source_notes_json).unwrap_or_default()
+    }
+
+    /// Parse source sessions from JSON
+    pub fn source_sessions(&self) -> Vec<String> {
+        self.source_sessions_json
+            .as_ref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default()
+    }
+}
+
+/// Input for creating a new SDK insight
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewSdkInsight {
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub insight_type: SdkInsightType,
+    #[serde(default)]
+    pub applicability: InsightApplicability,
+    pub title: String,
+    pub description: String,
+    pub applicability_context: Option<String>,
+    #[serde(default)]
+    pub source_notes: Vec<String>,
+    #[serde(default)]
+    pub source_sessions: Vec<String>,
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
+}
+
+fn default_confidence() -> f64 {
+    0.5
+}
+
+/// Input for updating an SDK insight
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSdkInsight {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub applicability: Option<InsightApplicability>,
+    pub applicability_context: Option<String>,
+    pub confidence: Option<f64>,
+    pub verified: Option<bool>,
+    pub active: Option<bool>,
+}
+
+/// Filter for listing SDK insights
+#[derive(Debug, Clone, Default)]
+pub struct SdkInsightFilter {
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub insight_type: Option<SdkInsightType>,
+    pub applicability: Option<InsightApplicability>,
+    pub applicability_context: Option<String>,
+    pub active: Option<bool>,
+    pub verified: Option<bool>,
+    pub min_confidence: Option<f64>,
+    pub limit: Option<usize>,
+}
+
+/// Application method for tracking insight usage
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationMethod {
+    /// Automatically applied by system
+    Automatic,
+    /// Suggested to user and accepted
+    Suggested,
+    /// Manually applied by user
+    Manual,
+}
+
+impl std::fmt::Display for ApplicationMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApplicationMethod::Automatic => write!(f, "automatic"),
+            ApplicationMethod::Suggested => write!(f, "suggested"),
+            ApplicationMethod::Manual => write!(f, "manual"),
+        }
+    }
+}
+
+impl std::str::FromStr for ApplicationMethod {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "automatic" => Ok(ApplicationMethod::Automatic),
+            "suggested" => Ok(ApplicationMethod::Suggested),
+            "manual" => Ok(ApplicationMethod::Manual),
+            _ => Err(format!("Invalid application method: {}", s)),
+        }
+    }
+}
+
+/// Record of an SDK insight being applied to a session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct SdkInsightApplication {
+    pub id: String,
+    pub insight_id: String,
+    pub session_id: String,
+    pub user_id: String,
+    /// How the insight was applied
+    pub application_method: ApplicationMethod,
+    /// User feedback on application (-1, 0, or 1)
+    pub feedback: Option<i32>,
+    /// Optional feedback comment
+    pub feedback_comment: Option<String>,
+    /// When the insight was applied (milliseconds)
+    pub applied_at: i64,
+    /// When feedback was provided (milliseconds)
+    pub feedback_at: Option<i64>,
+}
+
+/// Input for recording an SDK insight application
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewSdkInsightApplication {
+    pub insight_id: String,
+    pub session_id: String,
+    pub user_id: String,
+    pub application_method: ApplicationMethod,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
