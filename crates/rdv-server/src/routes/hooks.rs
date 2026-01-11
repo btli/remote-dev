@@ -15,7 +15,7 @@ use crate::state::AppState;
 
 /// Create hooks router
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/folders/:id/hooks", get(get_hooks_status))
+    Router::new().route("/folders/{id}/hooks", get(get_hooks_status))
 }
 
 #[derive(Debug, Serialize)]

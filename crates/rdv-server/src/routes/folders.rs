@@ -19,13 +19,13 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/folders", get(list_folders).post(create_folder))
         .route("/folders/reorder", post(reorder_folders))
         .route(
-            "/folders/:id",
+            "/folders/{id}",
             get(get_folder).patch(update_folder).delete(delete_folder),
         )
-        .route("/folders/:id/children", get(get_children))
+        .route("/folders/{id}/children", get(get_children))
         // Folder orchestrator routes
         .route(
-            "/folders/:id/orchestrator",
+            "/folders/{id}/orchestrator",
             get(get_folder_orchestrator)
                 .post(create_folder_orchestrator)
                 .delete(delete_folder_orchestrator),

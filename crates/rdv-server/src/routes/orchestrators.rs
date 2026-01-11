@@ -27,27 +27,27 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/orchestrators/reinitialize", post(reinitialize_orchestrator))
         .route(
-            "/orchestrators/:id",
+            "/orchestrators/{id}",
             get(get_orchestrator)
                 .patch(update_orchestrator)
                 .delete(delete_orchestrator),
         )
-        .route("/orchestrators/:id/insights", get(get_insights))
-        .route("/orchestrators/:id/insights/counts", get(get_insight_counts))
-        .route("/orchestrators/:id/inject", post(inject_command))
-        .route("/orchestrators/:id/pause", post(pause_orchestrator))
-        .route("/orchestrators/:id/resume", post(resume_orchestrator))
+        .route("/orchestrators/{id}/insights", get(get_insights))
+        .route("/orchestrators/{id}/insights/counts", get(get_insight_counts))
+        .route("/orchestrators/{id}/inject", post(inject_command))
+        .route("/orchestrators/{id}/pause", post(pause_orchestrator))
+        .route("/orchestrators/{id}/resume", post(resume_orchestrator))
         // Monitoring routes
-        .route("/orchestrators/:id/monitoring/start", post(start_monitoring))
-        .route("/orchestrators/:id/monitoring/stop", post(stop_monitoring))
-        .route("/orchestrators/:id/monitoring/status", get(get_monitoring_status))
-        .route("/orchestrators/:id/stalled-sessions", get(get_stalled_sessions))
-        .route("/orchestrators/:id/audit", get(get_audit_logs))
+        .route("/orchestrators/{id}/monitoring/start", post(start_monitoring))
+        .route("/orchestrators/{id}/monitoring/stop", post(stop_monitoring))
+        .route("/orchestrators/{id}/monitoring/status", get(get_monitoring_status))
+        .route("/orchestrators/{id}/stalled-sessions", get(get_stalled_sessions))
+        .route("/orchestrators/{id}/audit", get(get_audit_logs))
         // Insight routes
-        .route("/insights/:insight_id", get(get_insight).delete(delete_insight))
-        .route("/insights/:insight_id/resolve", post(resolve_insight))
+        .route("/insights/{insight_id}", get(get_insight).delete(delete_insight))
+        .route("/insights/{insight_id}/resolve", post(resolve_insight))
         .route("/insights/cleanup", post(cleanup_insights))
-        .route("/sessions/:session_id/insights/resolve", post(resolve_session_insights))
+        .route("/sessions/{session_id}/insights/resolve", post(resolve_session_insights))
 }
 
 #[derive(Debug, Serialize)]

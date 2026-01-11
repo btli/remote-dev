@@ -26,13 +26,13 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/reorder", post(reorder_sessions))
         .route(
-            "/sessions/:id",
+            "/sessions/{id}",
             get(get_session).patch(update_session).delete(close_session),
         )
-        .route("/sessions/:id/suspend", post(suspend_session))
-        .route("/sessions/:id/resume", post(resume_session))
-        .route("/sessions/:id/exec", post(exec_command))
-        .route("/sessions/:id/scrollback", get(get_scrollback))
+        .route("/sessions/{id}/suspend", post(suspend_session))
+        .route("/sessions/{id}/resume", post(resume_session))
+        .route("/sessions/{id}/exec", post(exec_command))
+        .route("/sessions/{id}/scrollback", get(get_scrollback))
 }
 
 #[derive(Debug, Deserialize)]

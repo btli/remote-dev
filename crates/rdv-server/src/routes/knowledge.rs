@@ -19,7 +19,7 @@ use crate::state::AppState;
 /// Create knowledge router
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/folders/:id/knowledge", get(get_knowledge).patch(update_knowledge).delete(delete_knowledge))
+        .route("/folders/{id}/knowledge", get(get_knowledge).patch(update_knowledge).delete(delete_knowledge))
 }
 
 #[derive(Debug, Deserialize)]
