@@ -53,7 +53,7 @@ pub mod migrations;
 pub use types::{
     TaskSpec, TaskType, ProjectContext, AgentConfig, AgentProvider,
     Benchmark, BenchmarkResult, TestCase, TestCaseResult,
-    OptimizationResult, OptimizationOptions, StopReason,
+    OptimizationResult, OptimizationOptions, OptimizationSnapshot, StopReason,
     RefinementSuggestion, RefinementTarget, ChangeType, ImprovementResult,
 };
 

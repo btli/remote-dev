@@ -347,6 +347,7 @@ impl MetaAgentTrait for MetaAgent {
         let opts = options.unwrap_or_default();
         let start = std::time::Instant::now();
         let mut score_history = Vec::new();
+        let mut iteration_history = Vec::new();
 
         // BUILD initial config
         let mut config = self.build(task, context).await?;
@@ -359,10 +360,27 @@ impl MetaAgentTrait for MetaAgent {
 
         while iterations < opts.max_iterations {
             iterations += 1;
+            let iteration_start = std::time::Instant::now();
 
             // TEST
             let results = self.test(&config, &benchmark).await?;
             score_history.push(results.score);
+
+            // Get suggestions count for this iteration
+            let suggestions = self.get_suggestions(&config, &results).await?;
+            let suggestions_to_apply = suggestions
+                .iter()
+                .filter(|s| s.confidence >= 0.5)
+                .count();
+
+            // Record iteration snapshot
+            iteration_history.push(OptimizationSnapshot {
+                iteration: iterations,
+                score: results.score,
+                config_version: config.version as usize,
+                suggestions_applied: suggestions_to_apply,
+                iteration_duration_ms: iteration_start.elapsed().as_millis() as u64,
+            });
 
             // Check if target reached
             if results.score >= opts.target_score {
@@ -371,6 +389,7 @@ impl MetaAgentTrait for MetaAgent {
                     iterations,
                     final_score: results.score,
                     score_history,
+                    iteration_history,
                     total_duration_ms: start.elapsed().as_millis() as u64,
                     reached_target: true,
                     stop_reason: StopReason::TargetReached,
@@ -384,6 +403,7 @@ impl MetaAgentTrait for MetaAgent {
                     iterations,
                     final_score: results.score,
                     score_history,
+                    iteration_history,
                     total_duration_ms: start.elapsed().as_millis() as u64,
                     reached_target: false,
                     stop_reason: StopReason::NoImprovement,
@@ -402,6 +422,7 @@ impl MetaAgentTrait for MetaAgent {
                     iterations,
                     final_score: last_score,
                     score_history,
+                    iteration_history,
                     total_duration_ms: start.elapsed().as_millis() as u64,
                     reached_target: false,
                     stop_reason: StopReason::Timeout,
@@ -414,6 +435,7 @@ impl MetaAgentTrait for MetaAgent {
             iterations,
             final_score: last_score,
             score_history,
+            iteration_history,
             total_duration_ms: start.elapsed().as_millis() as u64,
             reached_target: false,
             stop_reason: StopReason::MaxIterations,

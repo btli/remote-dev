@@ -111,6 +111,21 @@ pub struct TestCaseResult {
     pub duration_ms: u64,
 }
 
+/// A single iteration's snapshot during optimization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationSnapshot {
+    /// Iteration number (1-indexed)
+    pub iteration: usize,
+    /// Score achieved in this iteration
+    pub score: f64,
+    /// Config version used
+    pub config_version: usize,
+    /// Number of suggestions applied
+    pub suggestions_applied: usize,
+    /// Duration of this iteration in ms
+    pub iteration_duration_ms: u64,
+}
+
 /// Optimization result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationResult {
@@ -118,9 +133,34 @@ pub struct OptimizationResult {
     pub iterations: usize,
     pub final_score: f64,
     pub score_history: Vec<f64>,
+    /// Detailed history of each iteration
+    pub iteration_history: Vec<OptimizationSnapshot>,
     pub total_duration_ms: u64,
     pub reached_target: bool,
     pub stop_reason: StopReason,
+}
+
+impl OptimizationResult {
+    /// Get the improvement from first to last iteration
+    pub fn total_improvement(&self) -> f64 {
+        if self.score_history.len() < 2 {
+            return 0.0;
+        }
+        self.final_score - self.score_history[0]
+    }
+
+    /// Get average score improvement per iteration
+    pub fn average_improvement(&self) -> f64 {
+        if self.iterations <= 1 {
+            return 0.0;
+        }
+        self.total_improvement() / (self.iterations - 1) as f64
+    }
+
+    /// Check if optimization made any improvement
+    pub fn improved(&self) -> bool {
+        self.total_improvement() > 0.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
