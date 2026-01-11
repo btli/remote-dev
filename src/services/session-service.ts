@@ -274,6 +274,26 @@ export async function createSession(
       })
       .returning();
 
+    // Store session context in working memory (non-blocking)
+    import("./session-memory-service")
+      .then(({ onSessionStart }) => {
+        onSessionStart(
+          userId,
+          session.id,
+          input.folderId ?? null,
+          {
+            projectPath: workingPath ?? undefined,
+            workingDirectory: workingPath ?? undefined,
+            startupCommand: input.startupCommand ?? undefined,
+          }
+        ).catch((err) => {
+          console.warn("[SessionService] Failed to store session context:", err);
+        });
+      })
+      .catch(() => {
+        // Module load failed, ignore
+      });
+
     return mapDbSessionToSession(session);
   } catch (error) {
     // SECURITY: Clean up orphaned resources if DB insert fails
@@ -526,6 +546,18 @@ export async function closeSession(
       "SESSION_NOT_FOUND",
       sessionId
     );
+  }
+
+  // Promote valuable working memories to long-term before closing
+  try {
+    const { onSessionClose } = await import("./session-memory-service");
+    const promoted = await onSessionClose(userId, sessionId);
+    if (promoted > 0) {
+      console.log(`[SessionService] Promoted ${promoted} memories to long-term for session ${sessionId}`);
+    }
+  } catch (error) {
+    // Don't block session close on memory errors
+    console.warn("[SessionService] Failed to promote session memories:", error);
   }
 
   // Kill the tmux session

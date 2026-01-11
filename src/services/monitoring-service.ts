@@ -228,15 +228,33 @@ export function startStallChecking(
           `[MonitoringService] Found ${result.stalledSessions.length} potentially stalled sessions for ${orchestratorId}`
         );
 
-        // Log stalled sessions for debugging
+        // Process each stalled session
         for (const session of result.stalledSessions) {
           console.log(
             `[MonitoringService] Stalled: ${session.sessionName} (${session.stalledMinutes} min)`
           );
-        }
 
-        // TODO: Generate insights for stalled sessions
-        // This would create OrchestratorInsight records for the UI to display
+          // Capture scrollback and store observations to memory
+          try {
+            const scrollback = await captureSessionScrollback(session.tmuxSessionName);
+            if (scrollback) {
+              const { processScrollbackForMemory } = await import("./session-memory-service");
+              const storedIds = await processScrollbackForMemory(
+                userId,
+                session.sessionId,
+                session.folderId,
+                scrollback
+              );
+              if (storedIds.length > 0) {
+                console.log(
+                  `[MonitoringService] Stored ${storedIds.length} observations from scrollback`
+                );
+              }
+            }
+          } catch (error) {
+            console.warn(`[MonitoringService] Failed to process scrollback for memory:`, error);
+          }
+        }
       }
     } catch (error) {
       console.error(`[MonitoringService] Stall check failed for ${orchestratorId}:`, error);
