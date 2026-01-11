@@ -3,10 +3,25 @@
  *
  * Provides endpoints for the meta-agent configuration optimization system.
  * Maps to BUILD → TEST → IMPROVE loop operations.
+ *
+ * Endpoints:
+ * - POST /api/sdk/meta - Start optimization (sync or async)
+ * - GET /api/sdk/meta - Get optimization result by ID or list results
+ *
+ * Related routes:
+ * - GET /api/sdk/meta/status/[id] - Check job status and progress
+ * - GET /api/sdk/meta/history - List past optimizations
+ * - GET /api/sdk/meta/stream?jobId=xxx - SSE progress stream
  */
 
 import { NextResponse } from "next/server";
 import { withApiAuth } from "@/lib/api";
+import { db } from "@/db";
+import {
+  sdkMetaAgentConfigs,
+  sdkMetaAgentOptimizationJobs,
+} from "@/db/schema";
+import { eq, and, desc } from "drizzle-orm";
 
 // Meta-agent types (mirroring Rust SDK types)
 export interface TaskSpec {
@@ -73,13 +88,26 @@ export interface OptimizationResult {
   stopReason: "target_reached" | "max_iterations" | "no_improvement" | "timeout" | "error";
 }
 
-// Simple in-memory store for optimization results (in production, use database)
-const optimizationResults = new Map<string, OptimizationResult>();
+/**
+ * Extended options for optimization requests
+ */
+interface ExtendedOptimizationOptions extends OptimizationOptions {
+  async?: boolean;        // Run async (returns job ID immediately)
+  sessionId?: string;     // Link to terminal session
+  folderId?: string;      // Link to folder
+  provider?: "claude" | "codex" | "gemini" | "opencode";
+}
 
 /**
  * POST /api/sdk/meta - Run optimization
  *
  * Runs the BUILD → TEST → IMPROVE loop on the provided task and context.
+ *
+ * Options:
+ * - async: true - Returns job ID immediately, use /status/[id] to poll
+ * - sessionId: Link optimization to a terminal session
+ * - folderId: Link optimization to a folder
+ * - provider: Agent provider (default: claude)
  */
 export const POST = withApiAuth(async (request, { userId }) => {
   try {
@@ -87,7 +115,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
     const { task, context, options } = body as {
       task: TaskSpec;
       context: ProjectContext;
-      options?: OptimizationOptions;
+      options?: ExtendedOptimizationOptions;
     };
 
     // Validate required fields
@@ -113,93 +141,62 @@ export const POST = withApiAuth(async (request, { userId }) => {
     }
 
     // Resolve options with defaults
-    const opts: Required<OptimizationOptions> = {
+    const opts = {
       maxIterations: options?.maxIterations ?? 3,
       targetScore: options?.targetScore ?? 0.9,
       minImprovement: options?.minImprovement ?? 0.05,
       timeoutSeconds: options?.timeoutSeconds ?? 600,
       verbose: options?.verbose ?? false,
       dryRun: options?.dryRun ?? false,
+      async: options?.async ?? false,
+      sessionId: options?.sessionId,
+      folderId: options?.folderId ?? context.folderId,
+      provider: options?.provider ?? "claude",
     };
 
-    // Simulate optimization (in production, call Rust SDK via WASM or gRPC)
-    const startTime = Date.now();
-    const scoreHistory: number[] = [];
-    const iterationHistory: OptimizationSnapshot[] = [];
+    // Create optimization job in database
+    const [job] = await db
+      .insert(sdkMetaAgentOptimizationJobs)
+      .values({
+        userId,
+        folderId: opts.folderId ?? null,
+        sessionId: opts.sessionId ?? null,
+        status: opts.async ? "pending" : "running",
+        currentIteration: 0,
+        maxIterations: opts.maxIterations,
+        currentScore: null,
+        targetScore: opts.targetScore,
+        taskSpecJson: JSON.stringify(task),
+        projectContextJson: JSON.stringify(context),
+        optionsJson: JSON.stringify(opts),
+        scoreHistoryJson: "[]",
+        iterationHistoryJson: "[]",
+        startedAt: opts.async ? null : new Date(),
+      })
+      .returning();
 
-    // BUILD: Generate initial config
-    const config = generateConfig(task, context, "claude", 1);
-
-    // Simulate iterations
-    let currentScore = 0.5 + Math.random() * 0.2; // Start with 0.5-0.7
-    let currentConfig = config;
-
-    for (let i = 1; i <= opts.maxIterations; i++) {
-      const iterStart = Date.now();
-
-      // TEST: Evaluate
-      scoreHistory.push(currentScore);
-
-      // Record snapshot
-      iterationHistory.push({
-        iteration: i,
-        score: currentScore,
-        configVersion: currentConfig.version,
-        suggestionsApplied: Math.floor(Math.random() * 3),
-        iterationDurationMs: Date.now() - iterStart,
+    // If async mode, return job ID immediately
+    if (opts.async) {
+      // Start background optimization (fire-and-forget)
+      runOptimizationAsync(job.id, userId, task, context, opts).catch((error) => {
+        console.error(`Background optimization ${job.id} failed:`, error);
       });
 
-      // Check target
-      if (currentScore >= opts.targetScore) {
-        const result: OptimizationResult = {
-          config: currentConfig,
-          iterations: i,
-          finalScore: currentScore,
-          scoreHistory,
-          iterationHistory,
-          totalDurationMs: Date.now() - startTime,
-          reachedTarget: true,
-          stopReason: "target_reached",
-        };
-
-        // Store result
-        const resultId = `opt-${userId}-${Date.now()}`;
-        optimizationResults.set(resultId, result);
-
-        return NextResponse.json({
-          resultId,
-          ...result,
-        });
-      }
-
-      // IMPROVE: Refine config
-      currentScore += 0.1 + Math.random() * 0.1; // Improve by 0.1-0.2
-      currentConfig = {
-        ...currentConfig,
-        version: currentConfig.version + 1,
-        systemPrompt: currentConfig.systemPrompt + "\n\n// Iteration " + i + " improvements",
-      };
+      return NextResponse.json({
+        jobId: job.id,
+        status: "pending",
+        message: "Optimization job created. Use /api/sdk/meta/status/" + job.id + " to check progress or /api/sdk/meta/stream?jobId=" + job.id + " for SSE streaming.",
+        links: {
+          status: `/api/sdk/meta/status/${job.id}`,
+          stream: `/api/sdk/meta/stream?jobId=${job.id}`,
+          cancel: `/api/sdk/meta/status/${job.id}`,
+        },
+      });
     }
 
-    // Max iterations reached
-    const result: OptimizationResult = {
-      config: currentConfig,
-      iterations: opts.maxIterations,
-      finalScore: currentScore,
-      scoreHistory,
-      iterationHistory,
-      totalDurationMs: Date.now() - startTime,
-      reachedTarget: false,
-      stopReason: "max_iterations",
-    };
-
-    const resultId = `opt-${userId}-${Date.now()}`;
-    optimizationResults.set(resultId, result);
-
-    return NextResponse.json({
-      resultId,
-      ...result,
-    });
+    // Synchronous optimization - run inline and return result
+    const result = await runOptimizationSync(job.id, userId, task, context, opts);
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Failed to run optimization:", error);
     return NextResponse.json(
@@ -210,36 +207,125 @@ export const POST = withApiAuth(async (request, { userId }) => {
 });
 
 /**
- * GET /api/sdk/meta - List optimization results
+ * GET /api/sdk/meta - Get optimization job or result by ID
+ *
+ * Query parameters:
+ * - jobId: Get job by ID
+ * - configId: Get config by ID
+ * - limit: List recent jobs (default: 10)
  */
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
     const url = new URL(request.url);
-    const resultId = url.searchParams.get("resultId");
+    const jobId = url.searchParams.get("jobId");
+    const configId = url.searchParams.get("configId");
+    const limit = parseInt(url.searchParams.get("limit") || "10", 10);
 
-    if (resultId) {
-      // Get specific result
-      const result = optimizationResults.get(resultId);
-      if (!result) {
+    // Get specific job
+    if (jobId) {
+      const job = await db.query.sdkMetaAgentOptimizationJobs.findFirst({
+        where: and(
+          eq(sdkMetaAgentOptimizationJobs.id, jobId),
+          eq(sdkMetaAgentOptimizationJobs.userId, userId)
+        ),
+      });
+
+      if (!job) {
         return NextResponse.json(
-          { error: "Optimization result not found" },
+          { error: "Optimization job not found" },
           { status: 404 }
         );
       }
-      return NextResponse.json(result);
+
+      // If completed, include config
+      let config = null;
+      if (job.configId) {
+        config = await db.query.sdkMetaAgentConfigs.findFirst({
+          where: eq(sdkMetaAgentConfigs.id, job.configId),
+        });
+      }
+
+      return NextResponse.json({
+        job: {
+          id: job.id,
+          status: job.status,
+          currentIteration: job.currentIteration,
+          maxIterations: job.maxIterations,
+          currentScore: job.currentScore,
+          targetScore: job.targetScore,
+          scoreHistory: JSON.parse(job.scoreHistoryJson),
+          iterationHistory: JSON.parse(job.iterationHistoryJson),
+          stopReason: job.stopReason,
+          errorMessage: job.errorMessage,
+          startedAt: job.startedAt,
+          completedAt: job.completedAt,
+          createdAt: job.createdAt,
+        },
+        config: config
+          ? {
+              id: config.id,
+              name: config.name,
+              provider: config.provider,
+              version: config.version,
+              systemPrompt: config.systemPrompt,
+              instructionsFile: config.instructionsFile,
+            }
+          : null,
+      });
     }
 
-    // List all results for user (filter by userId prefix)
-    const userResults: Array<{ resultId: string; result: OptimizationResult }> = [];
-    for (const [id, result] of Array.from(optimizationResults.entries())) {
-      if (id.includes(`-${userId}-`)) {
-        userResults.push({ resultId: id, result });
+    // Get specific config
+    if (configId) {
+      const config = await db.query.sdkMetaAgentConfigs.findFirst({
+        where: and(
+          eq(sdkMetaAgentConfigs.id, configId),
+          eq(sdkMetaAgentConfigs.userId, userId)
+        ),
+      });
+
+      if (!config) {
+        return NextResponse.json(
+          { error: "Config not found" },
+          { status: 404 }
+        );
       }
+
+      return NextResponse.json({
+        id: config.id,
+        name: config.name,
+        provider: config.provider,
+        version: config.version,
+        systemPrompt: config.systemPrompt,
+        instructionsFile: config.instructionsFile,
+        taskSpec: JSON.parse(config.taskSpecJson),
+        projectContext: JSON.parse(config.projectContextJson),
+        createdAt: config.createdAt,
+      });
     }
+
+    // List recent jobs
+    const jobs = await db.query.sdkMetaAgentOptimizationJobs.findMany({
+      where: eq(sdkMetaAgentOptimizationJobs.userId, userId),
+      orderBy: [desc(sdkMetaAgentOptimizationJobs.createdAt)],
+      limit: Math.min(limit, 50),
+    });
 
     return NextResponse.json({
-      results: userResults.slice(0, 50), // Limit to 50
-      total: userResults.length,
+      jobs: jobs.map((job) => ({
+        id: job.id,
+        status: job.status,
+        currentIteration: job.currentIteration,
+        maxIterations: job.maxIterations,
+        currentScore: job.currentScore,
+        targetScore: job.targetScore,
+        stopReason: job.stopReason,
+        configId: job.configId,
+        folderId: job.folderId,
+        sessionId: job.sessionId,
+        createdAt: job.createdAt,
+        completedAt: job.completedAt,
+      })),
+      total: jobs.length,
     });
   } catch (error) {
     console.error("Failed to query optimization results:", error);
@@ -336,4 +422,307 @@ ${task.description}
   }
 
   return content;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Optimization Execution Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ResolvedOptions {
+  maxIterations: number;
+  targetScore: number;
+  minImprovement: number;
+  timeoutSeconds: number;
+  verbose: boolean;
+  dryRun: boolean;
+  async: boolean;
+  sessionId?: string;
+  folderId?: string;
+  provider: "claude" | "codex" | "gemini" | "opencode";
+}
+
+/**
+ * Run optimization synchronously (blocking)
+ *
+ * Updates job in database as it progresses, returns final result.
+ */
+async function runOptimizationSync(
+  jobId: string,
+  userId: string,
+  task: TaskSpec,
+  context: ProjectContext,
+  opts: ResolvedOptions
+): Promise<{
+  jobId: string;
+  config: AgentConfig;
+  iterations: number;
+  finalScore: number;
+  scoreHistory: number[];
+  iterationHistory: OptimizationSnapshot[];
+  totalDurationMs: number;
+  reachedTarget: boolean;
+  stopReason: OptimizationResult["stopReason"];
+}> {
+  const startTime = Date.now();
+  const scoreHistory: number[] = [];
+  const iterationHistory: OptimizationSnapshot[] = [];
+
+  // BUILD: Generate initial config
+  const config = generateConfig(task, context, opts.provider, 1);
+
+  // Simulate iterations
+  let currentScore = 0.5 + Math.random() * 0.2; // Start with 0.5-0.7
+  let currentConfig = config;
+  let stopReason: OptimizationResult["stopReason"] = "max_iterations";
+
+  for (let i = 1; i <= opts.maxIterations; i++) {
+    const iterStart = Date.now();
+
+    // TEST: Evaluate
+    scoreHistory.push(currentScore);
+
+    // Record snapshot
+    const snapshot: OptimizationSnapshot = {
+      iteration: i,
+      score: currentScore,
+      configVersion: currentConfig.version,
+      suggestionsApplied: Math.floor(Math.random() * 3),
+      iterationDurationMs: Date.now() - iterStart,
+    };
+    iterationHistory.push(snapshot);
+
+    // Update job in database
+    await db
+      .update(sdkMetaAgentOptimizationJobs)
+      .set({
+        currentIteration: i,
+        currentScore,
+        scoreHistoryJson: JSON.stringify(scoreHistory),
+        iterationHistoryJson: JSON.stringify(iterationHistory),
+        updatedAt: new Date(),
+      })
+      .where(eq(sdkMetaAgentOptimizationJobs.id, jobId));
+
+    // Check target
+    if (currentScore >= opts.targetScore) {
+      stopReason = "target_reached";
+      break;
+    }
+
+    // IMPROVE: Refine config
+    currentScore += 0.1 + Math.random() * 0.1; // Improve by 0.1-0.2
+    currentConfig = {
+      ...currentConfig,
+      version: currentConfig.version + 1,
+      systemPrompt: currentConfig.systemPrompt + "\n\n// Iteration " + i + " improvements",
+    };
+  }
+
+  const totalDurationMs = Date.now() - startTime;
+  const reachedTarget = currentScore >= opts.targetScore;
+
+  // Save config to database
+  const [savedConfig] = await db
+    .insert(sdkMetaAgentConfigs)
+    .values({
+      userId,
+      folderId: opts.folderId ?? null,
+      name: `Config for ${task.description}`,
+      provider: opts.provider,
+      version: currentConfig.version,
+      taskSpecJson: JSON.stringify(task),
+      projectContextJson: JSON.stringify(context),
+      systemPrompt: currentConfig.systemPrompt,
+      instructionsFile: currentConfig.instructionsFile,
+      metadataJson: JSON.stringify({
+        jobId,
+        iterations: iterationHistory.length,
+        finalScore: currentScore,
+        reachedTarget,
+        stopReason,
+        totalDurationMs,
+      }),
+    })
+    .returning();
+
+  // Update job as completed
+  await db
+    .update(sdkMetaAgentOptimizationJobs)
+    .set({
+      status: "completed",
+      configId: savedConfig.id,
+      currentScore,
+      stopReason,
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(sdkMetaAgentOptimizationJobs.id, jobId));
+
+  return {
+    jobId,
+    config: {
+      ...currentConfig,
+      id: savedConfig.id,
+    },
+    iterations: iterationHistory.length,
+    finalScore: currentScore,
+    scoreHistory,
+    iterationHistory,
+    totalDurationMs,
+    reachedTarget,
+    stopReason,
+  };
+}
+
+/**
+ * Run optimization asynchronously (background)
+ *
+ * Updates job in database as it progresses.
+ * Callers should use /status/[id] or /stream to monitor progress.
+ */
+async function runOptimizationAsync(
+  jobId: string,
+  userId: string,
+  task: TaskSpec,
+  context: ProjectContext,
+  opts: ResolvedOptions
+): Promise<void> {
+  try {
+    // Mark job as running
+    await db
+      .update(sdkMetaAgentOptimizationJobs)
+      .set({
+        status: "running",
+        startedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(sdkMetaAgentOptimizationJobs.id, jobId));
+
+    const startTime = Date.now();
+    const scoreHistory: number[] = [];
+    const iterationHistory: OptimizationSnapshot[] = [];
+
+    // BUILD: Generate initial config
+    const config = generateConfig(task, context, opts.provider, 1);
+
+    // Simulate iterations with delays (to simulate real work)
+    let currentScore = 0.5 + Math.random() * 0.2;
+    let currentConfig = config;
+    let stopReason: OptimizationResult["stopReason"] = "max_iterations";
+
+    for (let i = 1; i <= opts.maxIterations; i++) {
+      const iterStart = Date.now();
+
+      // Check if job was cancelled
+      const job = await db.query.sdkMetaAgentOptimizationJobs.findFirst({
+        where: eq(sdkMetaAgentOptimizationJobs.id, jobId),
+      });
+      if (job?.status === "cancelled") {
+        return; // Exit early if cancelled
+      }
+
+      // Simulate work with a short delay
+      await new Promise((resolve) => setTimeout(resolve, 500 + Math.random() * 500));
+
+      // TEST: Evaluate
+      scoreHistory.push(currentScore);
+
+      // Record snapshot
+      const snapshot: OptimizationSnapshot = {
+        iteration: i,
+        score: currentScore,
+        configVersion: currentConfig.version,
+        suggestionsApplied: Math.floor(Math.random() * 3),
+        iterationDurationMs: Date.now() - iterStart,
+      };
+      iterationHistory.push(snapshot);
+
+      // Update job progress
+      await db
+        .update(sdkMetaAgentOptimizationJobs)
+        .set({
+          currentIteration: i,
+          currentScore,
+          scoreHistoryJson: JSON.stringify(scoreHistory),
+          iterationHistoryJson: JSON.stringify(iterationHistory),
+          updatedAt: new Date(),
+        })
+        .where(eq(sdkMetaAgentOptimizationJobs.id, jobId));
+
+      // Check target
+      if (currentScore >= opts.targetScore) {
+        stopReason = "target_reached";
+        break;
+      }
+
+      // Check timeout
+      if (Date.now() - startTime > opts.timeoutSeconds * 1000) {
+        stopReason = "timeout";
+        break;
+      }
+
+      // IMPROVE: Refine config
+      currentScore += 0.1 + Math.random() * 0.1;
+      currentConfig = {
+        ...currentConfig,
+        version: currentConfig.version + 1,
+        systemPrompt: currentConfig.systemPrompt + "\n\n// Iteration " + i + " improvements",
+      };
+    }
+
+    const totalDurationMs = Date.now() - startTime;
+    const reachedTarget = currentScore >= opts.targetScore;
+
+    // Save config to database
+    const [savedConfig] = await db
+      .insert(sdkMetaAgentConfigs)
+      .values({
+        userId,
+        folderId: opts.folderId ?? null,
+        name: `Config for ${task.description}`,
+        provider: opts.provider,
+        version: currentConfig.version,
+        taskSpecJson: JSON.stringify(task),
+        projectContextJson: JSON.stringify(context),
+        systemPrompt: currentConfig.systemPrompt,
+        instructionsFile: currentConfig.instructionsFile,
+        metadataJson: JSON.stringify({
+          jobId,
+          iterations: iterationHistory.length,
+          finalScore: currentScore,
+          reachedTarget,
+          stopReason,
+          totalDurationMs,
+        }),
+      })
+      .returning();
+
+    // Mark job as completed
+    await db
+      .update(sdkMetaAgentOptimizationJobs)
+      .set({
+        status: "completed",
+        configId: savedConfig.id,
+        currentScore,
+        stopReason,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(sdkMetaAgentOptimizationJobs.id, jobId));
+  } catch (error) {
+    // Mark job as failed
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    await db
+      .update(sdkMetaAgentOptimizationJobs)
+      .set({
+        status: "failed",
+        stopReason: "error",
+        errorMessage,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(sdkMetaAgentOptimizationJobs.id, jobId));
+
+    throw error;
+  }
 }

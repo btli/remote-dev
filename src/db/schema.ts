@@ -2330,6 +2330,70 @@ export const sdkMetaAgentBenchmarkResults = sqliteTable(
 );
 
 /**
+ * SDK Meta-Agent Optimization Jobs - Track long-running optimizations.
+ *
+ * Supports async optimization with SSE progress streaming.
+ */
+export const sdkMetaAgentOptimizationJobs = sqliteTable(
+  "sdk_meta_agent_optimization_job",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "set null",
+    }),
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    // Job status
+    status: text("status")
+      .$type<"pending" | "running" | "completed" | "failed" | "cancelled">()
+      .notNull()
+      .default("pending"),
+    // Progress tracking
+    currentIteration: integer("current_iteration").notNull().default(0),
+    maxIterations: integer("max_iterations").notNull().default(3),
+    currentScore: real("current_score"),
+    targetScore: real("target_score").notNull().default(0.9),
+    // Input (JSON)
+    taskSpecJson: text("task_spec_json").notNull(),
+    projectContextJson: text("project_context_json").notNull(),
+    optionsJson: text("options_json").notNull(),
+    // Output
+    configId: text("config_id").references(() => sdkMetaAgentConfigs.id, {
+      onDelete: "set null",
+    }),
+    // Result details (JSON)
+    scoreHistoryJson: text("score_history_json").notNull().default("[]"),
+    iterationHistoryJson: text("iteration_history_json").notNull().default("[]"),
+    stopReason: text("stop_reason").$type<
+      "target_reached" | "max_iterations" | "no_improvement" | "timeout" | "error" | "cancelled"
+    >(),
+    errorMessage: text("error_message"),
+    // Timing
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    // Timestamps
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_optimization_job_user_idx").on(table.userId),
+    index("sdk_optimization_job_status_idx").on(table.userId, table.status),
+    index("sdk_optimization_job_folder_idx").on(table.folderId),
+    index("sdk_optimization_job_session_idx").on(table.sessionId),
+  ]
+);
+
+/**
  * SDK Notes - User notes for the note-taking service.
  */
 export const sdkNotes = sqliteTable(
