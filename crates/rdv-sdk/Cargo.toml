@@ -46,6 +46,9 @@ uuid.workspace = true
 sha2.workspace = true
 hex.workspace = true
 
+# Async traits
+async-trait.workspace = true
+
 # Embeddings (optional)
 fastembed = { version = "4", optional = true }
 
