@@ -74,6 +74,9 @@ pub enum Commands {
     /// View orchestrator insights (stall detection, errors, suggestions)
     Insights(InsightsCommand),
 
+    /// Extension management (list, enable, disable, create)
+    Ext(ExtCommand),
+
     /// Show system status (dashboard view)
     Status {
         /// Output as JSON
@@ -915,5 +918,83 @@ pub enum InsightsAction {
         /// Stall threshold in seconds
         #[arg(short, long, default_value = "300")]
         threshold: i64,
+    },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extension Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct ExtCommand {
+    #[command(subcommand)]
+    pub action: ExtAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ExtAction {
+    /// List installed extensions
+    List {
+        /// Show all extensions (including disabled)
+        #[arg(short, long)]
+        all: bool,
+
+        /// Output as JSON
+        #[arg(short, long)]
+        json: bool,
+    },
+
+    /// Show extension details
+    Show {
+        /// Extension ID
+        id: String,
+
+        /// Output as JSON
+        #[arg(short, long)]
+        json: bool,
+    },
+
+    /// Enable an extension
+    Enable {
+        /// Extension ID
+        id: String,
+    },
+
+    /// Disable an extension
+    Disable {
+        /// Extension ID
+        id: String,
+    },
+
+    /// Uninstall an extension
+    Uninstall {
+        /// Extension ID
+        id: String,
+
+        /// Skip confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Create a new extension (scaffold)
+    Create {
+        /// Extension name (will be converted to kebab-case)
+        name: String,
+
+        /// Output directory (defaults to current directory)
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Extension description
+        #[arg(short, long)]
+        description: Option<String>,
+
+        /// Include example tool
+        #[arg(long)]
+        with_tool: bool,
+
+        /// Include example prompt
+        #[arg(long)]
+        with_prompt: bool,
     },
 }

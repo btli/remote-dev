@@ -486,6 +486,13 @@ The CLI uses **ApiClient** to communicate with rdv-server via Unix socket (no di
 | `rdv insights show <id>` | Show insight details |
 | `rdv insights resolve <id> [-n notes]` | Resolve an insight |
 | `rdv insights stalled [-t threshold]` | Check for stalled sessions |
+| **Extensions** | |
+| `rdv ext list [--all] [--json]` | List installed extensions |
+| `rdv ext show <id> [--json]` | Show extension details (tools, prompts) |
+| `rdv ext enable <id>` | Enable an extension |
+| `rdv ext disable <id>` | Disable an extension |
+| `rdv ext uninstall <id> [--force]` | Remove an extension |
+| `rdv ext create <name> [--with-tool] [--with-prompt]` | Scaffold a new extension |
 | **Utilities** | |
 | `rdv nudge <session> <message>` | Send real-time nudge to session |
 | `rdv peek <session>` | Quick health check on session |

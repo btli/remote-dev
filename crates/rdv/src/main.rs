@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
         Commands::Peek { session_id } => commands::peek::execute(&session_id, &config).await,
         Commands::Doctor => commands::doctor::execute(&config).await,
         Commands::Insights(cmd) => commands::insights::execute(cmd, &config).await,
+        Commands::Ext(cmd) => commands::ext::execute(cmd, &config),
         Commands::Status { json } => commands::status::execute(json, &config).await,
         Commands::Version => {
             println!("rdv {}", env!("CARGO_PKG_VERSION"));

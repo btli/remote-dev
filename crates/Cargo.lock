@@ -2364,6 +2364,7 @@ dependencies = [
  "rdv-core",
  "rdv-sdk",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

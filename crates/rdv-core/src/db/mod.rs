@@ -84,6 +84,18 @@ impl Database {
             .map_err(Error::Database)
     }
 
+    /// Execute a closure with direct access to the database connection.
+    ///
+    /// Use this for custom queries that aren't covered by built-in methods.
+    /// The closure receives a reference to the rusqlite Connection.
+    pub fn with_connection<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&Connection) -> std::result::Result<T, rusqlite::Error>,
+    {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        f(&conn).map_err(Error::Database)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Session Operations
     // ─────────────────────────────────────────────────────────────────────────
