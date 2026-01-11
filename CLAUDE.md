@@ -621,6 +621,7 @@ Features:
 | `AuditLogSidebar.tsx` | View orchestrator audit trail |
 | `SidebarOrchestratorStatus.tsx` | Folder sidebar orchestrator status widget |
 | `MemoryPanel.tsx` | Session memory panel with tier-based organization and quick actions |
+| `InsightsDashboardWidget.tsx` | Expandable sidebar widget for viewing and managing learned insights |
 
 ### State Management
 

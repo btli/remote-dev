@@ -7,7 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
-  Brain, RefreshCw, BookOpen, Bot,
+  Brain, RefreshCw, BookOpen, Bot, Lightbulb, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -41,6 +41,7 @@ import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
+import { InsightsDashboardWidget } from "@/components/insights";
 
 export interface SessionFolder {
   id: string;
@@ -187,6 +188,9 @@ export function Sidebar({
   const { folderConfigs } = useSecretsContext();
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
+
+  // Insights panel state
+  const [insightsExpanded, setInsightsExpanded] = useState(false);
 
   // Touch drag state for mobile
   const touchDragRef = useRef<{
@@ -2297,6 +2301,36 @@ export function Sidebar({
               </span>
             </button>
           )}
+          {/* Insights expandable section */}
+          <div className="border-t border-border/50 pt-1 mt-1">
+            <button
+              onClick={() => setInsightsExpanded(!insightsExpanded)}
+              className={cn(
+                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
+                "text-xs text-muted-foreground hover:text-foreground",
+                "hover:bg-muted/50 transition-colors",
+                insightsExpanded && "bg-amber-500/10 text-amber-400"
+              )}
+            >
+              <Lightbulb className="w-3.5 h-3.5" />
+              <span>Insights</span>
+              {insightsExpanded ? (
+                <ChevronDown className="w-3 h-3 ml-auto" />
+              ) : (
+                <ChevronRight className="w-3 h-3 ml-auto" />
+              )}
+            </button>
+            {insightsExpanded && (
+              <div className="mt-1 -mx-1">
+                <InsightsDashboardWidget
+                  folderId={activeFolderId}
+                  maxHeight={200}
+                  showHeader={false}
+                  className="rounded-md border border-border/50 bg-background/50"
+                />
+              </div>
+            )}
+          </div>
           <div className="flex items-center justify-between text-[10px] text-muted-foreground">
             <span>New session</span>
             <kbd className="px-1 py-0.5 bg-muted rounded">⌘↵</kbd>
