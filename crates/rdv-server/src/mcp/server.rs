@@ -1,4 +1,7 @@
 //! MCP Server implementation.
+//!
+//! This server provides both static tools (defined via #[tool_router]) and
+//! dynamic extension tools (registered at runtime via DynamicToolRouter).
 
 use rmcp::{
     handler::server::{
@@ -7,15 +10,17 @@ use rmcp::{
         wrapper::Parameters,
     },
     model::{
-        CallToolRequestParam, CallToolResult, ListToolsResult,
-        PaginatedRequestParam, ServerCapabilities, ServerInfo,
+        CallToolRequestParam, CallToolResult, Content, ListToolsResult,
+        PaginatedRequestParam, ServerCapabilities, ServerInfo, Tool,
     },
     schemars::{self, JsonSchema},
     tool, tool_router, ErrorData, RoleServer, ServerHandler,
 };
+use rdv_sdk::extensions::{MCPToolAdapter, ToolInput, ToolContext};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::state::AppState;
 
@@ -312,7 +317,7 @@ impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "Remote Dev MCP Server - Manage terminal sessions, folders, and orchestrators."
+                "Remote Dev MCP Server - Manage terminal sessions, folders, orchestrators, and extension tools."
                     .to_string(),
             ),
             capabilities: ServerCapabilities::builder()
@@ -327,11 +332,43 @@ impl ServerHandler for McpServer {
         _request: Option<PaginatedRequestParam>,
         _context: rmcp::service::RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
-        let tools = self.tool_router.list_all();
-        std::future::ready(Ok(ListToolsResult {
-            tools,
-            next_cursor: None,
-        }))
+        async move {
+            // Get static tools from the tool router
+            let mut tools = self.tool_router.list_all();
+
+            // Get dynamic extension tools
+            let extension_tools = self.state.extension_tools.list_mcp_tools().await;
+            for mcp_tool in extension_tools {
+                // Convert our MCPTool to rmcp's Tool format
+                // input_schema must be a JSON object, extract it from the Value
+                let input_schema = match mcp_tool.input_schema {
+                    serde_json::Value::Object(obj) => Arc::new(obj),
+                    _ => Arc::new(serde_json::Map::new()),
+                };
+
+                tools.push(Tool {
+                    name: mcp_tool.name.into(),
+                    title: None,
+                    description: Some(mcp_tool.description.into()),
+                    input_schema,
+                    output_schema: None,
+                    annotations: None,
+                    icons: None,
+                    meta: None,
+                });
+            }
+
+            debug!("list_tools: returning {} tools ({} static, {} extension)",
+                tools.len(),
+                self.tool_router.list_all().len(),
+                self.state.extension_tools.tool_count().await
+            );
+
+            Ok(ListToolsResult {
+                tools,
+                next_cursor: None,
+            })
+        }
     }
 
     fn call_tool(
@@ -341,8 +378,84 @@ impl ServerHandler for McpServer {
     ) -> impl std::future::Future<Output = Result<CallToolResult, ErrorData>> + Send + '_ {
         debug!("Calling tool: {}", request.name);
         async move {
+            let tool_name = request.name.as_ref();
+
+            // Check if this is an extension tool (contains ':' separator)
+            if tool_name.contains(':') {
+                // Try to call as extension tool
+                if self.state.extension_tools.has_tool(tool_name).await {
+                    // Convert Map to Value for our API
+                    let args = request.arguments.map(serde_json::Value::Object);
+                    return self.call_extension_tool(tool_name, args).await;
+                }
+                // Fall through to static router if not found
+                warn!("Extension tool not found, trying static router: {}", tool_name);
+            }
+
+            // Call static tool via router
             let tool_context = ToolCallContext::new(self, request, context);
             self.tool_router.call(tool_context).await
+        }
+    }
+}
+
+impl McpServer {
+    /// Call an extension tool by name
+    async fn call_extension_tool(
+        &self,
+        tool_name: &str,
+        arguments: Option<serde_json::Value>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Get user context
+        let user = match self.state.db.get_default_user() {
+            Ok(Some(u)) => u,
+            Ok(None) => {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::json!({"success": false, "error": "No user found"}).to_string()
+                )]));
+            }
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::json!({"success": false, "error": e.to_string()}).to_string()
+                )]));
+            }
+        };
+
+        // Build tool input
+        let input = ToolInput {
+            args: arguments.unwrap_or(serde_json::json!({})),
+            context: ToolContext {
+                session_id: None,
+                user_id: user.id,
+                folder_id: None,
+                task_id: None,
+                metadata: HashMap::new(),
+            },
+        };
+
+        // Call the extension tool
+        match self.state.extension_tools.call_tool(tool_name, input).await {
+            Ok(output) => {
+                let result = MCPToolAdapter::to_mcp_result(output);
+                let text_content: String = result.content.iter()
+                    .filter_map(|c| match c {
+                        rdv_sdk::extensions::MCPContent::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                if result.is_error.unwrap_or(false) {
+                    Ok(CallToolResult::error(vec![Content::text(text_content)]))
+                } else {
+                    Ok(CallToolResult::success(vec![Content::text(text_content)]))
+                }
+            }
+            Err(e) => {
+                Ok(CallToolResult::error(vec![Content::text(
+                    serde_json::json!({"success": false, "error": e.to_string()}).to_string()
+                )]))
+            }
         }
     }
 }
