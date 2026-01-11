@@ -10,6 +10,7 @@ use rdv_core::{auth::ServiceToken, Database};
 use std::fs::{self, Permissions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::net::UnixListener;
 use tokio::signal;
 use tower::ServiceExt;
@@ -79,6 +80,14 @@ async fn main() -> anyhow::Result<()> {
 
     // Create application state
     let state = AppState::new(config.clone(), db, service_token);
+
+    // Register SDK tools
+    if let Err(e) = mcp::register_sdk_tools(
+        state.extension_router(),
+        Arc::clone(&state.db),
+    ).await {
+        warn!("Failed to register SDK tools: {}", e);
+    }
 
     // Load CLI tokens from database
     load_cli_tokens(&state).await?;
@@ -275,6 +284,14 @@ async fn run_mcp_server() -> anyhow::Result<()> {
 
     // Create application state
     let state = AppState::new(config, db, service_token);
+
+    // Register SDK tools
+    if let Err(e) = mcp::register_sdk_tools(
+        state.extension_router(),
+        Arc::clone(&state.db),
+    ).await {
+        warn!("Failed to register SDK tools: {}", e);
+    }
 
     // Create MCP server
     let mcp_server = mcp::McpServer::new(state);

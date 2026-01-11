@@ -140,7 +140,7 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 | **Repositories** | Persistence interfaces (IOrchestratorRepository, IInsightRepository) |
 | **Gateways** | External operations (IScrollbackMonitor, ICommandInjector) |
 | **Monitoring Service** | Automated cycles (runs every 30s by default) |
-| **MCP Integration** | 6 tools for AI agent access (see MCP Tools below) |
+| **MCP Integration** | 12 tools for AI agent access (see MCP Tools below) |
 
 **MCP Tools:**
 | Tool | Purpose |
@@ -151,6 +151,16 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 | `session_analyze` | Analyze session scrollback to understand agent activity |
 | `session_agent_info` | Get agent provider info (claude, codex, gemini, opencode) |
 | `project_metadata_detect` | Detect project stack, framework, dependencies |
+
+**SDK Extension Tools (sdk:*):**
+| Tool | Purpose |
+|------|---------|
+| `sdk:memory_store` | Store a memory entry (short_term/working/long_term tiers) |
+| `sdk:memory_search` | Search memories with text matching and filters |
+| `sdk:note_capture` | Quick note capture (todo/reminder/question/observation/warning/decision) |
+| `sdk:insight_extract` | Extract insights (convention/pattern/gotcha/skill/tool) |
+| `sdk:knowledge_add` | Add project knowledge entry to a folder |
+| `sdk:knowledge_get` | Get project knowledge with optional search/filters |
 
 **Stall Detection Logic:**
 - Captures tmux scrollback buffer via `tmux capture-pane`
