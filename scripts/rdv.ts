@@ -30,6 +30,12 @@ const STANDALONE_DIR = join(PROJECT_ROOT, ".next", "standalone");
 // Standard directory for all Remote Dev runtime files
 const REMOTE_DEV_DIR = process.env.REMOTE_DEV_DIR || join(process.env.HOME || "~", ".remote-dev");
 const SOCKET_DIR = join(REMOTE_DEV_DIR, "run");
+const RDV_SERVER_DIR = join(REMOTE_DEV_DIR, "server");
+
+// rdv-server (Rust backend) paths
+const RDV_SERVER_BINARY = join(PROJECT_ROOT, "crates", "target", "release", "rdv-server");
+const RDV_SERVER_PID_FILE = join(RDV_SERVER_DIR, "server.pid");
+const RDV_SERVER_SOCKET = join(SOCKET_DIR, "api.sock");
 
 const CONFIG = {
   dev: {
@@ -42,6 +48,7 @@ const CONFIG = {
     type: "socket" as const,
     nextSocket: join(SOCKET_DIR, "nextjs.sock"),
     terminalSocket: join(SOCKET_DIR, "terminal.sock"),
+    rdvServerSocket: RDV_SERVER_SOCKET,
     nextCmd: ["node", "scripts/standalone-server.js"],
   },
 } as const;
@@ -65,6 +72,27 @@ function ensureSocketDir(): void {
       process.exit(1);
     }
   }
+}
+
+function ensureRdvServerDir(): void {
+  if (!existsSync(RDV_SERVER_DIR)) {
+    console.log(`Creating rdv-server directory: ${RDV_SERVER_DIR}`);
+    try {
+      mkdirSync(RDV_SERVER_DIR, { recursive: true, mode: 0o755 });
+    } catch {
+      console.error(`Failed to create rdv-server directory. Try: sudo mkdir -p ${RDV_SERVER_DIR} && sudo chown $(whoami) ${RDV_SERVER_DIR}`);
+      process.exit(1);
+    }
+  }
+}
+
+function checkRdvServerBinary(): boolean {
+  if (!existsSync(RDV_SERVER_BINARY)) {
+    console.warn(`\nWarning: rdv-server binary not found at ${RDV_SERVER_BINARY}`);
+    console.warn(`Build it with: cd crates && cargo build --release`);
+    return false;
+  }
+  return true;
 }
 
 function cleanupSocket(socketPath: string): void {
@@ -332,25 +360,43 @@ async function start(mode: Mode): Promise<void> {
       NEXT_PID_FILE
     );
 
-    await waitForExit(mode, terminalProc, nextProc);
+    await waitForExit(mode, terminalProc, nextProc, null);
   } else {
     // Prod mode: use Unix sockets
     ensureSocketDir();
+    ensureRdvServerDir();
     prepareStandalone();
 
     // Clean up stale sockets
     cleanupSocket(config.nextSocket);
     cleanupSocket(config.terminalSocket);
+    cleanupSocket(config.rdvServerSocket);
 
     // Use project root database for both dev and prod (shared database)
     const prodDatabaseUrl = `file:${join(PROJECT_ROOT, "sqlite.db")}`;
 
     console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode (Unix sockets)`);
-    console.log(`  Next.js:  ${config.nextSocket}`);
-    console.log(`  Terminal: ${config.terminalSocket}`);
-    console.log(`  Database: ${join(PROJECT_ROOT, "sqlite.db")}\n`);
+    console.log(`  rdv-server: ${config.rdvServerSocket}`);
+    console.log(`  Next.js:    ${config.nextSocket}`);
+    console.log(`  Terminal:   ${config.terminalSocket}`);
+    console.log(`  Database:   ${join(PROJECT_ROOT, "sqlite.db")}\n`);
 
-    // Start terminal server first
+    // Start rdv-server (Rust backend) first if available
+    let rdvServerProc: SpawnedProcess | null = null;
+    if (checkRdvServerBinary()) {
+      rdvServerProc = await startServer(
+        "rdv-server",
+        [RDV_SERVER_BINARY],
+        {
+          REMOTE_DEV_DIR: REMOTE_DEV_DIR,
+        },
+        RDV_SERVER_PID_FILE
+      );
+      console.log("Waiting for rdv-server to initialize...");
+      await Bun.sleep(1000);
+    }
+
+    // Start terminal server
     const terminalProc = await startServer(
       "Terminal Server",
       ["bun", "run", "tsx", "src/server/index.ts"],
@@ -371,19 +417,21 @@ async function start(mode: Mode): Promise<void> {
       {
         SOCKET_PATH: config.nextSocket,
         TERMINAL_SOCKET: config.terminalSocket,
+        RDV_SERVER_SOCKET: config.rdvServerSocket,
         DATABASE_URL: prodDatabaseUrl,
       },
       NEXT_PID_FILE
     );
 
-    await waitForExit(mode, terminalProc, nextProc);
+    await waitForExit(mode, terminalProc, nextProc, rdvServerProc);
   }
 }
 
 async function waitForExit(
   mode: Mode,
   terminalProc: SpawnedProcess | null,
-  nextProc: SpawnedProcess | null
+  nextProc: SpawnedProcess | null,
+  rdvServerProc: SpawnedProcess | null
 ): Promise<void> {
   saveMode(mode);
 
@@ -403,6 +451,12 @@ async function waitForExit(
   process.on("SIGTERM", () => shutdown("Received SIGTERM", 0));
 
   const exitPromises: Promise<{ name: string; code: number | null }>[] = [];
+  if (rdvServerProc) {
+    exitPromises.push(rdvServerProc.exited.then((code) => ({
+      name: "rdv-server",
+      code,
+    })));
+  }
   if (terminalProc) {
     exitPromises.push(terminalProc.exited.then((code) => ({
       name: "Terminal Server",
@@ -431,6 +485,7 @@ function stop(mode?: Mode): void {
   // Stop by PID file first
   let stoppedNext = stopProcess(NEXT_PID_FILE, "Next.js");
   let stoppedTerminal = stopProcess(TERMINAL_PID_FILE, "Terminal Server");
+  let stoppedRdvServer = stopProcess(RDV_SERVER_PID_FILE, "rdv-server");
 
   const targetMode = mode || getRunningMode();
 
@@ -450,9 +505,10 @@ function stop(mode?: Mode): void {
     const prodConfig = CONFIG.prod;
     cleanupSocket(prodConfig.nextSocket);
     cleanupSocket(prodConfig.terminalSocket);
+    cleanupSocket(prodConfig.rdvServerSocket);
   }
 
-  if (!stoppedNext && !stoppedTerminal) {
+  if (!stoppedNext && !stoppedTerminal && !stoppedRdvServer) {
     console.log("No servers were running");
   } else {
     console.log("\nAll servers stopped");
@@ -474,6 +530,7 @@ function status(): void {
 
   const nextPid = readPid(NEXT_PID_FILE);
   const terminalPid = readPid(TERMINAL_PID_FILE);
+  const rdvServerPid = readPid(RDV_SERVER_PID_FILE);
   const runningMode = getRunningMode();
 
   console.log("\nRemote Dev Status");
@@ -489,7 +546,8 @@ function status(): void {
   const prodConfig = CONFIG.prod;
   const prodNextRunning = existsSync(prodConfig.nextSocket);
   const prodTerminalRunning = existsSync(prodConfig.terminalSocket);
-  const prodRunning = prodNextRunning || prodTerminalRunning;
+  const prodRdvServerRunning = existsSync(prodConfig.rdvServerSocket);
+  const prodRunning = prodNextRunning || prodTerminalRunning || prodRdvServerRunning;
 
   if (devRunning) {
     console.log(`\nDEV Mode (ports ${devConfig.nextPort}, ${devConfig.terminalPort}):`);
@@ -499,8 +557,12 @@ function status(): void {
 
   if (prodRunning || runningMode === "prod") {
     console.log("\nPROD Mode (Unix sockets):");
-    console.log(`  Next.js:   ${prodNextRunning ? `RUNNING (${prodConfig.nextSocket})` : "STOPPED"}`);
-    console.log(`  Terminal:  ${prodTerminalRunning ? `RUNNING (${prodConfig.terminalSocket})` : "STOPPED"}`);
+    console.log(`  rdv-server: ${prodRdvServerRunning ? `RUNNING (${prodConfig.rdvServerSocket})` : "STOPPED"}`);
+    console.log(`  Next.js:    ${prodNextRunning ? `RUNNING (${prodConfig.nextSocket})` : "STOPPED"}`);
+    console.log(`  Terminal:   ${prodTerminalRunning ? `RUNNING (${prodConfig.terminalSocket})` : "STOPPED"}`);
+    if (rdvServerPid && isProcessRunning(rdvServerPid)) {
+      console.log(`  rdv-server PID: ${rdvServerPid}`);
+    }
     if (nextPid && isProcessRunning(nextPid)) {
       console.log(`  Next.js PID: ${nextPid}`);
     }
@@ -516,6 +578,7 @@ function status(): void {
   // Clean up stale PID files
   if (nextPid && !isProcessRunning(nextPid)) removePid(NEXT_PID_FILE);
   if (terminalPid && !isProcessRunning(terminalPid)) removePid(TERMINAL_PID_FILE);
+  if (rdvServerPid && !isProcessRunning(rdvServerPid)) removePid(RDV_SERVER_PID_FILE);
   if (!devRunning && !prodRunning) clearMode();
 
   console.log("");
@@ -552,7 +615,10 @@ Commands:
 
 Modes:
   dev   Development (ports 6001, 6002)
-  prod  Production  (Unix sockets: ${CONFIG.prod.nextSocket}, ${CONFIG.prod.terminalSocket})
+  prod  Production  (Unix sockets)
+        - rdv-server: ${CONFIG.prod.rdvServerSocket}
+        - Next.js:    ${CONFIG.prod.nextSocket}
+        - Terminal:   ${CONFIG.prod.terminalSocket}
 
 Examples:
   bun run rdv start          # Start dev servers
