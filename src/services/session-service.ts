@@ -583,6 +583,29 @@ export async function closeSession(
     console.warn("[SessionService] Failed to promote session memories:", error);
   }
 
+  // Extract learnings from the session before killing tmux
+  try {
+    const { processSessionEndForLearning } = await import("./cross-session-learning-service");
+    const result = await processSessionEndForLearning(
+      sessionId,
+      session.tmuxSessionName,
+      session.folderId,
+      session.projectPath ?? "",
+      (session.agentProvider ?? "claude") as import("@/types/agent").AgentProvider,
+      "session_end",
+      { reason: "user_closed" }
+    );
+    if (result.patternsAdded > 0 || result.skillsAdded > 0 || result.gotchasAdded > 0) {
+      console.log(
+        `[SessionService] Extracted learnings from session ${sessionId}: ` +
+        `${result.patternsAdded} patterns, ${result.skillsAdded} skills, ${result.gotchasAdded} gotchas`
+      );
+    }
+  } catch (error) {
+    // Don't block session close on learning extraction errors
+    console.warn("[SessionService] Failed to extract learnings:", error);
+  }
+
   // Kill the tmux session
   await TmuxService.killSession(session.tmuxSessionName);
 
