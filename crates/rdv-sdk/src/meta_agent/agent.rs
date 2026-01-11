@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::{SDKResult, config::MetaAgentConfig};
 use super::traits::MetaAgentTrait;
+use super::generators::create_config_generator;
 use super::types::*;
 
 /// Meta-agent for configuration optimization.
@@ -54,8 +55,38 @@ impl MetaAgent {
         &self.config
     }
 
+    /// Build a configuration for a specific provider.
+    ///
+    /// Uses provider-specific generators to create optimized system prompts
+    /// and instructions files.
+    pub async fn build_for_provider(
+        &self,
+        task: &TaskSpec,
+        context: &ProjectContext,
+        provider: AgentProvider,
+    ) -> SDKResult<AgentConfig> {
+        let id = Uuid::new_v4().to_string();
+        let generator = create_config_generator(provider);
+
+        // Use provider-specific generation
+        let system_prompt = generator.generate_system_prompt(task, context).await?;
+        let instructions_file = generator.generate_instructions(task, context).await?;
+
+        Ok(AgentConfig {
+            id,
+            name: format!("Config for {} ({:?})", task.description, provider),
+            provider,
+            task_spec: task.clone(),
+            project_context: context.clone(),
+            system_prompt,
+            instructions_file,
+            version: 1,
+            created_at: Utc::now(),
+        })
+    }
+
     // ─────────────────────────────────────────────────────────────────────────────
-    // Private Helpers
+    // Private Helpers (Legacy - kept for backwards compatibility)
     // ─────────────────────────────────────────────────────────────────────────────
 
     fn generate_system_prompt(&self, task: &TaskSpec, context: &ProjectContext) -> String {

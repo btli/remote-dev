@@ -43,6 +43,7 @@
 mod types;
 mod traits;
 mod agent;
+mod generators;
 
 pub mod migrations;
 
@@ -61,3 +62,10 @@ pub use traits::{
 
 // Re-export implementation
 pub use agent::MetaAgent;
+
+// Re-export generators
+pub use generators::{
+    create_config_generator,
+    ClaudeConfigGenerator, CodexConfigGenerator,
+    GeminiConfigGenerator, OpenCodeConfigGenerator,
+};
