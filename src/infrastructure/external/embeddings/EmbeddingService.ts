@@ -12,7 +12,7 @@
  * - Cosine similarity utilities
  */
 
-import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
 
 const MODEL_NAME = "Xenova/bge-base-en-v1.5";
 const EMBEDDING_DIMENSIONS = 768;
@@ -63,10 +63,12 @@ export class EmbeddingService {
       return this.loading;
     }
 
-    this.loading = pipeline("feature-extraction", MODEL_NAME, {
-      // Use quantized model for faster inference
-      quantized: true,
-    });
+    // TypeScript workaround: pipeline() returns a complex union type
+    this.loading = pipeline(
+      "feature-extraction",
+      MODEL_NAME,
+      { dtype: "q8" }
+    ) as unknown as Promise<FeatureExtractionPipeline>;
 
     this.pipeline = await this.loading;
     this.loading = null;

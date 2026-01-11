@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "bun:test";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyMock = ReturnType<typeof vi.fn<any>>;
 import {
   CreateSessionUseCase,
   CreateSessionError,
@@ -92,7 +95,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("assigns next available tab order", async () => {
-      (mockSessionRepository.getNextTabOrder as Mock).mockResolvedValue(5);
+      (mockSessionRepository.getNextTabOrder as AnyMock).mockResolvedValue(5);
 
       const input: CreateSessionInput = {
         userId: "user-123",
@@ -216,7 +219,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - not git repo", () => {
     it("throws when project path is not a git repo", async () => {
-      (mockWorktreeGateway.isGitRepo as Mock).mockResolvedValue(false);
+      (mockWorktreeGateway.isGitRepo as AnyMock).mockResolvedValue(false);
 
       const input: CreateSessionInput = {
         userId: "user-123",
@@ -235,7 +238,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - worktree creation failure", () => {
     it("throws when worktree creation fails", async () => {
-      (mockWorktreeGateway.createWorktree as Mock).mockRejectedValue(
+      (mockWorktreeGateway.createWorktree as AnyMock).mockRejectedValue(
         new Error("Branch already exists")
       );
 
@@ -256,7 +259,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - tmux creation failure", () => {
     it("throws when tmux session creation fails", async () => {
-      (mockTmuxGateway.createSession as Mock).mockRejectedValue(
+      (mockTmuxGateway.createSession as AnyMock).mockRejectedValue(
         new Error("tmux error")
       );
 
@@ -273,7 +276,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("cleans up worktree when tmux creation fails", async () => {
-      (mockTmuxGateway.createSession as Mock).mockRejectedValue(
+      (mockTmuxGateway.createSession as AnyMock).mockRejectedValue(
         new Error("tmux error")
       );
 
@@ -297,7 +300,7 @@ describe("CreateSessionUseCase", () => {
 
   describe("error handling - persistence failure", () => {
     it("throws when persistence fails", async () => {
-      (mockSessionRepository.save as Mock).mockRejectedValue(
+      (mockSessionRepository.save as AnyMock).mockRejectedValue(
         new Error("Database error")
       );
 
@@ -313,7 +316,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("cleans up tmux session when persistence fails", async () => {
-      (mockSessionRepository.save as Mock).mockRejectedValue(
+      (mockSessionRepository.save as AnyMock).mockRejectedValue(
         new Error("Database error")
       );
 
@@ -328,7 +331,7 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("cleans up both tmux and worktree when persistence fails", async () => {
-      (mockSessionRepository.save as Mock).mockRejectedValue(
+      (mockSessionRepository.save as AnyMock).mockRejectedValue(
         new Error("Database error")
       );
 
@@ -349,10 +352,10 @@ describe("CreateSessionUseCase", () => {
 
   describe("cleanup error handling", () => {
     it("continues even if worktree cleanup fails", async () => {
-      (mockTmuxGateway.createSession as Mock).mockRejectedValue(
+      (mockTmuxGateway.createSession as AnyMock).mockRejectedValue(
         new Error("tmux error")
       );
-      (mockWorktreeGateway.removeWorktree as Mock).mockRejectedValue(
+      (mockWorktreeGateway.removeWorktree as AnyMock).mockRejectedValue(
         new Error("cleanup failed")
       );
 
@@ -376,10 +379,10 @@ describe("CreateSessionUseCase", () => {
     });
 
     it("continues even if tmux cleanup fails", async () => {
-      (mockSessionRepository.save as Mock).mockRejectedValue(
+      (mockSessionRepository.save as AnyMock).mockRejectedValue(
         new Error("Database error")
       );
-      (mockTmuxGateway.killSession as Mock).mockRejectedValue(
+      (mockTmuxGateway.killSession as AnyMock).mockRejectedValue(
         new Error("tmux cleanup failed")
       );
 

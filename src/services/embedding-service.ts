@@ -5,7 +5,7 @@
  * No API calls needed - model is downloaded once (~90MB).
  */
 
-import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -45,10 +45,13 @@ class EmbeddingService {
       console.log(`[EmbeddingService] Loading model: ${this.modelName}`);
       const startTime = Date.now();
 
-      this.embedder = (await pipeline("feature-extraction", this.modelName, {
-        // Use quantized model for faster inference
-        quantized: true,
-      })) as FeatureExtractionPipeline;
+      // TypeScript workaround: pipeline() returns a complex union type
+      const pipelinePromise = pipeline(
+        "feature-extraction",
+        this.modelName,
+        { dtype: "q8" }
+      ) as unknown as Promise<FeatureExtractionPipeline>;
+      this.embedder = await pipelinePromise;
 
       const elapsed = Date.now() - startTime;
       console.log(`[EmbeddingService] Model loaded in ${elapsed}ms`);

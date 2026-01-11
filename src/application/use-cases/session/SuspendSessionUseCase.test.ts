@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "bun:test";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyMock = ReturnType<typeof vi.fn<any>>;
 import { SuspendSessionUseCase, type SuspendSessionInput } from "./SuspendSessionUseCase";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
@@ -60,7 +63,7 @@ describe("SuspendSessionUseCase", () => {
   describe("successful suspension", () => {
     it("suspends an active session", async () => {
       const activeSession = createTestSession();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -75,7 +78,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("detaches the tmux session", async () => {
       const activeSession = createTestSession();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -91,7 +94,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("persists the suspended state", async () => {
       const activeSession = createTestSession();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -115,7 +118,7 @@ describe("SuspendSessionUseCase", () => {
         projectPath: "/special/path",
         folderId: "folder-456",
       });
-      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(activeSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -132,7 +135,7 @@ describe("SuspendSessionUseCase", () => {
 
   describe("error handling - session not found", () => {
     it("throws EntityNotFoundError when session does not exist", async () => {
-      (mockSessionRepository.findById as Mock).mockResolvedValue(null);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(null);
 
       const input: SuspendSessionInput = {
         sessionId: "nonexistent-id",
@@ -143,7 +146,7 @@ describe("SuspendSessionUseCase", () => {
     });
 
     it("throws EntityNotFoundError when session belongs to different user", async () => {
-      (mockSessionRepository.findById as Mock).mockResolvedValue(null);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(null);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -154,7 +157,7 @@ describe("SuspendSessionUseCase", () => {
     });
 
     it("does not call tmux gateway when session not found", async () => {
-      (mockSessionRepository.findById as Mock).mockResolvedValue(null);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(null);
 
       const input: SuspendSessionInput = {
         sessionId: "nonexistent-id",
@@ -170,7 +173,7 @@ describe("SuspendSessionUseCase", () => {
   describe("error handling - invalid state transitions", () => {
     it("throws InvalidStateTransitionError when suspending suspended session", async () => {
       const suspendedSession = createTestSession().suspend();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(suspendedSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(suspendedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -182,7 +185,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("throws InvalidStateTransitionError when suspending closed session", async () => {
       const closedSession = createTestSession().close();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(closedSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(closedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -194,7 +197,7 @@ describe("SuspendSessionUseCase", () => {
 
     it("does not call tmux gateway when state transition is invalid", async () => {
       const closedSession = createTestSession().close();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(closedSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(closedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -210,7 +213,7 @@ describe("SuspendSessionUseCase", () => {
   describe("execution order", () => {
     it("validates state before calling tmux", async () => {
       const closedSession = createTestSession().close();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(closedSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(closedSession);
 
       const input: SuspendSessionInput = {
         sessionId: "123e4567-e89b-12d3-a456-426614174000",
@@ -226,13 +229,13 @@ describe("SuspendSessionUseCase", () => {
 
     it("calls tmux before persisting", async () => {
       const activeSession = createTestSession();
-      (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
+      (mockSessionRepository.findById as AnyMock).mockResolvedValue(activeSession);
 
       const callOrder: string[] = [];
-      (mockTmuxGateway.detachSession as Mock).mockImplementation(async () => {
+      (mockTmuxGateway.detachSession as AnyMock).mockImplementation(async () => {
         callOrder.push("detach");
       });
-      (mockSessionRepository.save as Mock).mockImplementation(async (session) => {
+      (mockSessionRepository.save as AnyMock).mockImplementation(async (session: Session) => {
         callOrder.push("save");
         return session;
       });

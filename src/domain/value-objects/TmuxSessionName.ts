@@ -17,13 +17,13 @@ import { randomUUID } from "crypto";
 // - rdv-{uuid} - Original pattern for web UI sessions
 // - rdv-session-{uuid} - Sessions created via rdv CLI
 // - rdv-task-{uuid} - Task sessions from rdv CLI
-// - rdv-folder-{uuid} - Folder orchestrator sessions
+// - rdv-folder-{name} - Folder orchestrator sessions (name or uuid)
 // - rdv-master-control - Master Control orchestrator
 const RDV_SESSION_PATTERNS = [
   /^rdv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   /^rdv-session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   /^rdv-task-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-  /^rdv-folder-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^rdv-folder-[a-z0-9_-]+$/i, // Folder names can be slugs or UUIDs
 ];
 const SPECIAL_NAMES = ["rdv-master-control"];
 const TMUX_NAME_PATTERN = (value: string): boolean =>

@@ -339,7 +339,7 @@ describe("E2E: Folder Orchestrator Hierarchy", () => {
     });
 
     it("should track activity timestamps independently", () => {
-      let masterOrchestrator = Orchestrator.createMaster({
+      const masterOrchestrator = Orchestrator.createMaster({
         userId: "user-activity-1",
         sessionId: "master-session",
       });
