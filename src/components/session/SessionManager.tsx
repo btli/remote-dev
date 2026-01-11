@@ -16,6 +16,7 @@ import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { IssuesModal } from "@/components/github/IssuesModal";
 import { PRsModal } from "@/components/github/PRsModal";
 import { ProjectKnowledgeModal } from "@/components/knowledge";
+import { MetaAgentOptimizationModal } from "@/components/meta-agent/MetaAgentOptimizationModal";
 import { MemoryPanel, MemoryBrowser } from "@/components/memory";
 import type { MemoryQueryResult } from "@/hooks/useSessionMemory";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
@@ -330,6 +331,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     repositoryId: string;
     repositoryName: string;
     repositoryUrl?: string;
+  } | null>(null);
+
+  // Meta-agent optimization modal state
+  const [optimizationModal, setOptimizationModal] = useState<{
+    open: boolean;
+    sessionId: string;
+    folderId: string | null;
+    folderPath: string | null;
+    agentProvider: "claude" | "codex" | "gemini" | "opencode";
   } | null>(null);
 
   // Get trash count for a specific folder
@@ -674,6 +684,28 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       }
     },
     [sessions]
+  );
+
+  // Open optimization modal for a session
+  const handleOptimizeSession = useCallback(
+    (sessionId: string) => {
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session && session.agentProvider) {
+        // Find folder info if session is in a folder
+        const folder = session.folderId
+          ? folders.find((f) => f.id === session.folderId)
+          : null;
+
+        setOptimizationModal({
+          open: true,
+          sessionId: session.id,
+          folderId: session.folderId || null,
+          folderPath: session.projectPath || null,
+          agentProvider: session.agentProvider as "claude" | "codex" | "gemini" | "opencode",
+        });
+      }
+    },
+    [sessions, folders]
   );
 
   // Folder handlers now use the context methods directly
@@ -1396,6 +1428,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderReinitOrchestrator={handleReinitOrchestrator}
             onOrchestratorReinstallHooks={handleReinstallHooks}
             onFolderKnowledge={handleFolderKnowledge}
+            onSessionOptimize={handleOptimizeSession}
           />
       </div>
 
@@ -1770,6 +1803,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           repositoryId={prsModal.repositoryId}
           repositoryName={prsModal.repositoryName}
           repositoryUrl={prsModal.repositoryUrl}
+        />
+      )}
+
+      {/* Meta-Agent Optimization Modal */}
+      {optimizationModal && (
+        <MetaAgentOptimizationModal
+          open={optimizationModal.open}
+          onClose={() => setOptimizationModal(null)}
+          sessionId={optimizationModal.sessionId}
+          folderId={optimizationModal.folderId || undefined}
+          folderPath={optimizationModal.folderPath || undefined}
+          agentProvider={optimizationModal.agentProvider}
         />
       )}
     </div>

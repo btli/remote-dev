@@ -114,6 +114,7 @@ interface SidebarProps {
   onFolderReinitOrchestrator?: (folderId: string) => void;
   onOrchestratorReinstallHooks?: (folderId: string) => void;
   onFolderKnowledge?: (folderId: string, folderName: string) => void;
+  onSessionOptimize?: (sessionId: string) => void;
 }
 
 export function Sidebar({
@@ -161,6 +162,7 @@ export function Sidebar({
   onFolderReinitOrchestrator,
   onOrchestratorReinstallHooks,
   onFolderKnowledge,
+  onSessionOptimize,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -1246,6 +1248,13 @@ export function Sidebar({
                 <ContextMenuItem onClick={() => onSessionSchedule(session.id)}>
                   <Clock className="w-3.5 h-3.5 mr-2" />
                   Schedule Command
+                </ContextMenuItem>
+              )}
+              {/* Optimize config option (agent sessions only) */}
+              {onSessionOptimize && session.agentProvider && (
+                <ContextMenuItem onClick={() => onSessionOptimize(session.id)}>
+                  <Sparkles className="w-3.5 h-3.5 mr-2" />
+                  Optimize Config
                 </ContextMenuItem>
               )}
               <ContextMenuSeparator />
