@@ -47,10 +47,12 @@
 mod traits;
 mod store;
 mod consolidation;
+mod service;
 
 pub use traits::*;
 pub use store::*;
 pub use consolidation::*;
+pub use service::*;
 
 use crate::types::{MemoryTier, MemoryQueryFilter};
 
