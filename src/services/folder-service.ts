@@ -383,6 +383,20 @@ export async function getParentChain(
 }
 
 /**
+ * Get folder ID and all ancestor folder IDs for inheritance queries.
+ * Returns array: [folderId, parentId, grandparentId, ...] up to root.
+ * Used for notes/memory/insights inheritance where child folders
+ * should see content from parent folders.
+ */
+export async function getFolderWithAncestorIds(
+  folderId: string,
+  userId: string
+): Promise<string[]> {
+  const ancestors = await getParentChain(folderId, userId);
+  return [folderId, ...ancestors.map((f) => f.id)];
+}
+
+/**
  * Get a single folder by ID with ownership validation
  */
 export async function getFolderById(

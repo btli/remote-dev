@@ -12,8 +12,9 @@ import {
   type InsightType,
   type InsightApplicability,
 } from "@/db/schema";
-import { eq, and, like, desc, asc, gte } from "drizzle-orm";
+import { eq, and, like, desc, asc, gte, inArray, or, isNull } from "drizzle-orm";
 import { withApiAuth } from "@/lib/api";
+import { getFolderWithAncestorIds } from "@/services/folder-service";
 
 /**
  * POST /api/sdk/insights - Create a new insight manually
@@ -125,10 +126,13 @@ export const POST = withApiAuth(async (request, { userId }) => {
 });
 
 /**
- * GET /api/sdk/insights - Query insights
+ * GET /api/sdk/insights - Query insights with folder inheritance
+ *
+ * Insights are folder-scoped with inheritance from parent folders.
+ * When querying a subfolder, insights from all ancestor folders are included.
  *
  * Query params:
- * - folderId: Filter by folder
+ * - folderId: Filter by folder (includes inherited insights from ancestors)
  * - type: Filter by insight type
  * - applicability: Filter by applicability scope
  * - applicabilityContext: Filter by specific context (e.g., "typescript")
@@ -139,6 +143,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
  * - sortBy: Sort field (createdAt, confidence, applicationCount, feedbackScore)
  * - sortOrder: asc or desc - default: desc
  * - limit: Max results - default: 50
+ * - inherit: Enable folder inheritance (default: true)
  */
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
@@ -156,6 +161,8 @@ export const GET = withApiAuth(async (request, { userId }) => {
     const sortBy = url.searchParams.get("sortBy") || "createdAt";
     const sortOrder = url.searchParams.get("sortOrder") || "desc";
     const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const inheritParam = url.searchParams.get("inherit");
+    const inherit = inheritParam !== "false"; // Default to true
 
     // Build query conditions
     const conditions = [eq(sdkInsights.userId, userId)];
@@ -170,9 +177,25 @@ export const GET = withApiAuth(async (request, { userId }) => {
       conditions.push(eq(sdkInsights.active, true));
     }
 
+    // Folder inheritance: include insights from folder + all ancestors + user-level
     if (folderId) {
-      conditions.push(eq(sdkInsights.folderId, folderId));
+      if (inherit) {
+        // Get folder and all ancestor folder IDs
+        const folderIds = await getFolderWithAncestorIds(folderId, userId);
+        // Include insights from any of these folders OR user-level insights (null folderId)
+        conditions.push(
+          or(
+            inArray(sdkInsights.folderId, folderIds),
+            isNull(sdkInsights.folderId)
+          )!
+        );
+      } else {
+        // Exact match only (no inheritance)
+        conditions.push(eq(sdkInsights.folderId, folderId));
+      }
     }
+    // If no folderId specified, return all user insights (no folder filter)
+
     if (type) {
       conditions.push(eq(sdkInsights.type, type));
     }
@@ -215,13 +238,15 @@ export const GET = withApiAuth(async (request, { userId }) => {
       .orderBy(orderFn(sortColumn))
       .limit(limit);
 
-    // Parse JSON fields for response
+    // Parse JSON fields and add inheritance info
     const parsedInsights = insights.map((insight) => ({
       ...insight,
       sourceNotes: JSON.parse(insight.sourceNotesJson),
       sourceSessions: insight.sourceSessionsJson
         ? JSON.parse(insight.sourceSessionsJson)
         : [],
+      // Mark if this insight is inherited (from a parent folder)
+      inherited: folderId ? insight.folderId !== folderId : false,
     }));
 
     return NextResponse.json(parsedInsights);

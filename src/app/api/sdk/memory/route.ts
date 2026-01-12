@@ -8,8 +8,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { sdkMemoryEntries, type MemoryTierType, type MemoryContentType } from "@/db/schema";
-import { eq, and, or, gte, desc, isNull } from "drizzle-orm";
+import { eq, and, or, gte, desc, isNull, inArray } from "drizzle-orm";
 import { withApiAuth } from "@/lib/api";
+import { getFolderWithAncestorIds } from "@/services/folder-service";
 import { createHash } from "crypto";
 
 // Helper to compute content hash
@@ -119,7 +120,21 @@ export const POST = withApiAuth(async (request, { userId }) => {
 });
 
 /**
- * GET /api/sdk/memory - Query memory entries
+ * GET /api/sdk/memory - Query memory entries with folder inheritance
+ *
+ * Memory entries are folder-scoped with inheritance from parent folders.
+ * When querying a subfolder, entries from all ancestor folders are included.
+ *
+ * Query params:
+ * - folderId: Filter by folder (includes inherited entries from ancestors)
+ * - tier: Filter by memory tier (short_term, working, long_term)
+ * - contentType: Filter by content type
+ * - sessionId: Filter by session
+ * - taskId: Filter by task
+ * - minRelevance: Minimum relevance score
+ * - minConfidence: Minimum confidence score
+ * - limit: Max results - default: 50
+ * - inherit: Enable folder inheritance (default: true)
  */
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
@@ -132,6 +147,8 @@ export const GET = withApiAuth(async (request, { userId }) => {
     const minRelevance = url.searchParams.get("minRelevance");
     const minConfidence = url.searchParams.get("minConfidence");
     const limit = parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const inheritParam = url.searchParams.get("inherit");
+    const inherit = inheritParam !== "false"; // Default to true
 
     // Build query conditions
     const conditions = [eq(sdkMemoryEntries.userId, userId)];
@@ -150,9 +167,26 @@ export const GET = withApiAuth(async (request, { userId }) => {
     if (contentType) {
       conditions.push(eq(sdkMemoryEntries.contentType, contentType));
     }
+
+    // Folder inheritance: include entries from folder + all ancestors + user-level
     if (folderId) {
-      conditions.push(eq(sdkMemoryEntries.folderId, folderId));
+      if (inherit) {
+        // Get folder and all ancestor folder IDs
+        const folderIds = await getFolderWithAncestorIds(folderId, userId);
+        // Include entries from any of these folders OR user-level entries (null folderId)
+        conditions.push(
+          or(
+            inArray(sdkMemoryEntries.folderId, folderIds),
+            isNull(sdkMemoryEntries.folderId)
+          )!
+        );
+      } else {
+        // Exact match only (no inheritance)
+        conditions.push(eq(sdkMemoryEntries.folderId, folderId));
+      }
     }
+    // If no folderId specified, return all user entries (no folder filter)
+
     if (sessionId) {
       conditions.push(eq(sdkMemoryEntries.sessionId, sessionId));
     }
@@ -173,7 +207,14 @@ export const GET = withApiAuth(async (request, { userId }) => {
       .orderBy(desc(sdkMemoryEntries.relevance), desc(sdkMemoryEntries.lastAccessedAt))
       .limit(limit);
 
-    return NextResponse.json(entries);
+    // Add inheritance info to response
+    const parsedEntries = entries.map((entry) => ({
+      ...entry,
+      // Mark if this entry is inherited (from a parent folder)
+      inherited: folderId ? entry.folderId !== folderId : false,
+    }));
+
+    return NextResponse.json(parsedEntries);
   } catch (error) {
     console.error("Failed to query memory:", error);
     return NextResponse.json(
