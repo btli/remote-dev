@@ -87,14 +87,15 @@ pub async fn list_sessions(
         .list_sessions(user_id, query.folder_id.as_deref())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Filter by status if provided
+    // Filter by status if provided (supports comma-separated values like "active,suspended")
     let sessions: Vec<SessionResponse> = sessions
         .into_iter()
         .filter(|s| {
-            query
-                .status
-                .as_ref()
-                .map_or(true, |status| &s.status == status)
+            query.status.as_ref().map_or(true, |status_filter| {
+                status_filter
+                    .split(',')
+                    .any(|allowed| allowed.trim() == s.status)
+            })
         })
         .map(SessionResponse::from)
         .collect();

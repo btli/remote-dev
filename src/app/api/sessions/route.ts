@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { proxyToRdvServer } from "@/lib/rdv-proxy";
 import { resolve } from "path";
+import * as WorktreeService from "@/services/worktree-service";
 
 /**
  * Validate a project path to prevent path traversal attacks.
@@ -79,7 +80,7 @@ export const GET = withApiAuth(async (request, { userId }) => {
 /**
  * POST /api/sessions - Create a new terminal session
  *
- * Proxies to rdv-server. Path validation done here for security.
+ * Proxies to rdv-server. Path validation and worktree creation done here.
  */
 export const POST = withApiAuth(async (request, { userId }) => {
   const result = await parseJsonBody<{
@@ -91,6 +92,10 @@ export const POST = withApiAuth(async (request, { userId }) => {
     isOrchestratorSession?: boolean;
     shellCommand?: string;
     environment?: Record<string, string>;
+    // Worktree creation fields
+    createWorktree?: boolean;
+    featureDescription?: string;
+    baseBranch?: string;
   }>(request);
   if ("error" in result) return result.error;
   const body = result.data;
@@ -104,15 +109,65 @@ export const POST = withApiAuth(async (request, { userId }) => {
     body.projectPath = validatedPath;
   }
 
+  // Handle worktree creation if requested
+  let finalProjectPath = body.projectPath;
+  let finalWorktreeBranch = body.worktreeBranch;
+
+  if (body.createWorktree && body.projectPath) {
+    // Validate it's a git repo
+    if (!(await WorktreeService.isGitRepo(body.projectPath))) {
+      return errorResponse(
+        "Project path is not a git repository",
+        400,
+        "NOT_GIT_REPO"
+      );
+    }
+
+    // Generate branch name from feature description or use provided worktreeBranch
+    let branchName: string;
+    if (body.featureDescription) {
+      branchName = `feature/${WorktreeService.sanitizeBranchName(body.featureDescription)}`;
+    } else if (body.worktreeBranch) {
+      branchName = body.worktreeBranch;
+    } else {
+      return errorResponse(
+        "Either featureDescription or worktreeBranch is required for worktree creation",
+        400,
+        "MISSING_BRANCH"
+      );
+    }
+
+    try {
+      const worktreeResult = await WorktreeService.createBranchWithWorktreeAndEnv(
+        body.projectPath,
+        branchName,
+        {
+          baseBranch: body.baseBranch,
+          copyEnvFiles: true,
+        }
+      );
+
+      finalProjectPath = worktreeResult.worktreePath;
+      finalWorktreeBranch = worktreeResult.branch;
+    } catch (error) {
+      const err = error as Error & { code?: string };
+      return errorResponse(
+        `Failed to create worktree: ${err.message}`,
+        400,
+        err.code || "WORKTREE_ERROR"
+      );
+    }
+  }
+
   // Create new request with validated body
   const proxyRequest = new Request(request.url, {
     method: "POST",
     headers: request.headers,
     body: JSON.stringify({
       name: body.name || "Terminal",
-      project_path: body.projectPath,
+      project_path: finalProjectPath,
       folder_id: body.folderId,
-      worktree_branch: body.worktreeBranch,
+      worktree_branch: finalWorktreeBranch,
       agent_provider: body.agentProvider,
       is_orchestrator_session: body.isOrchestratorSession,
       shell_command: body.shellCommand,
