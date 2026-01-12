@@ -17,6 +17,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { toast } from "sonner";
 import {
   Loader2,
   Sparkles,
@@ -392,22 +393,27 @@ export function MetaAgentOptimizationModal({
   }, [jobId]);
 
   /**
-   * Apply generated config
+   * Apply generated config - copies to clipboard for manual application
    */
   const handleApply = useCallback(async () => {
     if (!config) return;
 
     setIsApplying(true);
     try {
-      // TODO: Apply config to session/folder
-      // For now, just close the modal
+      // Copy the instructions file content to clipboard
+      await navigator.clipboard.writeText(config.instructionsFile);
+      toast.success("Configuration copied to clipboard", {
+        description: `Paste into your ${agentProvider === "claude" ? "CLAUDE.md" : "config"} file to apply`,
+      });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to apply config");
+      const message = err instanceof Error ? err.message : "Failed to copy config";
+      setError(message);
+      toast.error(message);
     } finally {
       setIsApplying(false);
     }
-  }, [config, onClose]);
+  }, [config, agentProvider, onClose]);
 
   /**
    * Format duration in human-readable form

@@ -38,6 +38,7 @@ import type { FolderRepoStats } from "./Sidebar";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import dynamic from "next/dynamic";
 import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
 
@@ -1047,7 +1048,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [createSession, setActiveSession]
   );
 
-  // TODO: Add toast notifications for success/failure feedback to user
   const handleReinitOrchestrator = useCallback(
     async (folderId: string): Promise<boolean> => {
       try {
@@ -1072,16 +1072,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
         // Refresh sessions to show the new orchestrator session
         refreshSessions();
+        toast.success(folderId ? "Folder orchestrator reinitialized" : "Master Control reinitialized");
         return true;
       } catch (error) {
         console.error("Failed to reinitialize orchestrator:", error);
+        toast.error(error instanceof Error ? error.message : "Failed to reinitialize orchestrator");
         return false;
       }
     },
     [refreshSessions]
   );
 
-  // TODO: Add toast notifications for success/failure feedback to user
   const handleReinstallHooks = useCallback(
     async (folderId: string): Promise<boolean> => {
       try {
@@ -1101,9 +1102,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
         const result = await response.json();
         console.log("Hooks reinstalled:", result);
+        toast.success("Agent hooks reinstalled successfully");
         return true;
       } catch (error) {
         console.error("Failed to reinstall hooks:", error);
+        toast.error(error instanceof Error ? error.message : "Failed to reinstall hooks");
         return false;
       }
     },

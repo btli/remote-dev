@@ -44,6 +44,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
   StickyNote,
   Plus,
   Search,
@@ -428,6 +435,7 @@ export function NotesSidebar({
     error,
     refresh,
     createNote,
+    updateNote,
     togglePin,
     toggleArchive,
     deleteNote,
@@ -444,7 +452,11 @@ export function NotesSidebar({
   });
 
   const [pinnedExpanded, setPinnedExpanded] = useState(true);
-  const [, setEditingNote] = useState<Note | null>(null);
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editType, setEditType] = useState<NoteType>("observation");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Filtered notes (excluding pinned from main list)
   const mainNotes = useMemo(() => {
@@ -453,8 +465,32 @@ export function NotesSidebar({
 
   const handleEdit = useCallback((note: Note) => {
     setEditingNote(note);
-    // TODO: Implement edit modal
-  }, [setEditingNote]);
+    setEditContent(note.content);
+    setEditTitle(note.title || "");
+    setEditType(note.type);
+  }, []);
+
+  const handleSaveEdit = useCallback(async () => {
+    if (!editingNote) return;
+    setIsSavingEdit(true);
+    try {
+      await updateNote(editingNote.id, {
+        content: editContent,
+        title: editTitle || undefined,
+        type: editType,
+      });
+      setEditingNote(null);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [editingNote, editContent, editTitle, editType, updateNote]);
+
+  const handleCloseEdit = useCallback(() => {
+    setEditingNote(null);
+    setEditContent("");
+    setEditTitle("");
+    setEditType("observation");
+  }, []);
 
   // Collapsed view
   if (collapsed) {
@@ -704,6 +740,71 @@ export function NotesSidebar({
           })}
         </div>
       </div>
+
+      {/* Edit Note Modal */}
+      <Dialog open={!!editingNote} onOpenChange={(open) => !open && handleCloseEdit()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Note</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Type</label>
+              <Select value={editType} onValueChange={(v) => setEditType(v as NoteType)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {NOTE_TYPES.map((t) => {
+                    const config = typeConfig[t];
+                    const Icon = config.icon;
+                    return (
+                      <SelectItem key={t} value={t}>
+                        <div className="flex items-center gap-2">
+                          <Icon className={cn("h-3.5 w-3.5", config.color)} />
+                          <span>{config.label}</span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Title (optional)</label>
+              <Input
+                placeholder="Note title..."
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Content</label>
+              <Textarea
+                placeholder="Note content..."
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                rows={6}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseEdit} disabled={isSavingEdit}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={isSavingEdit || !editContent.trim()}>
+              {isSavingEdit ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

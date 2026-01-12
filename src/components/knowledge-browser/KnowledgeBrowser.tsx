@@ -15,8 +15,16 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -477,12 +485,26 @@ export function KnowledgeBrowser({
   const [deleteTarget, setDeleteTarget] = useState<{ type: "note" | "insight"; id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Edit note state
+  const [editingNote, setEditingNote] = useState<Note | null>(null);
+  const [editNoteContent, setEditNoteContent] = useState("");
+  const [editNoteTitle, setEditNoteTitle] = useState("");
+  const [editNoteType, setEditNoteType] = useState<NoteType>("observation");
+  const [savingNote, setSavingNote] = useState(false);
+
+  // Edit insight state
+  const [editingInsight, setEditingInsight] = useState<SdkInsight | null>(null);
+  const [editInsightTitle, setEditInsightTitle] = useState("");
+  const [editInsightDescription, setEditInsightDescription] = useState("");
+  const [savingInsight, setSavingInsight] = useState(false);
+
   // Notes data
   const {
     notes,
     loading: notesLoading,
     error: notesError,
     refresh: refreshNotes,
+    updateNote,
     togglePin,
     toggleArchive,
     deleteNote,
@@ -502,6 +524,7 @@ export function KnowledgeBrowser({
     loading: insightsLoading,
     error: insightsError,
     refresh: refreshInsights,
+    updateInsight,
     toggleVerified,
     toggleActive,
     deleteInsight,
@@ -515,13 +538,58 @@ export function KnowledgeBrowser({
   });
 
   const handleEditNote = useCallback((note: Note) => {
-    // TODO: Open edit modal
-    console.log("Edit note:", note.id);
+    setEditingNote(note);
+    setEditNoteContent(note.content);
+    setEditNoteTitle(note.title || "");
+    setEditNoteType(note.type);
+  }, []);
+
+  const handleSaveNote = useCallback(async () => {
+    if (!editingNote) return;
+    setSavingNote(true);
+    try {
+      await updateNote(editingNote.id, {
+        content: editNoteContent,
+        title: editNoteTitle || undefined,
+        type: editNoteType,
+      });
+      setEditingNote(null);
+    } finally {
+      setSavingNote(false);
+    }
+  }, [editingNote, editNoteContent, editNoteTitle, editNoteType, updateNote]);
+
+  const handleCloseNoteEdit = useCallback(() => {
+    setEditingNote(null);
+    setEditNoteContent("");
+    setEditNoteTitle("");
+    setEditNoteType("observation");
   }, []);
 
   const handleEditInsight = useCallback((insight: SdkInsight) => {
-    // TODO: Open edit modal
-    console.log("Edit insight:", insight.id);
+    setEditingInsight(insight);
+    setEditInsightTitle(insight.title);
+    setEditInsightDescription(insight.description);
+  }, []);
+
+  const handleSaveInsight = useCallback(async () => {
+    if (!editingInsight) return;
+    setSavingInsight(true);
+    try {
+      await updateInsight(editingInsight.id, {
+        title: editInsightTitle,
+        description: editInsightDescription,
+      });
+      setEditingInsight(null);
+    } finally {
+      setSavingInsight(false);
+    }
+  }, [editingInsight, editInsightTitle, editInsightDescription, updateInsight]);
+
+  const handleCloseInsightEdit = useCallback(() => {
+    setEditingInsight(null);
+    setEditInsightTitle("");
+    setEditInsightDescription("");
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
@@ -785,6 +853,114 @@ export function KnowledgeBrowser({
         onConfirm={handleDeleteConfirm}
         loading={deleting}
       />
+
+      {/* Edit Note Modal */}
+      <Dialog open={!!editingNote} onOpenChange={(open) => !open && handleCloseNoteEdit()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Note</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Type</label>
+              <Select value={editNoteType} onValueChange={(v) => setEditNoteType(v as NoteType)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {NOTE_TYPES.map((t) => {
+                    const config = noteTypeConfig[t];
+                    const Icon = config.icon;
+                    return (
+                      <SelectItem key={t} value={t}>
+                        <div className="flex items-center gap-2">
+                          <Icon className={cn("h-3.5 w-3.5", config.color)} />
+                          <span>{config.label}</span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Title (optional)</label>
+              <Input
+                placeholder="Note title..."
+                value={editNoteTitle}
+                onChange={(e) => setEditNoteTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Content</label>
+              <Textarea
+                placeholder="Note content..."
+                value={editNoteContent}
+                onChange={(e) => setEditNoteContent(e.target.value)}
+                rows={6}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseNoteEdit} disabled={savingNote}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveNote} disabled={savingNote || !editNoteContent.trim()}>
+              {savingNote ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Insight Modal */}
+      <Dialog open={!!editingInsight} onOpenChange={(open) => !open && handleCloseInsightEdit()}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Insight</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Title</label>
+              <Input
+                placeholder="Insight title..."
+                value={editInsightTitle}
+                onChange={(e) => setEditInsightTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Description</label>
+              <Textarea
+                placeholder="Insight description..."
+                value={editInsightDescription}
+                onChange={(e) => setEditInsightDescription(e.target.value)}
+                rows={6}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseInsightEdit} disabled={savingInsight}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveInsight} disabled={savingInsight || !editInsightTitle.trim()}>
+              {savingInsight ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
