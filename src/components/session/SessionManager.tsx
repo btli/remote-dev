@@ -391,6 +391,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     window.dispatchEvent(new CustomEvent("right-sidebar-tab-change"));
   }, []);
 
+  const setRightSidebarWidth = useCallback((width: number) => {
+    localStorage.setItem("right-sidebar-width", String(width));
+    window.dispatchEvent(new CustomEvent("right-sidebar-width-change"));
+  }, []);
+
   // Track mobile state for responsive sidebar behavior
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -1806,6 +1811,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               collapsed={rightSidebarCollapsed}
               onCollapsedChange={setRightSidebarCollapsed}
               width={rightSidebarWidth}
+              onWidthChange={setRightSidebarWidth}
               activeTab={rightSidebarTab}
               onActiveTabChange={setRightSidebarTab}
             />
