@@ -18,7 +18,25 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::middleware::AuthContext;
+use crate::sse::SessionEventData;
 use crate::state::AppState;
+
+/// Convert Session to SessionEventData for SSE broadcasting
+fn session_to_event_data(s: &Session) -> SessionEventData {
+    SessionEventData {
+        id: s.id.clone(),
+        name: s.name.clone(),
+        tmux_session_name: s.tmux_session_name.clone(),
+        status: s.status.clone(),
+        project_path: s.project_path.clone(),
+        folder_id: s.folder_id.clone(),
+        worktree_branch: s.worktree_branch.clone(),
+        agent_provider: s.agent_provider.clone(),
+        is_orchestrator_session: s.is_orchestrator_session,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+    }
+}
 
 /// Create session router
 pub fn router() -> Router<Arc<AppState>> {
@@ -208,6 +226,9 @@ pub async fn create_session(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
 
+    // Broadcast SSE event for session creation
+    state.sse_broadcaster.session_created(user_id, session_to_event_data(&session));
+
     Ok((StatusCode::CREATED, Json(SessionResponse::from(session))))
 }
 
@@ -378,6 +399,9 @@ pub async fn update_session(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
 
+    // Broadcast SSE event for session update
+    state.sse_broadcaster.session_updated(user_id, session_to_event_data(&session));
+
     Ok(Json(SessionResponse::from(session)))
 }
 
@@ -442,6 +466,9 @@ pub async fn close_session(
         .db
         .update_session_status(&id, "closed")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Broadcast SSE event for session deletion
+    state.sse_broadcaster.session_deleted(user_id, &id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -527,6 +554,9 @@ pub async fn suspend_session(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
 
+    // Broadcast SSE event for status change
+    state.sse_broadcaster.session_status_changed(user_id, session_to_event_data(&session));
+
     Ok(Json(SessionResponse::from(session)))
 }
 
@@ -571,6 +601,9 @@ pub async fn resume_session(
         .get_session(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Session not found".to_string()))?;
+
+    // Broadcast SSE event for status change
+    state.sse_broadcaster.session_status_changed(user_id, session_to_event_data(&session));
 
     Ok(Json(SessionResponse::from(session)))
 }
@@ -667,6 +700,9 @@ pub async fn reorder_sessions(
         .db
         .reorder_sessions(user_id, &req.session_ids)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    // Broadcast SSE event for session reordering
+    state.sse_broadcaster.sessions_reordered(user_id);
 
     Ok(Json(ReorderSessionsResponse { success: true }))
 }

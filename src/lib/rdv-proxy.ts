@@ -20,6 +20,7 @@ import { Agent, request as undiciRequest } from "undici";
 import { readFileSync, existsSync, statSync, watchFile, unwatchFile } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { Socket } from "net";
 
 // Default paths (can be overridden via environment variables)
 // All sockets and runtime files are in ~/.remote-dev/run/
@@ -537,4 +538,159 @@ export async function callRdvServer<T>(
 
     return { error: "Internal server error", status: 500 };
   }
+}
+
+/**
+ * Stream SSE events from rdv-server to the client
+ *
+ * Creates a streaming response that proxies SSE events from rdv-server.
+ * The connection stays open and events are forwarded in real-time.
+ *
+ * @param userId - Authenticated user ID from session
+ * @param path - Target SSE endpoint path (e.g., "/events/sessions")
+ * @returns Streaming Response or error NextResponse
+ *
+ * @example
+ * ```ts
+ * export const GET = withAuth(async (request, { userId }) => {
+ *   return streamSseFromRdvServer(userId, "/events/sessions");
+ * });
+ * ```
+ */
+export function streamSseFromRdvServer(
+  userId: string,
+  path: string
+): Response {
+  // Load service token
+  const serviceToken = loadServiceToken();
+  if (!serviceToken) {
+    return new Response(
+      JSON.stringify({ error: "rdv-server not configured", code: "RDV_NOT_CONFIGURED" }),
+      {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  // Check socket exists
+  if (!existsSync(RDV_API_SOCKET)) {
+    return new Response(
+      JSON.stringify({ error: "rdv-server not running", code: "RDV_NOT_RUNNING" }),
+      {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  // Build the path
+  let targetPath = path;
+  if (!path.startsWith("/api")) {
+    targetPath = `/api${path}`;
+  }
+
+  // Create a streaming response using TransformStream
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const encoder = new TextEncoder();
+
+  // Connect to Unix socket and start streaming
+  const socket = new Socket();
+
+  const cleanup = () => {
+    if (!socket.destroyed) {
+      socket.destroy();
+    }
+  };
+
+  socket.on("error", async (error) => {
+    console.error("[rdv-proxy] SSE socket error:", error);
+    try {
+      await writer.write(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: "Connection error" })}\n\n`));
+      await writer.close();
+    } catch {
+      // Writer may already be closed
+    }
+    cleanup();
+  });
+
+  socket.on("close", async () => {
+    try {
+      await writer.close();
+    } catch {
+      // Writer may already be closed
+    }
+  });
+
+  // Connect and send HTTP request
+  socket.connect(RDV_API_SOCKET, () => {
+    // Send HTTP request for SSE
+    const request = [
+      `GET ${targetPath} HTTP/1.1`,
+      "Host: localhost",
+      "Accept: text/event-stream",
+      "Cache-Control: no-cache",
+      "Connection: keep-alive",
+      `X-RDV-Service-Token: ${serviceToken}`,
+      `X-RDV-User-ID: ${userId}`,
+      "",
+      "",
+    ].join("\r\n");
+
+    socket.write(request);
+  });
+
+  // Parse HTTP response and forward SSE events
+  let headersParsed = false;
+  let buffer = "";
+
+  socket.on("data", async (data) => {
+    buffer += data.toString();
+
+    // Parse headers if not done yet
+    if (!headersParsed) {
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd !== -1) {
+        const headers = buffer.substring(0, headerEnd);
+        buffer = buffer.substring(headerEnd + 4);
+        headersParsed = true;
+
+        // Check for successful response
+        const statusLine = headers.split("\r\n")[0];
+        if (!statusLine.includes("200")) {
+          console.error("[rdv-proxy] SSE request failed:", statusLine);
+          try {
+            await writer.write(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: "SSE connection failed" })}\n\n`));
+            await writer.close();
+          } catch {
+            // Writer may already be closed
+          }
+          cleanup();
+          return;
+        }
+      }
+    }
+
+    // Forward any data after headers
+    if (headersParsed && buffer.length > 0) {
+      try {
+        await writer.write(encoder.encode(buffer));
+        buffer = "";
+      } catch {
+        // Writer closed (client disconnected)
+        cleanup();
+      }
+    }
+  });
+
+  // Return streaming response
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no", // Disable nginx buffering
+    },
+  });
 }

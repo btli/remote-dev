@@ -22,6 +22,7 @@ mod mcp;
 mod middleware;
 mod routes;
 mod services;
+mod sse;
 mod state;
 
 use config::Config;

@@ -17,6 +17,7 @@ import type {
   CreateSessionInput,
   SessionStatus,
 } from "@/types/session";
+import { useSessionEvents, type SessionEventData } from "@/hooks/useSessionEvents";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 
@@ -51,6 +52,39 @@ function saveActiveSessionId(sessionId: string | null): void {
 
 interface CloseSessionOptions {
   deleteWorktree?: boolean;
+}
+
+/**
+ * Convert SSE SessionEventData to TerminalSession
+ *
+ * SSE events provide a subset of session data. Missing fields are set to
+ * sensible defaults. These sessions typically come from external sources
+ * (CLI, MCP, other tabs) so we don't have full context.
+ */
+function sseDataToSession(data: SessionEventData): TerminalSession {
+  const now = new Date();
+  return {
+    id: data.id,
+    userId: "", // Not provided by SSE (filtered server-side by user)
+    name: data.name,
+    tmuxSessionName: data.tmux_session_name,
+    status: data.status as SessionStatus,
+    projectPath: data.project_path,
+    folderId: data.folder_id,
+    worktreeBranch: data.worktree_branch,
+    agentProvider: (data.agent_provider as TerminalSession["agentProvider"]) ?? null,
+    isOrchestratorSession: data.is_orchestrator_session,
+    // Fields not provided by SSE - use defaults
+    githubRepoId: null,
+    profileId: null,
+    splitGroupId: null,
+    splitOrder: 0,
+    splitSize: 100,
+    tabOrder: 0,
+    lastActivityAt: now,
+    createdAt: new Date(data.created_at),
+    updatedAt: new Date(data.updated_at),
+  };
 }
 
 interface SessionContextValue extends SessionState {
@@ -155,6 +189,50 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         sessions: [...orderedSessions, ...remainingSessions],
       };
 
+    // Remote SSE events - only apply if session doesn't exist locally (new) or is newer
+    case "REMOTE_SESSION_CREATED": {
+      // Only add if not already in state (avoids duplicating our own creates)
+      if (state.sessions.find((s) => s.id === action.session.id)) {
+        return state;
+      }
+      return {
+        ...state,
+        sessions: [...state.sessions, action.session],
+        // Don't auto-activate remote sessions
+      };
+    }
+
+    case "REMOTE_SESSION_UPDATED": {
+      const existing = state.sessions.find((s) => s.id === action.session.id);
+      // Only update if newer timestamp (avoids reverting our optimistic updates)
+      if (!existing || existing.updatedAt >= action.session.updatedAt) {
+        return state;
+      }
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.session.id ? action.session : s
+        ),
+      };
+    }
+
+    case "REMOTE_SESSION_DELETED": {
+      // Only delete if exists in state
+      if (!state.sessions.find((s) => s.id === action.sessionId)) {
+        return state;
+      }
+      const filtered = state.sessions.filter((s) => s.id !== action.sessionId);
+      const active = filtered.filter((s) => s.status !== "closed");
+      return {
+        ...state,
+        sessions: filtered,
+        activeSessionId:
+          state.activeSessionId === action.sessionId
+            ? active[0]?.id ?? null
+            : state.activeSessionId,
+      };
+    }
+
     default:
       return state;
   }
@@ -220,6 +298,39 @@ export function SessionProvider({
       refreshSessions();
     }
   }, [refreshSessions]);
+
+  // Subscribe to SSE for real-time session updates from external sources (CLI, MCP, other tabs)
+  useSessionEvents({
+    onSessionCreated: (sessionData) => {
+      const session = sseDataToSession(sessionData);
+      dispatch({ type: "REMOTE_SESSION_CREATED", session });
+    },
+    onSessionUpdated: (sessionData) => {
+      const session = sseDataToSession(sessionData);
+      dispatch({ type: "REMOTE_SESSION_UPDATED", session });
+    },
+    onSessionDeleted: (sessionId) => {
+      dispatch({ type: "REMOTE_SESSION_DELETED", sessionId });
+    },
+    onSessionStatusChanged: (sessionData) => {
+      // Status change is treated as an update
+      const session = sseDataToSession(sessionData);
+      dispatch({ type: "REMOTE_SESSION_UPDATED", session });
+    },
+    onSessionsReordered: () => {
+      // Refetch sessions to get new order
+      refreshSessions();
+    },
+    onConnected: () => {
+      console.log("[SessionContext] SSE connected for real-time updates");
+    },
+    onDisconnected: () => {
+      console.log("[SessionContext] SSE disconnected");
+    },
+    onError: (error) => {
+      console.error("[SessionContext] SSE error:", error);
+    },
+  });
 
   const createSession = useCallback(
     async (input: CreateSessionInput): Promise<TerminalSession> => {

@@ -57,6 +57,10 @@ chrono.workspace = true
 dirs.workspace = true
 libc.workspace = true
 
+# SSE streaming
+futures = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
 # MCP (Model Context Protocol)
 rmcp.workspace = true
 schemars.workspace = true

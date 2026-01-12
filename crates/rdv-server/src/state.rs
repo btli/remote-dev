@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 use crate::services::{InsightService, MonitoringService};
+use crate::sse::SseBroadcaster;
 
 // Extension tool router for dynamic MCP tool registration
 use rdv_sdk::extensions::DynamicToolRouter;
@@ -93,6 +94,8 @@ pub struct AppState {
     pub insights: Arc<InsightService>,
     /// Dynamic tool router for extension-provided MCP tools
     pub extension_tools: Arc<DynamicToolRouter>,
+    /// SSE broadcaster for real-time session events
+    pub sse_broadcaster: Arc<SseBroadcaster>,
     /// Server start time
     pub start_time: Instant,
     /// Whether server is accepting connections
@@ -114,6 +117,7 @@ impl AppState {
             cli_tokens: Arc::new(CLITokenRegistry::new()),
             terminal_connections: Arc::new(RwLock::new(HashMap::new())),
             extension_tools: Arc::new(DynamicToolRouter::new()),
+            sse_broadcaster: Arc::new(SseBroadcaster::new()),
             start_time: Instant::now(),
             accepting: Arc::new(AtomicBool::new(true)),
             active_requests: Arc::new(AtomicUsize::new(0)),

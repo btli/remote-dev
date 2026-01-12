@@ -163,7 +163,11 @@ export type SessionAction =
   | { type: "UPDATE"; sessionId: string; updates: Partial<TerminalSession> }
   | { type: "DELETE"; sessionId: string }
   | { type: "SET_ACTIVE"; sessionId: string | null }
-  | { type: "REORDER"; sessionIds: string[] };
+  | { type: "REORDER"; sessionIds: string[] }
+  // Remote SSE events for external session changes (CLI, MCP, other tabs)
+  | { type: "REMOTE_SESSION_CREATED"; session: TerminalSession }
+  | { type: "REMOTE_SESSION_UPDATED"; session: TerminalSession }
+  | { type: "REMOTE_SESSION_DELETED"; sessionId: string };
 
 export interface SessionState {
   sessions: TerminalSession[];

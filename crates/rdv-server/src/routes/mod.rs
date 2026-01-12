@@ -1,5 +1,6 @@
 //! API route modules.
 
+pub mod events;
 pub mod extensions;
 pub mod folders;
 pub mod health;
@@ -40,6 +41,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(hooks::router())
         .merge(tokens::router())
         .merge(extensions::router())
+        // SSE endpoint for real-time session events
+        .route("/events/sessions", get(events::session_events))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,

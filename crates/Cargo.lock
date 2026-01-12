@@ -2439,6 +2439,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs",
+ "futures",
  "hex",
  "hyper",
  "hyper-util",
@@ -2454,6 +2455,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-stream",
  "tokio-test",
  "tower",
  "tower-http",
@@ -3247,6 +3249,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
