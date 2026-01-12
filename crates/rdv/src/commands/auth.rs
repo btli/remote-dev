@@ -26,6 +26,7 @@ async fn login(name: Option<String>) -> Result<()> {
     let home = dirs::home_dir().expect("No home directory");
     let token_file = home.join(".remote-dev/cli-token");
     let server_socket = home.join(".remote-dev/run/api.sock");
+    let service_token_file = home.join(".remote-dev/server/service-token");
 
     // Check if already logged in
     if token_file.exists() {
@@ -49,6 +50,20 @@ async fn login(name: Option<String>) -> Result<()> {
         return Ok(());
     }
 
+    // Check for service token (required for bootstrap)
+    if !service_token_file.exists() {
+        println!(
+            "{} Service token not found at {}",
+            "✗".red(),
+            service_token_file.display()
+        );
+        println!("  The rdv-server must be running and must have created the service token.");
+        return Ok(());
+    }
+
+    // Read the service token (already base64-encoded in the file)
+    let service_token_b64 = fs::read_to_string(&service_token_file)?.trim().to_string();
+
     // Create token via server API using curl (simpler than hyper for one-off)
     let token_name = name.unwrap_or_else(|| {
         format!(
@@ -61,8 +76,11 @@ async fn login(name: Option<String>) -> Result<()> {
 
     println!("{} Creating CLI token '{}'...", "→".cyan(), token_name);
 
-    // Use curl to call the API via Unix socket
-    let body = serde_json::json!({ "name": token_name });
+    // Use the bootstrap endpoint (public, uses service token for auth)
+    let body = serde_json::json!({
+        "serviceToken": service_token_b64,
+        "name": token_name
+    });
     let output = Command::new("curl")
         .args([
             "--silent",
@@ -74,7 +92,7 @@ async fn login(name: Option<String>) -> Result<()> {
             "Content-Type: application/json",
             "-d",
             &body.to_string(),
-            "http://localhost/api/tokens",
+            "http://localhost/api/tokens/bootstrap",
         ])
         .output()?;
 

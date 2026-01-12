@@ -21,6 +21,27 @@ rdv session list
 
 # Get scrollback from another session
 rdv session scrollback <session-id> --lines 100
+
+# Spawn a new agent session
+rdv session spawn -a claude -n "Task Name" --folder myproject
+
+# Spawn with Chrome MCP access (for browser automation)
+rdv session spawn -a claude -F "--chrome" -n "Visual Testing" --folder myproject
+
+# Spawn with worktree isolation
+rdv session spawn -a claude -W -b feature-branch -n "Feature Work"
+
+# Spawn a shell session (no agent)
+rdv session spawn --shell -n "Debug Shell"
+
+# Attach to a session
+rdv session attach <session-id>
+
+# Inject context into a running session
+rdv session inject <session-id> "Context or instructions here"
+
+# Close a session
+rdv session close <session-id>
 ```
 
 ### Inter-Agent Communication
@@ -148,6 +169,57 @@ bd show <beads-id>
 3. **Save learnings** - Use `--save` flag when analyzing sessions
 4. **Coordinate changes** - Notify other sessions before modifying shared code
 5. **Report completion** - Send status to Master Control when done
+
+### Task Management
+```bash
+# Create a task (integrates with beads)
+rdv task create "Implement feature X" --folder myproject
+
+# List tasks
+rdv task list --status open
+
+# Execute a planned task
+rdv task execute <task-id>
+```
+
+### Orchestrator Management
+```bash
+# Initialize Master Control
+rdv master init
+
+# Start Master Control
+rdv master start
+
+# Check Master Control status
+rdv master status
+
+# Attach to Master Control session
+rdv master attach
+
+# Initialize folder orchestrator
+rdv folder init /path/to/project
+
+# Start folder orchestrator
+rdv folder start /path/to/project
+
+# List all folder orchestrators
+rdv folder list
+```
+
+### Insights Management
+```bash
+# List insights
+rdv insights list --unresolved
+
+# Show insight details
+rdv insights show <insight-id>
+
+# Resolve an insight
+rdv insights resolve <insight-id> -n "Resolution notes"
+
+# Check for stalled sessions
+rdv insights stalled
+```
 
 ## Diagnostics
 

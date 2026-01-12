@@ -25,7 +25,9 @@ pub fn parse_content_type(s: &str) -> Option<rdv_core::memory::ContentType> {
 /// Create the main router with all routes
 pub fn create_router(state: Arc<AppState>) -> Router {
     // Public routes (no auth)
-    let public_routes = Router::new().route("/health", get(health::health_check));
+    let public_routes = Router::new()
+        .route("/health", get(health::health_check))
+        .nest("/api", tokens::public_router());
 
     // Protected routes (require auth)
     let protected_routes = Router::new()

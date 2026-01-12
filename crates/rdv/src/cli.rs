@@ -334,8 +334,8 @@ pub enum SessionAction {
         #[arg(short, long)]
         folder: Option<String>,
 
-        /// Additional flags to pass to the agent CLI
-        #[arg(short = 'F', long = "flag", action = clap::ArgAction::Append)]
+        /// Additional flags to pass to the agent CLI (e.g., -F --chrome)
+        #[arg(short = 'F', long = "flag", action = clap::ArgAction::Append, allow_hyphen_values = true)]
         flags: Vec<String>,
 
         /// Skip permission prompts (adds --dangerously-skip-permissions for claude)

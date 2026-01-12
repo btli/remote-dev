@@ -24,6 +24,88 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/tokens/{id}", delete(revoke_token))
 }
 
+/// Public routes for token bootstrap (no auth required)
+pub fn public_router() -> Router<Arc<AppState>> {
+    Router::new().route("/tokens/bootstrap", post(bootstrap_token))
+}
+
+/// Bootstrap a CLI token for first-time setup.
+/// This endpoint is public but requires the service token as proof of local access.
+/// The service token is only accessible to processes on the local machine.
+async fn bootstrap_token(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<BootstrapTokenRequest>,
+) -> Result<(StatusCode, Json<CLITokenCreateResponse>), (StatusCode, String)> {
+    // Verify the service token (proves local access)
+    let token_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&input.service_token)
+        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid service token encoding".to_string()))?;
+
+    if !state.service_token.verify(&token_bytes) {
+        return Err((StatusCode::UNAUTHORIZED, "Invalid service token".to_string()));
+    }
+
+    // Get the default user (first user in the system)
+    let user = state
+        .db
+        .get_default_user()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "No users in system. Create a user first.".to_string()))?;
+
+    // Generate token components
+    let id = uuid::Uuid::new_v4().to_string();
+    let raw_key = generate_raw_key();
+    let key_prefix = format!("rdv_{}", &raw_key[..8]);
+    let key_hash = hash_key(&raw_key);
+    let now = chrono::Utc::now().timestamp_millis();
+
+    // Store in database
+    state
+        .db
+        .create_cli_token(&id, &user.id, &input.name, &key_prefix, &key_hash, None)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Add to in-memory registry
+    state
+        .cli_tokens
+        .add(crate::state::CLITokenEntry {
+            token_hash: decode_hash(&key_hash),
+            user_id: user.id.clone(),
+            token_id: id.clone(),
+            name: input.name.clone(),
+        })
+        .await;
+
+    info!(
+        "Bootstrapped CLI token '{}' (prefix: {}) for user {}",
+        input.name,
+        key_prefix,
+        &user.id[..8]
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CLITokenCreateResponse {
+            id,
+            name: input.name,
+            key_prefix,
+            raw_key,
+            expires_at: None,
+            created_at: now,
+        }),
+    ))
+}
+
+/// Request to bootstrap a new CLI token
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootstrapTokenRequest {
+    /// Service token (from ~/.remote-dev/run/service-token) for local auth
+    pub service_token: String,
+    /// Name for the CLI token
+    pub name: String,
+}
+
 /// List all CLI tokens for the authenticated user
 async fn list_tokens(
     State(state): State<Arc<AppState>>,

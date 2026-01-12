@@ -342,39 +342,35 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
       return null;
     }
 
-    const { stats, sessionCount, hasSecrets } = data;
+    const { stats, sessionCount } = data;
+
+    // Only render if there's something to show
+    const hasIssues = stats && stats.issueCount > 0;
+    const hasChanges = stats?.hasChanges;
+    const hasSessions = sessionCount > 0;
+
+    if (!hasIssues && !hasChanges && !hasSessions) {
+      return null;
+    }
 
     return (
-      <div className="flex items-center gap-1 ml-auto shrink-0">
-        {/* PR count */}
-        {stats && stats.prCount > 0 && (
-          <span className="flex items-center gap-0.5 text-[10px] text-primary">
-            <GitPullRequest className="w-2.5 h-2.5" />
-            {stats.prCount}
-          </span>
-        )}
-
+      <div className="flex items-center gap-1 ml-auto shrink-0 text-[10px] leading-none">
         {/* Issue count */}
-        {stats && stats.issueCount > 0 && (
-          <span className="flex items-center gap-0.5 text-[10px] text-chart-2">
+        {hasIssues && (
+          <span className="inline-flex items-center text-chart-2">
             <CircleDot className="w-2.5 h-2.5" />
-            {stats.issueCount}
+            <span className="ml-0.5">{stats.issueCount}</span>
           </span>
         )}
 
         {/* Changes indicator */}
-        {stats?.hasChanges && (
+        {hasChanges && (
           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
         )}
 
-        {/* Secrets indicator */}
-        {hasSecrets && (
-          <KeyRound className="w-2.5 h-2.5 text-primary/50" />
-        )}
-
         {/* Session count */}
-        {sessionCount > 0 && (
-          <span className="text-[10px] text-muted-foreground/50 min-w-[1.5ch] text-right">
+        {hasSessions && (
+          <span className="text-muted-foreground/60 tabular-nums">
             {sessionCount}
           </span>
         )}
@@ -387,16 +383,22 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
     if (isSessionNode(data)) {
       handlers.onSessionClick(data.session.id);
     } else if (isFolderNode(data)) {
+      // Toggle expand/collapse on click
+      node.toggle();
       handlers.onFolderClick(data.folder.id);
-    }
-    // Trash nodes don't have a click action
-  };
-
-  // Handle double click for folders (toggle expand)
-  const handleDoubleClick = () => {
-    if (isFolderNode(data) || isTrashNode(data)) {
+    } else if (isTrashNode(data)) {
+      // Toggle trash folder on click
       node.toggle();
     }
+  };
+
+  // Handle double click - for sessions, this can be used for a rename action
+  const handleDoubleClick = () => {
+    if (isFolderNode(data) || isTrashNode(data)) {
+      // Double click on folder toggles expand/collapse
+      node.toggle();
+    }
+    // Sessions: double click currently does nothing extra
   };
 
   // Context menu content based on node type
@@ -612,7 +614,7 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
           ref={dragHandle}
           style={style}
           className={cn(
-            "flex items-center gap-1.5 px-2 py-1 cursor-pointer select-none",
+            "flex items-center gap-1.5 px-1.5 py-0.5 cursor-pointer select-none",
             "hover:bg-accent/50 transition-colors duration-150 rounded-sm",
             isSelected && "bg-primary/20",
             node.state.isEditing && "bg-accent",
@@ -644,11 +646,11 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
                 }
               }}
               autoFocus
-              className="flex-1 bg-transparent border border-primary/50 rounded px-1 py-0.5 text-sm outline-none"
+              className="flex-1 min-w-0 bg-transparent border border-primary/50 rounded px-1 py-0.5 text-xs outline-none"
             />
           ) : (
             <span className={cn(
-              "flex-1 truncate text-sm",
+              "flex-1 min-w-0 truncate text-xs",
               isTrashNode(data) && "text-muted-foreground italic"
             )}>
               {node.data.name}
@@ -725,32 +727,90 @@ export function ArboristTree(props: ArboristTreeProps) {
     parentId: string | null;
     index: number;
   }) => {
-    const { dragIds, parentId } = args;
-    // Note: index is available for reordering but not yet implemented
+    const { dragIds, parentId, index } = args;
+
+    // Get the target folder ID
+    const targetFolderId = parentId?.startsWith("folder-")
+      ? parentId.replace("folder-", "")
+      : null;
+
+    // Get current children in target location
+    const siblingFolders = folders
+      .filter(f => f.parentId === targetFolderId)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+
+    const siblingSessions = sessions
+      .filter(s => s.folderId === targetFolderId && s.status !== "closed" && s.status !== "trashed")
+      .sort((a, b) => a.tabOrder - b.tabOrder);
 
     dragIds.forEach(dragId => {
       if (dragId.startsWith("session-")) {
         const sessionId = dragId.replace("session-", "");
-        const targetFolderId = parentId?.startsWith("folder-")
-          ? parentId.replace("folder-", "")
-          : null;
+        const session = sessions.find(s => s.id === sessionId);
 
-        props.onSessionMove(sessionId, targetFolderId);
+        if (!session) return;
 
-        // TODO: Handle reordering based on index
-        // This would require updating the session's tabOrder
+        // Check if this is a move to a different folder or just reordering
+        const isChangingFolder = session.folderId !== targetFolderId;
+
+        if (isChangingFolder) {
+          // Moving to different folder - use the move handler
+          props.onSessionMove(sessionId, targetFolderId);
+        }
+
+        // Handle reordering within the folder
+        // Build new order of session IDs based on drop index
+        const otherSessionIds = siblingSessions
+          .filter(s => s.id !== sessionId)
+          .map(s => s.id);
+
+        // Insert the dragged session at the new index
+        // Account for folders being rendered before sessions in the tree
+        const adjustedIndex = Math.max(0, index - siblingFolders.length);
+        const newSessionOrder = [
+          ...otherSessionIds.slice(0, adjustedIndex),
+          sessionId,
+          ...otherSessionIds.slice(adjustedIndex),
+        ];
+
+        // Call reorder handler if we have sessions to reorder
+        if (newSessionOrder.length > 0) {
+          props.onSessionReorder(newSessionOrder);
+        }
       } else if (dragId.startsWith("folder-")) {
         const folderId = dragId.replace("folder-", "");
-        const targetParentId = parentId?.startsWith("folder-")
-          ? parentId.replace("folder-", "")
-          : null;
+        const folder = folders.find(f => f.id === folderId);
 
-        props.onFolderMove(folderId, targetParentId);
+        if (!folder) return;
 
-        // TODO: Handle reordering based on index
+        // Check if this is a move to a different parent or just reordering
+        const isChangingParent = folder.parentId !== targetFolderId;
+
+        if (isChangingParent) {
+          // Moving to different parent - use the move handler
+          props.onFolderMove(folderId, targetFolderId);
+        }
+
+        // Handle reordering within the parent
+        // Build new order of folder IDs based on drop index
+        const otherFolderIds = siblingFolders
+          .filter(f => f.id !== folderId)
+          .map(f => f.id);
+
+        // Insert the dragged folder at the new index
+        const newFolderOrder = [
+          ...otherFolderIds.slice(0, index),
+          folderId,
+          ...otherFolderIds.slice(index),
+        ];
+
+        // Call reorder handler if we have folders to reorder
+        if (newFolderOrder.length > 0) {
+          props.onFolderReorder(newFolderOrder);
+        }
       }
     });
-  }, [props]);
+  }, [props, folders, sessions]);
 
   // Determine if a node can be dropped on another
   const disableDrop = useCallback((args: {
@@ -798,46 +858,52 @@ export function ArboristTree(props: ArboristTreeProps) {
     <TreeNodeRenderer {...nodeProps} handlers={props} allFolders={folders} />
   ), [props, folders]);
 
+  // Account for all padding when calculating available width
+  // Don't add extra wrapper padding - let the tree use full width
+  const treeWidth = Math.max(width, 100);
+
   return (
-    <Tree<TreeNode>
-      ref={treeRef}
-      data={treeData}
-      openByDefault={false}
-      initialOpenState={initialOpenState}
-      onToggle={handleToggle}
-      width={width}
-      height={height}
-      indent={12}
-      rowHeight={28}
-      overscanCount={5}
+    <div className="overflow-hidden">
+      <Tree<TreeNode>
+        ref={treeRef}
+        data={treeData}
+        openByDefault={false}
+        initialOpenState={initialOpenState}
+        onToggle={handleToggle}
+        width={treeWidth}
+        height={height}
+        indent={12}
+        rowHeight={26}
+        overscanCount={5}
 
-      // Drag and drop
-      onMove={handleMove}
-      disableDrop={disableDrop}
-      disableDrag={disableDrag}
+        // Drag and drop
+        onMove={handleMove}
+        disableDrop={disableDrop}
+        disableDrag={disableDrag}
 
-      // Custom rendering with tree connector lines
-      renderRow={({ node, innerRef, attrs, children }) => {
-        const depth = node.level;
-        // Calculate connector line position: depth * indent + offset
-        const connectorLeft = depth > 0 ? (depth * 12) + 7 : 0;
+        // Custom rendering with tree connector lines
+        renderRow={({ node, innerRef, attrs, children }) => {
+          const depth = node.level;
+          // Calculate connector line position: depth * indent + offset for icon centering
+          const connectorLeft = depth > 0 ? (depth * 12) + 6 : 0;
 
-        return (
-          <div
-            ref={innerRef}
-            {...attrs}
-            className="relative tree-item"
-            style={{
-              ...attrs.style,
-              "--tree-connector-left": depth > 0 ? `${connectorLeft}px` : undefined,
-            } as React.CSSProperties}
-          >
-            {children}
-          </div>
-        );
-      }}
-    >
-      {renderNode}
-    </Tree>
+          return (
+            <div
+              ref={innerRef}
+              {...attrs}
+              className="relative tree-item"
+              style={{
+                ...attrs.style,
+                "--tree-connector-left": depth > 0 ? `${connectorLeft}px` : undefined,
+              } as React.CSSProperties}
+            >
+              {children}
+            </div>
+          );
+        }}
+      >
+        {renderNode}
+      </Tree>
+    </div>
   );
 }
