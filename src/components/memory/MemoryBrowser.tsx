@@ -69,7 +69,6 @@ import {
   type MemoryContentType,
 } from "@/hooks/useSessionMemory";
 import { useSessionContext } from "@/contexts/SessionContext";
-import { useFolderContext } from "@/contexts/FolderContext";
 import { formatDistanceToNow } from "date-fns";
 
 interface MemoryBrowserProps {
@@ -443,7 +442,6 @@ function MemoryList({
 
 export function MemoryBrowser({ open, onClose }: MemoryBrowserProps) {
   const { sessions, activeSessionId } = useSessionContext();
-  const { sessionFolders } = useFolderContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<MemoryTier | "all">("all");
   const [selectedEntry, setSelectedEntry] = useState<MemoryQueryResult | null>(
@@ -451,9 +449,9 @@ export function MemoryBrowser({ open, onClose }: MemoryBrowserProps) {
   );
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-  // Get the active session and its folder
+  // Get the active session and its folder directly from session data
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const activeFolderId = activeSession?.folderId ?? sessionFolders[activeSessionId ?? ""] ?? null;
+  const activeFolderId = activeSession?.folderId ?? null;
 
   const {
     memories,

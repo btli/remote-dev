@@ -17,8 +17,8 @@ import { IssuesModal } from "@/components/github/IssuesModal";
 import { PRsModal } from "@/components/github/PRsModal";
 import { ProjectKnowledgeModal } from "@/components/knowledge";
 import { MetaAgentOptimizationModal } from "@/components/meta-agent/MetaAgentOptimizationModal";
-import { MemoryPanel, MemoryBrowser } from "@/components/memory";
-import { NotesSidebar } from "@/components/notes";
+import { MemoryBrowser } from "@/components/memory";
+import { RightSidebar, type RightSidebarTab } from "@/components/sidebar";
 import type { MemoryQueryResult } from "@/hooks/useSessionMemory";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -101,6 +101,77 @@ function getServerSidebarCollapsed() {
 
 function getServerSidebarWidth() {
   return 220;
+}
+
+// Right sidebar localStorage persistence (unified Memory/Notes panel)
+function subscribeToRightSidebarCollapsed(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "right-sidebar-collapsed") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("right-sidebar-collapsed-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("right-sidebar-collapsed-change", handler);
+  };
+}
+
+function subscribeToRightSidebarWidth(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "right-sidebar-width") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("right-sidebar-width-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("right-sidebar-width-change", handler);
+  };
+}
+
+function subscribeToRightSidebarTab(callback: () => void) {
+  const handler = (e: Event) => {
+    if (e instanceof StorageEvent && e.key !== "right-sidebar-tab") return;
+    callback();
+  };
+  window.addEventListener("storage", handler);
+  window.addEventListener("right-sidebar-tab-change", handler);
+  return () => {
+    window.removeEventListener("storage", handler);
+    window.removeEventListener("right-sidebar-tab-change", handler);
+  };
+}
+
+function getRightSidebarCollapsed() {
+  return localStorage.getItem("right-sidebar-collapsed") !== "false"; // Default collapsed
+}
+
+function getRightSidebarWidth() {
+  const saved = localStorage.getItem("right-sidebar-width");
+  if (saved) {
+    const width = parseInt(saved, 10);
+    if (!isNaN(width) && width >= 200 && width <= 500) return width;
+  }
+  return 300;
+}
+
+function getRightSidebarTab(): RightSidebarTab {
+  const saved = localStorage.getItem("right-sidebar-tab");
+  if (saved === "notes" || saved === "insights") return saved;
+  return "memory";
+}
+
+function getServerRightSidebarCollapsed() {
+  return true; // Default collapsed on server
+}
+
+function getServerRightSidebarWidth() {
+  return 300;
+}
+
+function getServerRightSidebarTab(): RightSidebarTab {
+  return "memory";
 }
 
 // Memory panel localStorage persistence
@@ -289,6 +360,35 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const setNotesPanelCollapsed = useCallback((collapsed: boolean) => {
     localStorage.setItem("notes-panel-collapsed", String(collapsed));
     window.dispatchEvent(new CustomEvent("notes-panel-collapsed-change"));
+  }, []);
+
+  // Right sidebar state (unified memory/notes panel)
+  const rightSidebarCollapsed = useSyncExternalStore(
+    subscribeToRightSidebarCollapsed,
+    getRightSidebarCollapsed,
+    getServerRightSidebarCollapsed
+  );
+
+  const rightSidebarWidth = useSyncExternalStore(
+    subscribeToRightSidebarWidth,
+    getRightSidebarWidth,
+    getServerRightSidebarWidth
+  );
+
+  const rightSidebarTab = useSyncExternalStore(
+    subscribeToRightSidebarTab,
+    getRightSidebarTab,
+    getServerRightSidebarTab
+  );
+
+  const setRightSidebarCollapsed = useCallback((collapsed: boolean) => {
+    localStorage.setItem("right-sidebar-collapsed", String(collapsed));
+    window.dispatchEvent(new CustomEvent("right-sidebar-collapsed-change"));
+  }, []);
+
+  const setRightSidebarTab = useCallback((tab: RightSidebarTab) => {
+    localStorage.setItem("right-sidebar-tab", tab);
+    window.dispatchEvent(new CustomEvent("right-sidebar-tab-change"));
   }, []);
 
   // Track mobile state for responsive sidebar behavior
@@ -1698,25 +1798,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
           )}
 
-          {/* Notes Panel - visible on desktop when sessions exist */}
+          {/* Right Sidebar - unified Memory/Notes panel */}
           {!isMobile && activeSessions.length > 0 && (
-            <NotesSidebar
+            <RightSidebar
               sessionId={activeSessionId}
               folderId={activeSessions.find((s) => s.id === activeSessionId)?.folderId ?? null}
-              collapsed={notesPanelCollapsed}
-              onCollapsedChange={setNotesPanelCollapsed}
-              width={notesPanelWidth}
-            />
-          )}
-
-          {/* Memory Panel - visible on desktop when sessions exist */}
-          {!isMobile && activeSessions.length > 0 && (
-            <MemoryPanel
-              sessionId={activeSessionId}
-              folderId={activeSessions.find((s) => s.id === activeSessionId)?.folderId ?? null}
-              collapsed={memoryPanelCollapsed}
-              onCollapsedChange={setMemoryPanelCollapsed}
-              width={memoryPanelWidth}
+              collapsed={rightSidebarCollapsed}
+              onCollapsedChange={setRightSidebarCollapsed}
+              width={rightSidebarWidth}
+              activeTab={rightSidebarTab}
+              onActiveTabChange={setRightSidebarTab}
             />
           )}
         </div>

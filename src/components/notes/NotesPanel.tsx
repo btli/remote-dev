@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * NotesSidebar - Collapsible sidebar for session notes.
+ * NotesPanel - Session notes panel for the right sidebar.
  *
  * Features:
  * - Quick capture form with type selection
@@ -86,7 +86,7 @@ import {
 // Props
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface NotesSidebarProps {
+interface NotesPanelProps {
   sessionId?: string | null;
   folderId?: string | null;
   className?: string;
@@ -420,14 +420,14 @@ function QuickCapture({ sessionId, folderId, onSubmit, disabled }: QuickCaptureP
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function NotesSidebar({
+export function NotesPanel({
   sessionId,
   folderId,
   className,
   collapsed = false,
   onCollapsedChange,
   width = 320,
-}: NotesSidebarProps) {
+}: NotesPanelProps) {
   const {
     notes,
     pinned,

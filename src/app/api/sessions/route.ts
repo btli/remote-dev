@@ -28,6 +28,33 @@ function validateProjectPath(path: string | undefined): string | undefined {
 }
 
 /**
+ * Transform session from snake_case (rdv-server) to camelCase (frontend).
+ */
+function transformSession(s: Record<string, unknown>): Record<string, unknown> {
+  return {
+    id: s.id,
+    userId: s.user_id,
+    name: s.name,
+    tmuxSessionName: s.tmux_session_name,
+    projectPath: s.project_path ?? null,
+    githubRepoId: s.github_repo_id ?? null,
+    worktreeBranch: s.worktree_branch ?? null,
+    folderId: s.folder_id ?? null,
+    profileId: s.profile_id ?? null,
+    agentProvider: s.agent_provider ?? null,
+    isOrchestratorSession: s.is_orchestrator_session ?? false,
+    splitGroupId: s.split_group_id ?? null,
+    splitOrder: s.split_order ?? 0,
+    splitSize: s.split_size ?? 100,
+    status: s.status,
+    tabOrder: s.tab_order ?? 0,
+    lastActivityAt: s.last_activity_at ? new Date(s.last_activity_at as number) : new Date(),
+    createdAt: s.created_at ? new Date(s.created_at as number) : new Date(),
+    updatedAt: s.updated_at ? new Date(s.updated_at as number) : new Date(),
+  };
+}
+
+/**
  * GET /api/sessions - List user's terminal sessions
  *
  * Proxies to rdv-server.
@@ -37,10 +64,13 @@ export const GET = withApiAuth(async (request, { userId }) => {
     path: "/sessions",
   });
 
-  // Transform response: rdv-server returns array, frontend expects { sessions: [] }
+  // Transform response: rdv-server returns array in snake_case, frontend expects { sessions: [] } in camelCase
   if (response.ok) {
-    const sessions = await response.json();
-    return NextResponse.json({ sessions: Array.isArray(sessions) ? sessions : [] });
+    const data = await response.json();
+    const sessions = Array.isArray(data) ? data : [];
+    return NextResponse.json({
+      sessions: sessions.map((s: Record<string, unknown>) => transformSession(s)),
+    });
   }
 
   return response;
@@ -90,7 +120,15 @@ export const POST = withApiAuth(async (request, { userId }) => {
     }),
   });
 
-  return proxyToRdvServer(proxyRequest, userId, {
+  const response = await proxyToRdvServer(proxyRequest, userId, {
     path: "/sessions",
   });
+
+  // Transform response from snake_case to camelCase
+  if (response.ok) {
+    const session = await response.json();
+    return NextResponse.json(transformSession(session), { status: response.status });
+  }
+
+  return response;
 });

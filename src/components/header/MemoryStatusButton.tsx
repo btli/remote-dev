@@ -19,16 +19,14 @@ import { Badge } from "@/components/ui/badge";
 import { MemoryBrowser } from "@/components/memory/MemoryBrowser";
 import { useSessionMemory } from "@/hooks/useSessionMemory";
 import { useSessionContext } from "@/contexts/SessionContext";
-import { useFolderContext } from "@/contexts/FolderContext";
 
 export function MemoryStatusButton() {
   const [isOpen, setIsOpen] = useState(false);
   const { sessions, activeSessionId } = useSessionContext();
-  const { sessionFolders } = useFolderContext();
 
-  // Get the active session and its folder
+  // Get the active session and its folder directly from session data
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const activeFolderId = activeSession?.folderId ?? sessionFolders[activeSessionId ?? ""] ?? null;
+  const activeFolderId = activeSession?.folderId ?? null;
 
   const { counts, loading } = useSessionMemory({
     sessionId: activeSessionId,
