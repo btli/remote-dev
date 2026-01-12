@@ -5,7 +5,7 @@ import { Tree, TreeApi, NodeRendererProps, NodeApi } from "react-arborist";
 import {
   Terminal, Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   GitPullRequest, CircleDot, KeyRound, Brain, RefreshCw, BookOpen, Bot, Settings,
-  Lightbulb, Clock,
+  Lightbulb, Clock, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -288,92 +288,102 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
     if (isSessionNode(data)) {
       const session = data.session;
       if (session.isOrchestratorSession) {
-        return <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />;
+        return <Brain className="w-3 h-3 text-purple-400 shrink-0" />;
       }
       if (session.agentProvider && session.agentProvider !== "none") {
-        return <Bot className="w-3.5 h-3.5 text-blue-400 shrink-0" />;
+        return <Bot className="w-3 h-3 text-blue-400 shrink-0" />;
       }
-      return <Terminal className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
+      return <Terminal className="w-3 h-3 text-muted-foreground shrink-0" />;
     }
 
     if (isTrashNode(data)) {
-      return <Trash2 className="w-3.5 h-3.5 text-destructive/70 shrink-0" />;
+      return <Trash2 className="w-3 h-3 text-destructive/70 shrink-0" />;
     }
 
     // Folder
     return node.isOpen
-      ? <FolderOpen className="w-3.5 h-3.5 text-primary/70 shrink-0" />
-      : <Folder className="w-3.5 h-3.5 text-primary/70 shrink-0" />;
+      ? <FolderOpen className="w-3 h-3 text-primary/70 shrink-0" />
+      : <Folder className="w-3 h-3 text-primary/70 shrink-0" />;
   };
 
   // Render badges (for folders with stats, sessions with schedules)
+  // All badges are rendered in a single container div that flows left after the text
   const renderBadges = () => {
+    // Collect badge elements
+    const badges: React.ReactNode[] = [];
+
     // Session badges - show schedule count if available
     if (isSessionNode(data)) {
-      if (!handlers.getSchedulesForSession) return null;
-      const schedules = handlers.getSchedulesForSession(data.session.id);
-      const activeCount = schedules.filter(s => s.enabled).length;
-      if (activeCount === 0) return null;
-      return (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handlers.onSessionSchedulesView?.(data.session.id, data.session.name);
-          }}
-          className="flex items-center gap-0.5 text-[9px] text-primary shrink-0 hover:text-primary/80 transition-colors ml-auto"
-        >
-          <Clock className="w-2.5 h-2.5" />
-          {activeCount}
-        </button>
-      );
+      if (handlers.getSchedulesForSession) {
+        const schedules = handlers.getSchedulesForSession(data.session.id);
+        const activeCount = schedules.filter(s => s.enabled).length;
+        if (activeCount > 0) {
+          badges.push(
+            <button
+              key="schedule"
+              onClick={(e) => {
+                e.stopPropagation();
+                handlers.onSessionSchedulesView?.(data.session.id, data.session.name);
+              }}
+              className="inline-flex items-center gap-0.5 text-primary hover:text-primary/80 transition-colors"
+            >
+              <Clock className="w-2 h-2" />
+              {activeCount}
+            </button>
+          );
+        }
+      }
     }
 
-    // Show trash count for trash nodes
+    // Trash count badge
     if (isTrashNode(data)) {
-      return (
-        <span className="text-[10px] text-muted-foreground/50 ml-auto">
+      badges.push(
+        <span key="trash" className="text-muted-foreground/50 tabular-nums">
           {data.trashCount}
         </span>
       );
     }
 
     // Folder badges
-    if (!isFolderNode(data)) {
-      return null;
-    }
+    if (isFolderNode(data)) {
+      const { stats, sessionCount } = data;
 
-    const { stats, sessionCount } = data;
-
-    // Only render if there's something to show
-    const hasIssues = stats && stats.issueCount > 0;
-    const hasChanges = stats?.hasChanges;
-    const hasSessions = sessionCount > 0;
-
-    if (!hasIssues && !hasChanges && !hasSessions) {
-      return null;
-    }
-
-    return (
-      <div className="flex items-center gap-1 ml-auto shrink-0 text-[10px] leading-none">
-        {/* Issue count */}
-        {hasIssues && (
-          <span className="inline-flex items-center text-chart-2">
-            <CircleDot className="w-2.5 h-2.5" />
+      // Issue count
+      if (stats && stats.issueCount > 0) {
+        badges.push(
+          <span key="issues" className="inline-flex items-center text-chart-2">
+            <CircleDot className="w-2 h-2" />
             <span className="ml-0.5">{stats.issueCount}</span>
           </span>
-        )}
+        );
+      }
 
-        {/* Changes indicator */}
-        {hasChanges && (
-          <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-        )}
+      // Changes indicator
+      if (stats?.hasChanges) {
+        badges.push(
+          <span key="changes" className="w-1 h-1 rounded-full bg-primary animate-pulse" />
+        );
+      }
 
-        {/* Session count */}
-        {hasSessions && (
-          <span className="text-muted-foreground/60 tabular-nums">
+      // Session count
+      if (sessionCount > 0) {
+        badges.push(
+          <span key="sessions" className="text-muted-foreground/50 tabular-nums">
             {sessionCount}
           </span>
-        )}
+        );
+      }
+    }
+
+    // Return null if no badges
+    if (badges.length === 0) {
+      return null;
+    }
+
+    // Render all badges in a single container
+    return (
+      <div className="flex items-center gap-1 shrink-0 text-[9px] leading-none">
+        {badges}
       </div>
     );
   };
@@ -614,8 +624,9 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
           ref={dragHandle}
           style={style}
           className={cn(
-            "flex items-center gap-1.5 px-1.5 py-0.5 cursor-pointer select-none",
+            "group flex items-center gap-1.5 px-2 py-0.5 cursor-pointer select-none",
             "hover:bg-accent/50 transition-colors duration-150 rounded-sm",
+            "max-w-full overflow-hidden box-border",
             isSelected && "bg-primary/20",
             node.state.isEditing && "bg-accent",
             node.isDragging && "opacity-50",
@@ -646,11 +657,11 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
                 }
               }}
               autoFocus
-              className="flex-1 min-w-0 bg-transparent border border-primary/50 rounded px-1 py-0.5 text-xs outline-none"
+              className="flex-1 min-w-0 bg-transparent border border-primary/50 rounded px-1 py-0 text-[11px] outline-none"
             />
           ) : (
             <span className={cn(
-              "flex-1 min-w-0 truncate text-xs",
+              "flex-1 min-w-0 truncate text-[11px]",
               isTrashNode(data) && "text-muted-foreground italic"
             )}>
               {node.data.name}
@@ -658,6 +669,20 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
           )}
 
           {renderBadges()}
+
+          {/* Close button - only for sessions, visible on hover */}
+          {isSessionNode(data) && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handlers.onSessionClose(data.session.id);
+              }}
+              className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-destructive/20 rounded transition-opacity"
+              title="Close session"
+            >
+              <X className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+            </button>
+          )}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
@@ -858,12 +883,12 @@ export function ArboristTree(props: ArboristTreeProps) {
     <TreeNodeRenderer {...nodeProps} handlers={props} allFolders={folders} />
   ), [props, folders]);
 
-  // Account for all padding when calculating available width
-  // Don't add extra wrapper padding - let the tree use full width
-  const treeWidth = Math.max(width, 100);
+  // Account for padding when calculating available width
+  // Subtract 16px for container padding and scrollbar space to prevent overflow
+  const treeWidth = Math.max(width - 16, 100);
 
   return (
-    <div className="overflow-hidden">
+    <div className="overflow-hidden pr-2">
       <Tree<TreeNode>
         ref={treeRef}
         data={treeData}
@@ -872,8 +897,8 @@ export function ArboristTree(props: ArboristTreeProps) {
         onToggle={handleToggle}
         width={treeWidth}
         height={height}
-        indent={12}
-        rowHeight={26}
+        indent={14}
+        rowHeight={24}
         overscanCount={5}
 
         // Drag and drop
@@ -885,7 +910,7 @@ export function ArboristTree(props: ArboristTreeProps) {
         renderRow={({ node, innerRef, attrs, children }) => {
           const depth = node.level;
           // Calculate connector line position: depth * indent + offset for icon centering
-          const connectorLeft = depth > 0 ? (depth * 12) + 6 : 0;
+          const connectorLeft = depth > 0 ? (depth * 14) + 7 : 0;
 
           return (
             <div

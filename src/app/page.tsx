@@ -1,8 +1,8 @@
 import { signOut } from "@/auth";
 import { getAuthSession } from "@/lib/auth-utils";
 import { db } from "@/db";
-import { terminalSessions, accounts } from "@/db/schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { terminalSessions, accounts, sessionFolders } from "@/db/schema";
+import { eq, and, inArray, asc } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
@@ -18,8 +18,8 @@ import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
 import { OrchestratorProvider } from "@/contexts/OrchestratorContext";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
+import { SessionManagerClient } from "@/components/session/SessionManagerClient";
 import type { TerminalSession } from "@/types/session";
 
 export default async function Home() {
@@ -47,6 +47,29 @@ export default async function Home() {
   });
   const isGitHubConnected = !!githubAccount;
 
+  // Fetch user's folders
+  const dbFolders = await db.query.sessionFolders.findMany({
+    where: eq(sessionFolders.userId, session.user.id),
+    orderBy: [asc(sessionFolders.sortOrder)],
+  });
+
+  // Build sessionFolders map (sessionId -> folderId)
+  const sessionFoldersMap: Record<string, string> = {};
+  for (const s of dbSessions) {
+    if (s.folderId) {
+      sessionFoldersMap[s.id] = s.folderId;
+    }
+  }
+
+  // Map database folders to frontend format
+  const initialFolders = dbFolders.map((f) => ({
+    id: f.id,
+    parentId: f.parentId,
+    name: f.name,
+    collapsed: f.collapsed,
+    sortOrder: f.sortOrder,
+  }));
+
   // Map database sessions to TypeScript type
   const initialSessions: TerminalSession[] = dbSessions.map((s) => ({
     id: s.id,
@@ -72,7 +95,7 @@ export default async function Home() {
 
   return (
     <PreferencesProvider>
-      <FolderProvider>
+      <FolderProvider initialFolders={initialFolders} initialSessionFolders={sessionFoldersMap}>
         <SecretsProvider>
           <ProfileProvider>
             <TemplateProvider>
@@ -97,8 +120,8 @@ export default async function Home() {
                             }}
                           />
 
-                          {/* Main content */}
-                          <SessionManager isGitHubConnected={isGitHubConnected} />
+                          {/* Main content - client-only to prevent Radix UI hydration mismatch */}
+                          <SessionManagerClient isGitHubConnected={isGitHubConnected} />
                         </div>
                             </OrchestratorProvider>
                           </ErrorBoundary>
