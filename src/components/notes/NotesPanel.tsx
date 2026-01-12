@@ -11,7 +11,7 @@
  * - Markdown preview support
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -294,6 +294,21 @@ function QuickCapture({ sessionId, folderId, onSubmit, disabled }: QuickCaptureP
   const [content, setContent] = useState("");
   const [tags, setTags] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-expand textarea based on content
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    // Reset height to auto to get the correct scrollHeight
+    textarea.style.height = "auto";
+    // Set height to scrollHeight, capped between min and max
+    const minHeight = 60;
+    const maxHeight = 200;
+    const newHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight);
+    textarea.style.height = `${newHeight}px`;
+  }, [content]);
 
   const handleSubmit = useCallback(async () => {
     if (!content.trim()) return;
@@ -378,12 +393,13 @@ function QuickCapture({ sessionId, folderId, onSubmit, disabled }: QuickCaptureP
         </Button>
       </div>
 
-      {/* Content */}
+      {/* Content - auto-expands based on text */}
       <Textarea
+        ref={textareaRef}
         placeholder="What did you notice or decide?"
         value={content}
         onChange={(e) => setContent(e.target.value)}
-        className="min-h-[60px] text-xs resize-none"
+        className="min-h-[60px] max-h-[200px] text-xs resize-none overflow-y-auto"
         disabled={submitting}
       />
 
