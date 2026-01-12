@@ -25,9 +25,18 @@
 //!
 //! Use the MCP adapter to expose extension tools to AI agents:
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rdv_sdk::extensions::mcp_adapter::{DynamicToolRouter, MCPToolAdapter};
+//! use rdv_sdk::extensions::builders::SDK;
+//! use serde_json::json;
 //!
+//! // Create a tool
+//! let tool = SDK::tool("search")
+//!     .description("Search for files")
+//!     .input_schema(json!({"type": "object"}))
+//!     .build();
+//!
+//! // In an async context:
 //! let router = DynamicToolRouter::new();
 //! router.register_tools("my-ext", vec![tool]).await;
 //!

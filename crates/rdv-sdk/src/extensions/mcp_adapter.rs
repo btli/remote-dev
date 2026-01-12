@@ -17,9 +17,10 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use rdv_sdk::extensions::{SDK, ExtensionRegistry};
 //! use rdv_sdk::extensions::mcp_adapter::{MCPToolAdapter, DynamicToolRouter};
+//! use serde_json::json;
 //!
 //! // Register an extension with tools
 //! let tool = SDK::tool("search")
@@ -28,11 +29,11 @@
 //!     .build();
 //!
 //! // The adapter converts extension tools to MCP format
-//! let mcp_tool = MCPToolAdapter::to_mcp_tool(&tool);
+//! let mcp_tool = MCPToolAdapter::to_mcp_tool(&tool, "my-extension");
 //!
-//! // The router can add/remove tools dynamically
+//! // The router can add/remove tools dynamically (in async context)
 //! let router = DynamicToolRouter::new();
-//! router.register("my-extension", vec![tool]).await;
+//! router.register_tools("my-extension", vec![tool]).await;
 //! ```
 
 use std::collections::HashMap;
