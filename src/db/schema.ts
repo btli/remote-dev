@@ -1445,9 +1445,8 @@ export const orchestratorSessions = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    // Link to the underlying terminal session
+    // Link to the underlying terminal session (nullable for pending_bootstrap state)
     sessionId: text("session_id")
-      .notNull()
       .unique()
       .references(() => terminalSessions.id, { onDelete: "cascade" }),
     userId: text("user_id")
