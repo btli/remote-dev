@@ -5,10 +5,11 @@ import { Tree, TreeApi, NodeRendererProps, NodeApi } from "react-arborist";
 import {
   Terminal, Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   GitPullRequest, CircleDot, KeyRound, Brain, RefreshCw, BookOpen, Bot, Settings,
-  Lightbulb,
+  Lightbulb, Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
+import type { SessionSchedule } from "@/types/schedule";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -103,7 +104,7 @@ export interface ArboristTreeProps {
   onFolderDelete: (folderId: string) => void;
   onFolderToggle: (folderId: string) => void;
   onFolderClick: (folderId: string) => void;
-  onFolderSettings: (folderId: string, folderName: string, initialTab?: string) => void;
+  onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onFolderNewSession: (folderId: string, type: "agent" | "terminal") => void;
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
@@ -117,8 +118,11 @@ export interface ArboristTreeProps {
   onFolderReinitOrchestrator?: (folderId: string) => void;
   onOrchestratorReinstallHooks?: (folderId: string) => void;
   onFolderKnowledge?: (folderId: string, folderName: string) => void;
+  onFolderSecretsConfig?: (folderId: string) => void;
   onSessionSchedule?: (sessionId: string) => void;
+  onSessionSchedulesView?: (sessionId: string, sessionName: string) => void;
   onSessionOptimize?: (sessionId: string) => void;
+  getSchedulesForSession?: (sessionId: string) => SessionSchedule[];
 
   // Dimensions
   height: number;
@@ -302,17 +306,39 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
       : <Folder className="w-3.5 h-3.5 text-primary/70 shrink-0" />;
   };
 
-  // Render badges (for folders with stats)
+  // Render badges (for folders with stats, sessions with schedules)
   const renderBadges = () => {
+    // Session badges - show schedule count if available
+    if (isSessionNode(data)) {
+      if (!handlers.getSchedulesForSession) return null;
+      const schedules = handlers.getSchedulesForSession(data.session.id);
+      const activeCount = schedules.filter(s => s.enabled).length;
+      if (activeCount === 0) return null;
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handlers.onSessionSchedulesView?.(data.session.id, data.session.name);
+          }}
+          className="flex items-center gap-0.5 text-[9px] text-primary shrink-0 hover:text-primary/80 transition-colors ml-auto"
+        >
+          <Clock className="w-2.5 h-2.5" />
+          {activeCount}
+        </button>
+      );
+    }
+
+    // Show trash count for trash nodes
+    if (isTrashNode(data)) {
+      return (
+        <span className="text-[10px] text-muted-foreground/50 ml-auto">
+          {data.trashCount}
+        </span>
+      );
+    }
+
+    // Folder badges
     if (!isFolderNode(data)) {
-      // Show trash count for trash nodes
-      if (isTrashNode(data)) {
-        return (
-          <span className="text-[10px] text-muted-foreground/50 ml-auto">
-            {data.trashCount}
-          </span>
-        );
-      }
       return null;
     }
 
@@ -414,9 +440,22 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
 
           {handlers.onSessionSchedule && (
             <ContextMenuItem onClick={() => handlers.onSessionSchedule!(session.id)}>
-              <Sparkles className="w-3.5 h-3.5 mr-2" />
+              <Clock className="w-3.5 h-3.5 mr-2" />
               Schedule Command
             </ContextMenuItem>
+          )}
+
+          {handlers.onSessionSchedulesView && handlers.getSchedulesForSession && (
+            (() => {
+              const schedules = handlers.getSchedulesForSession(session.id);
+              if (schedules.length === 0) return null;
+              return (
+                <ContextMenuItem onClick={() => handlers.onSessionSchedulesView!(session.id, session.name)}>
+                  <Clock className="w-3.5 h-3.5 mr-2" />
+                  View Schedules ({schedules.length})
+                </ContextMenuItem>
+              );
+            })()
           )}
 
           {handlers.onSessionOptimize && session.agentProvider && session.agentProvider !== "none" && (
@@ -487,6 +526,15 @@ function TreeNodeRenderer({ node, style, dragHandle, handlers, allFolders }: Tre
             <span className="ml-auto text-[10px] text-primary">Custom</span>
           )}
         </ContextMenuItem>
+        {handlers.onFolderSecretsConfig && (
+          <ContextMenuItem onClick={() => handlers.onFolderSecretsConfig!(folder.id)}>
+            <KeyRound className="w-3.5 h-3.5 mr-2" />
+            Secrets
+            {data.hasSecrets && (
+              <span className="ml-auto text-[10px] text-primary">Active</span>
+            )}
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onClick={() => handlers.onFolderSettings(folder.id, folder.name, "repository")}>
           <GitBranch className="w-3.5 h-3.5 mr-2" />
           Repository
