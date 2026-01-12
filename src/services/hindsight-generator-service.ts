@@ -13,7 +13,6 @@
 import {
   Episode,
   type EpisodeReflection,
-  type TrajectoryStep,
   type Decision,
   type Pivot,
 } from "@/domain/entities/Episode";

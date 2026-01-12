@@ -7,7 +7,6 @@ import {
   detectErrors,
   getSupportedLanguages,
   getErrorCategories,
-  type DetectedError,
 } from "./error-auto-capture-service";
 
 describe("error-auto-capture-service", () => {

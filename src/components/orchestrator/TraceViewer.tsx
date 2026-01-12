@@ -41,13 +41,11 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  ChevronDown,
   ChevronRight,
   Play,
   Pause,
   ZoomIn,
   ZoomOut,
-  Maximize2,
   Download,
   Search,
   ArrowRight,
@@ -63,7 +61,6 @@ import {
   Copy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatDistanceToNow } from "date-fns";
 import { Input } from "@/components/ui/input";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,6 +241,17 @@ interface TimelineViewProps {
 }
 
 function TimelineView({ calls, selectedId, onSelect, zoom }: TimelineViewProps) {
+  // For running calls without completedAt, use the latest call's startedAt as reference
+  // This avoids calling Date.now() which is impure
+  const getEffectiveEndTime = useCallback((call: ToolCall): number => {
+    if (call.completedAt) {
+      return call.completedAt.getTime();
+    }
+    // For running calls, estimate end time as startedAt + estimated duration
+    // or just use startedAt + 1 second minimum width
+    return call.startedAt.getTime() + (call.duration || 1000);
+  }, []);
+
   if (calls.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground">
@@ -256,9 +264,7 @@ function TimelineView({ calls, selectedId, onSelect, zoom }: TimelineViewProps) 
 
   // Calculate timeline bounds
   const startTime = Math.min(...calls.map((c) => c.startedAt.getTime()));
-  const endTime = Math.max(
-    ...calls.map((c) => (c.completedAt?.getTime() || Date.now()))
-  );
+  const endTime = Math.max(...calls.map(getEffectiveEndTime));
   const totalDuration = endTime - startTime;
 
   // Base width per second (adjusted by zoom)
@@ -291,7 +297,7 @@ function TimelineView({ calls, selectedId, onSelect, zoom }: TimelineViewProps) 
           const CategoryIcon = CATEGORY_ICONS[call.category || inferCategory(call.name)];
 
           const left = ((call.startedAt.getTime() - startTime) / 1000) * pixelsPerSecond;
-          const duration = call.duration || (Date.now() - call.startedAt.getTime());
+          const duration = call.duration || (getEffectiveEndTime(call) - call.startedAt.getTime());
           const width = Math.max(20, (duration / 1000) * pixelsPerSecond);
 
           return (
@@ -655,8 +661,8 @@ export function TraceViewer({
   height = "600px",
   onClose,
 }: TraceViewerProps) {
-  // State
-  const [calls, setCalls] = useState<ToolCall[]>(trace?.calls || []);
+  // State for streaming mode - maintains mutable call list
+  const [streamingCalls, setStreamingCalls] = useState<ToolCall[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"timeline" | "stack" | "graph">("timeline");
   const [zoom, setZoom] = useState(1);
@@ -667,12 +673,11 @@ export function TraceViewer({
   // Refs
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  // Update calls when trace changes
-  useEffect(() => {
-    if (trace?.calls) {
-      setCalls(trace.calls);
-    }
-  }, [trace?.calls]);
+  // Derive calls from either trace prop (static) or streaming state (live)
+  // This avoids syncing props to state which causes cascading renders
+  const calls = isStreaming && streamingCalls.length > 0
+    ? streamingCalls
+    : (trace?.calls || []);
 
   // SSE streaming connection
   useEffect(() => {
@@ -692,7 +697,7 @@ export function TraceViewer({
             completedAt: data.data.completedAt ? new Date(data.data.completedAt) : undefined,
           };
 
-          setCalls((prev) => {
+          setStreamingCalls((prev) => {
             // Update existing or add new
             const existingIndex = prev.findIndex((c) => c.id === toolCall.id);
             if (existingIndex >= 0) {
