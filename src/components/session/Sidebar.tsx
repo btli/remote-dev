@@ -41,6 +41,7 @@ import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
+import { SidebarTree } from "./SidebarTree";
 
 export interface SessionFolder {
   id: string;
@@ -1679,8 +1680,53 @@ export function Sidebar({
                 </div>
               )}
 
-              {/* Recursive folder rendering */}
-              {folderTree.map((folderNode) => {
+              {/* Tree rendering - use ArboristTree for expanded mode */}
+              {!collapsed ? (
+                <SidebarTree
+                  containerWidth={width}
+                  sessions={activeSessions.filter(s => !s.isOrchestratorSession || s.folderId)}
+                  folders={folders}
+                  activeSessionId={activeSessionId}
+                  activeFolderId={activeFolderId}
+                  folderHasPreferences={folderHasPreferences}
+                  folderHasRepo={folderHasRepo}
+                  getFolderRepoStats={getRolledUpStats}
+                  getFolderTrashCount={getFolderTrashCount}
+                  onSessionClick={onSessionClick}
+                  onSessionClose={onSessionClose}
+                  onSessionRename={onSessionRename}
+                  onSessionMove={onSessionMove}
+                  onSessionReorder={onSessionReorder}
+                  onFolderCreate={onFolderCreate}
+                  onFolderRename={onFolderRename}
+                  onFolderDelete={onFolderDelete}
+                  onFolderToggle={onFolderToggle}
+                  onFolderClick={onFolderClick}
+                  onFolderSettings={onFolderSettings}
+                  onFolderNewSession={onFolderNewSession}
+                  onFolderAdvancedSession={onFolderAdvancedSession}
+                  onFolderNewWorktree={onFolderNewWorktree}
+                  onFolderMove={onFolderMove}
+                  onFolderReorder={onFolderReorder}
+                  onEmptyTrash={onEmptyTrash}
+                  onViewIssues={onViewIssues}
+                  onViewPRs={onViewPRs}
+                  onFolderReinitOrchestrator={onFolderReinitOrchestrator}
+                  onOrchestratorReinstallHooks={onOrchestratorReinstallHooks}
+                  onFolderKnowledge={onFolderKnowledge}
+                  onFolderSecretsConfig={(folderId) => {
+                    setSecretsModalFolderId(folderId);
+                    setSecretsModalOpen(true);
+                  }}
+                  onSessionSchedule={onSessionSchedule}
+                  onSessionSchedulesView={onSessionSchedulesView}
+                  onSessionOptimize={onSessionOptimize}
+                  getSchedulesForSession={getSchedulesForSession}
+                />
+              ) : (
+                <>
+                  {/* Collapsed mode - manual rendering for icon-only view */}
+                  {folderTree.map((folderNode) => {
                 // Helper to count sessions recursively in a folder and all descendants
                 const countSessionsRecursively = (node: FolderNode): number => {
                   const directSessions = activeSessions.filter(s => s.folderId === node.id).length;
@@ -2215,11 +2261,10 @@ export function Sidebar({
                 return renderFolderNode(folderNode);
               })}
 
-              {/* Root sessions (not in any folder) */}
-              {renderSessionsWithSplits(rootSessions, {
-                folderId: null,
-                depth: 0,
-              })}
+                  {/* Root sessions (not in any folder) - collapsed mode */}
+                  {rootSessions.map((session) => renderSession(session, 0, null))}
+                </>
+              )}
             </>
           )}
       </div>
