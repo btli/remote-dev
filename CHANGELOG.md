@@ -9,22 +9,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote Dev SDK**: Three-perspective architecture (AX/UX/DX) for AI agent integration
+  - `RemoteDevSDK` class with session, memory, and orchestrator APIs
+  - `useRemoteDevSDK` and `useOrchestratorEvents` React hooks
+  - REST API routes under `/api/sdk/*` for sessions, memory, notes, and meta-agent
+  - SDK integration tests and comprehensive documentation
+
+- **Meta-Agent Optimization System**: Self-improving agent configuration
+  - BUILD → TEST → IMPROVE optimization loop
+  - Config version tracking with automatic rollback
+  - A/B testing between config versions
+  - SSE streaming for real-time optimization updates
+  - `MetaAgentOptimizationModal` UI component
+  - CLI commands: `rdv meta start|status|history|benchmark|rollback`
+
+- **Hierarchical Memory System**: Three-tier memory architecture
+  - Short-term (5 min TTL), Working (24 hour TTL), Long-term (permanent)
+  - Memory types: observation, error, pattern, decision, gotcha, insight, knowledge
+  - Content-hash deduplication and TTL-based expiration
+  - Scrollback pattern detection and session lifecycle integration
+  - Semantic search with LanceDB vector storage
+  - API routes: `/api/sdk/memory/*` for store, query, consolidate, prune
+
+- **Note-Taking and Knowledge System**: Structured note capture for AI agents
+  - Database schema for notes and insights with types and tags
+  - NoteTakingService with insight extraction
+  - Cross-session knowledge aggregation
+  - `NotesSidebar` and `KnowledgeBrowser` UI components
+  - CLI commands: `rdv notes create|list|show|delete|insights`
+
+- **Extension System** (rdv-sdk): Plugin architecture for custom tools
+  - Fluent builder APIs for tools, prompts, and extensions
+  - Extension traits: Perception, Reasoning, Action, Memory, UI, Orchestration
+  - Composition system with dependency resolution and cycle detection
+  - Prebuilt compositions: minimal, development, web_development, data_science
+  - Lifecycle hooks: OnInputMessages, PreToolUse, PostToolUse, SessionStart, etc.
+  - MCP tool integration via DynamicToolRouter
+  - CLI commands: `rdv extension list|install|enable|disable`
+  - Documentation: `docs/extensions/composition.md`
+
+- **arXiv 2512.10398v5 UX/DX Improvements**:
+  - **ErrorAutoCaptureService**: Pattern-based error detection for multiple languages
+  - **LogViewer**: Real-time streaming, filtering, search, virtual scrolling
+  - **TraceViewer**: Tool call timeline, call stack, dependency graph visualization
+  - **PromptPlayground**: Interactive prompt testing with parameter tuning
+  - **BenchmarkComparisonView**: Side-by-side config comparison and score history
+  - **RegressionDetector**: Threshold-based monitoring with severity alerts
+  - **HindsightGeneratorService**: Session analysis for learnings extraction
+  - **CodePreview**: Syntax highlighting with virtual scrolling
+  - **DiffViewer**: Unified/split diff views with inline commenting
+
+- **Rust Backend (rdv-server)**: Consolidated service architecture
+  - REST API + WebSocket + MCP server
+  - Session creation with project detection and tech stack analysis
+  - Master Control auto-initialization and Folder Control auto-spin
+  - Learning extraction from session transcripts
+  - Worktree cleanup automation
+  - Unix socket transport for low-latency communication
+  - CLI token management: `rdv auth create-token|list-tokens|revoke-token`
+  - Cloudflare tunnel configuration template
+
+- **UI Enhancements**:
+  - `MemoryPanel` for session memory display
+  - `InsightsDashboardWidget` in sidebar
+  - Memory search integration in command palette
+  - Edit modals for sessions, folders, and templates
+  - Consistent toast notifications throughout
+
+- **CLI Enhancements**:
+  - Memory commands: `rdv memory store|list|query|consolidate|prune`
+  - Knowledge commands: `rdv knowledge list|show|apply`
+  - Learning commands: `rdv learn analyze|extract|apply|consolidate|show`
+
 - **Orchestrator-First Mode Feature Flag**: Opt-in control for Master Control monitoring
   - User-level setting with per-folder overrides
   - Hierarchical preference inheritance (Default → User → Parent Folder → Child Folder)
-  - `OrchestratorModeToggle` UI component for settings and folder preferences
-  - `isOrchestratorModeEnabled()` helper for checking effective flag state
-  - Migration script (`bun run db:migrate-orchestrators`) for safe rollout
-  - Comprehensive documentation in `docs/ORCHESTRATOR_FIRST_MODE.md`
-- **Environment Variables Documentation**: Updated `.env.local.example` with:
-  - AI Agent API keys section (ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY)
-  - MCP server configuration options
-  - Feature flags section with ORCHESTRATOR_FIRST_MODE
+  - `OrchestratorModeToggle` UI component
+  - Migration script (`bun run db:migrate-orchestrators`)
+
+- **Testing Infrastructure**:
+  - 742+ unit tests across services and SDK
+  - 7 integration tests for database workflows
+  - 6 E2E tests for complete user flows
+  - Performance benchmarks for SDK operations
 
 ### Changed
 
 - Monitoring service now respects `orchestratorFirstMode` feature flag on startup
 - Orchestrators for users/folders with disabled flag are skipped during initialization
+- Migrated multiple TypeScript services to consolidated Rust backend
+- Enhanced command palette with memory search integration
+
+### Fixed
+
+- Impure `Date.now()` calls in TraceViewer causing render issues
+- Cascading setState errors in TraceViewer prop syncing
+- Unused import cleanup across codebase
+- Lint errors in new UX/DX components
 
 ## [0.2.0] - 2026-01-09
 
