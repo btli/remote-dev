@@ -264,7 +264,7 @@ export function RightSidebar({
         {/* Content panel - to the RIGHT of icons */}
         {!collapsed && (
           <div
-            className="flex-1 overflow-hidden border-l border-border"
+            className="flex-1 h-full overflow-hidden border-l border-border"
             style={{ width: contentWidth }}
           >
             {renderContent()}

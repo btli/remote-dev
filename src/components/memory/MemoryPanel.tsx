@@ -211,7 +211,7 @@ export function MemoryPanel({
   return (
     <div
       className={cn(
-        "flex flex-col border-l border-border bg-card/50 backdrop-blur-sm",
+        "flex flex-col h-full border-l border-border bg-card/50 backdrop-blur-sm",
         className
       )}
       style={{ width }}

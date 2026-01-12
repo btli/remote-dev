@@ -345,7 +345,7 @@ function QuickCapture({ sessionId, folderId, onSubmit, disabled }: QuickCaptureP
       {/* Type selector */}
       <div className="flex gap-2">
         <Select value={type} onValueChange={(v) => setType(v as NoteType)}>
-          <SelectTrigger className="h-7 w-[130px]">
+          <SelectTrigger className="h-7 min-w-[130px] flex-1">
             <SelectValue>
               <div className="flex items-center gap-1.5">
                 <TypeIcon className={cn("h-3 w-3", config.color)} />
