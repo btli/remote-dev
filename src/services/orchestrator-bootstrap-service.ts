@@ -105,6 +105,13 @@ async function withCreationLock<T extends BootstrapResult>(
     if (creationLocks.has(lockKey)) {
       continue;
     }
+
+    // Prevent unhandled rejection warning if no one is waiting on the placeholder
+    // The error will be thrown synchronously via the re-throw below
+    placeholderPromise.catch(() => {
+      // Intentionally swallow - error is re-thrown below
+    });
+
     creationLocks.set(lockKey, placeholderPromise);
 
     try {

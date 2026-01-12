@@ -32,6 +32,10 @@ const REMOTE_DEV_DIR = process.env.REMOTE_DEV_DIR || join(process.env.HOME || "~
 const SOCKET_DIR = join(REMOTE_DEV_DIR, "run");
 const RDV_SERVER_DIR = join(REMOTE_DEV_DIR, "server");
 
+// Database location (shared by dev and prod)
+const DATABASE_PATH = join(REMOTE_DEV_DIR, "sqlite.db");
+const DATABASE_URL = `file:${DATABASE_PATH}`;
+
 // rdv-server (Rust backend) paths
 const RDV_SERVER_BINARY = join(PROJECT_ROOT, "crates", "target", "release", "rdv-server");
 const RDV_SERVER_PID_FILE = join(RDV_SERVER_DIR, "server.pid");
@@ -104,6 +108,23 @@ function cleanupSocket(socketPath: string): void {
       console.error(`Failed to remove socket ${socketPath}:`, err);
     }
   }
+}
+
+/**
+ * Wait for a Unix socket to become available (file exists).
+ * Returns true if socket is ready, false if timeout exceeded.
+ */
+async function waitForSocket(socketPath: string, timeoutMs: number = 10000): Promise<boolean> {
+  const pollIntervalMs = 100;
+  let waited = 0;
+  while (waited < timeoutMs) {
+    if (existsSync(socketPath)) {
+      return true;
+    }
+    await Bun.sleep(pollIntervalMs);
+    waited += pollIntervalMs;
+  }
+  return false;
 }
 
 function prepareStandalone(): void {
@@ -290,7 +311,7 @@ async function startServer(
   name: string,
   cmd: string[],
   env: Record<string, string>,
-  pidFile: string
+  pidFile: string | null
 ): Promise<SpawnedProcess | null> {
   console.log(`Starting ${name}...`);
 
@@ -303,7 +324,10 @@ async function startServer(
   });
 
   if (proc.pid) {
-    writePid(pidFile, proc.pid);
+    // Only write PID file if provided (rdv-server manages its own)
+    if (pidFile) {
+      writePid(pidFile, proc.pid);
+    }
     console.log(`${name} started (PID: ${proc.pid})`);
     return proc;
   }
@@ -334,15 +358,52 @@ async function start(mode: Mode): Promise<void> {
       process.exit(1);
     }
 
+    // Dev mode also needs rdv-server for API proxying
+    ensureSocketDir();
+    ensureRdvServerDir();
+    cleanupSocket(CONFIG.prod.rdvServerSocket);
+
     console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode`);
     console.log(`  Next.js:  http://localhost:${config.nextPort}`);
-    console.log(`  Terminal: ws://localhost:${config.terminalPort}\n`);
+    console.log(`  Terminal: ws://localhost:${config.terminalPort}`);
+    console.log(`  rdv-server: ${CONFIG.prod.rdvServerSocket}`);
+    console.log(`  Database: ${DATABASE_PATH}\n`);
 
-    // Start terminal server first
+    // Start rdv-server first (uses Unix socket even in dev mode)
+    let rdvServerProc: SpawnedProcess | null = null;
+    if (checkRdvServerBinary()) {
+      rdvServerProc = await startServer(
+        "rdv-server",
+        [RDV_SERVER_BINARY],
+        {
+          REMOTE_DEV_DIR: REMOTE_DEV_DIR,
+        },
+        null  // rdv-server manages its own PID file
+      );
+      if (!rdvServerProc) {
+        console.error("Failed to start rdv-server");
+        process.exit(1);
+      }
+      console.log("Waiting for rdv-server socket...");
+      const socketReady = await waitForSocket(CONFIG.prod.rdvServerSocket, 10000);
+      if (!socketReady) {
+        console.error(`rdv-server socket not ready after 10s: ${CONFIG.prod.rdvServerSocket}`);
+        process.exit(1);
+      }
+      console.log("rdv-server ready");
+    } else {
+      console.warn("⚠️  WARNING: Running WITHOUT rdv-server - API proxy will not work!");
+      console.warn("⚠️  Some features will be unavailable. Build with: cd crates && cargo build --release\n");
+    }
+
+    // Start terminal server
     const terminalProc = await startServer(
       "Terminal Server",
       ["bun", "run", "tsx", "src/server/index.ts"],
-      { TERMINAL_PORT: config.terminalPort.toString() },
+      {
+        TERMINAL_PORT: config.terminalPort.toString(),
+        DATABASE_URL: DATABASE_URL,
+      },
       TERMINAL_PID_FILE
     );
 
@@ -356,11 +417,12 @@ async function start(mode: Mode): Promise<void> {
       {
         PORT: config.nextPort.toString(),
         NEXT_PUBLIC_TERMINAL_PORT: config.terminalPort.toString(),
+        DATABASE_URL: DATABASE_URL,
       },
       NEXT_PID_FILE
     );
 
-    await waitForExit(mode, terminalProc, nextProc, null);
+    await waitForExit(mode, terminalProc, nextProc, rdvServerProc);
   } else {
     // Prod mode: use Unix sockets
     ensureSocketDir();
@@ -372,16 +434,14 @@ async function start(mode: Mode): Promise<void> {
     cleanupSocket(config.terminalSocket);
     cleanupSocket(config.rdvServerSocket);
 
-    // Use project root database for both dev and prod (shared database)
-    const prodDatabaseUrl = `file:${join(PROJECT_ROOT, "sqlite.db")}`;
-
     console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode (Unix sockets)`);
     console.log(`  rdv-server: ${config.rdvServerSocket}`);
     console.log(`  Next.js:    ${config.nextSocket}`);
     console.log(`  Terminal:   ${config.terminalSocket}`);
-    console.log(`  Database:   ${join(PROJECT_ROOT, "sqlite.db")}\n`);
+    console.log(`  Database:   ${DATABASE_PATH}\n`);
 
     // Start rdv-server (Rust backend) first if available
+    // Note: rdv-server manages its own PID file, so we pass null
     let rdvServerProc: SpawnedProcess | null = null;
     if (checkRdvServerBinary()) {
       rdvServerProc = await startServer(
@@ -390,10 +450,22 @@ async function start(mode: Mode): Promise<void> {
         {
           REMOTE_DEV_DIR: REMOTE_DEV_DIR,
         },
-        RDV_SERVER_PID_FILE
+        null  // rdv-server manages its own PID file
       );
-      console.log("Waiting for rdv-server to initialize...");
-      await Bun.sleep(1000);
+      if (!rdvServerProc) {
+        console.error("Failed to start rdv-server");
+        process.exit(1);
+      }
+      console.log("Waiting for rdv-server socket...");
+      const socketReady = await waitForSocket(config.rdvServerSocket, 10000);
+      if (!socketReady) {
+        console.error(`rdv-server socket not ready after 10s: ${config.rdvServerSocket}`);
+        process.exit(1);
+      }
+      console.log("rdv-server ready");
+    } else {
+      console.warn("⚠️  WARNING: Running WITHOUT rdv-server - API proxy will not work!");
+      console.warn("⚠️  Some features will be unavailable. Build with: cd crates && cargo build --release\n");
     }
 
     // Start terminal server
@@ -402,7 +474,7 @@ async function start(mode: Mode): Promise<void> {
       ["bun", "run", "tsx", "src/server/index.ts"],
       {
         TERMINAL_SOCKET: config.terminalSocket,
-        DATABASE_URL: prodDatabaseUrl,
+        DATABASE_URL: DATABASE_URL,
       },
       TERMINAL_PID_FILE
     );
@@ -418,7 +490,7 @@ async function start(mode: Mode): Promise<void> {
         SOCKET_PATH: config.nextSocket,
         TERMINAL_SOCKET: config.terminalSocket,
         RDV_SERVER_SOCKET: config.rdvServerSocket,
-        DATABASE_URL: prodDatabaseUrl,
+        DATABASE_URL: DATABASE_URL,
       },
       NEXT_PID_FILE
     );

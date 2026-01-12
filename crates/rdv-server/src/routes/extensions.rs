@@ -28,12 +28,12 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/extensions", get(list_extensions).post(register_extension))
         .route(
-            "/extensions/:id",
+            "/extensions/{id}",
             get(get_extension).delete(unregister_extension),
         )
-        .route("/extensions/:id/enable", post(enable_extension))
-        .route("/extensions/:id/disable", post(disable_extension))
-        .route("/extensions/:id/tools", get(list_extension_tools))
+        .route("/extensions/{id}/enable", post(enable_extension))
+        .route("/extensions/{id}/disable", post(disable_extension))
+        .route("/extensions/{id}/tools", get(list_extension_tools))
 }
 
 // ============================================================================

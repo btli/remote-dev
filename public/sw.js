@@ -1,4 +1,4 @@
-const CACHE_NAME = 'remote-dev-v1';
+const CACHE_NAME = 'remote-dev-v2';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',

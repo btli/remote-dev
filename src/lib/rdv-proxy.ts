@@ -164,8 +164,16 @@ export async function proxyToRdvServer(
   }
 
   // Build target URL
+  // rdv-server nests protected routes under /api, so ensure path has /api prefix
+  // Note: Public routes like /health are handled separately (see isRdvServerAvailable)
   const url = new URL(request.url);
-  const targetPath = options.path || url.pathname;
+  let targetPath = options.path || url.pathname;
+  if (!targetPath.startsWith("/api")) {
+    if (process.env.NODE_ENV !== "production") {
+      console.debug(`[rdv-proxy] Auto-prefixing path: ${targetPath} -> /api${targetPath}`);
+    }
+    targetPath = `/api${targetPath}`;
+  }
   const targetUrl = `http://localhost${targetPath}${url.search}`;
 
   // Build headers
@@ -329,8 +337,16 @@ export async function proxyToRdvServerNoAuth(
   }
 
   // Build target URL
+  // rdv-server nests protected routes under /api, so ensure path has /api prefix
+  // Note: Public routes like /health are handled separately (see isRdvServerAvailable)
   const url = new URL(request.url);
-  const targetPath = options.path || url.pathname;
+  let targetPath = options.path || url.pathname;
+  if (!targetPath.startsWith("/api")) {
+    if (process.env.NODE_ENV !== "production") {
+      console.debug(`[rdv-proxy] Auto-prefixing path: ${targetPath} -> /api${targetPath}`);
+    }
+    targetPath = `/api${targetPath}`;
+  }
   const targetUrl = `http://localhost${targetPath}${url.search}`;
 
   // Build headers (no user ID for unauthenticated endpoints)
@@ -460,7 +476,15 @@ export async function callRdvServer<T>(
     return { error: "rdv-server not running", status: 503 };
   }
 
-  const targetUrl = `http://localhost${path}`;
+  // rdv-server nests protected routes under /api, so ensure path has /api prefix
+  let targetPath = path;
+  if (!path.startsWith("/api")) {
+    if (process.env.NODE_ENV !== "production") {
+      console.debug(`[rdv-proxy] Auto-prefixing path: ${path} -> /api${path}`);
+    }
+    targetPath = `/api${path}`;
+  }
+  const targetUrl = `http://localhost${targetPath}`;
   const headers: Record<string, string> = {
     "X-RDV-Service-Token": serviceToken,
     "X-RDV-User-ID": userId,
