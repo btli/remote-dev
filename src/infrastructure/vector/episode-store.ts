@@ -13,6 +13,8 @@ import {
   type EpisodeProps,
   type EpisodeType,
   type EpisodeOutcome,
+  type CompressedSummary,
+  type TrajectoryStep,
 } from "@/domain/entities/Episode";
 import path from "path";
 import fs from "fs/promises";
@@ -66,6 +68,157 @@ const DATA_DIR = "data/lance";
 const TABLE_NAME = "episodes";
 const DEFAULT_SEARCH_LIMIT = 5;
 const DEFAULT_MIN_SCORE = 0.4;
+
+/** Token threshold for triggering compression (approximate tokens) */
+const COMPRESSION_TOKEN_THRESHOLD = 8000;
+/** Target token count after compression */
+const COMPRESSION_TARGET_TOKENS = 2000;
+/** Minimum actions to keep after compression */
+const MIN_ACTIONS_TO_KEEP = 3;
+/** Default rolling window size for recent actions */
+const DEFAULT_ROLLING_WINDOW_ACTIONS = 5;
+/** Default rolling window size for recent observations */
+const DEFAULT_ROLLING_WINDOW_OBSERVATIONS = 5;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Token Counting & Importance Scoring
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Estimate token count for text (approximately 4 characters per token for English).
+ * This is a heuristic - can be replaced with tiktoken for exact counts.
+ */
+function estimateTokens(text: string): number {
+  if (!text) return 0;
+  // Average ~4 chars per token for English/code mixed content
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Calculate token count for an episode's trajectory.
+ */
+function calculateTrajectoryTokens(trajectory: EpisodeProps["trajectory"]): number {
+  let tokens = 0;
+
+  for (const action of trajectory.actions) {
+    tokens += estimateTokens(action.action);
+    tokens += estimateTokens(action.tool || "");
+    tokens += estimateTokens(action.input || "");
+    tokens += estimateTokens(action.output || "");
+  }
+
+  for (const obs of trajectory.observations) {
+    tokens += estimateTokens(obs);
+  }
+
+  for (const decision of trajectory.decisions) {
+    tokens += estimateTokens(decision.context);
+    tokens += estimateTokens(decision.chosen);
+    tokens += estimateTokens(decision.reasoning);
+    for (const opt of decision.options) {
+      tokens += estimateTokens(opt);
+    }
+  }
+
+  for (const pivot of trajectory.pivots) {
+    tokens += estimateTokens(pivot.fromApproach);
+    tokens += estimateTokens(pivot.toApproach);
+    tokens += estimateTokens(pivot.reason);
+  }
+
+  return tokens;
+}
+
+/**
+ * Calculate importance score for a trajectory step.
+ * Higher scores = more important to keep.
+ */
+function calculateActionImportance(
+  action: EpisodeProps["trajectory"]["actions"][0],
+  index: number,
+  totalActions: number
+): number {
+  let score = 0;
+
+  // Errors are critically important
+  if (!action.success) {
+    score += 100;
+  }
+
+  // First and last actions are important for context
+  if (index === 0) {
+    score += 50;
+  }
+  if (index === totalActions - 1) {
+    score += 50;
+  }
+
+  // Actions with tool usage are more significant
+  if (action.tool) {
+    score += 20;
+  }
+
+  // Longer duration suggests more significant operation
+  if (action.duration > 5000) {
+    score += 15;
+  }
+
+  // Actions with output are more informative
+  if (action.output && action.output.length > 100) {
+    score += 10;
+  }
+
+  return score;
+}
+
+/**
+ * Generate a summary of compressed actions.
+ */
+function generateActionSummary(compressedActions: TrajectoryStep[]): string {
+  if (compressedActions.length === 0) return "";
+
+  const toolCounts = new Map<string, number>();
+  let successCount = 0;
+  let failCount = 0;
+  let totalDuration = 0;
+
+  for (const action of compressedActions) {
+    if (action.tool) {
+      toolCounts.set(action.tool, (toolCounts.get(action.tool) || 0) + 1);
+    }
+    if (action.success) {
+      successCount++;
+    } else {
+      failCount++;
+    }
+    totalDuration += action.duration;
+  }
+
+  const parts: string[] = [];
+  parts.push(`${compressedActions.length} actions`);
+
+  if (toolCounts.size > 0) {
+    const toolSummary = Array.from(toolCounts.entries())
+      .map(([tool, count]) => `${tool}×${count}`)
+      .join(", ");
+    parts.push(`tools: ${toolSummary}`);
+  }
+
+  parts.push(`${successCount}✓ ${failCount}✗`);
+  parts.push(`${Math.round(totalDuration / 1000)}s total`);
+
+  return parts.join("; ");
+}
+
+/**
+ * Extract errors from compressed actions.
+ */
+function extractErrors(actions: TrajectoryStep[]): string[] {
+  return actions
+    .filter((a) => !a.success && a.output)
+    .map((a) => a.output!.slice(0, 200))
+    .slice(0, 5); // Keep at most 5 error messages
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Episode Store
@@ -553,20 +706,51 @@ export class EpisodeStore {
   }
 
   /**
-   * Compress old episodes (summarize trajectory).
+   * Compress episodes using token-aware, importance-scored compression.
+   *
+   * Unlike fixed truncation, this method:
+   * 1. Measures token count before deciding to compress
+   * 2. Uses importance scoring to keep high-value actions
+   * 3. Generates summaries of compressed content
+   * 4. Preserves error information
+   *
+   * @param options Compression options
+   * @returns Number of episodes compressed
    */
-  async compressOldEpisodes(olderThanDays: number = 30): Promise<number> {
+  async compressOldEpisodes(options: {
+    /** Only compress episodes older than this many days */
+    olderThanDays?: number;
+    /** Token threshold to trigger compression (default: 8000) */
+    tokenThreshold?: number;
+    /** Target token count after compression (default: 2000) */
+    targetTokens?: number;
+    /** Maximum episodes to process per call */
+    limit?: number;
+    /** Number of recent actions to preserve in rolling window */
+    rollingWindowActions?: number;
+    /** Number of recent observations to preserve in rolling window */
+    rollingWindowObservations?: number;
+  } = {}): Promise<number> {
+    const {
+      olderThanDays = 30,
+      tokenThreshold = COMPRESSION_TOKEN_THRESHOLD,
+      targetTokens = COMPRESSION_TARGET_TOKENS,
+      limit = 1000,
+      rollingWindowActions = DEFAULT_ROLLING_WINDOW_ACTIONS,
+      rollingWindowObservations = DEFAULT_ROLLING_WINDOW_OBSERVATIONS,
+    } = options;
+
     await this.initialize();
 
     if (!this.table) return 0;
 
     const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
 
-    // Get old episodes
+    // Get old episodes that haven't been compressed yet
     const results = await this.table
       .search([])
       .where(`createdAt < ${cutoff}`)
-      .limit(1000)
+      .limit(limit)
       .toArray();
 
     let compressed = 0;
@@ -575,27 +759,197 @@ export class EpisodeStore {
       try {
         const props = JSON.parse(row.propsJson) as EpisodeProps;
 
-        // Compress trajectory by keeping only summary
-        if (props.trajectory.actions.length > 10) {
-          props.trajectory.actions = props.trajectory.actions.slice(0, 5);
-          props.trajectory.observations = props.trajectory.observations.slice(0, 5);
+        // Skip if already compressed
+        if (props.trajectory.compressedSummary) {
+          continue;
+        }
 
-          // Update stored record
-          await this.table.update({
-            where: `id = '${row.id}'`,
-            values: {
-              propsJson: JSON.stringify(props),
-            },
+        // Calculate current token count
+        const currentTokens = calculateTrajectoryTokens(props.trajectory);
+
+        // Only compress if above threshold
+        if (currentTokens <= tokenThreshold) {
+          continue;
+        }
+
+        const allActions = props.trajectory.actions;
+        const allObservations = props.trajectory.observations;
+
+        // ROLLING WINDOW: Extract most recent actions/observations to preserve in full
+        const recentActionsCount = Math.min(rollingWindowActions, allActions.length);
+        const recentObsCount = Math.min(rollingWindowObservations, allObservations.length);
+
+        // Recent items are the last N items (most recent)
+        const recentActions = allActions.slice(-recentActionsCount);
+        const recentObservations = allObservations.slice(-recentObsCount);
+
+        // Remaining actions/observations to be processed for importance-based compression
+        const remainingActions = allActions.slice(0, -recentActionsCount || allActions.length);
+        const remainingObservations = allObservations.slice(0, -recentObsCount || allObservations.length);
+
+        // Score each remaining action by importance
+        const scoredActions = remainingActions.map((action, index) => ({
+          action,
+          index,
+          importance: calculateActionImportance(
+            action,
+            index,
+            remainingActions.length
+          ),
+        }));
+
+        // Sort by importance (descending)
+        scoredActions.sort((a, b) => b.importance - a.importance);
+
+        // Determine how many actions to keep from the remaining set
+        // Account for tokens used by rolling window
+        const rollingWindowTokens =
+          calculateTrajectoryTokens({
+            actions: recentActions,
+            observations: recentObservations,
+            decisions: [],
+            pivots: [],
           });
 
-          compressed++;
+        const adjustedTargetTokens = Math.max(
+          targetTokens - rollingWindowTokens,
+          MIN_ACTIONS_TO_KEEP * 100 // Minimum budget for importance-scored actions
+        );
+
+        let estimatedTokens = 0;
+        const keepIndices = new Set<number>();
+
+        for (const scored of scoredActions) {
+          const actionTokens =
+            estimateTokens(scored.action.action) +
+            estimateTokens(scored.action.tool || "") +
+            estimateTokens(scored.action.input || "") +
+            estimateTokens(scored.action.output || "");
+
+          if (estimatedTokens + actionTokens <= adjustedTargetTokens || keepIndices.size < MIN_ACTIONS_TO_KEEP) {
+            keepIndices.add(scored.index);
+            estimatedTokens += actionTokens;
+          }
+
+          if (estimatedTokens >= adjustedTargetTokens && keepIndices.size >= MIN_ACTIONS_TO_KEEP) {
+            break;
+          }
+        }
+
+        // Separate remaining actions to keep vs compress
+        const keptActions: TrajectoryStep[] = [];
+        const compressedActions: TrajectoryStep[] = [];
+
+        remainingActions.forEach((action, index) => {
+          if (keepIndices.has(index)) {
+            keptActions.push(action);
+          } else {
+            compressedActions.push(action);
+          }
+        });
+
+        // Compress remaining observations proportionally
+        const obsRatio = remainingActions.length > 0
+          ? keptActions.length / remainingActions.length
+          : 0;
+        const obsToKeep = Math.max(
+          MIN_ACTIONS_TO_KEEP,
+          Math.floor(remainingObservations.length * obsRatio)
+        );
+        const keptObservations = remainingObservations.slice(0, obsToKeep);
+        const compressedObservations = remainingObservations.slice(obsToKeep);
+
+        // Generate compression summary
+        const compressedSummary: CompressedSummary = {
+          compressedActionCount: compressedActions.length,
+          compressedObservationCount: compressedObservations.length,
+          actionSummary: generateActionSummary(compressedActions),
+          keyOutcomes: compressedActions
+            .filter((a) => a.output && a.success)
+            .slice(0, 3)
+            .map((a) => a.output!.slice(0, 100)),
+          errorsEncountered: extractErrors(compressedActions),
+          compressedAt: new Date(),
+          originalTokenCount: currentTokens,
+          compressedTokenCount: calculateTrajectoryTokens({
+            ...props.trajectory,
+            actions: keptActions,
+            observations: keptObservations,
+          }) + rollingWindowTokens,
+        };
+
+        // Update trajectory with compressed data + rolling window
+        props.trajectory.actions = keptActions;
+        props.trajectory.observations = keptObservations;
+        props.trajectory.compressedSummary = compressedSummary;
+        // Store rolling window: most recent items preserved in full
+        props.trajectory.recentActions = recentActions.length > 0 ? recentActions : undefined;
+        props.trajectory.recentObservations = recentObservations.length > 0 ? recentObservations : undefined;
+
+        // Update stored record
+        await this.table.update({
+          where: `id = '${row.id}'`,
+          values: {
+            propsJson: JSON.stringify(props),
+          },
+        });
+
+        compressed++;
+      } catch (error) {
+        // Log but continue with other records
+        console.error(`Failed to compress episode ${row.id}:`, error);
+      }
+    }
+
+    return compressed;
+  }
+
+  /**
+   * Get compression statistics for episodes.
+   */
+  async getCompressionStats(): Promise<{
+    totalEpisodes: number;
+    compressedEpisodes: number;
+    totalTokensSaved: number;
+    avgCompressionRatio: number;
+  }> {
+    await this.initialize();
+
+    if (!this.table) {
+      return {
+        totalEpisodes: 0,
+        compressedEpisodes: 0,
+        totalTokensSaved: 0,
+        avgCompressionRatio: 0,
+      };
+    }
+
+    const results = await this.table.search([]).limit(10000).toArray();
+
+    let compressedCount = 0;
+    let totalSaved = 0;
+    let totalRatio = 0;
+
+    for (const row of results) {
+      try {
+        const props = JSON.parse(row.propsJson) as EpisodeProps;
+        if (props.trajectory.compressedSummary) {
+          compressedCount++;
+          const summary = props.trajectory.compressedSummary;
+          totalSaved += summary.originalTokenCount - summary.compressedTokenCount;
+          totalRatio += summary.compressedTokenCount / summary.originalTokenCount;
         }
       } catch {
         // Skip invalid records
       }
     }
 
-    return compressed;
+    return {
+      totalEpisodes: results.length,
+      compressedEpisodes: compressedCount,
+      totalTokensSaved: totalSaved,
+      avgCompressionRatio: compressedCount > 0 ? totalRatio / compressedCount : 0,
+    };
   }
 
   /**

@@ -1,16 +1,20 @@
 "use client";
 
 /**
- * TaskStatusCard - Display task status with progress indicator.
+ * TaskStatusCard - Display task status with progress indicator and streaming updates.
  *
  * Shows:
  * - Task description and type
  * - Current status with visual indicator
  * - Assigned agent and delegation info
  * - Time elapsed and estimated duration
+ * - Execution steps with real-time progress
+ * - Terminal output (buffered for readability)
+ * - Tool calls and their results
  * - Actions (cancel, retry)
  */
 
+import { useState, useEffect, useCallback, useRef } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -23,6 +27,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Loader2,
   CheckCircle2,
@@ -37,8 +47,37 @@ import {
   FileText,
   HelpCircle,
   X,
+  ChevronDown,
+  Terminal,
+  Wrench,
+  Circle,
 } from "lucide-react";
 import type { Task, TaskStatus, TaskType } from "@/contexts/TaskContext";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ExecutionStep {
+  id: string;
+  type: "planning" | "setup" | "execution" | "validation" | "cleanup";
+  name: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  startedAt?: string;
+  completedAt?: string;
+  details?: string;
+  error?: string;
+}
+
+interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  startedAt: string;
+  completedAt?: string;
+  result?: unknown;
+  error?: string;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props
@@ -46,11 +85,13 @@ import type { Task, TaskStatus, TaskType } from "@/contexts/TaskContext";
 
 interface TaskStatusCardProps {
   task: Task;
+  orchestratorId?: string; // Required for streaming
   onCancel?: (taskId: string) => void;
   onRetry?: (taskId: string) => void;
   onSelect?: (taskId: string) => void;
   selected?: boolean;
   compact?: boolean;
+  enableStreaming?: boolean; // Enable real-time streaming updates
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,16 +122,247 @@ const typeConfig: Record<TaskType, { icon: React.ElementType; label: string }> =
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Streaming Hook
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface StreamingState {
+  connected: boolean;
+  steps: ExecutionStep[];
+  toolCalls: ToolCall[];
+  outputLines: string[];
+  currentStep: ExecutionStep | null;
+}
+
+function useTaskStreaming(
+  orchestratorId: string | undefined,
+  taskId: string,
+  enabled: boolean,
+  isActive: boolean
+): StreamingState {
+  const [state, setState] = useState<StreamingState>({
+    connected: false,
+    steps: [],
+    toolCalls: [],
+    outputLines: [],
+    currentStep: null,
+  });
+
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  const handleEvent = useCallback((event: MessageEvent) => {
+    try {
+      const data = JSON.parse(event.data);
+
+      switch (event.type) {
+        case "connected":
+          setState((prev) => ({
+            ...prev,
+            connected: true,
+            steps: data.data.steps || [],
+            toolCalls: data.data.toolCalls || [],
+          }));
+          break;
+
+        case "step_start":
+          setState((prev) => ({
+            ...prev,
+            currentStep: data.data,
+            steps: prev.steps.some((s) => s.id === data.data.id)
+              ? prev.steps.map((s) => (s.id === data.data.id ? data.data : s))
+              : [...prev.steps, data.data],
+          }));
+          break;
+
+        case "step_complete":
+          setState((prev) => ({
+            ...prev,
+            currentStep: null,
+            steps: prev.steps.map((s) =>
+              s.id === data.data.id ? data.data : s
+            ),
+          }));
+          break;
+
+        case "tool_call":
+          setState((prev) => ({
+            ...prev,
+            toolCalls: [...prev.toolCalls, data.data],
+          }));
+          break;
+
+        case "tool_result":
+          setState((prev) => ({
+            ...prev,
+            toolCalls: prev.toolCalls.map((t) =>
+              t.id === data.data.id ? data.data : t
+            ),
+          }));
+          break;
+
+        case "output":
+          setState((prev) => ({
+            ...prev,
+            outputLines: [...prev.outputLines.slice(-100), ...data.data.lines],
+          }));
+          break;
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || !orchestratorId || !isActive) {
+      return;
+    }
+
+    const url = `/api/orchestrators/${orchestratorId}/tasks/${taskId}/stream`;
+    const eventSource = new EventSource(url);
+    eventSourceRef.current = eventSource;
+
+    // Listen for all event types
+    const eventTypes = [
+      "connected",
+      "status_change",
+      "step_start",
+      "step_complete",
+      "command",
+      "output",
+      "tool_call",
+      "tool_result",
+      "progress",
+      "completed",
+      "failed",
+      "cancelled",
+    ];
+
+    eventTypes.forEach((type) => {
+      eventSource.addEventListener(type, handleEvent);
+    });
+
+    eventSource.onerror = () => {
+      setState((prev) => ({ ...prev, connected: false }));
+    };
+
+    return () => {
+      eventSource.close();
+      eventSourceRef.current = null;
+    };
+  }, [orchestratorId, taskId, enabled, isActive, handleEvent]);
+
+  return state;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-components
+// ─────────────────────────────────────────────────────────────────────────────
+
+function StepIndicator({ step }: { step: ExecutionStep }) {
+  const iconClass = "h-3 w-3";
+
+  switch (step.status) {
+    case "running":
+      return <Loader2 className={cn(iconClass, "animate-spin text-blue-500")} />;
+    case "completed":
+      return <CheckCircle2 className={cn(iconClass, "text-green-500")} />;
+    case "failed":
+      return <XCircle className={cn(iconClass, "text-red-500")} />;
+    case "skipped":
+      return <Circle className={cn(iconClass, "text-muted-foreground")} />;
+    default:
+      return <Circle className={cn(iconClass, "text-muted-foreground")} />;
+  }
+}
+
+function ExecutionSteps({ steps }: { steps: ExecutionStep[] }) {
+  if (steps.length === 0) return null;
+
+  return (
+    <div className="space-y-1">
+      {steps.map((step) => (
+        <div key={step.id} className="flex items-center gap-2 text-xs">
+          <StepIndicator step={step} />
+          <span className={cn(
+            step.status === "running" && "font-medium",
+            step.status === "failed" && "text-red-500",
+            step.status === "skipped" && "text-muted-foreground line-through"
+          )}>
+            {step.name}
+          </span>
+          {step.details && (
+            <span className="text-muted-foreground">- {step.details}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ToolCallList({ toolCalls }: { toolCalls: ToolCall[] }) {
+  if (toolCalls.length === 0) return null;
+
+  // Show only last 5 tool calls
+  const recentCalls = toolCalls.slice(-5);
+
+  return (
+    <div className="space-y-1">
+      {recentCalls.map((call) => (
+        <div key={call.id} className="flex items-center gap-2 text-xs">
+          <Wrench className="h-3 w-3 text-muted-foreground" />
+          <span className="font-mono">{call.name}</span>
+          {call.completedAt ? (
+            call.error ? (
+              <Badge variant="destructive" className="text-[10px] px-1 py-0">error</Badge>
+            ) : (
+              <Badge variant="outline" className="text-[10px] px-1 py-0">done</Badge>
+            )
+          ) : (
+            <Loader2 className="h-2 w-2 animate-spin" />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TerminalOutput({ lines }: { lines: string[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [lines]);
+
+  if (lines.length === 0) return null;
+
+  return (
+    <div
+      ref={scrollRef}
+      className="bg-background/80 border rounded-md p-2 font-mono text-[10px] max-h-32 overflow-y-auto"
+    >
+      {lines.slice(-20).map((line, i) => (
+        <div key={i} className="whitespace-pre-wrap break-all text-muted-foreground">
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function TaskStatusCard({
   task,
+  orchestratorId,
   onCancel,
   onRetry,
   onSelect,
   selected = false,
   compact = false,
+  enableStreaming = false,
 }: TaskStatusCardProps) {
   const status = statusConfig[task.status];
   const type = typeConfig[task.type];
@@ -103,6 +375,16 @@ export function TaskStatusCard({
     task.status === "planning" ||
     task.status === "executing";
   const isRetryable = task.status === "failed";
+
+  // Streaming state
+  const streaming = useTaskStreaming(
+    orchestratorId,
+    task.id,
+    enableStreaming,
+    isActive
+  );
+
+  const [showDetails, setShowDetails] = useState(false);
 
   if (compact) {
     return (
@@ -146,6 +428,12 @@ export function TaskStatusCard({
               <TypeIcon className="h-3 w-3" />
               {type.label}
             </Badge>
+            {streaming.connected && (
+              <Badge variant="outline" className="gap-1 text-[10px]">
+                <Circle className="h-1.5 w-1.5 fill-green-500 text-green-500" />
+                Live
+              </Badge>
+            )}
           </div>
           {isCancellable && onCancel && (
             <Button
@@ -172,7 +460,7 @@ export function TaskStatusCard({
         </CardDescription>
       </CardHeader>
 
-      <CardContent className="pb-2">
+      <CardContent className="pb-2 space-y-3">
         {/* Progress indicator for active tasks */}
         {isActive && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -182,6 +470,62 @@ export function TaskStatusCard({
               {formatDistanceToNow(task.createdAt, { addSuffix: false })}
             </span>
           </div>
+        )}
+
+        {/* Execution steps (streaming) */}
+        {streaming.steps.length > 0 && (
+          <div className="border-l-2 border-primary/30 pl-3">
+            <ExecutionSteps steps={streaming.steps} />
+          </div>
+        )}
+
+        {/* Tool calls (streaming) */}
+        {streaming.toolCalls.length > 0 && (
+          <Collapsible open={showDetails} onOpenChange={setShowDetails}>
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-between px-2 h-7"
+              >
+                <span className="flex items-center gap-1 text-xs">
+                  <Wrench className="h-3 w-3" />
+                  {streaming.toolCalls.length} tool call(s)
+                </span>
+                <ChevronDown
+                  className={cn(
+                    "h-3 w-3 transition-transform",
+                    showDetails && "rotate-180"
+                  )}
+                />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <ToolCallList toolCalls={streaming.toolCalls} />
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {/* Terminal output (streaming) */}
+        {streaming.outputLines.length > 0 && (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full justify-between px-2 h-7"
+              >
+                <span className="flex items-center gap-1 text-xs">
+                  <Terminal className="h-3 w-3" />
+                  Terminal output
+                </span>
+                <ChevronDown className="h-3 w-3" />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <TerminalOutput lines={streaming.outputLines} />
+            </CollapsibleContent>
+          </Collapsible>
         )}
 
         {/* Completion info */}

@@ -16,6 +16,12 @@ import {
   getEpisodeRecorder,
   type EpisodeRecorderService,
 } from "./episode-recorder-service";
+import {
+  generateHindsight,
+  applyHindsight,
+  analyzeEpisodePatterns,
+  type HindsightAnalysis,
+} from "./hindsight-generator-service";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -432,10 +438,30 @@ class EpisodicMemoryService {
   }
 
   /**
-   * Compress old episodes to save space.
+   * Compress old episodes using token-aware, importance-scored compression.
+   *
+   * @param options Compression options
+   * @returns Number of episodes compressed
    */
-  async compressOldEpisodes(olderThanDays: number = 30): Promise<number> {
-    return this.store.compressOldEpisodes(olderThanDays);
+  async compressOldEpisodes(options: {
+    olderThanDays?: number;
+    tokenThreshold?: number;
+    targetTokens?: number;
+    limit?: number;
+  } = {}): Promise<number> {
+    return this.store.compressOldEpisodes(options);
+  }
+
+  /**
+   * Get compression statistics.
+   */
+  async getCompressionStats(): Promise<{
+    totalEpisodes: number;
+    compressedEpisodes: number;
+    totalTokensSaved: number;
+    avgCompressionRatio: number;
+  }> {
+    return this.store.getCompressionStats();
   }
 
   /**
@@ -443,6 +469,83 @@ class EpisodicMemoryService {
    */
   async deleteEpisode(id: string): Promise<void> {
     return this.store.delete(id);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Hindsight Generation
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Generate hindsight analysis for an episode.
+   * Returns structured analysis of what worked, what failed, and recommendations.
+   */
+  async generateHindsight(episodeId: string): Promise<HindsightAnalysis | null> {
+    const episode = await this.store.get(episodeId);
+    if (!episode) return null;
+
+    return generateHindsight(episode);
+  }
+
+  /**
+   * Apply auto-generated hindsight to an episode's reflection.
+   * Merges with existing reflection data (doesn't overwrite user-provided data).
+   */
+  async applyHindsight(episodeId: string): Promise<Episode | null> {
+    const episode = await this.store.get(episodeId);
+    if (!episode) return null;
+
+    const updated = applyHindsight(episode);
+    await this.store.update(updated);
+    return updated;
+  }
+
+  /**
+   * Analyze patterns across multiple episodes.
+   * Useful for identifying common success/failure patterns.
+   */
+  async analyzePatterns(options?: EpisodeSearchOptions): Promise<{
+    commonSuccessPatterns: string[];
+    commonFailurePatterns: string[];
+    recommendations: string[];
+  }> {
+    const results = await this.store.search("", {
+      ...options,
+      limit: 50, // Analyze up to 50 episodes
+    });
+
+    const episodes = results.map((r) => r.episode);
+    return analyzeEpisodePatterns(episodes);
+  }
+
+  /**
+   * Complete a recording with auto-generated hindsight.
+   * Generates reflection automatically if not provided.
+   */
+  async completeRecordingWithHindsight(
+    sessionId: string,
+    success: boolean,
+    result: string,
+    reflection?: Partial<EpisodeReflection>,
+    tags: string[] = []
+  ): Promise<Episode> {
+    // First complete the recording with minimal reflection
+    const episode = await this.recorder.completeRecording(
+      sessionId,
+      success ? "success" : "failure",
+      result,
+      {
+        whatWorked: reflection?.whatWorked || [],
+        whatFailed: reflection?.whatFailed || [],
+        keyInsights: reflection?.keyInsights || [],
+        wouldDoDifferently: reflection?.wouldDoDifferently,
+        userRating: reflection?.userRating,
+        userFeedback: reflection?.userFeedback,
+      },
+      tags
+    );
+
+    // Apply hindsight to fill in gaps
+    return applyHindsight(episode);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

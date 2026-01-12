@@ -45,9 +45,35 @@ export interface ClaudeCodeHook {
   timeout?: number;
 }
 
+/**
+ * Extended hook configuration following arXiv 2512.10398v5 agent UX patterns.
+ *
+ * Lifecycle hooks allow extensions to intercept and modify agent I/O at various
+ * stages of the processing pipeline. These can be configured as shell commands
+ * (Claude Code native) or as extension callbacks (Remote Dev extensions).
+ */
 export interface ClaudeCodeHooks {
+  // Claude Code native hooks (shell command based)
   PreToolUse?: ClaudeCodeHook[];
   PostToolUse?: ClaudeCodeHook[];
+
+  // arXiv paper hooks (extension callback based)
+  // These enable structured interception patterns for agent I/O
+  /** Before processing user input - can filter/transform messages */
+  OnInputMessages?: ClaudeCodeHook[];
+  /** For text content handling - extract structured data from text */
+  OnPlainText?: ClaudeCodeHook[];
+  /** For structured tag parsing - handle custom XML-like tags */
+  OnTag?: ClaudeCodeHook[];
+  /** After LLM generates response - post-process or log responses */
+  OnLlmOutput?: ClaudeCodeHook[];
+  /** When session starts */
+  SessionStart?: ClaudeCodeHook[];
+  /** When session ends */
+  SessionEnd?: ClaudeCodeHook[];
+  /** When an error occurs */
+  OnError?: ClaudeCodeHook[];
+
   disableAllHooks?: boolean;
 }
 

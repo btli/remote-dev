@@ -44,6 +44,29 @@ export interface Pivot {
   triggered_by: "error" | "feedback" | "discovery" | "timeout";
 }
 
+/**
+ * Compressed summary of trajectory data that was truncated.
+ * Preserves semantic meaning without full detail.
+ */
+export interface CompressedSummary {
+  /** Number of actions that were compressed */
+  compressedActionCount: number;
+  /** Number of observations that were compressed */
+  compressedObservationCount: number;
+  /** Summary of compressed actions by type */
+  actionSummary: string;
+  /** Key outcomes from compressed content */
+  keyOutcomes: string[];
+  /** Errors encountered in compressed content */
+  errorsEncountered: string[];
+  /** Timestamp when compression occurred */
+  compressedAt: Date;
+  /** Original token count before compression */
+  originalTokenCount: number;
+  /** Token count after compression */
+  compressedTokenCount: number;
+}
+
 export interface EpisodeContext {
   taskDescription: string;
   projectPath: string;
@@ -52,11 +75,39 @@ export interface EpisodeContext {
   sessionId?: string;
 }
 
+/**
+ * Rolling window configuration for trajectory compression.
+ * Defines how many recent items to preserve in full form.
+ */
+export interface RollingWindowConfig {
+  /** Number of recent actions to keep in full form (default: 5) */
+  recentActionsCount: number;
+  /** Number of recent observations to keep in full form (default: 5) */
+  recentObservationsCount: number;
+}
+
 export interface EpisodeTrajectory {
+  /** All actions (or remaining after compression) */
   actions: TrajectoryStep[];
+  /** All observations (or remaining after compression) */
   observations: string[];
+  /** Decision points made during execution */
   decisions: Decision[];
+  /** Strategy pivots during execution */
   pivots: Pivot[];
+  /** Summary of compressed trajectory data (if compression occurred) */
+  compressedSummary?: CompressedSummary;
+  /**
+   * Rolling window: Most recent actions preserved in full form.
+   * These are guaranteed to be the last N actions before compression.
+   * Only present if compression has occurred.
+   */
+  recentActions?: TrajectoryStep[];
+  /**
+   * Rolling window: Most recent observations preserved in full form.
+   * Only present if compression has occurred.
+   */
+  recentObservations?: string[];
 }
 
 export interface EpisodeOutcomeData {
@@ -119,6 +170,15 @@ export class Episode {
       observations: [...props.trajectory.observations],
       decisions: [...props.trajectory.decisions],
       pivots: [...props.trajectory.pivots],
+      compressedSummary: props.trajectory.compressedSummary
+        ? { ...props.trajectory.compressedSummary }
+        : undefined,
+      recentActions: props.trajectory.recentActions
+        ? [...props.trajectory.recentActions]
+        : undefined,
+      recentObservations: props.trajectory.recentObservations
+        ? [...props.trajectory.recentObservations]
+        : undefined,
     };
     this.outcome = { ...props.outcome };
     this.reflection = { ...props.reflection };
@@ -335,6 +395,15 @@ export class Episode {
         observations: [...this.trajectory.observations],
         decisions: [...this.trajectory.decisions],
         pivots: [...this.trajectory.pivots],
+        compressedSummary: this.trajectory.compressedSummary
+          ? { ...this.trajectory.compressedSummary }
+          : undefined,
+        recentActions: this.trajectory.recentActions
+          ? [...this.trajectory.recentActions]
+          : undefined,
+        recentObservations: this.trajectory.recentObservations
+          ? [...this.trajectory.recentObservations]
+          : undefined,
       },
       outcome: { ...this.outcome },
       reflection: { ...this.reflection },
@@ -342,6 +411,66 @@ export class Episode {
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
+  }
+
+  /**
+   * Get all actions including recent window.
+   * Returns importance-scored actions + recent window actions in chronological order.
+   */
+  getAllActions(): TrajectoryStep[] {
+    if (!this.trajectory.recentActions) {
+      return this.trajectory.actions;
+    }
+    // Recent actions are the most recent, so they come after the kept actions
+    return [...this.trajectory.actions, ...this.trajectory.recentActions];
+  }
+
+  /**
+   * Get all observations including recent window.
+   */
+  getAllObservations(): string[] {
+    if (!this.trajectory.recentObservations) {
+      return this.trajectory.observations;
+    }
+    return [...this.trajectory.observations, ...this.trajectory.recentObservations];
+  }
+
+  /**
+   * Check if this episode has a rolling window.
+   */
+  hasRollingWindow(): boolean {
+    return (
+      this.trajectory.recentActions !== undefined ||
+      this.trajectory.recentObservations !== undefined
+    );
+  }
+
+  /**
+   * Check if this episode has been compressed.
+   */
+  isCompressed(): boolean {
+    return this.trajectory.compressedSummary !== undefined;
+  }
+
+  /**
+   * Get compression summary if available.
+   */
+  getCompressionSummary(): string | null {
+    const summary = this.trajectory.compressedSummary;
+    if (!summary) return null;
+
+    const parts: string[] = [];
+    parts.push(
+      `Compressed ${summary.compressedActionCount} actions and ${summary.compressedObservationCount} observations`
+    );
+    parts.push(`Token reduction: ${summary.originalTokenCount} → ${summary.compressedTokenCount}`);
+    if (summary.actionSummary) {
+      parts.push(`Summary: ${summary.actionSummary}`);
+    }
+    if (summary.errorsEncountered.length > 0) {
+      parts.push(`Errors preserved: ${summary.errorsEncountered.join("; ")}`);
+    }
+    return parts.join("\n");
   }
 }
 

@@ -664,20 +664,20 @@ describe("Hierarchical Memory System", () => {
         lineCount: 1,
       };
 
-      const storedIds = await processScrollbackForMemory(
+      const result = await processScrollbackForMemory(
         testUserId,
         testSessionId,
         testFolderId,
         scrollback
       );
 
-      expect(storedIds.length).toBeGreaterThan(0);
+      expect(result.memoryIds.length).toBeGreaterThan(0);
 
       // Verify stored in database
       const [entry] = await db
         .select()
         .from(sdkMemoryEntries)
-        .where(eq(sdkMemoryEntries.id, storedIds[0]));
+        .where(eq(sdkMemoryEntries.id, result.memoryIds[0]));
 
       expect(entry.tier).toBe("short_term");
       expect(entry.contentType).toBe("observation");

@@ -240,15 +240,20 @@ export function startStallChecking(
             const scrollback = await captureSessionScrollback(session.tmuxSessionName);
             if (scrollback) {
               const { processScrollbackForMemory } = await import("./session-memory-service");
-              const storedIds = await processScrollbackForMemory(
+              const result = await processScrollbackForMemory(
                 userId,
                 session.sessionId,
                 session.folderId,
                 scrollback
               );
-              if (storedIds.length > 0) {
+              if (result.memoryIds.length > 0) {
                 console.log(
-                  `[MonitoringService] Stored ${storedIds.length} observations from scrollback`
+                  `[MonitoringService] Stored ${result.memoryIds.length} observations from scrollback`
+                );
+              }
+              if (result.errorCapture && result.errorCapture.noteIds.length > 0) {
+                console.log(
+                  `[MonitoringService] Auto-captured ${result.errorCapture.noteIds.length} errors as gotcha notes`
                 );
               }
             }

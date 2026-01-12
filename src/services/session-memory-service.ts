@@ -18,6 +18,10 @@ import {
 import { eq, and, desc, gte, or, isNull, like } from "drizzle-orm";
 import { createHash } from "crypto";
 import type { ScrollbackSnapshot } from "@/types/orchestrator";
+import {
+  autoCapturErrors,
+  type AutoCaptureResult,
+} from "./error-auto-capture-service";
 
 /**
  * Error class for session memory operations
@@ -548,20 +552,32 @@ export function analyzeScrollbackForPatterns(
 }
 
 /**
+ * Result of scrollback processing including both memory entries and gotcha notes
+ */
+export interface ScrollbackProcessingResult {
+  /** IDs of memory entries created (short-term observations) */
+  memoryIds: string[];
+  /** Result from error auto-capture (gotcha notes) */
+  errorCapture: AutoCaptureResult | null;
+}
+
+/**
  * Process scrollback and store relevant observations
  *
  * Call this when capturing scrollback for a potentially stalled session.
  * Extracts errors and patterns and stores them as short-term memories.
+ * Also auto-captures compilation/runtime errors as persistent gotcha notes.
  */
 export async function processScrollbackForMemory(
   userId: string,
   sessionId: string | null,
   folderId: string | null,
   scrollback: ScrollbackSnapshot
-): Promise<string[]> {
+): Promise<ScrollbackProcessingResult> {
   const patterns = analyzeScrollbackForPatterns(scrollback);
-  const storedIds: string[] = [];
+  const memoryIds: string[] = [];
 
+  // Store short-term memory entries for patterns
   for (const pattern of patterns) {
     try {
       const id = await storeSessionMemory({
@@ -580,13 +596,33 @@ export async function processScrollbackForMemory(
           timestamp: scrollback.timestamp.toISOString(),
         },
       });
-      storedIds.push(id);
+      memoryIds.push(id);
     } catch (error) {
       console.error("[SessionMemoryService] Failed to store pattern:", error);
     }
   }
 
-  return storedIds;
+  // Auto-capture compilation/runtime errors as persistent gotcha notes
+  let errorCapture: AutoCaptureResult | null = null;
+  try {
+    errorCapture = await autoCapturErrors(
+      userId,
+      scrollback.content,
+      sessionId ?? undefined,
+      folderId ?? undefined
+    );
+
+    if (errorCapture.noteIds.length > 0) {
+      console.log(
+        `[SessionMemoryService] Auto-captured ${errorCapture.noteIds.length} errors as gotcha notes, ` +
+        `${errorCapture.duplicatesSkipped} duplicates skipped`
+      );
+    }
+  } catch (error) {
+    console.error("[SessionMemoryService] Failed to auto-capture errors:", error);
+  }
+
+  return { memoryIds, errorCapture };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
