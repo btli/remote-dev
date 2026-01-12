@@ -532,3 +532,29 @@ export async function initializeMonitoring(): Promise<void> {
     `[MonitoringService] Event-driven monitoring initialized: ${enabledCount} enabled, ${skippedCount} skipped (feature flag disabled)`
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Process cleanup handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Clean up all monitoring intervals on process exit.
+ * This prevents intervals from keeping the event loop alive during shutdown.
+ */
+function cleanupOnExit(): void {
+  if (activeStallChecks.size > 0) {
+    console.log(`[MonitoringService] Cleaning up ${activeStallChecks.size} active intervals...`);
+    stopAllStallChecking();
+  }
+}
+
+// Register cleanup handlers for graceful shutdown
+process.on("exit", cleanupOnExit);
+process.on("SIGINT", () => {
+  cleanupOnExit();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  cleanupOnExit();
+  process.exit(0);
+});

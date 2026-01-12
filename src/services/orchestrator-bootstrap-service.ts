@@ -38,6 +38,23 @@ import { join, dirname } from "path";
  */
 const DEFAULT_MASTER_CONTROL_DIR = join(process.env.HOME || "/tmp", ".remote-dev", "projects");
 
+/**
+ * Escape a string for safe use in a shell command.
+ *
+ * Uses single quotes which prevent all shell expansion ($, `, \, etc.)
+ * The only character that needs escaping in single quotes is the single quote itself,
+ * which is done by ending the quote, adding an escaped quote, and starting a new quote.
+ *
+ * Example: "path with 'quotes'" becomes "'path with '\''quotes'\'''"
+ *
+ * @param str - The string to escape
+ * @returns The escaped string safe for shell use
+ */
+function escapeShellArg(str: string): string {
+  // Replace single quotes with: end quote, escaped quote, start quote
+  return "'" + str.replace(/'/g, "'\\''") + "'";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lock mechanism to prevent race conditions in orchestrator creation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,28 +71,54 @@ function getLockKey(type: "master" | "folder", userId: string, scopeId?: string)
 /**
  * Execute a bootstrap function with lock protection.
  * If another request is already creating the same orchestrator, wait for it.
+ *
+ * Uses a synchronous placeholder pattern to prevent TOCTOU race conditions:
+ * 1. Atomically check-and-set a placeholder promise
+ * 2. If we set the placeholder, we own the lock - run the factory
+ * 3. If someone else has the lock, wait for their result and retry
  */
 async function withCreationLock<T extends BootstrapResult>(
   lockKey: string,
   factory: () => Promise<T>
 ): Promise<T> {
-  // Check if there's already a creation in progress
-  const existingLock = creationLocks.get(lockKey);
-  if (existingLock) {
-    console.log(`[Bootstrap] Waiting for existing creation: ${lockKey}`);
-    return existingLock as Promise<T>;
-  }
+  // Retry loop to handle race condition after waiting
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    // Check if there's already a creation in progress
+    const existingLock = creationLocks.get(lockKey);
+    if (existingLock) {
+      console.log(`[Bootstrap] Waiting for existing creation: ${lockKey}`);
+      await existingLock;
+      // After waiting, re-check if another waiter grabbed the lock
+      continue;
+    }
 
-  // Create new lock promise
-  const creationPromise = factory();
-  creationLocks.set(lockKey, creationPromise);
+    // Atomically set a placeholder to prevent TOCTOU race
+    let resolveCreation: (value: T) => void;
+    let rejectCreation: (error: unknown) => void;
+    const placeholderPromise = new Promise<T>((resolve, reject) => {
+      resolveCreation = resolve;
+      rejectCreation = reject;
+    });
 
-  try {
-    const result = await creationPromise;
-    return result;
-  } finally {
-    // Clean up lock after completion (success or failure)
-    creationLocks.delete(lockKey);
+    // Check again before setting - if someone beat us, retry
+    if (creationLocks.has(lockKey)) {
+      continue;
+    }
+    creationLocks.set(lockKey, placeholderPromise);
+
+    try {
+      // Now we own the lock - run the factory
+      const result = await factory();
+      resolveCreation!(result);
+      return result;
+    } catch (error) {
+      rejectCreation!(error);
+      throw error;
+    } finally {
+      // Clean up lock after completion (success or failure)
+      creationLocks.delete(lockKey);
+    }
   }
 }
 
@@ -843,8 +886,8 @@ async function startClaudeInSession(
   tmuxSessionName: string,
   workDir: string
 ): Promise<void> {
-  // First cd to the working directory
-  await TmuxService.sendKeys(tmuxSessionName, `cd "${workDir}"`, true);
+  // First cd to the working directory (use escapeShellArg for safety)
+  await TmuxService.sendKeys(tmuxSessionName, `cd ${escapeShellArg(workDir)}`, true);
 
   // Wait a moment for cd to complete
   await new Promise((resolve) => setTimeout(resolve, 500));

@@ -54,8 +54,13 @@ function getLockKey(operation: string, userId: string, scopeId?: string): string
  * Execute an operation with lock protection.
  * If another request is already performing the same operation, wait for it.
  *
- * Uses a retry loop to handle race conditions where multiple waiters wake up
- * simultaneously after the first operation completes.
+ * Uses a synchronous placeholder pattern to prevent TOCTOU race conditions:
+ * 1. Atomically check-and-set a placeholder promise
+ * 2. If we set the placeholder, we own the lock - run the factory
+ * 3. If someone else has the lock, wait for their result
+ *
+ * The retry loop handles cases where multiple waiters wake up after the
+ * first operation completes.
  */
 async function withOperationLock<T>(
   lockKey: string,
@@ -73,13 +78,30 @@ async function withOperationLock<T>(
       continue;
     }
 
-    // No existing lock - create our operation
-    const operationPromise = factory();
-    operationLocks.set(lockKey, operationPromise);
+    // Atomically set a placeholder to prevent TOCTOU race
+    // Create a deferred promise that we control
+    let resolveOperation: (value: T) => void;
+    let rejectOperation: (error: unknown) => void;
+    const placeholderPromise = new Promise<T>((resolve, reject) => {
+      resolveOperation = resolve;
+      rejectOperation = reject;
+    });
+
+    // Atomically check-and-set: if someone beat us, wait for them
+    if (operationLocks.has(lockKey)) {
+      // Another request grabbed the lock between our check and set
+      continue;
+    }
+    operationLocks.set(lockKey, placeholderPromise);
 
     try {
-      const result = await operationPromise;
+      // Now we own the lock - run the factory
+      const result = await factory();
+      resolveOperation!(result);
       return result;
+    } catch (error) {
+      rejectOperation!(error);
+      throw error;
     } finally {
       operationLocks.delete(lockKey);
     }
