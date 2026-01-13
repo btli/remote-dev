@@ -3154,4 +3154,560 @@ impl Database {
             executed_at: row.get(13)?,
         })
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Agent Profile Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// List all profiles for a user
+    pub fn list_profiles(&self, user_id: &str) -> Result<Vec<AgentProfile>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, description, provider, config_dir, is_default, created_at, updated_at
+             FROM agent_profile
+             WHERE user_id = ?1
+             ORDER BY is_default DESC, name ASC",
+        )?;
+        let profiles = stmt
+            .query_map(params![user_id], Self::map_profile)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(profiles)
+    }
+
+    /// Get a specific profile
+    pub fn get_profile(&self, profile_id: &str, user_id: &str) -> Result<Option<AgentProfile>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, description, provider, config_dir, is_default, created_at, updated_at
+             FROM agent_profile
+             WHERE id = ?1 AND user_id = ?2",
+        )?;
+        Ok(stmt
+            .query_row(params![profile_id, user_id], Self::map_profile)
+            .optional()?)
+    }
+
+    /// Create a new profile
+    pub fn create_profile(&self, profile: &NewAgentProfile) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // If this is the default profile, unset any existing default
+        if profile.is_default {
+            conn.execute(
+                "UPDATE agent_profile SET is_default = 0 WHERE user_id = ?1 AND is_default = 1",
+                params![profile.user_id],
+            )?;
+        }
+
+        conn.execute(
+            "INSERT INTO agent_profile (id, user_id, name, description, provider, config_dir, is_default, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            params![
+                id,
+                profile.user_id,
+                profile.name,
+                profile.description,
+                profile.provider,
+                profile.config_dir,
+                profile.is_default,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Update a profile
+    pub fn update_profile(
+        &self,
+        profile_id: &str,
+        user_id: &str,
+        update: &UpdateAgentProfile,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Check if profile exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM agent_profile WHERE id = ?1 AND user_id = ?2",
+                params![profile_id, user_id],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+
+        if !exists {
+            return Ok(false);
+        }
+
+        // If setting as default, unset other defaults first
+        if update.is_default == Some(true) {
+            conn.execute(
+                "UPDATE agent_profile SET is_default = 0 WHERE user_id = ?1 AND is_default = 1 AND id != ?2",
+                params![user_id, profile_id],
+            )?;
+        }
+
+        // Build update with all fields that might be updated
+        conn.execute(
+            "UPDATE agent_profile SET
+                name = COALESCE(?1, name),
+                description = COALESCE(?2, description),
+                provider = COALESCE(?3, provider),
+                is_default = COALESCE(?4, is_default),
+                updated_at = ?5
+             WHERE id = ?6 AND user_id = ?7",
+            params![
+                update.name,
+                update.description,
+                update.provider,
+                update.is_default,
+                now,
+                profile_id,
+                user_id,
+            ],
+        )?;
+
+        Ok(true)
+    }
+
+    /// Delete a profile
+    pub fn delete_profile(&self, profile_id: &str, user_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute(
+            "DELETE FROM agent_profile WHERE id = ?1 AND user_id = ?2",
+            params![profile_id, user_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    fn map_profile(row: &rusqlite::Row) -> rusqlite::Result<AgentProfile> {
+        Ok(AgentProfile {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get(3)?,
+            provider: row.get(4)?,
+            config_dir: row.get(5)?,
+            is_default: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Folder-Profile Link Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get folder-profile links for a user
+    pub fn get_folder_profile_links(&self, user_id: &str) -> Result<Vec<FolderProfileLink>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT fpl.id, fpl.folder_id, fpl.profile_id, fpl.created_at
+             FROM folder_profile_link fpl
+             JOIN session_folder sf ON sf.id = fpl.folder_id
+             WHERE sf.user_id = ?1",
+        )?;
+        let links = stmt
+            .query_map(params![user_id], |row| {
+                Ok(FolderProfileLink {
+                    id: row.get(0)?,
+                    folder_id: row.get(1)?,
+                    profile_id: row.get(2)?,
+                    created_at: row.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(links)
+    }
+
+    /// Link a folder to a profile
+    pub fn link_folder_profile(&self, folder_id: &str, profile_id: &str) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Remove existing link if any
+        conn.execute(
+            "DELETE FROM folder_profile_link WHERE folder_id = ?1",
+            params![folder_id],
+        )?;
+
+        conn.execute(
+            "INSERT INTO folder_profile_link (id, folder_id, profile_id, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id, folder_id, profile_id, now],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Unlink a folder from its profile
+    pub fn unlink_folder_profile(&self, folder_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute(
+            "DELETE FROM folder_profile_link WHERE folder_id = ?1",
+            params![folder_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Profile Git Identity Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get git identity for a profile
+    pub fn get_profile_git_identity(&self, profile_id: &str) -> Result<Option<ProfileGitIdentity>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, profile_id, user_name, user_email, ssh_key_path, gpg_key_id, github_username, created_at, updated_at
+             FROM profile_git_identity
+             WHERE profile_id = ?1",
+        )?;
+        Ok(stmt
+            .query_row(params![profile_id], |row| {
+                Ok(ProfileGitIdentity {
+                    id: row.get(0)?,
+                    profile_id: row.get(1)?,
+                    user_name: row.get(2)?,
+                    user_email: row.get(3)?,
+                    ssh_key_path: row.get(4)?,
+                    gpg_key_id: row.get(5)?,
+                    github_username: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .optional()?)
+    }
+
+    /// Create or update git identity
+    pub fn upsert_profile_git_identity(&self, identity: &NewProfileGitIdentity) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Check for existing
+        let existing_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM profile_git_identity WHERE profile_id = ?1",
+                params![identity.profile_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(id) = existing_id {
+            conn.execute(
+                "UPDATE profile_git_identity SET user_name = ?1, user_email = ?2, ssh_key_path = ?3,
+                 gpg_key_id = ?4, github_username = ?5, updated_at = ?6 WHERE id = ?7",
+                params![
+                    identity.user_name,
+                    identity.user_email,
+                    identity.ssh_key_path,
+                    identity.gpg_key_id,
+                    identity.github_username,
+                    now,
+                    id,
+                ],
+            )?;
+            Ok(id)
+        } else {
+            let id = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO profile_git_identity (id, profile_id, user_name, user_email, ssh_key_path, gpg_key_id, github_username, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                params![
+                    id,
+                    identity.profile_id,
+                    identity.user_name,
+                    identity.user_email,
+                    identity.ssh_key_path,
+                    identity.gpg_key_id,
+                    identity.github_username,
+                    now,
+                ],
+            )?;
+            Ok(id)
+        }
+    }
+
+    /// Delete git identity
+    pub fn delete_profile_git_identity(&self, profile_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute(
+            "DELETE FROM profile_git_identity WHERE profile_id = ?1",
+            params![profile_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Profile Appearance Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get appearance settings for a profile
+    pub fn get_profile_appearance(&self, profile_id: &str, user_id: &str) -> Result<Option<ProfileAppearance>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, profile_id, user_id, appearance_mode, light_color_scheme, dark_color_scheme,
+                    terminal_opacity, terminal_blur, terminal_cursor_style, created_at, updated_at
+             FROM agent_profile_appearance
+             WHERE profile_id = ?1 AND user_id = ?2",
+        )?;
+        Ok(stmt
+            .query_row(params![profile_id, user_id], |row| {
+                Ok(ProfileAppearance {
+                    id: row.get(0)?,
+                    profile_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    appearance_mode: row.get(3)?,
+                    light_color_scheme: row.get(4)?,
+                    dark_color_scheme: row.get(5)?,
+                    terminal_opacity: row.get(6)?,
+                    terminal_blur: row.get(7)?,
+                    terminal_cursor_style: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            })
+            .optional()?)
+    }
+
+    /// Update or create appearance settings
+    pub fn upsert_profile_appearance(
+        &self,
+        profile_id: &str,
+        user_id: &str,
+        update: &UpdateProfileAppearance,
+    ) -> Result<ProfileAppearance> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Check for existing
+        let existing: Option<ProfileAppearance> = conn
+            .query_row(
+                "SELECT id, profile_id, user_id, appearance_mode, light_color_scheme, dark_color_scheme,
+                        terminal_opacity, terminal_blur, terminal_cursor_style, created_at, updated_at
+                 FROM agent_profile_appearance WHERE profile_id = ?1 AND user_id = ?2",
+                params![profile_id, user_id],
+                |row| {
+                    Ok(ProfileAppearance {
+                        id: row.get(0)?,
+                        profile_id: row.get(1)?,
+                        user_id: row.get(2)?,
+                        appearance_mode: row.get(3)?,
+                        light_color_scheme: row.get(4)?,
+                        dark_color_scheme: row.get(5)?,
+                        terminal_opacity: row.get(6)?,
+                        terminal_blur: row.get(7)?,
+                        terminal_cursor_style: row.get(8)?,
+                        created_at: row.get(9)?,
+                        updated_at: row.get(10)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        if let Some(existing) = existing {
+            // Update existing
+            let appearance_mode = update.appearance_mode.clone().unwrap_or(existing.appearance_mode);
+            let light_color_scheme = update.light_color_scheme.clone().unwrap_or(existing.light_color_scheme);
+            let dark_color_scheme = update.dark_color_scheme.clone().unwrap_or(existing.dark_color_scheme);
+            let terminal_opacity = update.terminal_opacity.unwrap_or(existing.terminal_opacity);
+            let terminal_blur = update.terminal_blur.unwrap_or(existing.terminal_blur);
+            let terminal_cursor_style = update.terminal_cursor_style.clone().unwrap_or(existing.terminal_cursor_style);
+
+            conn.execute(
+                "UPDATE agent_profile_appearance SET appearance_mode = ?1, light_color_scheme = ?2,
+                 dark_color_scheme = ?3, terminal_opacity = ?4, terminal_blur = ?5,
+                 terminal_cursor_style = ?6, updated_at = ?7 WHERE id = ?8",
+                params![
+                    appearance_mode,
+                    light_color_scheme,
+                    dark_color_scheme,
+                    terminal_opacity,
+                    terminal_blur,
+                    terminal_cursor_style,
+                    now,
+                    existing.id,
+                ],
+            )?;
+
+            Ok(ProfileAppearance {
+                id: existing.id,
+                profile_id: profile_id.to_string(),
+                user_id: user_id.to_string(),
+                appearance_mode,
+                light_color_scheme,
+                dark_color_scheme,
+                terminal_opacity,
+                terminal_blur,
+                terminal_cursor_style,
+                created_at: existing.created_at,
+                updated_at: now,
+            })
+        } else {
+            // Create new with defaults
+            let id = uuid::Uuid::new_v4().to_string();
+            let appearance_mode = update.appearance_mode.clone().unwrap_or_else(|| "system".to_string());
+            let light_color_scheme = update.light_color_scheme.clone().unwrap_or_else(|| "ocean".to_string());
+            let dark_color_scheme = update.dark_color_scheme.clone().unwrap_or_else(|| "midnight".to_string());
+            let terminal_opacity = update.terminal_opacity.unwrap_or(100);
+            let terminal_blur = update.terminal_blur.unwrap_or(0);
+            let terminal_cursor_style = update.terminal_cursor_style.clone().unwrap_or_else(|| "block".to_string());
+
+            conn.execute(
+                "INSERT INTO agent_profile_appearance (id, profile_id, user_id, appearance_mode,
+                 light_color_scheme, dark_color_scheme, terminal_opacity, terminal_blur,
+                 terminal_cursor_style, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                params![
+                    id,
+                    profile_id,
+                    user_id,
+                    appearance_mode,
+                    light_color_scheme,
+                    dark_color_scheme,
+                    terminal_opacity,
+                    terminal_blur,
+                    terminal_cursor_style,
+                    now,
+                ],
+            )?;
+
+            Ok(ProfileAppearance {
+                id,
+                profile_id: profile_id.to_string(),
+                user_id: user_id.to_string(),
+                appearance_mode,
+                light_color_scheme,
+                dark_color_scheme,
+                terminal_opacity,
+                terminal_blur,
+                terminal_cursor_style,
+                created_at: now,
+                updated_at: now,
+            })
+        }
+    }
+
+    /// Delete appearance settings
+    pub fn delete_profile_appearance(&self, profile_id: &str, user_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute(
+            "DELETE FROM agent_profile_appearance WHERE profile_id = ?1 AND user_id = ?2",
+            params![profile_id, user_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Agent Profile Config Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get agent config for a profile
+    pub fn get_profile_agent_config(
+        &self,
+        profile_id: &str,
+        agent_type: &str,
+    ) -> Result<Option<AgentProfileConfig>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, profile_id, user_id, agent_type, config_json, is_valid, validation_errors, created_at, updated_at
+             FROM agent_profile_json_config
+             WHERE profile_id = ?1 AND agent_type = ?2",
+        )?;
+        Ok(stmt
+            .query_row(params![profile_id, agent_type], |row| {
+                Ok(AgentProfileConfig {
+                    id: row.get(0)?,
+                    profile_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    agent_type: row.get(3)?,
+                    config_json: row.get(4)?,
+                    is_valid: row.get(5)?,
+                    validation_errors: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .optional()?)
+    }
+
+    /// List all agent configs for a profile
+    pub fn list_profile_agent_configs(&self, profile_id: &str) -> Result<Vec<AgentProfileConfig>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, profile_id, user_id, agent_type, config_json, is_valid, validation_errors, created_at, updated_at
+             FROM agent_profile_json_config
+             WHERE profile_id = ?1
+             ORDER BY agent_type",
+        )?;
+        let configs = stmt
+            .query_map(params![profile_id], |row| {
+                Ok(AgentProfileConfig {
+                    id: row.get(0)?,
+                    profile_id: row.get(1)?,
+                    user_id: row.get(2)?,
+                    agent_type: row.get(3)?,
+                    config_json: row.get(4)?,
+                    is_valid: row.get(5)?,
+                    validation_errors: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(configs)
+    }
+
+    /// Create or update agent config
+    pub fn upsert_profile_agent_config(&self, config: &NewAgentProfileConfig) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Check for existing
+        let existing_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM agent_profile_json_config WHERE profile_id = ?1 AND agent_type = ?2",
+                params![config.profile_id, config.agent_type],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if let Some(id) = existing_id {
+            conn.execute(
+                "UPDATE agent_profile_json_config SET config_json = ?1, is_valid = 1, validation_errors = NULL, updated_at = ?2 WHERE id = ?3",
+                params![config.config_json, now, id],
+            )?;
+            Ok(id)
+        } else {
+            let id = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO agent_profile_json_config (id, profile_id, user_id, agent_type, config_json, is_valid, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+                params![
+                    id,
+                    config.profile_id,
+                    config.user_id,
+                    config.agent_type,
+                    config.config_json,
+                    now,
+                ],
+            )?;
+            Ok(id)
+        }
+    }
+
+    /// Delete agent config
+    pub fn delete_profile_agent_config(&self, profile_id: &str, agent_type: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute(
+            "DELETE FROM agent_profile_json_config WHERE profile_id = ?1 AND agent_type = ?2",
+            params![profile_id, agent_type],
+        )?;
+        Ok(rows > 0)
+    }
 }

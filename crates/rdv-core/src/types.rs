@@ -1298,3 +1298,197 @@ pub struct NewMetaAgentBenchmarkResult {
     pub commands_executed: Vec<String>,
     pub raw_output: Option<String>,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent Profile Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Agent provider type
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
+#[serde(rename_all = "lowercase")]
+pub enum AgentProvider {
+    Claude,
+    Codex,
+    Gemini,
+    OpenCode,
+    All,
+}
+
+impl AgentProvider {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "claude" => Some(Self::Claude),
+            "codex" => Some(Self::Codex),
+            "gemini" => Some(Self::Gemini),
+            "opencode" => Some(Self::OpenCode),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Gemini => "gemini",
+            Self::OpenCode => "opencode",
+            Self::All => "all",
+        }
+    }
+}
+
+impl std::fmt::Display for AgentProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Agent profile for managing isolated agent environments
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfile {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub provider: String, // claude, codex, gemini, opencode, all
+    pub config_dir: String, // ~/.remote-dev/profiles/{id}/
+    pub is_default: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for creating a new agent profile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewAgentProfile {
+    pub user_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub provider: String,
+    pub config_dir: String,
+    pub is_default: bool,
+}
+
+/// Input for updating an agent profile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAgentProfile {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub provider: Option<String>,
+    pub is_default: Option<bool>,
+}
+
+/// Folder-to-profile link
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct FolderProfileLink {
+    pub id: String,
+    pub folder_id: String,
+    pub profile_id: String,
+    pub created_at: i64,
+}
+
+/// Git identity for a profile
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileGitIdentity {
+    pub id: String,
+    pub profile_id: String,
+    pub user_name: String,
+    pub user_email: String,
+    pub ssh_key_path: Option<String>,
+    pub gpg_key_id: Option<String>,
+    pub github_username: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for creating/updating git identity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewProfileGitIdentity {
+    pub profile_id: String,
+    pub user_name: String,
+    pub user_email: String,
+    pub ssh_key_path: Option<String>,
+    pub gpg_key_id: Option<String>,
+    pub github_username: Option<String>,
+}
+
+/// Profile appearance settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileAppearance {
+    pub id: String,
+    pub profile_id: String,
+    pub user_id: String,
+    pub appearance_mode: String, // light, dark, system
+    pub light_color_scheme: String,
+    pub dark_color_scheme: String,
+    pub terminal_opacity: i32, // 0-100
+    pub terminal_blur: i32, // px
+    pub terminal_cursor_style: String, // block, underline, bar
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for updating profile appearance
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProfileAppearance {
+    pub appearance_mode: Option<String>,
+    pub light_color_scheme: Option<String>,
+    pub dark_color_scheme: Option<String>,
+    pub terminal_opacity: Option<i32>,
+    pub terminal_blur: Option<i32>,
+    pub terminal_cursor_style: Option<String>,
+}
+
+/// Agent profile JSON configuration (per agent type)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileConfig {
+    pub id: String,
+    pub profile_id: String,
+    pub user_id: String,
+    pub agent_type: String, // claude, gemini, opencode, codex
+    pub config_json: String,
+    pub is_valid: bool,
+    pub validation_errors: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for creating/updating agent profile config
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewAgentProfileConfig {
+    pub profile_id: String,
+    pub user_id: String,
+    pub agent_type: String,
+    pub config_json: String,
+}

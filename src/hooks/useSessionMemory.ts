@@ -188,7 +188,14 @@ export function useSessionMemory({
           throw new Error(`Query failed: ${response.statusText}`);
         }
 
-        entries = await response.json();
+        // rdv-server returns { results: [...], query, total, semantic }
+        const data = await response.json();
+        entries = Array.isArray(data) ? data : (data.results ?? []).map((r: { memory: MemoryQueryResult; score: number; semanticScore: number }) => ({
+          ...r.memory,
+          score: r.score,
+          semanticScore: r.semanticScore,
+          semantic: true,
+        }));
       } else {
         // Basic query - fetch by session/folder scope
         const params = new URLSearchParams();
@@ -203,7 +210,9 @@ export function useSessionMemory({
           throw new Error(`Fetch failed: ${response.statusText}`);
         }
 
-        entries = await response.json();
+        // rdv-server returns { memories: [...], total }
+        const data = await response.json();
+        entries = Array.isArray(data) ? data : (data.memories ?? []);
       }
 
       // Group by tier

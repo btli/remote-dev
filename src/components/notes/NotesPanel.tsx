@@ -558,11 +558,11 @@ export function NotesPanel({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <div className="flex items-center gap-2">
-          <StickyNote className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Notes</span>
+        <div className="flex items-center gap-1.5">
+          <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium">Notes</span>
           {counts.total > 0 && (
-            <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+            <Badge variant="secondary" className="h-4 px-1 text-[10px]">
               {counts.total}
             </Badge>
           )}

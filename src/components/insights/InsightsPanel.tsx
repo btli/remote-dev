@@ -52,9 +52,9 @@ export function InsightsPanel({
       >
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-          <div className="flex items-center gap-2">
-            <Lightbulb className="h-4 w-4 text-amber-400" />
-            <span className="text-sm font-medium">Insights</span>
+          <div className="flex items-center gap-1.5">
+            <Lightbulb className="h-3.5 w-3.5 text-amber-400" />
+            <span className="text-xs font-medium">Insights</span>
           </div>
           <Tooltip>
             <TooltipTrigger asChild>

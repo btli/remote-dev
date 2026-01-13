@@ -218,11 +218,11 @@ export function MemoryPanel({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Brain className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium">Memory</span>
+        <div className="flex items-center gap-1.5">
+          <Brain className="h-3.5 w-3.5 text-primary" />
+          <span className="text-xs font-medium">Memory</span>
           {counts.total > 0 && (
-            <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+            <Badge variant="secondary" className="h-4 px-1 text-[10px]">
               {counts.total}
             </Badge>
           )}

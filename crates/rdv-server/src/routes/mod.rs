@@ -5,9 +5,13 @@ pub mod extensions;
 pub mod folders;
 pub mod health;
 pub mod hooks;
+pub mod insights;
 pub mod knowledge;
 pub mod memory;
+pub mod meta;
+pub mod notes;
 pub mod orchestrators;
+pub mod profiles;
 pub mod sessions;
 pub mod tokens;
 pub mod worktrees;
@@ -38,6 +42,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(orchestrators::router())
         .merge(knowledge::router())
         .merge(memory::router())
+        .merge(meta::router())
+        .merge(notes::router())
+        .merge(insights::router())
+        .merge(profiles::router())
         .merge(hooks::router())
         .merge(tokens::router())
         .merge(extensions::router())
