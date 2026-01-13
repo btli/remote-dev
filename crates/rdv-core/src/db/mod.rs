@@ -16,6 +16,25 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// Compute cosine similarity between two vectors.
+///
+/// Returns a value between -1.0 and 1.0, where 1.0 means identical direction.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+
+    dot / (norm_a * norm_b)
+}
+
 /// Database connection wrapper.
 ///
 /// Thread-safe via internal Mutex. All database operations acquire the lock.
@@ -1913,6 +1932,199 @@ impl Database {
             created_at: row.get(20)?,
             updated_at: row.get(21)?,
             expires_at: row.get(22)?,
+        })
+    }
+
+    /// Set the embedding_id on a memory entry
+    pub fn set_memory_embedding(&self, memory_id: &str, embedding_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let rows = conn.execute(
+            "UPDATE sdk_memory_entry SET embedding_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![embedding_id, now, memory_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SDK Embedding Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a new embedding entry
+    pub fn create_embedding(&self, embedding: &NewSdkEmbedding) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let model_name = embedding
+            .model_name
+            .as_deref()
+            .unwrap_or(crate::types::DEFAULT_EMBEDDING_MODEL);
+        let dimensions = embedding.embedding.len() as i32;
+        let blob = SdkEmbedding::vector_to_blob(&embedding.embedding);
+
+        conn.execute(
+            "INSERT INTO sdk_embedding (id, entity_type, entity_id, user_id, embedding_blob, model_name, dimensions, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                embedding.entity_type,
+                embedding.entity_id,
+                embedding.user_id,
+                blob,
+                model_name,
+                dimensions,
+                now,
+            ],
+        )?;
+
+        Ok(id)
+    }
+
+    /// Get embedding by ID
+    pub fn get_embedding(&self, id: &str) -> Result<Option<SdkEmbedding>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let embedding = conn
+            .query_row(
+                "SELECT id, entity_type, entity_id, user_id, embedding_blob, model_name, dimensions, created_at
+                 FROM sdk_embedding WHERE id = ?1",
+                params![id],
+                Self::map_embedding,
+            )
+            .optional()?;
+        Ok(embedding)
+    }
+
+    /// Get embedding by entity type and ID
+    pub fn get_embedding_by_entity(&self, entity_type: &str, entity_id: &str) -> Result<Option<SdkEmbedding>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let embedding = conn
+            .query_row(
+                "SELECT id, entity_type, entity_id, user_id, embedding_blob, model_name, dimensions, created_at
+                 FROM sdk_embedding WHERE entity_type = ?1 AND entity_id = ?2",
+                params![entity_type, entity_id],
+                Self::map_embedding,
+            )
+            .optional()?;
+        Ok(embedding)
+    }
+
+    /// Search for similar embeddings using cosine similarity
+    ///
+    /// Returns entity IDs sorted by similarity (highest first).
+    /// Note: This performs the similarity computation in Rust since SQLite
+    /// doesn't have native vector operations.
+    pub fn search_similar_embeddings(
+        &self,
+        user_id: &str,
+        entity_type: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<EmbeddingSearchResult>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        // Fetch all embeddings for the user and entity type
+        let mut stmt = conn.prepare(
+            "SELECT id, entity_type, entity_id, user_id, embedding_blob, model_name, dimensions, created_at
+             FROM sdk_embedding WHERE user_id = ?1 AND entity_type = ?2",
+        )?;
+
+        let embeddings: Vec<SdkEmbedding> = stmt
+            .query_map(params![user_id, entity_type], Self::map_embedding)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // Compute cosine similarity for each embedding
+        let mut results: Vec<EmbeddingSearchResult> = embeddings
+            .into_iter()
+            .map(|emb| {
+                let vector = emb.to_vector();
+                let similarity = cosine_similarity(query_embedding, &vector);
+                EmbeddingSearchResult {
+                    entity_id: emb.entity_id,
+                    entity_type: emb.entity_type,
+                    similarity,
+                }
+            })
+            .collect();
+
+        // Sort by similarity descending
+        results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Limit results
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    /// Search for similar embeddings across all entity types
+    pub fn search_similar_all_types(
+        &self,
+        user_id: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<EmbeddingSearchResult>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+
+        // Fetch all embeddings for the user
+        let mut stmt = conn.prepare(
+            "SELECT id, entity_type, entity_id, user_id, embedding_blob, model_name, dimensions, created_at
+             FROM sdk_embedding WHERE user_id = ?1",
+        )?;
+
+        let embeddings: Vec<SdkEmbedding> = stmt
+            .query_map(params![user_id], Self::map_embedding)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // Compute cosine similarity for each embedding
+        let mut results: Vec<EmbeddingSearchResult> = embeddings
+            .into_iter()
+            .map(|emb| {
+                let vector = emb.to_vector();
+                let similarity = cosine_similarity(query_embedding, &vector);
+                EmbeddingSearchResult {
+                    entity_id: emb.entity_id,
+                    entity_type: emb.entity_type,
+                    similarity,
+                }
+            })
+            .collect();
+
+        // Sort by similarity descending
+        results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Limit results
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    /// Delete embedding by ID
+    pub fn delete_embedding(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute("DELETE FROM sdk_embedding WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    /// Delete embedding by entity
+    pub fn delete_embedding_by_entity(&self, entity_type: &str, entity_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let rows = conn.execute(
+            "DELETE FROM sdk_embedding WHERE entity_type = ?1 AND entity_id = ?2",
+            params![entity_type, entity_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    fn map_embedding(row: &rusqlite::Row) -> rusqlite::Result<SdkEmbedding> {
+        Ok(SdkEmbedding {
+            id: row.get(0)?,
+            entity_type: row.get(1)?,
+            entity_id: row.get(2)?,
+            user_id: row.get(3)?,
+            embedding_blob: row.get(4)?,
+            model_name: row.get(5)?,
+            dimensions: row.get(6)?,
+            created_at: row.get(7)?,
         })
     }
 

@@ -29,6 +29,7 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Session {
@@ -47,6 +48,7 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Folder {
@@ -64,6 +66,7 @@ pub struct Folder {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Orchestrator {
@@ -127,6 +130,7 @@ pub struct NewFolder {
 
 /// Input for creating a new orchestrator
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct NewOrchestrator {
@@ -146,6 +150,7 @@ pub struct NewOrchestrator {
 
 /// Orchestrator insight
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct Insight {
@@ -166,6 +171,7 @@ pub struct Insight {
 
 /// Input for creating a new insight
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct NewInsight {
@@ -181,6 +187,7 @@ pub struct NewInsight {
 
 /// Orchestrator for REST responses (simpler structure)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct OrchestratorSimple {
@@ -211,6 +218,7 @@ pub struct InsightCounts {
 
 /// Audit log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts-types", derive(TS))]
 #[cfg_attr(feature = "ts-types", ts(export))]
 pub struct AuditLog {
@@ -1664,4 +1672,109 @@ pub struct DelegationError {
     pub message: String,
     pub exit_code: Option<i32>,
     pub recoverable: bool,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDK Embedding Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Entity type for embeddings
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export))]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingEntityType {
+    Memory,
+    Note,
+    Insight,
+}
+
+impl std::fmt::Display for EmbeddingEntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EmbeddingEntityType::Memory => write!(f, "memory"),
+            EmbeddingEntityType::Note => write!(f, "note"),
+            EmbeddingEntityType::Insight => write!(f, "insight"),
+        }
+    }
+}
+
+impl std::str::FromStr for EmbeddingEntityType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "memory" => Ok(EmbeddingEntityType::Memory),
+            "note" => Ok(EmbeddingEntityType::Note),
+            "insight" => Ok(EmbeddingEntityType::Insight),
+            _ => Err(format!("Invalid embedding entity type: {}", s)),
+        }
+    }
+}
+
+/// Embedding model name constant
+pub const DEFAULT_EMBEDDING_MODEL: &str = "all-MiniLM-L6-v2";
+
+/// Default embedding dimensions (all-MiniLM-L6-v2)
+pub const DEFAULT_EMBEDDING_DIMENSIONS: usize = 384;
+
+/// Stored embedding for semantic search
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct SdkEmbedding {
+    pub id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub user_id: String,
+    /// Embedding vector stored as bytes (f32 array serialized)
+    #[serde(skip)]
+    pub embedding_blob: Vec<u8>,
+    pub model_name: String,
+    pub dimensions: i32,
+    pub created_at: i64,
+}
+
+impl SdkEmbedding {
+    /// Convert embedding blob back to f32 vector
+    pub fn to_vector(&self) -> Vec<f32> {
+        if self.embedding_blob.is_empty() {
+            return Vec::new();
+        }
+        self.embedding_blob
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    }
+
+    /// Convert f32 vector to blob bytes
+    pub fn vector_to_blob(vector: &[f32]) -> Vec<u8> {
+        vector.iter().flat_map(|f| f.to_le_bytes()).collect()
+    }
+}
+
+/// Input for creating a new embedding
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewSdkEmbedding {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub user_id: String,
+    /// Embedding vector as f32 array
+    #[serde(skip)]
+    pub embedding: Vec<f32>,
+    pub model_name: Option<String>,
+}
+
+/// Embedding search result with similarity score
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingSearchResult {
+    pub entity_id: String,
+    pub entity_type: String,
+    pub similarity: f32,
 }

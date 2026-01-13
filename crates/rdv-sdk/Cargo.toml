@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Remote Dev SDK - Hierarchical memory, meta-agent, and extension system"
 
 [features]
-default = ["memory", "meta-agent", "extensions"]
+default = ["memory", "meta-agent", "extensions", "embeddings"]
 memory = []
 meta-agent = []
 extensions = []

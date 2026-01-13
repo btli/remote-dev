@@ -12,7 +12,7 @@ name = "rdv-server"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["embeddings", "extensions"]
 embeddings = ["rdv-sdk/embeddings"]
 extensions = ["rdv-sdk/extensions"]
 

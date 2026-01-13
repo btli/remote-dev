@@ -9,14 +9,15 @@
 //! - knowledge_get: Get project knowledge
 
 use rdv_core::Database;
-use rdv_core::types::{MemoryQueryFilter, NewMemoryEntry};
+use rdv_core::types::{MemoryQueryFilter, NewMemoryEntry, NewSdkEmbedding};
 use rdv_sdk::extensions::{
     DynamicToolRouter, SDK, ToolHandler, ToolInput, ToolOutput,
 };
+use rdv_sdk::memory::embeddings::embedding_service;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Extension ID for SDK tools
 const SDK_EXTENSION_ID: &str = "sdk";
@@ -43,6 +44,18 @@ pub async fn register_sdk_tools(
     // Register insight_extract tool
     let db_clone = Arc::clone(&db);
     register_insight_extract(&router, db_clone).await?;
+
+    // Register insight_apply tool
+    let db_clone = Arc::clone(&db);
+    register_insight_apply(&router, db_clone).await?;
+
+    // Register note_to_memory tool
+    let db_clone = Arc::clone(&db);
+    register_note_to_memory(&router, db_clone).await?;
+
+    // Register insight_to_memory tool
+    let db_clone = Arc::clone(&db);
+    register_insight_to_memory(&router, db_clone).await?;
 
     // Register knowledge_add tool
     let db_clone = Arc::clone(&db);
@@ -222,12 +235,49 @@ async fn register_memory_store(
             match db.create_memory_entry(&entry) {
                 Ok(id) => {
                     debug!("Created memory entry: {}", &id[..8]);
+
+                    // Generate and store embedding for long_term and working memories
+                    let mut embedding_id = None;
+                    if tier == "long_term" || tier == "working" {
+                        let embed_service = embedding_service();
+                        match embed_service.embed(content).await {
+                            Ok(result) => {
+                                let new_embedding = NewSdkEmbedding {
+                                    entity_type: "memory".to_string(),
+                                    entity_id: id.clone(),
+                                    user_id: input.context.user_id.clone(),
+                                    embedding: result.vector,
+                                    model_name: None, // Use default
+                                };
+
+                                match db.create_embedding(&new_embedding) {
+                                    Ok(emb_id) => {
+                                        // Link embedding to memory
+                                        if let Err(e) = db.set_memory_embedding(&id, &emb_id) {
+                                            warn!("Failed to link embedding to memory {}: {}", &id[..8], e);
+                                        } else {
+                                            embedding_id = Some(emb_id);
+                                            debug!("Created embedding for memory: {}", &id[..8]);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to store embedding for memory {}: {}", &id[..8], e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to generate embedding for memory {}: {}", &id[..8], e);
+                            }
+                        }
+                    }
+
                     ToolOutput {
                         data: json!({
                             "success": true,
                             "id": id,
                             "tier": tier,
-                            "contentType": content_type
+                            "contentType": content_type,
+                            "embeddingId": embedding_id
                         }),
                         success: true,
                         error: None,
@@ -261,7 +311,7 @@ async fn register_memory_search(
 ) -> Result<(), String> {
     let tool = SDK::tool("memory_search")
         .display_name("Search Memories")
-        .description("Search memories with text matching and optional filters. Returns scored results based on relevance.")
+        .description("Search memories using hybrid semantic + text matching. Returns scored results based on combined relevance.")
         .input_schema(json!({
             "type": "object",
             "properties": {
@@ -297,6 +347,10 @@ async fn register_memory_search(
                     "minimum": 1,
                     "maximum": 100,
                     "description": "Maximum number of results (default: 20)"
+                },
+                "semantic": {
+                    "type": "boolean",
+                    "description": "Enable semantic search using embeddings (default: true)"
                 }
             },
             "required": ["query"]
@@ -321,14 +375,18 @@ async fn register_memory_search(
                 },
             };
 
+            let min_score = args.get("minScore").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+            let use_semantic = args.get("semantic").and_then(|v| v.as_bool()).unwrap_or(true);
+
             let filter = MemoryQueryFilter {
                 user_id: user_id.clone(),
                 session_id: args.get("sessionId").and_then(|v| v.as_str()).map(String::from),
                 folder_id: args.get("folderId").and_then(|v| v.as_str()).map(String::from),
                 tier: args.get("tier").and_then(|v| v.as_str()).map(String::from),
                 content_type: args.get("contentType").and_then(|v| v.as_str()).map(String::from),
-                min_relevance: args.get("minScore").and_then(|v| v.as_f64()),
-                limit: args.get("limit").and_then(|v| v.as_u64()).map(|v| v as usize),
+                min_relevance: None, // Don't filter by relevance yet, we'll do it after scoring
+                limit: Some(limit * 3), // Get more results for re-ranking
                 ..Default::default()
             };
 
@@ -343,12 +401,39 @@ async fn register_memory_search(
                 },
             };
 
-            // Score results based on text matching
+            // Build a map of memory ID -> semantic score (if semantic search is enabled)
+            let mut semantic_scores: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+            let mut semantic_used = false;
+
+            if use_semantic {
+                let embed_service = embedding_service();
+                match embed_service.embed(query).await {
+                    Ok(query_embedding) => {
+                        // Search for similar embeddings
+                        match db.search_similar_embeddings(&user_id, "memory", &query_embedding.vector, limit * 2) {
+                            Ok(results) => {
+                                semantic_used = true;
+                                for result in results {
+                                    // Normalize cosine similarity (-1 to 1) to relevance score (0 to 1)
+                                    let normalized = (result.similarity + 1.0) / 2.0;
+                                    semantic_scores.insert(result.entity_id, normalized);
+                                }
+                                debug!("Semantic search found {} similar memories", semantic_scores.len());
+                            }
+                            Err(e) => {
+                                warn!("Semantic search failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to generate query embedding: {}", e);
+                    }
+                }
+            }
+
+            // Score results using hybrid approach
             let query_lower = query.to_lowercase();
             let query_words: Vec<&str> = query_lower.split_whitespace().filter(|w| w.len() > 2).collect();
-
-            let min_score = args.get("minScore").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
             let mut results: Vec<serde_json::Value> = memories
                 .into_iter()
@@ -356,25 +441,37 @@ async fn register_memory_search(
                     let content_lower = entry.content.to_lowercase();
                     let name_lower = entry.name.as_deref().unwrap_or("").to_lowercase();
 
-                    // Calculate match score
-                    let mut score = 0.0f64;
+                    // Calculate text match score
+                    let mut text_score = 0.0f64;
                     for word in &query_words {
                         if content_lower.contains(word) {
-                            score += 0.2;
+                            text_score += 0.2;
                         }
                         if name_lower.contains(word) {
-                            score += 0.3;
+                            text_score += 0.3;
                         }
                     }
+                    text_score = text_score.min(1.0);
 
-                    // Combine with relevance
-                    let base_relevance = entry.relevance.unwrap_or(0.5);
-                    let final_score = (base_relevance * 0.5 + score * 0.5).min(1.0);
+                    // Get semantic score if available
+                    let semantic_score = semantic_scores.get(&entry.id).copied().unwrap_or(0.0) as f64;
 
-                    (entry, final_score)
+                    // Combine scores with hybrid weighting
+                    // If semantic search was used, weight it more heavily
+                    let final_score = if semantic_used && semantic_score > 0.0 {
+                        // Hybrid: 60% semantic, 30% text, 10% base relevance
+                        let base_relevance = entry.relevance.unwrap_or(0.5);
+                        (semantic_score * 0.6 + text_score * 0.3 + base_relevance * 0.1).min(1.0)
+                    } else {
+                        // Text-only: 50% text, 50% base relevance
+                        let base_relevance = entry.relevance.unwrap_or(0.5);
+                        (text_score * 0.5 + base_relevance * 0.5).min(1.0)
+                    };
+
+                    (entry, final_score, semantic_score)
                 })
-                .filter(|(_, score)| *score > min_score)
-                .map(|(entry, score)| {
+                .filter(|(_, score, _)| *score > min_score)
+                .map(|(entry, score, semantic_score)| {
                     json!({
                         "id": entry.id,
                         "tier": entry.tier,
@@ -382,6 +479,7 @@ async fn register_memory_search(
                         "content": entry.content,
                         "name": entry.name,
                         "score": score,
+                        "semanticScore": if semantic_used { Some(semantic_score) } else { None },
                         "confidence": entry.confidence,
                         "relevance": entry.relevance,
                         "createdAt": entry.created_at
@@ -405,7 +503,8 @@ async fn register_memory_search(
                     "success": true,
                     "query": query,
                     "results": results,
-                    "total": total
+                    "total": total,
+                    "semanticSearchUsed": semantic_used
                 }),
                 success: true,
                 error: None,
@@ -704,6 +803,476 @@ async fn register_insight_extract(
                         error: None,
                         duration_ms: 0,
                         side_effects: vec!["Created insight".to_string()],
+                    }
+                }
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+            }
+        })
+    });
+
+    router
+        .register_tool_with_handler(SDK_EXTENSION_ID, tool, handler)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Register insight_apply tool
+async fn register_insight_apply(
+    router: &DynamicToolRouter,
+    db: Arc<Database>,
+) -> Result<(), String> {
+    let tool = SDK::tool("insight_apply")
+        .display_name("Apply Insight")
+        .description("Record when an insight is applied/used. Increments application count for tracking insight utility.")
+        .input_schema(json!({
+            "type": "object",
+            "properties": {
+                "insightId": {
+                    "type": "string",
+                    "description": "ID of the insight being applied"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Optional context about how the insight was applied"
+                }
+            },
+            "required": ["insightId"]
+        }))
+        .category("insights")
+        .with_side_effects()
+        .build();
+
+    let handler: ToolHandler = Arc::new(move |input: ToolInput| {
+        let db = Arc::clone(&db);
+        Box::pin(async move {
+            let args = &input.args;
+            let user_id = input.context.user_id.clone();
+
+            let insight_id = match args.get("insightId").and_then(|v| v.as_str()) {
+                Some(id) => id,
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "insightId is required"}),
+                    success: false,
+                    error: Some("insightId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+            };
+
+            // Verify insight exists and belongs to user
+            match db.get_sdk_insight(insight_id) {
+                Ok(Some(insight)) => {
+                    if insight.user_id != user_id {
+                        return ToolOutput {
+                            data: json!({"success": false, "error": "Insight not found"}),
+                            success: false,
+                            error: Some("Insight not found".to_string()),
+                            duration_ms: 0,
+                            side_effects: vec![],
+                        };
+                    }
+                }
+                Ok(None) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": "Insight not found"}),
+                        success: false,
+                        error: Some("Insight not found".to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+                Err(e) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": e.to_string()}),
+                        success: false,
+                        error: Some(e.to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+            }
+
+            // Record the application
+            match db.record_sdk_insight_application(insight_id) {
+                Ok(_) => {
+                    // Get updated application count
+                    let application_count = db
+                        .get_sdk_insight(insight_id)
+                        .ok()
+                        .flatten()
+                        .map(|i| i.application_count)
+                        .unwrap_or(1);
+
+                    debug!("Applied insight: {} (count: {})", &insight_id[..8], application_count);
+                    ToolOutput {
+                        data: json!({
+                            "success": true,
+                            "insightId": insight_id,
+                            "applicationCount": application_count
+                        }),
+                        success: true,
+                        error: None,
+                        duration_ms: 0,
+                        side_effects: vec!["Recorded insight application".to_string()],
+                    }
+                }
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+            }
+        })
+    });
+
+    router
+        .register_tool_with_handler(SDK_EXTENSION_ID, tool, handler)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Register note_to_memory tool
+async fn register_note_to_memory(
+    router: &DynamicToolRouter,
+    db: Arc<Database>,
+) -> Result<(), String> {
+    let tool = SDK::tool("note_to_memory")
+        .display_name("Promote Note to Memory")
+        .description("Promote a note to a memory entry, optionally to a specific tier. The note is preserved.")
+        .input_schema(json!({
+            "type": "object",
+            "properties": {
+                "noteId": {
+                    "type": "string",
+                    "description": "ID of the note to promote"
+                },
+                "tier": {
+                    "type": "string",
+                    "enum": ["working", "long_term"],
+                    "description": "Memory tier to promote to (default: working)"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Optional name for the memory entry"
+                }
+            },
+            "required": ["noteId"]
+        }))
+        .category("notes")
+        .with_side_effects()
+        .build();
+
+    let handler: ToolHandler = Arc::new(move |input: ToolInput| {
+        let db = Arc::clone(&db);
+        Box::pin(async move {
+            let args = &input.args;
+            let user_id = input.context.user_id.clone();
+
+            let note_id = match args.get("noteId").and_then(|v| v.as_str()) {
+                Some(id) => id,
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "noteId is required"}),
+                    success: false,
+                    error: Some("noteId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+            };
+
+            // Get the note
+            let note = match db.get_note(note_id) {
+                Ok(Some(n)) => {
+                    if n.user_id != user_id {
+                        return ToolOutput {
+                            data: json!({"success": false, "error": "Note not found"}),
+                            success: false,
+                            error: Some("Note not found".to_string()),
+                            duration_ms: 0,
+                            side_effects: vec![],
+                        };
+                    }
+                    n
+                }
+                Ok(None) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": "Note not found"}),
+                        success: false,
+                        error: Some("Note not found".to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+                Err(e) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": e.to_string()}),
+                        success: false,
+                        error: Some(e.to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+            };
+
+            let tier = args.get("tier").and_then(|v| v.as_str()).unwrap_or("working");
+            let name = args.get("name")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| note.title.clone())
+                .or_else(|| Some(format!("[Note] {}", &note.content[..note.content.len().min(50)])));
+
+            // Create memory entry from note
+            let entry = NewMemoryEntry {
+                user_id: user_id.clone(),
+                session_id: note.session_id.clone(),
+                folder_id: note.folder_id.clone(),
+                tier: tier.to_string(),
+                content_type: format!("note_{}", note.note_type),
+                name,
+                description: None,
+                content: note.content.clone(),
+                task_id: None,
+                priority: Some(note.priority as i32),
+                confidence: Some(0.8),
+                relevance: Some(0.7),
+                ttl_seconds: if tier == "working" { Some(86400) } else { None },
+                metadata_json: Some(json!({
+                    "sourceNoteId": note_id,
+                    "noteType": note.note_type,
+                    "tags": note.tags()
+                }).to_string()),
+            };
+
+            match db.create_memory_entry(&entry) {
+                Ok(memory_id) => {
+                    // Generate embedding for the new memory if it's working or long_term
+                    let mut embedding_id = None;
+                    let embed_service = embedding_service();
+                    match embed_service.embed(&note.content).await {
+                        Ok(result) => {
+                            let new_embedding = NewSdkEmbedding {
+                                entity_type: "memory".to_string(),
+                                entity_id: memory_id.clone(),
+                                user_id: user_id.clone(),
+                                embedding: result.vector,
+                                model_name: None,
+                            };
+
+                            if let Ok(emb_id) = db.create_embedding(&new_embedding) {
+                                let _ = db.set_memory_embedding(&memory_id, &emb_id);
+                                embedding_id = Some(emb_id);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to generate embedding for promoted note: {}", e);
+                        }
+                    }
+
+                    debug!("Promoted note {} to memory {}", &note_id[..8], &memory_id[..8]);
+                    ToolOutput {
+                        data: json!({
+                            "success": true,
+                            "memoryId": memory_id,
+                            "tier": tier,
+                            "sourceNoteId": note_id,
+                            "embeddingId": embedding_id
+                        }),
+                        success: true,
+                        error: None,
+                        duration_ms: 0,
+                        side_effects: vec!["Promoted note to memory".to_string()],
+                    }
+                }
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+            }
+        })
+    });
+
+    router
+        .register_tool_with_handler(SDK_EXTENSION_ID, tool, handler)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Register insight_to_memory tool
+async fn register_insight_to_memory(
+    router: &DynamicToolRouter,
+    db: Arc<Database>,
+) -> Result<(), String> {
+    let tool = SDK::tool("insight_to_memory")
+        .display_name("Convert Insight to Memory")
+        .description("Convert an SDK insight to a long-term memory entry for unified retrieval. Maps insight types to memory content types.")
+        .input_schema(json!({
+            "type": "object",
+            "properties": {
+                "insightId": {
+                    "type": "string",
+                    "description": "ID of the insight to convert"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Optional name for the memory entry"
+                }
+            },
+            "required": ["insightId"]
+        }))
+        .category("insights")
+        .with_side_effects()
+        .build();
+
+    let handler: ToolHandler = Arc::new(move |input: ToolInput| {
+        let db = Arc::clone(&db);
+        Box::pin(async move {
+            let args = &input.args;
+            let user_id = input.context.user_id.clone();
+
+            let insight_id = match args.get("insightId").and_then(|v| v.as_str()) {
+                Some(id) => id,
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "insightId is required"}),
+                    success: false,
+                    error: Some("insightId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+            };
+
+            // Get the insight
+            let insight = match db.get_sdk_insight(insight_id) {
+                Ok(Some(i)) => {
+                    if i.user_id != user_id {
+                        return ToolOutput {
+                            data: json!({"success": false, "error": "Insight not found"}),
+                            success: false,
+                            error: Some("Insight not found".to_string()),
+                            duration_ms: 0,
+                            side_effects: vec![],
+                        };
+                    }
+                    i
+                }
+                Ok(None) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": "Insight not found"}),
+                        success: false,
+                        error: Some("Insight not found".to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+                Err(e) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": e.to_string()}),
+                        success: false,
+                        error: Some(e.to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+            };
+
+            // Map insight type to memory content type
+            let insight_type_str = insight.insight_type.to_string();
+            let content_type = match insight_type_str.as_str() {
+                "convention" => "convention",
+                "pattern" => "pattern",
+                "anti_pattern" => "gotcha",
+                "skill" => "skill",
+                "gotcha" => "gotcha",
+                "best_practice" => "pattern",
+                "dependency" => "reference",
+                "performance" => "observation",
+                _ => "insight",
+            };
+
+            let name = args.get("name")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| Some(insight.title.clone()));
+
+            // Create memory entry from insight
+            let entry = NewMemoryEntry {
+                user_id: user_id.clone(),
+                session_id: None,  // Insights don't have session_id
+                folder_id: insight.folder_id.clone(),
+                tier: "long_term".to_string(),  // Insights are always long-term
+                content_type: content_type.to_string(),
+                name,
+                description: Some(insight.title.clone()),
+                content: insight.description.clone(),
+                task_id: None,
+                priority: None,
+                confidence: Some(insight.confidence),
+                relevance: Some(0.9),  // High relevance for insights
+                ttl_seconds: None,  // No expiration for long-term
+                metadata_json: Some(json!({
+                    "sourceInsightId": insight_id,
+                    "insightType": insight_type_str,
+                    "applicability": insight.applicability.to_string(),
+                    "applicationCount": insight.application_count
+                }).to_string()),
+            };
+
+            match db.create_memory_entry(&entry) {
+                Ok(memory_id) => {
+                    // Generate embedding for the new memory
+                    let mut embedding_id = None;
+                    let embed_service = embedding_service();
+                    match embed_service.embed(&insight.description).await {
+                        Ok(result) => {
+                            let new_embedding = NewSdkEmbedding {
+                                entity_type: "memory".to_string(),
+                                entity_id: memory_id.clone(),
+                                user_id: user_id.clone(),
+                                embedding: result.vector,
+                                model_name: None,
+                            };
+
+                            if let Ok(emb_id) = db.create_embedding(&new_embedding) {
+                                let _ = db.set_memory_embedding(&memory_id, &emb_id);
+                                embedding_id = Some(emb_id);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to generate embedding for converted insight: {}", e);
+                        }
+                    }
+
+                    // Update insight to track linked memory (if the db method exists)
+                    // db.link_insight_to_memory(insight_id, &memory_id).ok();
+
+                    debug!("Converted insight {} to memory {}", &insight_id[..8], &memory_id[..8]);
+                    ToolOutput {
+                        data: json!({
+                            "success": true,
+                            "memoryId": memory_id,
+                            "contentType": content_type,
+                            "sourceInsightId": insight_id,
+                            "embeddingId": embedding_id
+                        }),
+                        success: true,
+                        error: None,
+                        duration_ms: 0,
+                        side_effects: vec!["Converted insight to memory".to_string()],
                     }
                 }
                 Err(e) => ToolOutput {
