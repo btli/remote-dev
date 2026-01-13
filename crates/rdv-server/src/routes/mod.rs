@@ -7,6 +7,7 @@ pub mod health;
 pub mod hooks;
 pub mod insights;
 pub mod knowledge;
+pub mod logs;
 pub mod memory;
 pub mod meta;
 pub mod notes;
@@ -49,6 +50,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(hooks::router())
         .merge(tokens::router())
         .merge(extensions::router())
+        .merge(logs::router())
         // SSE endpoint for real-time session events
         .route("/events/sessions", get(events::session_events))
         .layer(middleware::from_fn_with_state(

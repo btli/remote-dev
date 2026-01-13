@@ -3710,4 +3710,307 @@ impl Database {
         )?;
         Ok(rows > 0)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Task Methods
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// List tasks for a user with optional filters
+    pub fn list_tasks(
+        &self,
+        user_id: &str,
+        orchestrator_id: Option<&str>,
+        folder_id: Option<&str>,
+        status: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Task>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut query = String::from(
+            "SELECT id, orchestrator_id, user_id, folder_id, description, type, status,
+                    confidence, estimated_duration, assigned_agent, delegation_id,
+                    beads_issue_id, context_injected, result_json, error_json,
+                    created_at, updated_at, completed_at
+             FROM tasks WHERE user_id = ?1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id.to_string())];
+
+        if let Some(oid) = orchestrator_id {
+            query.push_str(" AND orchestrator_id = ?");
+            params.push(Box::new(oid.to_string()));
+        }
+        if let Some(fid) = folder_id {
+            query.push_str(" AND folder_id = ?");
+            params.push(Box::new(fid.to_string()));
+        }
+        if let Some(s) = status {
+            query.push_str(" AND status = ?");
+            params.push(Box::new(s.to_string()));
+        }
+
+        query.push_str(" ORDER BY created_at DESC");
+
+        if let Some(lim) = limit {
+            query.push_str(&format!(" LIMIT {}", lim));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&query)?;
+        let tasks = stmt
+            .query_map(params_refs.as_slice(), Self::map_task)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(tasks)
+    }
+
+    /// Get task by ID
+    pub fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        conn.query_row(
+            "SELECT id, orchestrator_id, user_id, folder_id, description, type, status,
+                    confidence, estimated_duration, assigned_agent, delegation_id,
+                    beads_issue_id, context_injected, result_json, error_json,
+                    created_at, updated_at, completed_at
+             FROM tasks WHERE id = ?1",
+            params![task_id],
+            Self::map_task,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Create a new task
+    pub fn create_task(&self, task: &NewTask) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+        let confidence = task.confidence.unwrap_or(1.0);
+
+        conn.execute(
+            "INSERT INTO tasks (id, orchestrator_id, user_id, folder_id, description, type, status,
+                               confidence, estimated_duration, assigned_agent, beads_issue_id,
+                               created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7, ?8, ?9, ?10, ?11, ?11)",
+            params![
+                id,
+                task.orchestrator_id,
+                task.user_id,
+                task.folder_id,
+                task.description,
+                task.task_type,
+                confidence,
+                task.estimated_duration,
+                task.assigned_agent,
+                task.beads_issue_id,
+                now,
+            ],
+        )?;
+        Ok(id)
+    }
+
+    /// Update task status
+    pub fn update_task_status(&self, task_id: &str, status: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let completed_at = if status == "completed" || status == "failed" || status == "cancelled" {
+            Some(now)
+        } else {
+            None
+        };
+
+        let rows = conn.execute(
+            "UPDATE tasks SET status = ?1, updated_at = ?2, completed_at = ?3 WHERE id = ?4",
+            params![status, now, completed_at, task_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Update task delegation link
+    pub fn update_task_delegation(&self, task_id: &str, delegation_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+        let rows = conn.execute(
+            "UPDATE tasks SET delegation_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![delegation_id, now, task_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Map a task row
+    fn map_task(row: &rusqlite::Row<'_>) -> std::result::Result<Task, rusqlite::Error> {
+        Ok(Task {
+            id: row.get(0)?,
+            orchestrator_id: row.get(1)?,
+            user_id: row.get(2)?,
+            folder_id: row.get(3)?,
+            description: row.get(4)?,
+            task_type: row.get(5)?,
+            status: row.get(6)?,
+            confidence: row.get(7)?,
+            estimated_duration: row.get(8)?,
+            assigned_agent: row.get(9)?,
+            delegation_id: row.get(10)?,
+            beads_issue_id: row.get(11)?,
+            context_injected: row.get(12)?,
+            result_json: row.get(13)?,
+            error_json: row.get(14)?,
+            created_at: row.get(15)?,
+            updated_at: row.get(16)?,
+            completed_at: row.get(17)?,
+        })
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Delegation Methods
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// List delegations for a session
+    pub fn list_delegations(
+        &self,
+        session_id: Option<&str>,
+        task_id: Option<&str>,
+        status: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<Delegation>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let mut query = String::from(
+            "SELECT id, task_id, session_id, worktree_id, agent_provider, status,
+                    context_injected, execution_logs_json, result_json, error_json,
+                    transcript_path, created_at, updated_at, completed_at
+             FROM delegations WHERE 1=1",
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+
+        if let Some(sid) = session_id {
+            query.push_str(" AND session_id = ?");
+            params.push(Box::new(sid.to_string()));
+        }
+        if let Some(tid) = task_id {
+            query.push_str(" AND task_id = ?");
+            params.push(Box::new(tid.to_string()));
+        }
+        if let Some(s) = status {
+            query.push_str(" AND status = ?");
+            params.push(Box::new(s.to_string()));
+        }
+
+        query.push_str(" ORDER BY created_at DESC");
+
+        if let Some(lim) = limit {
+            query.push_str(&format!(" LIMIT {}", lim));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&query)?;
+        let delegations = stmt
+            .query_map(params_refs.as_slice(), Self::map_delegation)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(delegations)
+    }
+
+    /// Get delegation by ID
+    pub fn get_delegation(&self, delegation_id: &str) -> Result<Option<Delegation>> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        conn.query_row(
+            "SELECT id, task_id, session_id, worktree_id, agent_provider, status,
+                    context_injected, execution_logs_json, result_json, error_json,
+                    transcript_path, created_at, updated_at, completed_at
+             FROM delegations WHERE id = ?1",
+            params![delegation_id],
+            Self::map_delegation,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Create a new delegation
+    pub fn create_delegation(&self, delegation: &NewDelegation) -> Result<String> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp_millis();
+
+        conn.execute(
+            "INSERT INTO delegations (id, task_id, session_id, worktree_id, agent_provider, status,
+                                     context_injected, execution_logs_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'spawning', ?6, '[]', ?7, ?7)",
+            params![
+                id,
+                delegation.task_id,
+                delegation.session_id,
+                delegation.worktree_id,
+                delegation.agent_provider,
+                delegation.context_injected,
+                now,
+            ],
+        )?;
+        Ok(id)
+    }
+
+    /// Update delegation status
+    pub fn update_delegation_status(&self, delegation_id: &str, status: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let completed_at = if status == "completed" || status == "failed" {
+            Some(now)
+        } else {
+            None
+        };
+
+        let rows = conn.execute(
+            "UPDATE delegations SET status = ?1, updated_at = ?2, completed_at = ?3 WHERE id = ?4",
+            params![status, now, completed_at, delegation_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Append execution log to delegation
+    pub fn append_delegation_log(&self, delegation_id: &str, log_json: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|_| Error::LockPoisoned)?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Get current logs
+        let current_logs: String = conn
+            .query_row(
+                "SELECT execution_logs_json FROM delegations WHERE id = ?1",
+                params![delegation_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| "[]".to_string());
+
+        // Parse and append
+        let mut logs: Vec<serde_json::Value> =
+            serde_json::from_str(&current_logs).unwrap_or_default();
+        if let Ok(new_log) = serde_json::from_str::<serde_json::Value>(log_json) {
+            logs.push(new_log);
+        }
+
+        let updated_logs = serde_json::to_string(&logs).unwrap_or_else(|_| "[]".to_string());
+
+        let rows = conn.execute(
+            "UPDATE delegations SET execution_logs_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![updated_logs, now, delegation_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Map a delegation row
+    fn map_delegation(row: &rusqlite::Row<'_>) -> std::result::Result<Delegation, rusqlite::Error> {
+        Ok(Delegation {
+            id: row.get(0)?,
+            task_id: row.get(1)?,
+            session_id: row.get(2)?,
+            worktree_id: row.get(3)?,
+            agent_provider: row.get(4)?,
+            status: row.get(5)?,
+            context_injected: row.get(6)?,
+            execution_logs_json: row.get(7)?,
+            result_json: row.get(8)?,
+            error_json: row.get(9)?,
+            transcript_path: row.get(10)?,
+            created_at: row.get(11)?,
+            updated_at: row.get(12)?,
+            completed_at: row.get(13)?,
+        })
+    }
 }

@@ -1492,3 +1492,176 @@ pub struct NewAgentProfileConfig {
     pub agent_type: String,
     pub config_json: String,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Task status values
+/// queued → planning → executing → monitoring → completed/failed/cancelled
+pub const TASK_STATUSES: &[&str] = &[
+    "queued",
+    "planning",
+    "executing",
+    "monitoring",
+    "completed",
+    "failed",
+    "cancelled",
+];
+
+/// Task type values - determines agent selection and context injection
+pub const TASK_TYPES: &[&str] = &[
+    "feature",
+    "bug",
+    "refactor",
+    "test",
+    "documentation",
+    "research",
+    "review",
+    "maintenance",
+];
+
+/// Task - unit of work delegated by an orchestrator to an agent session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: String,
+    pub orchestrator_id: String,
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub description: String,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    pub status: String,
+    pub confidence: f64,
+    pub estimated_duration: Option<i32>,
+    pub assigned_agent: Option<String>,
+    pub delegation_id: Option<String>,
+    pub beads_issue_id: Option<String>,
+    pub context_injected: Option<String>,
+    pub result_json: Option<String>,
+    pub error_json: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub completed_at: Option<i64>,
+}
+
+/// Input for creating a new task
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewTask {
+    pub orchestrator_id: String,
+    pub user_id: String,
+    pub folder_id: Option<String>,
+    pub description: String,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    pub confidence: Option<f64>,
+    pub estimated_duration: Option<i32>,
+    pub assigned_agent: Option<String>,
+    pub beads_issue_id: Option<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delegation Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Delegation status values
+/// spawning → injecting_context → running → monitoring → completed/failed
+pub const DELEGATION_STATUSES: &[&str] = &[
+    "spawning",
+    "injecting_context",
+    "running",
+    "monitoring",
+    "completed",
+    "failed",
+];
+
+/// Delegation - links tasks to sessions for execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct Delegation {
+    pub id: String,
+    pub task_id: String,
+    pub session_id: String,
+    pub worktree_id: Option<String>,
+    pub agent_provider: String,
+    pub status: String,
+    pub context_injected: Option<String>,
+    pub execution_logs_json: String,
+    pub result_json: Option<String>,
+    pub error_json: Option<String>,
+    pub transcript_path: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub completed_at: Option<i64>,
+}
+
+/// Input for creating a new delegation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct NewDelegation {
+    pub task_id: String,
+    pub session_id: String,
+    pub worktree_id: Option<String>,
+    pub agent_provider: String,
+    pub context_injected: Option<String>,
+}
+
+/// Execution log entry within a delegation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionLog {
+    pub timestamp: String,
+    pub level: String, // debug, info, warn, error
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Delegation result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationResult {
+    pub success: bool,
+    pub summary: Option<String>,
+    pub exit_code: Option<i32>,
+    pub files_modified: Vec<String>,
+    pub duration: Option<i32>,
+    pub token_usage: Option<TokenUsage>,
+}
+
+/// Token usage for delegation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
+}
+
+/// Delegation error
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-types", derive(TS))]
+#[cfg_attr(feature = "ts-types", ts(export, rename_all = "camelCase"))]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationError {
+    pub code: String,
+    pub message: String,
+    pub exit_code: Option<i32>,
+    pub recoverable: bool,
+}
