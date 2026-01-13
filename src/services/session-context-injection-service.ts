@@ -18,12 +18,17 @@
 import { db } from "@/db";
 import {
   sdkMemoryEntries,
+  sdkNotes,
+  sdkInsights,
   sessionFolders,
   terminalSessions,
   type MemoryTierType,
   type MemoryContentType,
+  type NoteType,
+  type InsightType,
+  type InsightApplicability,
 } from "@/db/schema";
-import { eq, and, desc, gte, or, isNull, like, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, or, isNull, like, inArray, asc } from "drizzle-orm";
 import { writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
@@ -56,6 +61,33 @@ interface MemoryForContext {
 }
 
 /**
+ * Note entry for context formatting
+ */
+interface NoteForContext {
+  id: string;
+  type: NoteType;
+  title: string | null;
+  content: string;
+  tags: string[];
+  priority: number | null;
+  pinned: boolean;
+}
+
+/**
+ * Insight entry for context formatting
+ */
+interface InsightForContext {
+  id: string;
+  type: InsightType;
+  applicability: InsightApplicability;
+  title: string;
+  description: string;
+  confidence: number;
+  applicationCount: number | null;
+  verified: boolean;
+}
+
+/**
  * Context section categories
  */
 interface ContextSections {
@@ -69,6 +101,10 @@ interface ContextSections {
   recentObservations: MemoryForContext[];
   /** Learned skills and procedures */
   skills: MemoryForContext[];
+  /** Relevant notes (pinned, high-priority, or recent) */
+  notes: NoteForContext[];
+  /** Active insights for this folder */
+  insights: InsightForContext[];
 }
 
 /**
@@ -87,6 +123,8 @@ export interface InjectionContext {
     conventions: number;
     skills: number;
     observations: number;
+    notes: number;
+    insights: number;
   };
 }
 
@@ -104,6 +142,10 @@ export interface ContextInjectionOptions {
   includeObservations?: boolean;
   /** Include skills */
   includeSkills?: boolean;
+  /** Include notes */
+  includeNotes?: boolean;
+  /** Include insights */
+  includeInsights?: boolean;
   /** Custom keywords to boost relevance */
   keywords?: string[];
 }
@@ -114,6 +156,8 @@ const DEFAULT_OPTIONS: Required<ContextInjectionOptions> = {
   minConfidence: 0.5,
   includeObservations: true,
   includeSkills: true,
+  includeNotes: true,
+  includeInsights: true,
   keywords: [],
 };
 
@@ -198,13 +242,160 @@ export async function getMemoriesForContext(
         : Promise.resolve([]),
     ]);
 
+  // Fetch notes and insights
+  const [notes, insights] = await Promise.all([
+    opts.includeNotes
+      ? getNotesForContext(userId, folderId, opts.maxPerCategory)
+      : Promise.resolve([]),
+    opts.includeInsights
+      ? getInsightsForContext(userId, folderId, opts.minConfidence, opts.maxPerCategory)
+      : Promise.resolve([]),
+  ]);
+
   return {
     patterns,
     gotchas,
     conventions,
     skills,
     recentObservations,
+    notes,
+    insights,
   };
+}
+
+/**
+ * Retrieve relevant notes for context injection
+ *
+ * Prioritizes:
+ * 1. Pinned notes
+ * 2. High-priority notes (priority >= 0.7)
+ * 3. Recent notes (last 24 hours)
+ *
+ * Excludes archived notes.
+ */
+async function getNotesForContext(
+  userId: string,
+  folderId: string | null,
+  limit: number
+): Promise<NoteForContext[]> {
+  // Build conditions - pinned or high priority or recent
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const baseConditions = [
+    eq(sdkNotes.userId, userId),
+    eq(sdkNotes.archived, false),
+  ];
+
+  // Scope to folder (notes don't have global scope like long-term memories)
+  if (folderId) {
+    baseConditions.push(eq(sdkNotes.folderId, folderId));
+  }
+
+  // Fetch pinned and high-priority notes first
+  const notes = await db
+    .select({
+      id: sdkNotes.id,
+      type: sdkNotes.type,
+      title: sdkNotes.title,
+      content: sdkNotes.content,
+      tagsJson: sdkNotes.tagsJson,
+      priority: sdkNotes.priority,
+      pinned: sdkNotes.pinned,
+      createdAt: sdkNotes.createdAt,
+    })
+    .from(sdkNotes)
+    .where(
+      and(
+        ...baseConditions,
+        or(
+          eq(sdkNotes.pinned, true),
+          gte(sdkNotes.priority, 0.7),
+          gte(sdkNotes.createdAt, oneDayAgo)
+        )
+      )
+    )
+    .orderBy(
+      desc(sdkNotes.pinned),
+      desc(sdkNotes.priority),
+      desc(sdkNotes.createdAt)
+    )
+    .limit(limit);
+
+  return notes.map((n) => ({
+    id: n.id,
+    type: n.type as NoteType,
+    title: n.title,
+    content: n.content,
+    tags: JSON.parse(n.tagsJson || "[]") as string[],
+    priority: n.priority,
+    pinned: n.pinned ?? false,
+  }));
+}
+
+/**
+ * Retrieve relevant insights for context injection
+ *
+ * Retrieves active insights that are either:
+ * 1. Global (applicable everywhere)
+ * 2. Scoped to this folder
+ *
+ * Prioritizes by confidence and application count.
+ */
+async function getInsightsForContext(
+  userId: string,
+  folderId: string | null,
+  minConfidence: number,
+  limit: number
+): Promise<InsightForContext[]> {
+  const baseConditions = [
+    eq(sdkInsights.userId, userId),
+    eq(sdkInsights.active, true),
+    gte(sdkInsights.confidence, minConfidence),
+  ];
+
+  // Include global insights and folder-scoped insights
+  if (folderId) {
+    baseConditions.push(
+      or(
+        eq(sdkInsights.applicability, "global"),
+        eq(sdkInsights.folderId, folderId)
+      )!
+    );
+  } else {
+    // Without folder scope, only include global insights
+    baseConditions.push(eq(sdkInsights.applicability, "global"));
+  }
+
+  const insights = await db
+    .select({
+      id: sdkInsights.id,
+      type: sdkInsights.type,
+      applicability: sdkInsights.applicability,
+      title: sdkInsights.title,
+      description: sdkInsights.description,
+      confidence: sdkInsights.confidence,
+      applicationCount: sdkInsights.applicationCount,
+      verified: sdkInsights.verified,
+    })
+    .from(sdkInsights)
+    .where(and(...baseConditions))
+    .orderBy(
+      desc(sdkInsights.verified),
+      desc(sdkInsights.confidence),
+      desc(sdkInsights.applicationCount)
+    )
+    .limit(limit);
+
+  return insights.map((i) => ({
+    id: i.id,
+    type: i.type as InsightType,
+    applicability: i.applicability as InsightApplicability,
+    title: i.title,
+    description: i.description,
+    confidence: i.confidence,
+    applicationCount: i.applicationCount,
+    verified: i.verified ?? false,
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -286,7 +477,51 @@ function formatContextAsMarkdown(sections: ContextSections): string {
     lines.push("");
   }
 
+  // Notes (pinned and high-priority)
+  if (sections.notes.length > 0) {
+    lines.push("## Important Notes");
+    lines.push("");
+    for (const note of sections.notes) {
+      const prefix = note.pinned ? "📌 " : "";
+      const title = note.title || note.type;
+      const tags = note.tags.length > 0 ? ` [${note.tags.join(", ")}]` : "";
+      lines.push(`- ${prefix}**${title}**${tags}: ${note.content}`);
+    }
+    lines.push("");
+  }
+
+  // Insights (verified and high-confidence)
+  if (sections.insights.length > 0) {
+    lines.push("## Learned Insights");
+    lines.push("");
+    lines.push("> These insights were learned from previous sessions.");
+    lines.push("");
+    for (const insight of sections.insights) {
+      const verified = insight.verified ? "✓ " : "";
+      const typeIcon = getInsightTypeIcon(insight.type);
+      lines.push(`- ${typeIcon} ${verified}**${insight.title}**: ${insight.description}`);
+    }
+    lines.push("");
+  }
+
   return lines.join("\n");
+}
+
+/**
+ * Get icon for insight type
+ */
+function getInsightTypeIcon(type: InsightType): string {
+  switch (type) {
+    case "convention": return "📐";
+    case "pattern": return "🔄";
+    case "anti_pattern": return "🚫";
+    case "skill": return "🛠️";
+    case "gotcha": return "⚠️";
+    case "best_practice": return "✨";
+    case "dependency": return "🔗";
+    case "performance": return "⚡";
+    default: return "💡";
+  }
 }
 
 /**
@@ -312,6 +547,20 @@ function formatContextAsJson(sections: ContextSections): string {
       content: s.content,
     })),
     observations: sections.recentObservations.map((o) => o.content),
+    notes: sections.notes.map((n) => ({
+      type: n.type,
+      title: n.title,
+      content: n.content,
+      tags: n.tags,
+      pinned: n.pinned,
+    })),
+    insights: sections.insights.map((i) => ({
+      type: i.type,
+      title: i.title,
+      description: i.description,
+      confidence: i.confidence,
+      verified: i.verified,
+    })),
   };
 
   return JSON.stringify(payload);
@@ -330,12 +579,16 @@ export function buildInjectionContext(sections: ContextSections): InjectionConte
         sections.gotchas.length +
         sections.conventions.length +
         sections.skills.length +
-        sections.recentObservations.length,
+        sections.recentObservations.length +
+        sections.notes.length +
+        sections.insights.length,
       patterns: sections.patterns.length,
       gotchas: sections.gotchas.length,
       conventions: sections.conventions.length,
       skills: sections.skills.length,
       observations: sections.recentObservations.length,
+      notes: sections.notes.length,
+      insights: sections.insights.length,
     },
   };
 }
@@ -413,8 +666,9 @@ export async function prepareSessionContext(
   const context = buildInjectionContext(sections);
 
   console.log(
-    `[ContextInjection] Prepared context: ${context.stats.totalMemories} memories ` +
-      `(${context.stats.patterns}P/${context.stats.gotchas}G/${context.stats.conventions}C/${context.stats.skills}S)`
+    `[ContextInjection] Prepared context: ${context.stats.totalMemories} items ` +
+      `(${context.stats.patterns}P/${context.stats.gotchas}G/${context.stats.conventions}C/${context.stats.skills}S/` +
+      `${context.stats.notes}N/${context.stats.insights}I)`
   );
 
   return context;
