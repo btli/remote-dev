@@ -27,7 +27,8 @@ pub fn execute(cmd: MemoryCommand, config: &Config) -> Result<()> {
             content_type,
             name,
             description,
-        } => remember(&content, tier.as_deref(), ttl, tags, &content_type, name, description, config),
+            folder,
+        } => remember(&content, tier.as_deref(), ttl, tags, &content_type, name, description, folder.as_deref(), config),
 
         MemoryAction::Recall {
             tier,
@@ -35,7 +36,8 @@ pub fn execute(cmd: MemoryCommand, config: &Config) -> Result<()> {
             min_relevance,
             limit,
             query,
-        } => recall(tier.as_deref(), content_type.as_deref(), min_relevance, limit, query.as_deref(), config),
+            json,
+        } => recall(tier.as_deref(), content_type.as_deref(), min_relevance, limit, query.as_deref(), json, config),
 
         MemoryAction::Forget { id, all, tier, expired } => {
             forget(id.as_deref(), all, tier.as_deref(), expired, config)
@@ -64,6 +66,57 @@ fn parse_tier(tier: Option<&str>) -> Result<String> {
     }
 }
 
+/// Resolve folder to folder_id by name, path, or direct ID.
+fn resolve_folder_id(db: &rdv_core::db::Database, user_id: &str, folder: &str) -> Result<Option<String>> {
+    // First, check if it's a UUID (direct folder ID)
+    if folder.len() == 36 && folder.chars().filter(|c| *c == '-').count() == 4 {
+        // Verify it exists
+        if let Ok(Some(_)) = db.get_folder(folder) {
+            return Ok(Some(folder.to_string()));
+        }
+    }
+
+    // Try to find by name
+    if let Ok(Some(f)) = db.get_folder_by_name(user_id, folder) {
+        return Ok(Some(f.id));
+    }
+
+    // Try to resolve path - canonicalize and match against folder paths
+    let path = if folder == "." {
+        std::env::current_dir()
+            .context("Failed to get current directory")?
+            .to_string_lossy()
+            .to_string()
+    } else {
+        std::path::Path::new(folder)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(folder))
+            .to_string_lossy()
+            .to_string()
+    };
+
+    // List folders and find by path
+    if let Ok(folders) = db.list_folders(user_id) {
+        for f in folders {
+            if let Some(ref fp) = f.path {
+                if fp == &path || fp.ends_with(&format!("/{}", folder)) {
+                    return Ok(Some(f.id));
+                }
+            }
+            // Also check if folder name matches the last component of the path
+            let folder_basename = std::path::Path::new(&path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if f.name == folder_basename {
+                return Ok(Some(f.id));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 /// Store something in memory.
 fn remember(
     content: &str,
@@ -73,11 +126,39 @@ fn remember(
     content_type: &str,
     name: Option<String>,
     description: Option<String>,
+    folder: Option<&str>,
     _config: &Config,
 ) -> Result<()> {
     let db = get_database()?;
     let tier = parse_tier(tier)?;
     let user_id = get_user_id();
+
+    // Resolve folder to folder_id if provided
+    let folder_id = if let Some(f) = folder {
+        match resolve_folder_id(db, &user_id, f)? {
+            Some(id) => Some(id),
+            None => {
+                eprintln!("{} Warning: folder '{}' not found, memory will not be associated with a folder", "⚠".yellow(), f);
+                None
+            }
+        }
+    } else {
+        // Try to auto-detect folder from current directory
+        let cwd = std::env::current_dir()
+            .ok()
+            .map(|p| p.to_string_lossy().to_string());
+        if let Some(ref path) = cwd {
+            if let Ok(folders) = db.list_folders(&user_id) {
+                folders.iter()
+                    .find(|f| f.path.as_ref().map(|p| path.starts_with(p)).unwrap_or(false))
+                    .map(|f| f.id.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
 
     // Build metadata JSON if tags provided
     let metadata_json = if tags.is_empty() {
@@ -89,7 +170,7 @@ fn remember(
     let entry = NewMemoryEntry {
         user_id,
         session_id: None,
-        folder_id: None,
+        folder_id: folder_id.clone(),
         tier: tier.clone(),
         content_type: content_type.to_string(),
         name,
@@ -109,6 +190,9 @@ fn remember(
 
     println!("{} Stored in {} memory", "✓".green(), tier_display(&tier).cyan());
     println!("  ID: {}", id);
+    if let Some(ref fid) = folder_id {
+        println!("  Folder: {}", fid);
+    }
     if let Some(ttl) = ttl {
         println!("  TTL: {} seconds", ttl);
     }
@@ -126,6 +210,7 @@ fn recall(
     min_relevance: Option<f64>,
     limit: usize,
     query: Option<&str>,
+    json: bool,
     _config: &Config,
 ) -> Result<()> {
     let db = get_database()?;
@@ -158,6 +243,16 @@ fn recall(
         entries
     };
 
+    // JSON output mode
+    if json {
+        let json_output: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|e| memory_entry_to_json(e))
+            .collect();
+        println!("{}", serde_json::to_string(&json_output).unwrap_or_else(|_| "[]".to_string()));
+        return Ok(());
+    }
+
     if entries.is_empty() {
         println!("{} No memories found matching criteria", "⚠".yellow());
         return Ok(());
@@ -171,6 +266,41 @@ fn recall(
     }
 
     Ok(())
+}
+
+/// Convert a memory entry to JSON value.
+fn memory_entry_to_json(entry: &MemoryEntry) -> serde_json::Value {
+    let mut obj = serde_json::json!({
+        "id": entry.id,
+        "tier": entry.tier,
+        "content_type": entry.content_type,
+        "content": entry.content,
+        "created_at": entry.created_at,
+        "access_count": entry.access_count,
+    });
+
+    if let Some(ref name) = entry.name {
+        obj["name"] = serde_json::json!(name);
+    }
+    if let Some(ref desc) = entry.description {
+        obj["description"] = serde_json::json!(desc);
+    }
+    if let Some(rel) = entry.relevance {
+        obj["relevance"] = serde_json::json!(rel);
+    }
+    if let Some(conf) = entry.confidence {
+        obj["confidence"] = serde_json::json!(conf);
+    }
+    if let Some(ref folder_id) = entry.folder_id {
+        obj["folder_id"] = serde_json::json!(folder_id);
+    }
+    if let Some(ref metadata) = entry.metadata_json {
+        if let Ok(meta) = serde_json::from_str::<serde_json::Value>(metadata) {
+            obj["metadata"] = meta;
+        }
+    }
+
+    obj
 }
 
 /// Forget memories.

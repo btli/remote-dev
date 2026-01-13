@@ -28,7 +28,8 @@ pub fn execute(cmd: KnowledgeCommand, config: &Config) -> Result<()> {
             r#type,
             folder,
             limit,
-        } => list(r#type, folder, limit, config),
+            json,
+        } => list(r#type, folder, limit, json, config),
 
         KnowledgeAction::Show { id } => show(&id, config),
 
@@ -131,6 +132,7 @@ fn list(
     r#type: Option<KnowledgeType>,
     folder: Option<String>,
     limit: usize,
+    json: bool,
     _config: &Config,
 ) -> Result<()> {
     let db = get_database()?;
@@ -182,6 +184,16 @@ fn list(
     // Limit total results
     all_entries.truncate(limit);
 
+    // JSON output mode
+    if json {
+        let json_output: Vec<serde_json::Value> = all_entries
+            .iter()
+            .map(|e| knowledge_entry_to_json(e))
+            .collect();
+        println!("{}", serde_json::to_string(&json_output).unwrap_or_else(|_| "[]".to_string()));
+        return Ok(());
+    }
+
     if all_entries.is_empty() {
         let type_str = r#type.map(|t| t.as_str()).unwrap_or("any type");
         println!("{} No {} knowledge found", "⚠".yellow(), type_str);
@@ -196,6 +208,35 @@ fn list(
     }
 
     Ok(())
+}
+
+/// Convert a knowledge entry to JSON value.
+fn knowledge_entry_to_json(entry: &MemoryEntry) -> serde_json::Value {
+    let created_at = chrono::DateTime::from_timestamp_millis(entry.created_at)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| entry.created_at.to_string());
+
+    let mut obj = serde_json::json!({
+        "id": entry.id,
+        "type": entry.content_type,
+        "name": entry.name,
+        "description": entry.description,
+        "content": entry.content,
+        "confidence": entry.confidence,
+        "created_at": created_at,
+        "access_count": entry.access_count,
+    });
+
+    if let Some(ref folder_id) = entry.folder_id {
+        obj["folder_id"] = serde_json::json!(folder_id);
+    }
+    if let Some(ref metadata) = entry.metadata_json {
+        if let Ok(meta) = serde_json::from_str::<serde_json::Value>(metadata) {
+            obj["metadata"] = meta;
+        }
+    }
+
+    obj
 }
 
 /// Show details of a knowledge entry.

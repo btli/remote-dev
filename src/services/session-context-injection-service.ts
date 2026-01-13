@@ -32,6 +32,7 @@ import { eq, and, desc, gte, or, isNull, like, inArray, asc } from "drizzle-orm"
 import { writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
+import { callRdvServer, isRdvServerAvailable } from "@/lib/rdv-proxy";
 
 /**
  * Error class for context injection operations
@@ -148,6 +149,10 @@ export interface ContextInjectionOptions {
   includeInsights?: boolean;
   /** Custom keywords to boost relevance */
   keywords?: string[];
+  /** Use semantic search (default: true if rdv-server available) */
+  useSemanticSearch?: boolean;
+  /** Context query for semantic search (auto-generated if not provided) */
+  contextQuery?: string;
 }
 
 const DEFAULT_OPTIONS: Required<ContextInjectionOptions> = {
@@ -159,14 +164,134 @@ const DEFAULT_OPTIONS: Required<ContextInjectionOptions> = {
   includeNotes: true,
   includeInsights: true,
   keywords: [],
+  useSemanticSearch: true,
+  contextQuery: "",
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Semantic Search Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Response from rdv-server semantic search */
+interface SemanticSearchResult {
+  memory: {
+    id: string;
+    tier: string;
+    contentType: string;
+    content: string;
+    name: string | null;
+    relevance: number | null;
+    confidence: number | null;
+    folderId: string | null;
+  };
+  score: number;
+  semanticScore: number;
+  tierWeight: number;
+  typeWeight: number;
+}
+
+interface SemanticSearchResponse {
+  results: SemanticSearchResult[];
+  query: string;
+  total: number;
+  semantic: boolean;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Memory Retrieval
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Perform semantic search via rdv-server
+ *
+ * Falls back to null if rdv-server is unavailable or search fails.
+ */
+async function performSemanticSearch(
+  userId: string,
+  folderId: string | null,
+  query: string,
+  contentTypes: MemoryContentType[],
+  tiers: string[],
+  minSimilarity: number,
+  limit: number
+): Promise<MemoryForContext[] | null> {
+  try {
+    const result = await callRdvServer<SemanticSearchResponse>(
+      "POST",
+      "/memory/semantic-search",
+      userId,
+      {
+        query,
+        folderId,
+        tiers,
+        contentTypes,
+        minSimilarity,
+        limit,
+      }
+    );
+
+    if ("error" in result) {
+      console.warn(`[ContextInjection] Semantic search failed: ${result.error}`);
+      return null;
+    }
+
+    // Convert response to MemoryForContext format
+    return result.data.results.map((r) => ({
+      id: r.memory.id,
+      tier: r.memory.tier as MemoryTierType,
+      contentType: r.memory.contentType as MemoryContentType,
+      content: r.memory.content,
+      name: r.memory.name,
+      relevance: r.score, // Use combined score as relevance
+      confidence: r.memory.confidence,
+    }));
+  } catch (error) {
+    console.warn("[ContextInjection] Semantic search error:", error);
+    return null;
+  }
+}
+
+/**
+ * Build context query for semantic search
+ *
+ * Generates a query string based on folder info and keywords.
+ */
+async function buildContextQuery(
+  folderId: string | null,
+  keywords: string[]
+): Promise<string> {
+  const parts: string[] = [];
+
+  // Get folder info if available
+  if (folderId) {
+    const folder = await db.query.sessionFolders.findFirst({
+      where: eq(sessionFolders.id, folderId),
+    });
+    if (folder) {
+      parts.push(`Project: ${folder.name}`);
+      if (folder.path) {
+        parts.push(`Path: ${folder.path}`);
+      }
+    }
+  }
+
+  // Add keywords
+  if (keywords.length > 0) {
+    parts.push(`Keywords: ${keywords.join(", ")}`);
+  }
+
+  // Default query if nothing else
+  if (parts.length === 0) {
+    parts.push("development context patterns conventions gotchas");
+  }
+
+  return parts.join(". ");
+}
+
+/**
  * Retrieve relevant memories for context injection
+ *
+ * Uses semantic search when available, falls back to SQL queries.
  */
 export async function getMemoriesForContext(
   userId: string,
@@ -175,6 +300,88 @@ export async function getMemoriesForContext(
 ): Promise<ContextSections> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
+  // Check if we should use semantic search
+  const useSemanticSearch = opts.useSemanticSearch && await isRdvServerAvailable();
+
+  // Try semantic search first if enabled
+  if (useSemanticSearch) {
+    const contextQuery = opts.contextQuery || await buildContextQuery(folderId, opts.keywords);
+
+    console.log(`[ContextInjection] Using semantic search with query: "${contextQuery.substring(0, 50)}..."`);
+
+    // Fetch all categories via semantic search in parallel
+    const [patterns, gotchas, conventions, skills, recentObservations] =
+      await Promise.all([
+        performSemanticSearch(
+          userId, folderId, `${contextQuery} patterns best practices`,
+          ["pattern"], ["working", "long_term"], opts.minRelevance, opts.maxPerCategory
+        ),
+        performSemanticSearch(
+          userId, folderId, `${contextQuery} gotchas pitfalls issues warnings`,
+          ["gotcha"], ["working", "long_term"], opts.minRelevance, opts.maxPerCategory
+        ),
+        performSemanticSearch(
+          userId, folderId, `${contextQuery} conventions style preferences`,
+          ["convention"], ["working", "long_term"], opts.minRelevance, opts.maxPerCategory
+        ),
+        opts.includeSkills
+          ? performSemanticSearch(
+              userId, folderId, `${contextQuery} skills procedures commands`,
+              ["skill"], ["working", "long_term"], opts.minRelevance, opts.maxPerCategory
+            )
+          : Promise.resolve([]),
+        opts.includeObservations
+          ? performSemanticSearch(
+              userId, folderId, contextQuery,
+              ["observation"], ["short_term", "working"], opts.minRelevance, Math.ceil(opts.maxPerCategory / 2)
+            )
+          : Promise.resolve([]),
+      ]);
+
+    // Check if semantic search succeeded for all categories
+    const allSucceeded = patterns !== null && gotchas !== null && conventions !== null &&
+                          (skills !== null || !opts.includeSkills) &&
+                          (recentObservations !== null || !opts.includeObservations);
+
+    if (allSucceeded) {
+      // Fetch notes and insights (these don't use semantic search yet)
+      const [notes, insights] = await Promise.all([
+        opts.includeNotes
+          ? getNotesForContext(userId, folderId, opts.maxPerCategory)
+          : Promise.resolve([]),
+        opts.includeInsights
+          ? getInsightsForContext(userId, folderId, opts.minConfidence, opts.maxPerCategory)
+          : Promise.resolve([]),
+      ]);
+
+      console.log(`[ContextInjection] Semantic search returned: ${patterns!.length}P/${gotchas!.length}G/${conventions!.length}C`);
+
+      return {
+        patterns: patterns ?? [],
+        gotchas: gotchas ?? [],
+        conventions: conventions ?? [],
+        skills: skills ?? [],
+        recentObservations: recentObservations ?? [],
+        notes,
+        insights,
+      };
+    }
+
+    console.log("[ContextInjection] Semantic search partial failure, falling back to SQL");
+  }
+
+  // Fallback to SQL queries
+  return getMemoriesForContextSql(userId, folderId, opts);
+}
+
+/**
+ * SQL-based memory retrieval (fallback when semantic search unavailable)
+ */
+async function getMemoriesForContextSql(
+  userId: string,
+  folderId: string | null,
+  opts: Required<ContextInjectionOptions>
+): Promise<ContextSections> {
   // Build base conditions
   const baseConditions = [
     eq(sdkMemoryEntries.userId, userId),

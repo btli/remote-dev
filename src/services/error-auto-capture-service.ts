@@ -4,6 +4,12 @@
  * Automatically detects compilation and runtime errors from terminal scrollback
  * and creates gotcha notes for learning and future reference.
  *
+ * Features:
+ * - Multi-language error detection (TypeScript, Rust, Python, Go, shell)
+ * - Automatic gotcha note creation for new errors
+ * - Similar error retrieval via semantic search
+ * - Context injection with known resolutions
+ *
  * Supports:
  * - TypeScript/JavaScript errors (tsc, bun, node)
  * - Rust errors (rustc, cargo)
@@ -14,6 +20,7 @@
 
 import { db } from "@/db";
 import { sdkNotes, type NoteType } from "@/db/schema";
+import { callRdvServer, isRdvServerAvailable } from "@/lib/rdv-proxy";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -49,6 +56,59 @@ export interface AutoCaptureResult {
   noteIds: string[];
   /** Number of errors deduplicated (already existed) */
   duplicatesSkipped: number;
+  /** Similar gotchas found for retrieval (when using findSimilarGotchas) */
+  similarGotchas?: SimilarGotcha[];
+}
+
+/** A similar gotcha found via semantic search */
+export interface SimilarGotcha {
+  /** Gotcha note ID */
+  id: string;
+  /** Title of the gotcha */
+  title: string;
+  /** Content with resolution */
+  content: string;
+  /** Semantic similarity score (0-1) */
+  score: number;
+  /** Source session ID if available */
+  sessionId?: string;
+  /** When the gotcha was created */
+  createdAt: string;
+  /** Confidence in the match */
+  confidence: number;
+}
+
+/** Context for injection into a session */
+export interface GotchaContext {
+  /** Formatted system reminder for injection */
+  systemReminder: string;
+  /** Number of similar gotchas found */
+  matchCount: number;
+  /** The similar gotchas */
+  gotchas: SimilarGotcha[];
+}
+
+/** Semantic search response from rdv-server */
+interface SemanticSearchResponse {
+  results: Array<{
+    memory: {
+      id: string;
+      tier: string;
+      contentType: string;
+      content: string;
+      name: string | null;
+      relevance: number | null;
+      confidence: number | null;
+      folderId: string | null;
+    };
+    score: number;
+    semanticScore: number;
+    tierWeight: number;
+    typeWeight: number;
+  }>;
+  query: string;
+  total: number;
+  semantic: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -325,6 +385,205 @@ export function detectErrors(scrollback: string): DetectedError[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Similar Gotcha Retrieval (Semantic Search)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build a semantic search query from a detected error.
+ *
+ * The query combines language, category, and error message to find
+ * similar gotchas from past sessions.
+ */
+function buildErrorQuery(error: DetectedError): string {
+  const parts: string[] = [];
+
+  // Add language context
+  if (error.language !== "unknown") {
+    parts.push(error.language);
+  }
+
+  // Add error category
+  parts.push(error.category);
+
+  // Add error message (truncated for embedding efficiency)
+  const message = error.message.slice(0, 200);
+  parts.push(message);
+
+  // Add file context if available (just the extension)
+  if (error.filePath) {
+    const ext = error.filePath.split(".").pop();
+    if (ext) {
+      parts.push(ext);
+    }
+  }
+
+  return parts.join(" ");
+}
+
+/**
+ * Search for similar gotchas using semantic search.
+ *
+ * @param userId - User ID for scoping the search
+ * @param error - The detected error to find similar gotchas for
+ * @param folderId - Optional folder ID to scope the search
+ * @param minSimilarity - Minimum similarity threshold (default: 0.75)
+ * @param limit - Maximum results to return (default: 3)
+ * @returns Array of similar gotchas or empty array if unavailable
+ */
+export async function findSimilarGotchas(
+  userId: string,
+  error: DetectedError,
+  folderId?: string,
+  minSimilarity: number = 0.75,
+  limit: number = 3
+): Promise<SimilarGotcha[]> {
+  // Check if rdv-server is available
+  const available = await isRdvServerAvailable();
+  if (!available) {
+    return [];
+  }
+
+  // Build semantic search query
+  const query = buildErrorQuery(error);
+
+  try {
+    const result = await callRdvServer<SemanticSearchResponse>(
+      "POST",
+      "/memory/semantic-search",
+      userId,
+      {
+        query,
+        folderId: folderId || null,
+        tiers: ["long_term", "working"],
+        contentTypes: ["gotcha"],
+        minSimilarity,
+        limit,
+      }
+    );
+
+    if ("error" in result) {
+      console.error("[error-auto-capture] Semantic search failed:", result.error);
+      return [];
+    }
+
+    // Map results to SimilarGotcha format
+    return result.data.results.map((r) => ({
+      id: r.memory.id,
+      title: r.memory.name || "Untitled gotcha",
+      content: r.memory.content,
+      score: r.score,
+      confidence: r.memory.confidence || 0.8,
+      createdAt: new Date().toISOString(), // Note: rdv-server should return this
+    }));
+  } catch (error) {
+    console.error("[error-auto-capture] Error searching for similar gotchas:", error);
+    return [];
+  }
+}
+
+/**
+ * Search for similar gotchas for multiple errors in parallel.
+ *
+ * @param userId - User ID for scoping the search
+ * @param errors - Array of detected errors
+ * @param folderId - Optional folder ID to scope the search
+ * @returns Map of error index to similar gotchas
+ */
+export async function findSimilarGotchasForErrors(
+  userId: string,
+  errors: DetectedError[],
+  folderId?: string
+): Promise<Map<number, SimilarGotcha[]>> {
+  const results = new Map<number, SimilarGotcha[]>();
+
+  // Search in parallel for all errors
+  const searches = errors.map((error, index) =>
+    findSimilarGotchas(userId, error, folderId).then((gotchas) => ({
+      index,
+      gotchas,
+    }))
+  );
+
+  const searchResults = await Promise.all(searches);
+
+  for (const { index, gotchas } of searchResults) {
+    if (gotchas.length > 0) {
+      results.set(index, gotchas);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Format similar gotchas as a system reminder for injection.
+ *
+ * @param error - The detected error
+ * @param gotchas - Similar gotchas found
+ * @returns Formatted context for injection
+ */
+export function formatGotchaContext(
+  error: DetectedError,
+  gotchas: SimilarGotcha[]
+): GotchaContext {
+  if (gotchas.length === 0) {
+    return {
+      systemReminder: "",
+      matchCount: 0,
+      gotchas: [],
+    };
+  }
+
+  const parts: string[] = [];
+  parts.push("<system-reminder>");
+  parts.push("Similar error found in past sessions:\n");
+
+  for (const gotcha of gotchas) {
+    parts.push(`## Known Issue: ${gotcha.title}`);
+    parts.push(`**Resolution:**`);
+    parts.push(gotcha.content);
+    parts.push("");
+    parts.push(`**Confidence:** ${Math.round(gotcha.confidence * 100)}%`);
+    parts.push(`**Similarity:** ${Math.round(gotcha.score * 100)}%`);
+    parts.push("");
+  }
+
+  parts.push("</system-reminder>");
+
+  return {
+    systemReminder: parts.join("\n"),
+    matchCount: gotchas.length,
+    gotchas,
+  };
+}
+
+/**
+ * Process an error and retrieve similar gotchas for context injection.
+ *
+ * This is the main entry point for error-to-gotcha retrieval.
+ * It detects errors, searches for similar gotchas, and formats
+ * the context for injection into the session.
+ *
+ * @param userId - User ID for scoping
+ * @param error - The detected error
+ * @param folderId - Optional folder ID
+ * @returns Context for injection, or null if no similar gotchas found
+ */
+export async function getGotchaContextForError(
+  userId: string,
+  error: DetectedError,
+  folderId?: string
+): Promise<GotchaContext | null> {
+  const gotchas = await findSimilarGotchas(userId, error, folderId);
+
+  if (gotchas.length === 0) {
+    return null;
+  }
+
+  return formatGotchaContext(error, gotchas);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Gotcha Note Creation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -475,6 +734,155 @@ export async function autoCapturErrors(
     errors,
     noteIds,
     duplicatesSkipped,
+  };
+}
+
+/**
+ * Extended auto-capture with similar gotcha retrieval.
+ *
+ * This function:
+ * 1. Detects errors in scrollback
+ * 2. Searches for similar gotchas for each error
+ * 3. Creates new gotcha notes for errors without matches
+ * 4. Returns both the created notes and found similar gotchas
+ *
+ * Use this when you want to both capture new errors AND retrieve
+ * known resolutions from past sessions.
+ *
+ * @param userId - User ID for note ownership and search scoping
+ * @param scrollback - Terminal scrollback content
+ * @param sessionId - Optional session ID to link note
+ * @param folderId - Optional folder ID to link note
+ * @returns Result with created notes, statistics, and similar gotchas
+ */
+export async function autoCaptureErrorsWithRetrieval(
+  userId: string,
+  scrollback: string,
+  sessionId?: string,
+  folderId?: string
+): Promise<AutoCaptureResult & { gotchaContexts: GotchaContext[] }> {
+  const errors = detectErrors(scrollback);
+  const noteIds: string[] = [];
+  let duplicatesSkipped = 0;
+  const gotchaContexts: GotchaContext[] = [];
+  const allSimilarGotchas: SimilarGotcha[] = [];
+
+  // Search for similar gotchas in parallel while processing errors
+  const similarGotchasMap = await findSimilarGotchasForErrors(userId, errors, folderId);
+
+  for (let i = 0; i < errors.length; i++) {
+    const error = errors[i];
+
+    // Check for similar gotchas from semantic search
+    const similarGotchas = similarGotchasMap.get(i);
+    if (similarGotchas && similarGotchas.length > 0) {
+      // Found similar gotchas - format for injection
+      const context = formatGotchaContext(error, similarGotchas);
+      gotchaContexts.push(context);
+      allSimilarGotchas.push(...similarGotchas);
+      // Skip creating a new note since similar exists
+      duplicatesSkipped++;
+      continue;
+    }
+
+    // Check for duplicates in local notes
+    const exists = await findExistingNote(userId, error.message, folderId);
+    if (exists) {
+      duplicatesSkipped++;
+      continue;
+    }
+
+    // Create gotcha note for new errors
+    const content = generateGotchaNoteContent(error);
+    const title = generateGotchaNoteTitle(error);
+
+    const [note] = await db
+      .insert(sdkNotes)
+      .values({
+        userId,
+        sessionId: sessionId || null,
+        folderId: folderId || null,
+        type: "gotcha" as NoteType,
+        title,
+        content,
+        tagsJson: JSON.stringify([
+          error.language,
+          error.category,
+          "auto-captured",
+        ]),
+        contextJson: JSON.stringify({
+          source: "error-auto-capture",
+          error: {
+            category: error.category,
+            language: error.language,
+            filePath: error.filePath,
+            lineNumber: error.lineNumber,
+            confidence: error.confidence,
+          },
+        }),
+        priority: error.category === "compilation" ? 0.8 : 0.6,
+        pinned: false,
+        archived: false,
+      })
+      .returning();
+
+    noteIds.push(note.id);
+  }
+
+  return {
+    errors,
+    noteIds,
+    duplicatesSkipped,
+    similarGotchas: allSimilarGotchas,
+    gotchaContexts,
+  };
+}
+
+/**
+ * Process scrollback for errors and return injection context.
+ *
+ * This is a convenience function that combines error detection
+ * with gotcha retrieval, returning formatted context ready
+ * for injection into the session.
+ *
+ * @param userId - User ID for scoping
+ * @param scrollback - Terminal scrollback content
+ * @param folderId - Optional folder ID
+ * @returns Combined context for all errors with similar gotchas
+ */
+export async function getContextForScrollbackErrors(
+  userId: string,
+  scrollback: string,
+  folderId?: string
+): Promise<{
+  errors: DetectedError[];
+  context: string;
+  matchCount: number;
+}> {
+  const errors = detectErrors(scrollback);
+
+  if (errors.length === 0) {
+    return { errors: [], context: "", matchCount: 0 };
+  }
+
+  const similarGotchasMap = await findSimilarGotchasForErrors(userId, errors, folderId);
+
+  const parts: string[] = [];
+  let totalMatches = 0;
+
+  for (let i = 0; i < errors.length; i++) {
+    const gotchas = similarGotchasMap.get(i);
+    if (gotchas && gotchas.length > 0) {
+      const context = formatGotchaContext(errors[i], gotchas);
+      parts.push(context.systemReminder);
+      totalMatches += gotchas.length;
+    }
+  }
+
+  return {
+    errors,
+    context: parts.join("\n\n"),
+    matchCount: totalMatches,
   };
 }
 

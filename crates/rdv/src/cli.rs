@@ -558,6 +558,10 @@ pub enum MemoryAction {
         /// Description for the memory (working/long-term)
         #[arg(short, long)]
         description: Option<String>,
+
+        /// Folder ID or path to associate memory with
+        #[arg(short = 'f', long)]
+        folder: Option<String>,
     },
 
     /// Recall memories matching criteria
@@ -581,6 +585,10 @@ pub enum MemoryAction {
         /// Include text search query
         #[arg(short, long)]
         query: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Forget (delete) memories
@@ -997,6 +1005,10 @@ pub enum KnowledgeAction {
         /// Maximum results
         #[arg(short, long, default_value = "20")]
         limit: usize,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show details of a knowledge entry
