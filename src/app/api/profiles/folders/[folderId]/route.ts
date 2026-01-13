@@ -1,68 +1,39 @@
-import { NextResponse } from "next/server";
-import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
-import { db } from "@/db";
-import { sessionFolders } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import * as AgentProfileService from "@/services/agent-profile-service";
-
 /**
- * Helper to verify folder ownership
+ * Profile Folder Linking API
+ *
+ * PUT /api/profiles/folders/:folderId - Link folder to a profile
+ * DELETE /api/profiles/folders/:folderId - Unlink folder from profile
+ *
+ * Proxies to rdv-server at /profiles/folders/:folderId.
  */
-async function verifyFolderOwnership(
-  folderId: string,
-  userId: string
-): Promise<boolean> {
-  const folder = await db.query.sessionFolders.findFirst({
-    where: and(eq(sessionFolders.id, folderId), eq(sessionFolders.userId, userId)),
-  });
-  return !!folder;
-}
+
+import { withAuth } from "@/lib/api";
+import { proxyToRdvServer } from "@/lib/rdv-proxy";
+import { NextResponse } from "next/server";
 
 /**
  * PUT /api/profiles/folders/:folderId - Link folder to a profile
+ * Body: { profileId: string }
  */
 export const PUT = withAuth(async (request, { userId, params }) => {
-  const folderId = params!.folderId;
-
-  // Verify folder ownership
-  if (!(await verifyFolderOwnership(folderId, userId))) {
-    return errorResponse("Folder not found", 404);
+  const folderId = params?.folderId;
+  if (!folderId) {
+    return NextResponse.json({ error: "Folder ID required" }, { status: 400 });
   }
-
-  const result = await parseJsonBody<{ profileId: string }>(request);
-  if ("error" in result) {
-    return result.error;
-  }
-
-  const { profileId } = result.data;
-
-  if (!profileId || typeof profileId !== "string") {
-    return errorResponse("profileId is required", 400);
-  }
-
-  // Verify profile ownership
-  const profile = await AgentProfileService.getProfile(profileId, userId);
-  if (!profile) {
-    return errorResponse("Profile not found", 404);
-  }
-
-  await AgentProfileService.linkFolderToProfile(folderId, profileId);
-
-  return NextResponse.json({ success: true, folderId, profileId });
+  return proxyToRdvServer(request, userId, {
+    path: `/profiles/folders/${folderId}`,
+  });
 });
 
 /**
  * DELETE /api/profiles/folders/:folderId - Unlink folder from profile
  */
-export const DELETE = withAuth(async (_request, { userId, params }) => {
-  const folderId = params!.folderId;
-
-  // Verify folder ownership
-  if (!(await verifyFolderOwnership(folderId, userId))) {
-    return errorResponse("Folder not found", 404);
+export const DELETE = withAuth(async (request, { userId, params }) => {
+  const folderId = params?.folderId;
+  if (!folderId) {
+    return NextResponse.json({ error: "Folder ID required" }, { status: 400 });
   }
-
-  await AgentProfileService.unlinkFolderFromProfile(folderId);
-
-  return NextResponse.json({ success: true, folderId });
+  return proxyToRdvServer(request, userId, {
+    path: `/profiles/folders/${folderId}`,
+  });
 });

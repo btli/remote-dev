@@ -1,118 +1,103 @@
-import { NextResponse } from "next/server";
-import { getAuthSession } from "@/lib/auth-utils";
-import { agentProfileConfigService } from "@/services/agent-profile-config-service";
-import { db } from "@/db";
-import { agentProfiles } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
-import type { AgentJsonConfig } from "@/types/agent-config";
-import type { AgentConfigType } from "@/services/agent-profile-config-service";
+/**
+ * Agent Profile Configs API - List all configs for a profile
+ *
+ * GET /api/agent-profiles/:id/configs - List all agent configurations
+ * POST /api/agent-profiles/:id/configs - Create a new agent configuration
+ *
+ * Proxies to rdv-server at /profiles/:id/configs.
+ */
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
+import { withAuth } from "@/lib/api";
+import { proxyToRdvServer } from "@/lib/rdv-proxy";
 
 /**
  * GET /api/agent-profiles/:id/configs
- * Get all JSON configurations for a profile
+ * List all JSON configurations for a profile
  */
-export async function GET(_request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const GET = withAuth(async (request, { userId, params }) => {
+  const profileId = params?.id;
+  if (!profileId) {
+    const { NextResponse } = await import("next/server");
+    return NextResponse.json({ error: "Profile ID required" }, { status: 400 });
   }
-
-  const { id: profileId } = await params;
-
-  // Verify profile belongs to user
-  const [profile] = await db
-    .select()
-    .from(agentProfiles)
-    .where(and(eq(agentProfiles.id, profileId), eq(agentProfiles.userId, session.user.id)));
-
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-  }
-
-  const configs = await agentProfileConfigService.getProfileConfigs(profileId);
-
-  return NextResponse.json({ configs });
-}
+  return proxyToRdvServer(request, userId, {
+    path: `/profiles/${profileId}/configs`,
+  });
+});
 
 /**
  * POST /api/agent-profiles/:id/configs
  * Create or update a configuration for a specific agent type
+ * Body: { agentType: string, configJson: object }
  */
-export async function POST(request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const POST = withAuth(async (request, { userId, params }) => {
+  const profileId = params?.id;
+  if (!profileId) {
+    const { NextResponse } = await import("next/server");
+    return NextResponse.json({ error: "Profile ID required" }, { status: 400 });
   }
 
-  const { id: profileId } = await params;
-
-  // Verify profile belongs to user
-  const [profile] = await db
-    .select()
-    .from(agentProfiles)
-    .where(and(eq(agentProfiles.id, profileId), eq(agentProfiles.userId, session.user.id)));
-
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-  }
-
-  const body = await request.json() as {
-    agentType: AgentConfigType;
-    configJson: AgentJsonConfig;
+  // rdv-server expects PUT to /profiles/{id}/configs/{agent_type}
+  // but TypeScript API has POST to /configs with agentType in body
+  // So we need to extract agentType and remap
+  const body = (await request.clone().json()) as {
+    agentType?: string;
+    configJson?: unknown;
   };
 
-  if (!body.agentType || !body.configJson) {
+  if (!body.agentType) {
+    const { NextResponse } = await import("next/server");
     return NextResponse.json(
-      { error: "agentType and configJson are required" },
+      { error: "agentType is required in body" },
       { status: 400 }
     );
   }
 
-  const validTypes: AgentConfigType[] = ["claude", "gemini", "opencode", "codex"];
-  if (!validTypes.includes(body.agentType)) {
-    return NextResponse.json(
-      { error: `Invalid agentType. Must be one of: ${validTypes.join(", ")}` },
-      { status: 400 }
-    );
-  }
+  // Proxy to PUT /profiles/{id}/configs/{agent_type} with body.configJson
+  const newBody = JSON.stringify(body.configJson);
+  const newRequest = new Request(request.url, {
+    method: "PUT",
+    headers: request.headers,
+    body: newBody,
+  });
 
-  const config = await agentProfileConfigService.upsertConfig(
-    session.user.id,
-    profileId,
-    body.agentType,
-    body.configJson
-  );
-
-  return NextResponse.json({ config });
-}
+  return proxyToRdvServer(newRequest, userId, {
+    path: `/profiles/${profileId}/configs/${body.agentType}`,
+  });
+});
 
 /**
  * DELETE /api/agent-profiles/:id/configs
  * Delete all configurations for a profile
+ * Note: rdv-server doesn't have this bulk delete - iterate over types
  */
-export async function DELETE(_request: Request, { params }: RouteParams) {
-  const session = await getAuthSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const DELETE = withAuth(async (request, { userId, params }) => {
+  const profileId = params?.id;
+  if (!profileId) {
+    const { NextResponse } = await import("next/server");
+    return NextResponse.json({ error: "Profile ID required" }, { status: 400 });
   }
 
-  const { id: profileId } = await params;
+  const { NextResponse } = await import("next/server");
 
-  // Verify profile belongs to user
-  const [profile] = await db
-    .select()
-    .from(agentProfiles)
-    .where(and(eq(agentProfiles.id, profileId), eq(agentProfiles.userId, session.user.id)));
+  // Delete each agent type's config
+  const agentTypes = ["claude", "gemini", "opencode", "codex"];
+  let deletedCount = 0;
 
-  if (!profile) {
-    return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+  for (const agentType of agentTypes) {
+    const deleteRequest = new Request(request.url, {
+      method: "DELETE",
+      headers: request.headers,
+    });
+
+    const response = await proxyToRdvServer(deleteRequest, userId, {
+      path: `/profiles/${profileId}/configs/${agentType}`,
+    });
+
+    if (response.ok) {
+      deletedCount++;
+    }
   }
 
-  const deleted = await agentProfileConfigService.deleteAllProfileConfigs(profileId);
-
-  return NextResponse.json({ deleted });
-}
+  return NextResponse.json({ deleted: deletedCount });
+});
