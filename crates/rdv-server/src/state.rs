@@ -8,7 +8,9 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 
 use crate::config::Config;
-use crate::services::{InsightService, MonitoringService};
+use crate::services::{
+    ConsolidationService, InsightService, MonitoringService, TrajectoryDistillationService,
+};
 use crate::sse::SseBroadcaster;
 
 // Extension tool router for dynamic MCP tool registration
@@ -92,6 +94,10 @@ pub struct AppState {
     pub monitoring: Arc<MonitoringService>,
     /// Insight service for managing orchestrator insights
     pub insights: Arc<InsightService>,
+    /// Consolidation service for memory lifecycle management
+    pub consolidation: Arc<ConsolidationService>,
+    /// Trajectory distillation service for async learning from agent sessions
+    pub distillation: Arc<TrajectoryDistillationService>,
     /// Dynamic tool router for extension-provided MCP tools
     pub extension_tools: Arc<DynamicToolRouter>,
     /// SSE broadcaster for real-time session events
@@ -112,6 +118,8 @@ impl AppState {
             config: Arc::new(config),
             monitoring: Arc::new(MonitoringService::new(Arc::clone(&db))),
             insights: Arc::new(InsightService::new(Arc::clone(&db))),
+            consolidation: Arc::new(ConsolidationService::new(Arc::clone(&db))),
+            distillation: Arc::new(TrajectoryDistillationService::with_defaults(Arc::clone(&db))),
             db,
             service_token: Arc::new(service_token),
             cli_tokens: Arc::new(CLITokenRegistry::new()),

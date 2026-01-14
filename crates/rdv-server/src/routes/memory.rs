@@ -5,12 +5,15 @@
 //! - GET /memory/search - Text-based search across memories
 //! - POST /memory/semantic-search - Semantic search using embeddings
 //! - POST /memory/consolidate - Trigger memory consolidation
+//! - POST /memory/consolidation/start - Start periodic consolidation scheduler
+//! - POST /memory/consolidation/stop - Stop periodic consolidation scheduler
+//! - GET /memory/consolidation/status - Get consolidation scheduler status
 //! - GET /memory/stats - Memory usage statistics
 
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{get, post},
+    routing::{get, post, delete},
     Extension, Json, Router,
 };
 use rdv_core::memory::MemoryStats;
@@ -33,6 +36,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/memory/search", get(search_memories))
         .route("/memory/semantic-search", post(semantic_search))
         .route("/memory/consolidate", post(consolidate_memories))
+        .route("/memory/consolidation/start", post(start_consolidation))
+        .route("/memory/consolidation/stop", delete(stop_consolidation))
+        .route("/memory/consolidation/status", get(consolidation_status))
         .route("/memory/stats", get(get_stats))
 }
 
@@ -134,6 +140,28 @@ pub struct ConsolidateRequest {
     pub folder_id: Option<String>,
     pub auto_promotion: Option<bool>,
     pub auto_demotion: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartConsolidationRequest {
+    /// Interval between runs in hours (default: 4)
+    pub interval_hours: Option<u64>,
+    /// Enable automatic promotion
+    pub auto_promotion: Option<bool>,
+    /// Enable automatic demotion
+    pub auto_demotion: Option<bool>,
+    /// Relevance decay rate per day (0-1, default: 0.02)
+    pub relevance_decay_rate: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsolidationStatusResponse {
+    /// Whether the consolidation scheduler is running
+    pub active: bool,
+    /// User ID if active
+    pub user_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -723,6 +751,9 @@ pub async fn semantic_search(
 }
 
 /// Trigger memory consolidation
+///
+/// Uses the ConsolidationService for comprehensive memory lifecycle management
+/// including promotion, demotion, and relevance decay.
 pub async fn consolidate_memories(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -743,71 +774,24 @@ pub async fn consolidate_memories(
         }
     }
 
-    // Run cleanup and promotion manually
-    // The full consolidation service requires the MemoryStore trait implementation
-    // For now, just run basic cleanup
-    let pruned = state
-        .db
-        .cleanup_expired_memory()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Manual promotion based on access patterns
-    let filter = MemoryQueryFilter {
-        user_id: user_id.to_string(),
-        folder_id: req.folder_id,
+    // Build config from request
+    let config = crate::services::ConsolidationConfig {
+        auto_promotion: req.auto_promotion.unwrap_or(true),
+        auto_demotion: req.auto_demotion.unwrap_or(true),
         ..Default::default()
     };
 
-    let entries = state
-        .db
-        .list_memory_entries(&filter)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let mut promoted = 0;
-    let mut demoted = 0;
-
-    for entry in entries {
-        let tier = entry.tier.as_str();
-        let access_count = entry.access_count;
-        let confidence = entry.confidence.unwrap_or(0.5);
-        let relevance = entry.relevance.unwrap_or(0.5);
-
-        // Promotion logic
-        if req.auto_promotion.unwrap_or(true) {
-            let new_tier = match tier {
-                "short_term" if access_count >= 3 || confidence >= 0.7 => Some("working"),
-                "working" if access_count >= 5 && confidence >= 0.8 && relevance >= 0.7 => Some("long_term"),
-                _ => None,
-            };
-
-            if let Some(t) = new_tier {
-                if state.db.update_memory_entry(&entry.id, Some(t), None, None, None).is_ok() {
-                    promoted += 1;
-                }
-            }
-        }
-
-        // Demotion logic
-        if req.auto_demotion.unwrap_or(true) && relevance < 0.2 && confidence < 0.3 {
-            let new_tier = match tier {
-                "long_term" => Some("working"),
-                "working" => Some("short_term"),
-                _ => None,
-            };
-
-            if let Some(t) = new_tier {
-                if state.db.update_memory_entry(&entry.id, Some(t), None, None, None).is_ok() {
-                    demoted += 1;
-                }
-            }
-        }
-    }
+    // Run consolidation via the service
+    let result = state
+        .consolidation
+        .consolidate_now(user_id, Some(config))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(ConsolidateResponse {
-        pruned_expired: pruned,
-        promoted,
-        demoted,
-        total_affected: pruned + promoted + demoted,
+        pruned_expired: result.expired_deleted,
+        promoted: result.promoted,
+        demoted: result.demoted,
+        total_affected: result.total_affected,
     }))
 }
 
@@ -831,4 +815,63 @@ pub async fn get_stats(
     };
 
     Ok(Json(stats.into()))
+}
+
+/// Start periodic consolidation scheduler
+///
+/// Starts a background task that runs consolidation at regular intervals.
+/// The scheduler persists across API calls until explicitly stopped.
+pub async fn start_consolidation(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<StartConsolidationRequest>,
+) -> Result<Json<ConsolidationStatusResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id().to_string();
+
+    // Build config from request
+    let interval_ms = req.interval_hours.unwrap_or(4) * 60 * 60 * 1000;
+    let config = crate::services::ConsolidationConfig {
+        interval_ms,
+        auto_promotion: req.auto_promotion.unwrap_or(true),
+        auto_demotion: req.auto_demotion.unwrap_or(true),
+        relevance_decay_rate: req.relevance_decay_rate.unwrap_or(0.02),
+        ..Default::default()
+    };
+
+    // Start consolidation
+    Arc::clone(&state.consolidation)
+        .start_consolidation(user_id.clone(), Some(config))
+        .await;
+
+    Ok(Json(ConsolidationStatusResponse {
+        active: true,
+        user_id: Some(user_id),
+    }))
+}
+
+/// Stop periodic consolidation scheduler
+pub async fn stop_consolidation(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    state.consolidation.stop_consolidation(user_id).await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Get consolidation scheduler status
+pub async fn consolidation_status(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Result<Json<ConsolidationStatusResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id();
+
+    let active = state.consolidation.is_consolidation_active(user_id).await;
+
+    Ok(Json(ConsolidationStatusResponse {
+        active,
+        user_id: if active { Some(user_id.to_string()) } else { None },
+    }))
 }
