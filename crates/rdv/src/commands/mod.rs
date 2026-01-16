@@ -7,7 +7,6 @@ pub mod doctor;
 pub mod escalate;
 pub mod ext;
 pub mod folder;
-pub mod hook;
 pub mod insights;
 pub mod knowledge;
 pub mod learn;
