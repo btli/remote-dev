@@ -104,6 +104,15 @@ const TIER_CONFIG: Record<
   },
 };
 
+// Tier ordering for promotion/demotion
+const TIER_ORDER: MemoryTier[] = ["short_term", "working", "long_term"];
+
+function getAdjacentTier(current: MemoryTier, direction: 1 | -1): MemoryTier {
+  const idx = TIER_ORDER.indexOf(current);
+  const newIdx = Math.max(0, Math.min(TIER_ORDER.length - 1, idx + direction));
+  return TIER_ORDER[newIdx];
+}
+
 const CONTENT_TYPE_LABELS: Record<MemoryContentType, string> = {
   "note:todo": "Todo",
   "note:reminder": "Reminder",
@@ -116,6 +125,14 @@ const CONTENT_TYPE_LABELS: Record<MemoryContentType, string> = {
   "insight:gotcha": "Gotcha",
   "insight:skill": "Skill",
   "insight:tool": "Tool",
+  // Plain types (CLI default types without prefix)
+  observation: "Observation",
+  convention: "Convention",
+  pattern: "Pattern",
+  gotcha: "Gotcha",
+  skill: "Skill",
+  tool: "Tool",
+  command: "Command",
   context: "Context",
   task_context: "Task Context",
   error: "Error",
@@ -153,18 +170,6 @@ function MemoryEntryCard({
 
   const canPromote = entry.tier !== "long_term";
   const canDemote = entry.tier !== "short_term";
-
-  const getNextTier = (current: MemoryTier): MemoryTier => {
-    if (current === "short_term") return "working";
-    if (current === "working") return "long_term";
-    return "long_term";
-  };
-
-  const getPrevTier = (current: MemoryTier): MemoryTier => {
-    if (current === "long_term") return "working";
-    if (current === "working") return "short_term";
-    return "short_term";
-  };
 
   return (
     <div className="group border border-border rounded-lg p-3 hover:border-primary/50 transition-colors bg-card/50">
@@ -239,18 +244,18 @@ function MemoryEntryCard({
             )}
             {canPromote && (
               <DropdownMenuItem
-                onClick={() => onPromote(entry.id, getNextTier(entry.tier))}
+                onClick={() => onPromote(entry.id, getAdjacentTier(entry.tier, 1))}
               >
                 <ChevronUp className="w-4 h-4 mr-2" />
-                Promote to {TIER_CONFIG[getNextTier(entry.tier)].label}
+                Promote to {TIER_CONFIG[getAdjacentTier(entry.tier, 1)].label}
               </DropdownMenuItem>
             )}
             {canDemote && (
               <DropdownMenuItem
-                onClick={() => onDemote(entry.id, getPrevTier(entry.tier))}
+                onClick={() => onDemote(entry.id, getAdjacentTier(entry.tier, -1))}
               >
                 <ChevronDown className="w-4 h-4 mr-2" />
-                Demote to {TIER_CONFIG[getPrevTier(entry.tier)].label}
+                Demote to {TIER_CONFIG[getAdjacentTier(entry.tier, -1)].label}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />

@@ -90,6 +90,9 @@ pub enum Commands {
     /// Meta-agent configuration optimization (BUILD → TEST → IMPROVE)
     Meta(MetaCommand),
 
+    /// Hook commands for Claude Code integration (session-start, session-end, compact)
+    Hook(HookCommand),
+
     /// Show version
     Version,
 }
@@ -539,10 +542,6 @@ pub enum MemoryAction {
         #[arg(short, long)]
         tier: Option<String>,
 
-        /// Time-to-live in seconds (short-term only)
-        #[arg(long)]
-        ttl: Option<i32>,
-
         /// Tags for categorization
         #[arg(short = 'T', long = "tag", action = clap::ArgAction::Append)]
         tags: Vec<String>,
@@ -655,10 +654,6 @@ pub struct NoteCommand {
     /// Priority level (1-5, lower is higher priority)
     #[arg(short, long)]
     pub priority: Option<i32>,
-
-    /// Time-to-live in seconds (default: 1 hour)
-    #[arg(long)]
-    pub ttl: Option<i32>,
 
     /// Tags for categorization
     #[arg(short = 'T', long = "tag", action = clap::ArgAction::Append)]
@@ -1369,5 +1364,98 @@ pub enum MetaAction {
         /// Maximum entries to show
         #[arg(short, long, default_value = "10")]
         limit: Option<i32>,
+    },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hook Commands (Claude Code integration)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct HookCommand {
+    #[command(subcommand)]
+    pub action: HookAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HookAction {
+    /// Session start hook - inject context, retrieve memories
+    SessionStart {
+        /// Agent provider (claude, codex, gemini, opencode)
+        #[arg(short, long, default_value = "claude")]
+        agent: String,
+
+        /// Project path (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+
+    /// Session end hook - extract learnings, notify orchestrator
+    SessionEnd {
+        /// Agent provider (claude, codex, gemini, opencode)
+        #[arg(short, long, default_value = "claude")]
+        agent: String,
+
+        /// Project path (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+
+        /// Skip learning extraction (faster exit)
+        #[arg(long)]
+        skip_learn: bool,
+    },
+
+    /// Pre-compact hook - save context to memory and output recovery instructions
+    Compact {
+        /// Project path (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+
+    /// Send event notification to orchestrator (lightweight)
+    Notify {
+        /// Event type (session_start, session_end, task_complete, heartbeat, error, stalled)
+        event: String,
+
+        /// Agent provider (claude, codex, gemini, opencode)
+        #[arg(short, long, default_value = "claude")]
+        agent: String,
+
+        /// Reason or additional context
+        #[arg(short, long)]
+        reason: Option<String>,
+    },
+
+    /// PostToolUse hook - capture tool usage as observation (Claude Code hook)
+    PostToolUse {
+        /// Tool name (e.g., "Bash", "Read", "Edit", "Write")
+        tool_name: String,
+
+        /// Tool input (what was requested)
+        #[arg(short, long)]
+        input: Option<String>,
+
+        /// Tool output (result, may be truncated)
+        #[arg(short, long)]
+        output: Option<String>,
+
+        /// Project path (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+
+    /// Stop hook - create session summary as working memory (Claude Code hook)
+    Stop {
+        /// Agent provider (claude, codex, gemini, opencode)
+        #[arg(short, long, default_value = "claude")]
+        agent: String,
+
+        /// Stop reason (user requested, error, timeout, etc.)
+        #[arg(short, long)]
+        reason: Option<String>,
+
+        /// Project path (defaults to current directory)
+        #[arg(short, long)]
+        path: Option<String>,
     },
 }

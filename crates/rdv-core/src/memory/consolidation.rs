@@ -223,7 +223,6 @@ mod tests {
     ) -> MemoryEntry {
         MemoryEntry {
             id: id.to_string(),
-            user_id: "test".to_string(),
             session_id: Some("session-1".to_string()),
             folder_id: Some("folder-1".to_string()),
             tier: tier.to_string(),
