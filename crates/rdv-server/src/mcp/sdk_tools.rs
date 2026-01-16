@@ -19,19 +19,8 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-/// Extension ID for SDK tools (prefixes tool names as "rdv:tool_name")
-const SDK_EXTENSION_ID: &str = "rdv";
-
-/// Helper to create error ToolOutput responses consistently
-fn tool_error(message: &str) -> ToolOutput {
-    ToolOutput {
-        data: json!({"success": false, "error": message}),
-        success: false,
-        error: Some(message.to_string()),
-        duration_ms: 0,
-        side_effects: vec![],
-    }
-}
+/// Extension ID for SDK tools
+const SDK_EXTENSION_ID: &str = "sdk";
 
 /// Register all SDK tools with the dynamic tool router
 pub async fn register_sdk_tools(
@@ -47,10 +36,6 @@ pub async fn register_sdk_tools(
     // Register memory_search tool
     let db_clone = Arc::clone(&db);
     register_memory_search(&router, db_clone).await?;
-
-    // Register memory_delete tool
-    let db_clone = Arc::clone(&db);
-    register_memory_delete(&router, db_clone).await?;
 
     // Register note_capture tool
     let db_clone = Arc::clone(&db);
@@ -126,10 +111,6 @@ async fn register_memory_store(
                     "type": "string",
                     "description": "Optional folder ID to associate with"
                 },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
-                },
                 "confidence": {
                     "type": "number",
                     "minimum": 0,
@@ -161,19 +142,31 @@ async fn register_memory_store(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Single-user system - userId parameter kept for API compatibility but not used for memory scoping
+            let user_id = input.context.user_id.clone();
 
             // Extract parameters
             let tier = args.get("tier").and_then(|v| v.as_str()).unwrap_or("short_term");
             let content_type = args.get("contentType").and_then(|v| v.as_str()).unwrap_or("observation");
             let content = match args.get("content").and_then(|v| v.as_str()) {
                 Some(c) => c,
-                None => return tool_error("content is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "content is required"}),
+                    success: false,
+                    error: Some("content is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             // Validate tier
             if !["short_term", "working", "long_term"].contains(&tier) {
-                return tool_error("Invalid tier. Must be short_term, working, or long_term");
+                return ToolOutput {
+                    data: json!({"success": false, "error": "Invalid tier"}),
+                    success: false,
+                    error: Some("Invalid tier. Must be short_term, working, or long_term".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                };
             }
 
             // Compute content hash for deduplication
@@ -181,8 +174,9 @@ async fn register_memory_store(
             hasher.update(content.as_bytes());
             let content_hash = format!("{:x}", hasher.finalize());
 
-            // Check for duplicate - single-user system, filter by tier only
+            // Check for duplicate
             let filter = MemoryQueryFilter {
+                user_id: user_id.clone(),
                 tier: Some(tier.to_string()),
                 ..Default::default()
             };
@@ -208,9 +202,21 @@ async fn register_memory_store(
                 }
             }
 
-            // Memory lifecycle managed by hooks/processes, not time-based expiration
-            // Single-user system: working memory scoped to sessionId, short/long-term to folderId
+            // Default TTLs by tier
+            let default_ttl = match tier {
+                "short_term" => Some(300),   // 5 minutes
+                "working" => Some(86400),    // 24 hours
+                "long_term" => None,         // No expiration
+                _ => Some(300),
+            };
+
+            let ttl = args.get("ttl")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32)
+                .or(default_ttl);
+
             let entry = NewMemoryEntry {
+                user_id,
                 session_id: args.get("sessionId").and_then(|v| v.as_str()).map(String::from),
                 folder_id: args.get("folderId").and_then(|v| v.as_str()).map(String::from),
                 tier: tier.to_string(),
@@ -222,6 +228,7 @@ async fn register_memory_store(
                 priority: args.get("priority").and_then(|v| v.as_i64()).map(|v| v as i32),
                 confidence: args.get("confidence").and_then(|v| v.as_f64()),
                 relevance: args.get("relevance").and_then(|v| v.as_f64()),
+                ttl_seconds: ttl,
                 metadata_json: args.get("metadata").map(|v| v.to_string()),
             };
 
@@ -230,7 +237,6 @@ async fn register_memory_store(
                     debug!("Created memory entry: {}", &id[..8]);
 
                     // Generate and store embedding for long_term and working memories
-                    // Single-user system - no user_id in embeddings
                     let mut embedding_id = None;
                     if tier == "long_term" || tier == "working" {
                         let embed_service = embedding_service();
@@ -239,6 +245,7 @@ async fn register_memory_store(
                                 let new_embedding = NewSdkEmbedding {
                                     entity_type: "memory".to_string(),
                                     entity_id: id.clone(),
+                                    user_id: input.context.user_id.clone(),
                                     embedding: result.vector,
                                     model_name: None, // Use default
                                 };
@@ -278,7 +285,13 @@ async fn register_memory_store(
                         side_effects: vec!["Created memory entry".to_string()],
                     }
                 }
-                Err(e) => tool_error(&e.to_string()),
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             }
         })
     });
@@ -323,10 +336,6 @@ async fn register_memory_search(
                     "type": "string",
                     "description": "Filter by folder ID"
                 },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
-                },
                 "minScore": {
                     "type": "number",
                     "minimum": 0,
@@ -353,19 +362,25 @@ async fn register_memory_search(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Single-user system - no user_id scoping for memory search
+            let user_id = input.context.user_id.clone();
 
             let query = match args.get("query").and_then(|v| v.as_str()) {
                 Some(q) => q,
-                None => return tool_error("query is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "query is required"}),
+                    success: false,
+                    error: Some("query is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             let min_score = args.get("minScore").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
             let use_semantic = args.get("semantic").and_then(|v| v.as_bool()).unwrap_or(true);
 
-            // Single-user system: filter by sessionId (working memory) or folderId (short/long-term)
             let filter = MemoryQueryFilter {
+                user_id: user_id.clone(),
                 session_id: args.get("sessionId").and_then(|v| v.as_str()).map(String::from),
                 folder_id: args.get("folderId").and_then(|v| v.as_str()).map(String::from),
                 tier: args.get("tier").and_then(|v| v.as_str()).map(String::from),
@@ -377,7 +392,13 @@ async fn register_memory_search(
 
             let memories = match db.list_memory_entries(&filter) {
                 Ok(m) => m,
-                Err(e) => return tool_error(&e.to_string()),
+                Err(e) => return ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             // Build a map of memory ID -> semantic score (if semantic search is enabled)
@@ -388,8 +409,8 @@ async fn register_memory_search(
                 let embed_service = embedding_service();
                 match embed_service.embed(query).await {
                     Ok(query_embedding) => {
-                        // Search for similar embeddings - single-user system, no user_id filter
-                        match db.search_similar_embeddings("memory", &query_embedding.vector, limit * 2) {
+                        // Search for similar embeddings
+                        match db.search_similar_embeddings(&user_id, "memory", &query_embedding.vector, limit * 2) {
                             Ok(results) => {
                                 semantic_used = true;
                                 for result in results {
@@ -501,83 +522,6 @@ async fn register_memory_search(
     Ok(())
 }
 
-/// Register memory_delete tool
-async fn register_memory_delete(
-    router: &DynamicToolRouter,
-    db: Arc<Database>,
-) -> Result<(), String> {
-    let tool = SDK::tool("memory_delete")
-        .display_name("Delete Memory")
-        .description("Delete a memory entry by ID. Use this to remove duplicate, outdated, or incorrect memories.")
-        .input_schema(json!({
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string",
-                    "description": "The memory entry ID to delete"
-                },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
-                }
-            },
-            "required": ["id"]
-        }))
-        .category("memory")
-        .with_side_effects()
-        .build();
-
-    let handler: ToolHandler = Arc::new(move |input: ToolInput| {
-        let db = Arc::clone(&db);
-        Box::pin(async move {
-            let args = &input.args;
-
-            let memory_id = match args.get("id").and_then(|v| v.as_str()) {
-                Some(id) => id,
-                None => return tool_error("id is required"),
-            };
-
-            // Single-user system - no ownership check needed
-            // Check if memory exists
-            match db.get_memory_entry(memory_id) {
-                Ok(Some(_entry)) => {
-                    // Delete the memory
-                    match db.delete_memory_entry(memory_id) {
-                        Ok(deleted) => {
-                            if deleted {
-                                debug!("Deleted memory entry: {}", &memory_id[..8.min(memory_id.len())]);
-                                ToolOutput {
-                                    data: json!({
-                                        "success": true,
-                                        "id": memory_id,
-                                        "deleted": true
-                                    }),
-                                    success: true,
-                                    error: None,
-                                    duration_ms: 0,
-                                    side_effects: vec!["Deleted memory entry".to_string()],
-                                }
-                            } else {
-                                tool_error("Memory not found")
-                            }
-                        }
-                        Err(e) => tool_error(&e.to_string()),
-                    }
-                }
-                Ok(None) => tool_error("Memory not found"),
-                Err(e) => tool_error(&e.to_string()),
-            }
-        })
-    });
-
-    router
-        .register_tool_with_handler(SDK_EXTENSION_ID, tool, handler)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
 /// Register note_capture tool
 async fn register_note_capture(
     router: &DynamicToolRouter,
@@ -601,10 +545,6 @@ async fn register_note_capture(
                 "folderId": {
                     "type": "string",
                     "description": "Optional folder ID to associate with"
-                },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
                 },
                 "tags": {
                     "type": "array",
@@ -632,11 +572,17 @@ async fn register_note_capture(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Single-user system - no user_id scoping for notes
+            let user_id = input.context.user_id.clone();
 
             let content = match args.get("content").and_then(|v| v.as_str()) {
                 Some(c) => c,
-                None => return tool_error("content is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "content is required"}),
+                    success: false,
+                    error: Some("content is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             let note_type = args.get("noteType").and_then(|v| v.as_str()).unwrap_or("observation");
@@ -646,6 +592,18 @@ async fn register_note_capture(
                 "todo" | "decision" => "working",
                 _ => "short_term",
             };
+
+            // Default TTLs
+            let default_ttl = match tier {
+                "short_term" => Some(3600),   // 1 hour
+                "working" => Some(86400),     // 24 hours
+                _ => None,
+            };
+
+            let ttl = args.get("ttl")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32)
+                .or(default_ttl);
 
             // Build metadata
             let metadata = {
@@ -670,9 +628,8 @@ async fn register_note_capture(
                 &content[..content.len().min(50)]
             );
 
-            // Memory lifecycle managed by hooks/processes, not time-based expiration
-            // Single-user system: notes scoped to folder_id
             let entry = NewMemoryEntry {
+                user_id,
                 session_id: None,
                 folder_id: args.get("folderId").and_then(|v| v.as_str()).map(String::from),
                 tier: tier.to_string(),
@@ -684,6 +641,7 @@ async fn register_note_capture(
                 priority: args.get("priority").and_then(|v| v.as_i64()).map(|v| v as i32),
                 confidence: Some(1.0),  // User-created notes have full confidence
                 relevance: Some(0.7),   // Default relevance
+                ttl_seconds: ttl,
                 metadata_json: metadata,
             };
 
@@ -691,12 +649,22 @@ async fn register_note_capture(
                 Ok(id) => {
                     debug!("Created note: {} (type: {})", &id[..8], note_type);
 
+                    let ttl_display = ttl.map(|t| {
+                        let hours = t / 3600;
+                        if hours > 0 {
+                            format!("{}h", hours)
+                        } else {
+                            format!("{}m", t / 60)
+                        }
+                    });
+
                     ToolOutput {
                         data: json!({
                             "success": true,
                             "id": id,
                             "noteType": note_type,
-                            "tier": tier
+                            "tier": tier,
+                            "expiresIn": ttl_display
                         }),
                         success: true,
                         error: None,
@@ -704,7 +672,13 @@ async fn register_note_capture(
                         side_effects: vec!["Created note".to_string()],
                     }
                 }
-                Err(e) => tool_error(&e.to_string()),
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             }
         })
     });
@@ -753,10 +727,6 @@ async fn register_insight_extract(
                     "type": "string",
                     "description": "Folder to associate with"
                 },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
-                },
                 "confidence": {
                     "type": "number",
                     "minimum": 0,
@@ -774,11 +744,17 @@ async fn register_insight_extract(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Single-user system - no user_id scoping for insights
+            let user_id = input.context.user_id.clone();
 
             let insight = match args.get("insight").and_then(|v| v.as_str()) {
                 Some(i) => i,
-                None => return tool_error("insight is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "insight is required"}),
+                    success: false,
+                    error: Some("insight is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             let insight_type = args.get("insightType").and_then(|v| v.as_str()).unwrap_or("pattern");
@@ -792,8 +768,8 @@ async fn register_insight_extract(
                 metadata.insert("source".to_string(), source.clone());
             }
 
-            // Single-user system: insights scoped to folder_id (long-term memory)
             let entry = NewMemoryEntry {
+                user_id,
                 session_id: args.get("sessionId").and_then(|v| v.as_str()).map(String::from),
                 folder_id: args.get("folderId").and_then(|v| v.as_str()).map(String::from),
                 tier: "long_term".to_string(),  // Insights are long-term
@@ -805,6 +781,7 @@ async fn register_insight_extract(
                 priority: None,
                 confidence: args.get("confidence").and_then(|v| v.as_f64()).or(Some(0.8)),
                 relevance: Some(0.9),  // Insights are highly relevant
+                ttl_seconds: None,     // No expiration for long-term
                 metadata_json: if metadata.is_empty() {
                     None
                 } else {
@@ -828,7 +805,13 @@ async fn register_insight_extract(
                         side_effects: vec!["Created insight".to_string()],
                     }
                 }
-                Err(e) => tool_error(&e.to_string()),
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             }
         })
     });
@@ -859,10 +842,6 @@ async fn register_insight_apply(
                 "context": {
                     "type": "string",
                     "description": "Optional context about how the insight was applied"
-                },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
                 }
             },
             "required": ["insightId"]
@@ -875,24 +854,50 @@ async fn register_insight_apply(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Use userId from args if provided, otherwise use context
-            let user_id = args.get("userId")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| input.context.user_id.clone());
+            let user_id = input.context.user_id.clone();
 
             let insight_id = match args.get("insightId").and_then(|v| v.as_str()) {
                 Some(id) => id,
-                None => return tool_error("insightId is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "insightId is required"}),
+                    success: false,
+                    error: Some("insightId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
-            // Verify insight exists (single-user system - no ownership check needed)
+            // Verify insight exists and belongs to user
             match db.get_sdk_insight(insight_id) {
-                Ok(Some(_insight)) => {
-                    // Insight exists, proceed
+                Ok(Some(insight)) => {
+                    if insight.user_id != user_id {
+                        return ToolOutput {
+                            data: json!({"success": false, "error": "Insight not found"}),
+                            success: false,
+                            error: Some("Insight not found".to_string()),
+                            duration_ms: 0,
+                            side_effects: vec![],
+                        };
+                    }
                 }
-                Ok(None) => return tool_error("Insight not found"),
-                Err(e) => return tool_error(&e.to_string()),
+                Ok(None) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": "Insight not found"}),
+                        success: false,
+                        error: Some("Insight not found".to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+                Err(e) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": e.to_string()}),
+                        success: false,
+                        error: Some(e.to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
             }
 
             // Record the application
@@ -919,7 +924,13 @@ async fn register_insight_apply(
                         side_effects: vec!["Recorded insight application".to_string()],
                     }
                 }
-                Err(e) => tool_error(&e.to_string()),
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             }
         })
     });
@@ -955,10 +966,6 @@ async fn register_note_to_memory(
                 "name": {
                     "type": "string",
                     "description": "Optional name for the memory entry"
-                },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
                 }
             },
             "required": ["noteId"]
@@ -971,22 +978,51 @@ async fn register_note_to_memory(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Use userId from args if provided, otherwise use context
-            let user_id = args.get("userId")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| input.context.user_id.clone());
+            let user_id = input.context.user_id.clone();
 
             let note_id = match args.get("noteId").and_then(|v| v.as_str()) {
                 Some(id) => id,
-                None => return tool_error("noteId is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "noteId is required"}),
+                    success: false,
+                    error: Some("noteId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
-            // Get the note (single-user system - no ownership check needed)
+            // Get the note
             let note = match db.get_note(note_id) {
-                Ok(Some(n)) => n,
-                Ok(None) => return tool_error("Note not found"),
-                Err(e) => return tool_error(&e.to_string()),
+                Ok(Some(n)) => {
+                    if n.user_id != user_id {
+                        return ToolOutput {
+                            data: json!({"success": false, "error": "Note not found"}),
+                            success: false,
+                            error: Some("Note not found".to_string()),
+                            duration_ms: 0,
+                            side_effects: vec![],
+                        };
+                    }
+                    n
+                }
+                Ok(None) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": "Note not found"}),
+                        success: false,
+                        error: Some("Note not found".to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+                Err(e) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": e.to_string()}),
+                        success: false,
+                        error: Some(e.to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
             };
 
             let tier = args.get("tier").and_then(|v| v.as_str()).unwrap_or("working");
@@ -996,8 +1032,9 @@ async fn register_note_to_memory(
                 .or_else(|| note.title.clone())
                 .or_else(|| Some(format!("[Note] {}", &note.content[..note.content.len().min(50)])));
 
-            // Create memory entry from note (single-user system - no user_id field)
+            // Create memory entry from note
             let entry = NewMemoryEntry {
+                user_id: user_id.clone(),
                 session_id: note.session_id.clone(),
                 folder_id: note.folder_id.clone(),
                 tier: tier.to_string(),
@@ -1009,6 +1046,7 @@ async fn register_note_to_memory(
                 priority: Some(note.priority as i32),
                 confidence: Some(0.8),
                 relevance: Some(0.7),
+                ttl_seconds: if tier == "working" { Some(86400) } else { None },
                 metadata_json: Some(json!({
                     "sourceNoteId": note_id,
                     "noteType": note.note_type,
@@ -1023,10 +1061,10 @@ async fn register_note_to_memory(
                     let embed_service = embedding_service();
                     match embed_service.embed(&note.content).await {
                         Ok(result) => {
-                            // Single-user system - no user_id field
                             let new_embedding = NewSdkEmbedding {
                                 entity_type: "memory".to_string(),
                                 entity_id: memory_id.clone(),
+                                user_id: user_id.clone(),
                                 embedding: result.vector,
                                 model_name: None,
                             };
@@ -1056,7 +1094,13 @@ async fn register_note_to_memory(
                         side_effects: vec!["Promoted note to memory".to_string()],
                     }
                 }
-                Err(e) => tool_error(&e.to_string()),
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             }
         })
     });
@@ -1087,10 +1131,6 @@ async fn register_insight_to_memory(
                 "name": {
                     "type": "string",
                     "description": "Optional name for the memory entry"
-                },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
                 }
             },
             "required": ["insightId"]
@@ -1103,22 +1143,51 @@ async fn register_insight_to_memory(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Use userId from args if provided, otherwise use context
-            let user_id = args.get("userId")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| input.context.user_id.clone());
+            let user_id = input.context.user_id.clone();
 
             let insight_id = match args.get("insightId").and_then(|v| v.as_str()) {
                 Some(id) => id,
-                None => return tool_error("insightId is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "insightId is required"}),
+                    success: false,
+                    error: Some("insightId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
-            // Get the insight (single-user system - no ownership check needed)
+            // Get the insight
             let insight = match db.get_sdk_insight(insight_id) {
-                Ok(Some(i)) => i,
-                Ok(None) => return tool_error("Insight not found"),
-                Err(e) => return tool_error(&e.to_string()),
+                Ok(Some(i)) => {
+                    if i.user_id != user_id {
+                        return ToolOutput {
+                            data: json!({"success": false, "error": "Insight not found"}),
+                            success: false,
+                            error: Some("Insight not found".to_string()),
+                            duration_ms: 0,
+                            side_effects: vec![],
+                        };
+                    }
+                    i
+                }
+                Ok(None) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": "Insight not found"}),
+                        success: false,
+                        error: Some("Insight not found".to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
+                Err(e) => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": e.to_string()}),
+                        success: false,
+                        error: Some(e.to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
             };
 
             // Map insight type to memory content type
@@ -1140,8 +1209,9 @@ async fn register_insight_to_memory(
                 .map(String::from)
                 .or_else(|| Some(insight.title.clone()));
 
-            // Create memory entry from insight (single-user system - no user_id field)
+            // Create memory entry from insight
             let entry = NewMemoryEntry {
+                user_id: user_id.clone(),
                 session_id: None,  // Insights don't have session_id
                 folder_id: insight.folder_id.clone(),
                 tier: "long_term".to_string(),  // Insights are always long-term
@@ -1153,6 +1223,7 @@ async fn register_insight_to_memory(
                 priority: None,
                 confidence: Some(insight.confidence),
                 relevance: Some(0.9),  // High relevance for insights
+                ttl_seconds: None,  // No expiration for long-term
                 metadata_json: Some(json!({
                     "sourceInsightId": insight_id,
                     "insightType": insight_type_str,
@@ -1168,10 +1239,10 @@ async fn register_insight_to_memory(
                     let embed_service = embedding_service();
                     match embed_service.embed(&insight.description).await {
                         Ok(result) => {
-                            // Single-user system - no user_id field
                             let new_embedding = NewSdkEmbedding {
                                 entity_type: "memory".to_string(),
                                 entity_id: memory_id.clone(),
+                                user_id: user_id.clone(),
                                 embedding: result.vector,
                                 model_name: None,
                             };
@@ -1204,7 +1275,13 @@ async fn register_insight_to_memory(
                         side_effects: vec!["Converted insight to memory".to_string()],
                     }
                 }
-                Err(e) => tool_error(&e.to_string()),
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             }
         })
     });
@@ -1258,10 +1335,6 @@ async fn register_knowledge_add(
                 "source": {
                     "type": "string",
                     "description": "Source of knowledge (manual, auto-detected, session)"
-                },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
                 }
             },
             "required": ["folderId", "type", "description"]
@@ -1274,32 +1347,58 @@ async fn register_knowledge_add(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Use userId from args if provided, otherwise use context
-            let user_id = args.get("userId")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| input.context.user_id.clone());
+            let user_id = input.context.user_id.clone();
 
             let folder_id = match args.get("folderId").and_then(|v| v.as_str()) {
                 Some(f) => f,
-                None => return tool_error("folderId is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "folderId is required"}),
+                    success: false,
+                    error: Some("folderId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             let knowledge_type = args.get("type").and_then(|v| v.as_str()).unwrap_or("pattern");
             let description = match args.get("description").and_then(|v| v.as_str()) {
                 Some(d) => d,
-                None => return tool_error("description is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "description is required"}),
+                    success: false,
+                    error: Some("description is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             // Verify folder exists
             let folder = match db.get_folder(folder_id) {
                 Ok(Some(f)) => f,
-                Ok(None) => return tool_error("Folder not found"),
-                Err(e) => return tool_error(&e.to_string()),
+                Ok(None) => return ToolOutput {
+                    data: json!({"success": false, "error": "Folder not found"}),
+                    success: false,
+                    error: Some("Folder not found".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+                Err(e) => return ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             if folder.user_id != user_id {
-                return tool_error("Access denied");
+                return ToolOutput {
+                    data: json!({"success": false, "error": "Access denied"}),
+                    success: false,
+                    error: Some("Access denied".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                };
             }
 
             // Get or create project knowledge
@@ -1314,12 +1413,30 @@ async fn register_knowledge_add(
                     }) {
                         Ok(_id) => match db.get_project_knowledge_by_folder(folder_id, &user_id) {
                             Ok(Some(k)) => k,
-                            _ => return tool_error("Failed to create knowledge"),
+                            _ => return ToolOutput {
+                                data: json!({"success": false, "error": "Failed to create knowledge"}),
+                                success: false,
+                                error: Some("Failed to create knowledge".to_string()),
+                                duration_ms: 0,
+                                side_effects: vec![],
+                            },
                         },
-                        Err(e) => return tool_error(&e.to_string()),
+                        Err(e) => return ToolOutput {
+                            data: json!({"success": false, "error": e.to_string()}),
+                            success: false,
+                            error: Some(e.to_string()),
+                            duration_ms: 0,
+                            side_effects: vec![],
+                        },
                     }
                 }
-                Err(e) => return tool_error(&e.to_string()),
+                Err(e) => return ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             let now = chrono::Utc::now().timestamp_millis();
@@ -1402,7 +1519,15 @@ async fn register_knowledge_add(
                         created_at: now,
                     });
                 }
-                _ => return tool_error("Invalid knowledge type"),
+                _ => {
+                    return ToolOutput {
+                        data: json!({"success": false, "error": "Invalid knowledge type"}),
+                        success: false,
+                        error: Some("Invalid knowledge type".to_string()),
+                        duration_ms: 0,
+                        side_effects: vec![],
+                    };
+                }
             }
 
             // Save updated knowledge
@@ -1422,7 +1547,13 @@ async fn register_knowledge_add(
                         side_effects: vec![format!("Added {} knowledge entry", knowledge_type)],
                     }
                 }
-                Err(e) => tool_error(&e.to_string()),
+                Err(e) => ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             }
         })
     });
@@ -1462,10 +1593,6 @@ async fn register_knowledge_get(
                 "category": {
                     "type": "string",
                     "description": "Filter by category (for conventions)"
-                },
-                "userId": {
-                    "type": "string",
-                    "description": "Optional user ID (overrides default user from context)"
                 }
             },
             "required": ["folderId"]
@@ -1477,26 +1604,46 @@ async fn register_knowledge_get(
         let db = Arc::clone(&db);
         Box::pin(async move {
             let args = &input.args;
-            // Use userId from args if provided, otherwise use context
-            let user_id = args.get("userId")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| input.context.user_id.clone());
+            let user_id = input.context.user_id.clone();
 
             let folder_id = match args.get("folderId").and_then(|v| v.as_str()) {
                 Some(f) => f,
-                None => return tool_error("folderId is required"),
+                None => return ToolOutput {
+                    data: json!({"success": false, "error": "folderId is required"}),
+                    success: false,
+                    error: Some("folderId is required".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             // Verify folder access
             let folder = match db.get_folder(folder_id) {
                 Ok(Some(f)) => f,
-                Ok(None) => return tool_error("Folder not found"),
-                Err(e) => return tool_error(&e.to_string()),
+                Ok(None) => return ToolOutput {
+                    data: json!({"success": false, "error": "Folder not found"}),
+                    success: false,
+                    error: Some("Folder not found".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
+                Err(e) => return ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             if folder.user_id != user_id {
-                return tool_error("Access denied");
+                return ToolOutput {
+                    data: json!({"success": false, "error": "Access denied"}),
+                    success: false,
+                    error: Some("Access denied".to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                };
             }
 
             // Get knowledge
@@ -1513,7 +1660,13 @@ async fn register_knowledge_get(
                     duration_ms: 0,
                     side_effects: vec![],
                 },
-                Err(e) => return tool_error(&e.to_string()),
+                Err(e) => return ToolOutput {
+                    data: json!({"success": false, "error": e.to_string()}),
+                    success: false,
+                    error: Some(e.to_string()),
+                    duration_ms: 0,
+                    side_effects: vec![],
+                },
             };
 
             let type_filter = args.get("type").and_then(|v| v.as_str());
@@ -1661,6 +1814,6 @@ mod tests {
 
     #[test]
     fn test_sdk_extension_id() {
-        assert_eq!(SDK_EXTENSION_ID, "rdv");
+        assert_eq!(SDK_EXTENSION_ID, "sdk");
     }
 }

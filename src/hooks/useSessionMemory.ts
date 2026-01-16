@@ -30,14 +30,6 @@ export type MemoryContentType =
   | "insight:gotcha"
   | "insight:skill"
   | "insight:tool"
-  // Plain types (CLI default types without prefix)
-  | "observation"
-  | "convention"
-  | "pattern"
-  | "gotcha"
-  | "skill"
-  | "tool"
-  | "command"
   | "context"
   | "task_context"
   | "error"
@@ -88,15 +80,6 @@ export interface UseSessionMemoryOptions {
   autoFetch?: boolean;
 }
 
-export interface UpdateMemoryParams {
-  tier?: MemoryTier;
-  content?: string;
-  name?: string;
-  confidence?: number;
-  relevance?: number;
-  priority?: number;
-}
-
 export interface UseSessionMemoryReturn {
   /** Current memory entries grouped by tier */
   memories: {
@@ -122,8 +105,6 @@ export interface UseSessionMemoryReturn {
   promoteToLongTerm: (memoryId: string, name: string) => Promise<void>;
   /** Store new memory */
   storeMemory: (entry: StoreMemoryParams) => Promise<MemoryEntry | null>;
-  /** Update memory content or metadata */
-  updateMemory: (memoryId: string, params: UpdateMemoryParams) => Promise<MemoryEntry | null>;
   /** Total count by tier */
   counts: {
     short_term: number;
@@ -191,19 +172,13 @@ export function useSessionMemory({
 
       if (query && query.trim()) {
         // Advanced query with optional semantic search
-        // Use folderId as primary scope, sessionId only as fallback
-        const scopeParams: { sessionId?: string; folderId?: string } = {};
-        if (folderId) {
-          scopeParams.folderId = folderId;
-        } else if (sessionId) {
-          scopeParams.sessionId = sessionId;
-        }
         const response = await fetch("/api/sdk/memory/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             query,
-            ...scopeParams,
+            sessionId,
+            folderId,
             minScore: minRelevance,
             limit,
           }),
@@ -222,22 +197,14 @@ export function useSessionMemory({
           semantic: true,
         }));
       } else {
-        // Basic query - fetch by folder or session scope
-        // Use folderId as primary scope (folder-level memories are visible to all sessions)
-        // Only use sessionId as fallback if no folderId is available
+        // Basic query - fetch by session/folder scope
         const params = new URLSearchParams();
-        if (folderId) {
-          // Folder scope - shows all memories for the folder (including session-less ones)
-          params.set("folderId", folderId);
-        } else if (sessionId) {
-          // Session-only scope (fallback when no folder)
-          params.set("sessionId", sessionId);
-        }
+        if (sessionId) params.set("sessionId", sessionId);
+        if (folderId) params.set("folderId", folderId);
         if (minRelevance > 0) params.set("minRelevance", String(minRelevance));
         params.set("limit", String(limit));
 
-        const url = `/api/sdk/memory?${params.toString()}`;
-        const response = await fetch(url);
+        const response = await fetch(`/api/sdk/memory?${params.toString()}`);
 
         if (!response.ok) {
           throw new Error(`Fetch failed: ${response.statusText}`);
@@ -257,6 +224,7 @@ export function useSessionMemory({
 
       setMemories(grouped);
     } catch (err) {
+      console.error("[useSessionMemory] Fetch error:", err);
       setError(err instanceof Error ? err.message : "Failed to fetch memories");
     } finally {
       setLoading(false);
@@ -285,6 +253,7 @@ export function useSessionMemory({
       // Refresh to show updated state
       await fetchMemories();
     } catch (err) {
+      console.error("[useSessionMemory] Pin error:", err);
       setError(err instanceof Error ? err.message : "Failed to pin memory");
     }
   }, [fetchMemories]);
@@ -309,6 +278,7 @@ export function useSessionMemory({
       // Refresh to show updated state
       await fetchMemories();
     } catch (err) {
+      console.error("[useSessionMemory] Dismiss error:", err);
       setError(err instanceof Error ? err.message : "Failed to dismiss memory");
     }
   }, [fetchMemories]);
@@ -329,6 +299,7 @@ export function useSessionMemory({
       // Refresh to show updated state
       await fetchMemories();
     } catch (err) {
+      console.error("[useSessionMemory] Delete error:", err);
       setError(err instanceof Error ? err.message : "Failed to delete memory");
     }
   }, [fetchMemories]);
@@ -356,6 +327,7 @@ export function useSessionMemory({
       // Refresh to show updated state
       await fetchMemories();
     } catch (err) {
+      console.error("[useSessionMemory] Promote error:", err);
       setError(err instanceof Error ? err.message : "Failed to promote memory");
     }
   }, [fetchMemories]);
@@ -386,37 +358,11 @@ export function useSessionMemory({
 
       return entry;
     } catch (err) {
+      console.error("[useSessionMemory] Store error:", err);
       setError(err instanceof Error ? err.message : "Failed to store memory");
       return null;
     }
   }, [sessionId, folderId, fetchMemories]);
-
-  /**
-   * Update memory content or metadata
-   */
-  const updateMemory = useCallback(async (memoryId: string, params: UpdateMemoryParams): Promise<MemoryEntry | null> => {
-    try {
-      const response = await fetch(`/api/sdk/memory/${memoryId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Update failed: ${response.statusText}`);
-      }
-
-      const entry = await response.json();
-
-      // Refresh to show updated entry
-      await fetchMemories();
-
-      return entry;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update memory");
-      return null;
-    }
-  }, [fetchMemories]);
 
   // Initial fetch
   useEffect(() => {
@@ -438,33 +384,6 @@ export function useSessionMemory({
       }
     };
   }, [pollInterval, sessionId, folderId, fetchMemories]);
-
-  // SSE subscription for real-time updates
-  // When CLI/SDK creates memories, they send lightweight notification to server
-  // which broadcasts via SSE - this is more efficient than polling
-  useEffect(() => {
-    if (!sessionId && !folderId) return;
-
-    const eventSource = new EventSource("/api/events/memory");
-
-    eventSource.addEventListener("memory", (event) => {
-      try {
-        JSON.parse(event.data);
-        // Refresh on any memory event (created, updated, deleted, promoted)
-        fetchMemories();
-      } catch {
-        // Ignore parse errors - EventSource will continue
-      }
-    });
-
-    eventSource.onerror = () => {
-      // EventSource will auto-reconnect
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, [sessionId, folderId, fetchMemories]);
 
   // Compute flat list and counts
   const allMemories = [
@@ -491,7 +410,6 @@ export function useSessionMemory({
     deleteMemory,
     promoteToLongTerm,
     storeMemory,
-    updateMemory,
     counts,
   };
 }
