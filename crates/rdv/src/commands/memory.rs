@@ -11,24 +11,23 @@
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
 use rdv_core::types::{MemoryEntry, MemoryQueryFilter, NewMemoryEntry};
+use std::process::Command;
 
 use crate::cli::{MemoryCommand, MemoryAction};
-use crate::config::Config;
-use crate::database::{get_database, get_user_id};
+use crate::database::get_database;
 
 /// Execute memory command.
-pub fn execute(cmd: MemoryCommand, config: &Config) -> Result<()> {
+pub fn execute(cmd: MemoryCommand) -> Result<()> {
     match cmd.action {
         MemoryAction::Remember {
             content,
             tier,
-            ttl,
             tags,
             content_type,
             name,
             description,
             folder,
-        } => remember(&content, tier.as_deref(), ttl, tags, &content_type, name, description, folder.as_deref(), config),
+        } => remember(&content, tier.as_deref(), tags, &content_type, name, description, folder.as_deref()),
 
         MemoryAction::Recall {
             tier,
@@ -37,21 +36,21 @@ pub fn execute(cmd: MemoryCommand, config: &Config) -> Result<()> {
             limit,
             query,
             json,
-        } => recall(tier.as_deref(), content_type.as_deref(), min_relevance, limit, query.as_deref(), json, config),
+        } => recall(tier.as_deref(), content_type.as_deref(), min_relevance, limit, query.as_deref(), json),
 
         MemoryAction::Forget { id, all, tier, expired } => {
-            forget(id.as_deref(), all, tier.as_deref(), expired, config)
+            forget(id.as_deref(), all, tier.as_deref(), expired)
         }
 
         MemoryAction::List {
             tier,
             content_type,
             limit,
-        } => list(tier.as_deref(), content_type.as_deref(), limit, config),
+        } => list(tier.as_deref(), content_type.as_deref(), limit),
 
-        MemoryAction::Stats => stats(config),
+        MemoryAction::Stats => stats(),
 
-        MemoryAction::Promote { id, tier } => promote(&id, &tier, config),
+        MemoryAction::Promote { id, tier } => promote(&id, &tier),
     }
 }
 
@@ -67,7 +66,8 @@ fn parse_tier(tier: Option<&str>) -> Result<String> {
 }
 
 /// Resolve folder to folder_id by name, path, or direct ID.
-fn resolve_folder_id(db: &rdv_core::db::Database, user_id: &str, folder: &str) -> Result<Option<String>> {
+/// Single-user system - no user_id parameter.
+fn resolve_folder_id(db: &rdv_core::db::Database, folder: &str) -> Result<Option<String>> {
     // First, check if it's a UUID (direct folder ID)
     if folder.len() == 36 && folder.chars().filter(|c| *c == '-').count() == 4 {
         // Verify it exists
@@ -77,7 +77,8 @@ fn resolve_folder_id(db: &rdv_core::db::Database, user_id: &str, folder: &str) -
     }
 
     // Try to find by name
-    if let Ok(Some(f)) = db.get_folder_by_name(user_id, folder) {
+    // Single-user system - folder name lookup uses empty user_id placeholder
+    if let Ok(Some(f)) = db.get_folder_by_name("", folder) {
         return Ok(Some(f.id));
     }
 
@@ -96,7 +97,8 @@ fn resolve_folder_id(db: &rdv_core::db::Database, user_id: &str, folder: &str) -
     };
 
     // List folders and find by path
-    if let Ok(folders) = db.list_folders(user_id) {
+    // Single-user system - folder list uses empty user_id placeholder
+    if let Ok(folders) = db.list_folders("") {
         for f in folders {
             if let Some(ref fp) = f.path {
                 if fp == &path || fp.ends_with(&format!("/{}", folder)) {
@@ -118,24 +120,22 @@ fn resolve_folder_id(db: &rdv_core::db::Database, user_id: &str, folder: &str) -
 }
 
 /// Store something in memory.
+/// Single-user system - no user_id parameter.
 fn remember(
     content: &str,
     tier: Option<&str>,
-    ttl: Option<i32>,
     tags: Vec<String>,
     content_type: &str,
     name: Option<String>,
     description: Option<String>,
     folder: Option<&str>,
-    _config: &Config,
 ) -> Result<()> {
     let db = get_database()?;
     let tier = parse_tier(tier)?;
-    let user_id = get_user_id();
 
     // Resolve folder to folder_id if provided
     let folder_id = if let Some(f) = folder {
-        match resolve_folder_id(db, &user_id, f)? {
+        match resolve_folder_id(db, f)? {
             Some(id) => Some(id),
             None => {
                 eprintln!("{} Warning: folder '{}' not found, memory will not be associated with a folder", "⚠".yellow(), f);
@@ -143,15 +143,33 @@ fn remember(
             }
         }
     } else {
-        // Try to auto-detect folder from current directory
+        // Try to auto-detect folder from current directory by walking up the tree
         let cwd = std::env::current_dir()
             .ok()
             .map(|p| p.to_string_lossy().to_string());
-        if let Some(ref path) = cwd {
-            if let Ok(folders) = db.list_folders(&user_id) {
-                folders.iter()
-                    .find(|f| f.path.as_ref().map(|p| path.starts_with(p)).unwrap_or(false))
-                    .map(|f| f.id.clone())
+        if let Some(path) = cwd {
+            // Single-user system - use list_all_folders
+            if let Ok(folders) = db.list_all_folders() {
+                // Walk up directory tree to find matching folder
+                let mut current = std::path::Path::new(&path);
+                loop {
+                    let current_str = current.to_string_lossy().to_string();
+                    let folder_name = current.file_name().map(|n| n.to_string_lossy().to_string());
+
+                    if let Some(folder) = folders.iter().find(|f| {
+                        f.path.as_deref() == Some(current_str.as_str())
+                            || folder_name.as_deref() == Some(f.name.as_str())
+                    }) {
+                        break Some(folder.id.clone());
+                    }
+
+                    match current.parent() {
+                        Some(parent) if !parent.as_os_str().is_empty() => {
+                            current = parent;
+                        }
+                        _ => break None,
+                    }
+                }
             } else {
                 None
             }
@@ -167,8 +185,8 @@ fn remember(
         Some(serde_json::json!({ "tags": tags }).to_string())
     };
 
+    // Single-user system - no user_id field
     let entry = NewMemoryEntry {
-        user_id,
         session_id: None,
         folder_id: folder_id.clone(),
         tier: tier.clone(),
@@ -180,7 +198,6 @@ fn remember(
         priority: None,
         confidence: None,
         relevance: None,
-        ttl_seconds: ttl,
         metadata_json,
     };
 
@@ -188,13 +205,13 @@ fn remember(
         .create_memory_entry(&entry)
         .context("Failed to create memory entry")?;
 
+    // Notify server for SSE broadcast to UI
+    send_memory_event("created", &id);
+
     println!("{} Stored in {} memory", "✓".green(), tier_display(&tier).cyan());
     println!("  ID: {}", id);
     if let Some(ref fid) = folder_id {
         println!("  Folder: {}", fid);
-    }
-    if let Some(ttl) = ttl {
-        println!("  TTL: {} seconds", ttl);
     }
     if !tags.is_empty() {
         println!("  Tags: {}", tags.join(", "));
@@ -204,6 +221,7 @@ fn remember(
 }
 
 /// Recall memories matching criteria.
+/// Single-user system - no user_id parameter.
 fn recall(
     tier: Option<&str>,
     content_type: Option<&str>,
@@ -211,13 +229,11 @@ fn recall(
     limit: usize,
     query: Option<&str>,
     json: bool,
-    _config: &Config,
 ) -> Result<()> {
     let db = get_database()?;
-    let user_id = get_user_id();
 
+    // Single-user system - no user_id field
     let filter = MemoryQueryFilter {
-        user_id,
         session_id: None,
         folder_id: None,
         tier: tier.and_then(|t| parse_tier(Some(t)).ok()),
@@ -309,7 +325,6 @@ fn forget(
     all: bool,
     tier: Option<&str>,
     expired: bool,
-    _config: &Config,
 ) -> Result<()> {
     let db = get_database()?;
 
@@ -326,6 +341,7 @@ fn forget(
             .delete_memory_entry(id)
             .context("Failed to delete memory entry")?;
         if deleted {
+            send_memory_event("deleted", id);
             println!("{} Deleted memory: {}", "✓".green(), id);
         } else {
             println!("{} Memory not found: {}", "⚠".yellow(), id);
@@ -334,12 +350,11 @@ fn forget(
     }
 
     if all {
-        let user_id = get_user_id();
         let tier = tier.and_then(|t| parse_tier(Some(t)).ok());
 
         // List entries to delete
+        // Single-user system - no user_id field
         let filter = MemoryQueryFilter {
-            user_id,
             tier: tier.clone(),
             limit: Some(1000), // Reasonable batch size
             ..Default::default()
@@ -365,12 +380,12 @@ fn forget(
 }
 
 /// List memories.
-fn list(tier: Option<&str>, content_type: Option<&str>, limit: usize, _config: &Config) -> Result<()> {
+/// Single-user system - no user_id parameter.
+fn list(tier: Option<&str>, content_type: Option<&str>, limit: usize) -> Result<()> {
     let db = get_database()?;
-    let user_id = get_user_id();
 
+    // Single-user system - no user_id field
     let filter = MemoryQueryFilter {
-        user_id,
         tier: tier.and_then(|t| parse_tier(Some(t)).ok()),
         content_type: content_type.map(String::from),
         limit: Some(limit),
@@ -398,12 +413,13 @@ fn list(tier: Option<&str>, content_type: Option<&str>, limit: usize, _config: &
 }
 
 /// Show memory statistics.
-fn stats(_config: &Config) -> Result<()> {
+/// Single-user system - no user_id parameter.
+fn stats() -> Result<()> {
     let db = get_database()?;
-    let user_id = get_user_id();
 
+    // Single-user system - get_memory_stats takes no user_id
     let stats = db
-        .get_memory_stats(&user_id)
+        .get_memory_stats()
         .context("Failed to get memory stats")?;
 
     println!("{} Memory Statistics", "📊".cyan());
@@ -425,7 +441,7 @@ fn stats(_config: &Config) -> Result<()> {
 }
 
 /// Promote a memory to a higher tier.
-fn promote(id: &str, target_tier: &str, _config: &Config) -> Result<()> {
+fn promote(id: &str, target_tier: &str) -> Result<()> {
     let db = get_database()?;
     let tier = parse_tier(Some(target_tier))?;
 
@@ -452,6 +468,9 @@ fn promote(id: &str, target_tier: &str, _config: &Config) -> Result<()> {
 
     db.update_memory_entry(id, Some(&tier), None, None, None)
         .context("Failed to promote memory")?;
+
+    // Notify server for SSE broadcast to UI
+    send_memory_event("promoted", id);
 
     println!(
         "{} Promoted {} → {}",
@@ -541,4 +560,42 @@ fn print_memory_entry(index: usize, entry: &MemoryEntry) {
     }
 
     println!();
+}
+
+/// Send memory event notification to server for SSE broadcast.
+/// Uses short timeouts (1 second) since this is a local server.
+/// This allows CLI memory operations to trigger UI updates.
+fn send_memory_event(event_type: &str, memory_id: &str) {
+    let payload = serde_json::json!({
+        "event_type": event_type,
+        "memory_id": memory_id,
+    });
+
+    // Try Unix socket first (production)
+    let socket_path = dirs::home_dir()
+        .map(|h| h.join(".remote-dev/run/api.sock"))
+        .filter(|p| p.exists());
+
+    if let Some(socket) = socket_path {
+        let payload_str = payload.to_string();
+        let _ = Command::new("curl")
+            .args([
+                "--unix-socket",
+                &socket.to_string_lossy(),
+                "-s",  // Silent mode
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                &payload_str,
+                "--max-time",
+                "1",
+                "--connect-timeout",
+                "1",
+                "http://localhost/api/memory/event",
+            ])
+            .output();
+    }
+    // Note: No fallback to HTTP needed since CLI always runs locally
 }

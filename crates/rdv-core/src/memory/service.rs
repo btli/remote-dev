@@ -27,7 +27,7 @@ use crate::types::{MemoryEntry, MemoryTier};
 
 use super::{
     are_similar, calculate_relevance_boost, merge_content, suggest_demotion, suggest_promotion,
-    ConsolidationCriteria, ConsolidationStrategy, MemoryConfig, MemoryStore, RecallOptions,
+    ConsolidationCriteria, ConsolidationStrategy, MemoryStore, RecallOptions,
     StoreOptions,
 };
 
@@ -116,16 +116,14 @@ impl ConsolidationCycleResult {
 pub struct MemoryConsolidationService<S: MemoryStore> {
     store: S,
     config: ConsolidationServiceConfig,
-    _memory_config: MemoryConfig,
 }
 
 impl<S: MemoryStore> MemoryConsolidationService<S> {
     /// Create a new consolidation service.
-    pub fn new(store: S, config: ConsolidationServiceConfig, memory_config: MemoryConfig) -> Self {
+    pub fn new(store: S, config: ConsolidationServiceConfig) -> Self {
         Self {
             store,
             config,
-            _memory_config: memory_config,
         }
     }
 
@@ -181,9 +179,10 @@ impl<S: MemoryStore> MemoryConsolidationService<S> {
     }
 
     /// Prune entries with very low relevance.
-    fn prune_irrelevant(&self, user_id: &str) -> Result<usize> {
+    /// Single-user system - no user_id parameter.
+    fn prune_irrelevant(&self, _user_id: &str) -> Result<usize> {
         let options = RecallOptions::default();
-        let entries = self.store.query(user_id, None, None, &options)?;
+        let entries = self.store.query(None, None, &options)?;
         let mut pruned = 0;
 
         for entry in entries {
@@ -214,9 +213,10 @@ impl<S: MemoryStore> MemoryConsolidationService<S> {
     }
 
     /// Promote entries to higher tiers based on access patterns.
-    fn promote_entries(&self, user_id: &str) -> Result<usize> {
+    /// Single-user system - no user_id parameter.
+    fn promote_entries(&self, _user_id: &str) -> Result<usize> {
         let options = RecallOptions::default();
-        let entries = self.store.query(user_id, None, None, &options)?;
+        let entries = self.store.query(None, None, &options)?;
         let mut promoted = 0;
 
         for entry in entries.iter().take(self.config.batch_size) {
@@ -239,9 +239,10 @@ impl<S: MemoryStore> MemoryConsolidationService<S> {
     }
 
     /// Demote entries to lower tiers based on relevance.
-    fn demote_entries(&self, user_id: &str) -> Result<usize> {
+    /// Single-user system - no user_id parameter.
+    fn demote_entries(&self, _user_id: &str) -> Result<usize> {
         let options = RecallOptions::default();
-        let entries = self.store.query(user_id, None, None, &options)?;
+        let entries = self.store.query(None, None, &options)?;
         let mut demoted = 0;
 
         for entry in entries.iter().take(self.config.batch_size) {
@@ -264,9 +265,10 @@ impl<S: MemoryStore> MemoryConsolidationService<S> {
     }
 
     /// Consolidate similar memories.
-    fn consolidate_similar(&self, user_id: &str) -> Result<(usize, usize)> {
+    /// Single-user system - no user_id parameter.
+    fn consolidate_similar(&self, _user_id: &str) -> Result<(usize, usize)> {
         let options = RecallOptions::default();
-        let entries = self.store.query(user_id, None, None, &options)?;
+        let entries = self.store.query(None, None, &options)?;
 
         // Group entries by tier and content type for consolidation
         let mut groups: HashMap<(String, String), Vec<MemoryEntry>> = HashMap::new();
@@ -303,7 +305,7 @@ impl<S: MemoryStore> MemoryConsolidationService<S> {
 
                 // If we found similar entries, consolidate them
                 if similar_group.len() > 1 {
-                    match self.merge_entries(user_id, &similar_group) {
+                    match self.merge_entries(_user_id, &similar_group) {
                         Ok(merged_count) => {
                             consolidated += merged_count;
                         }
@@ -331,7 +333,8 @@ impl<S: MemoryStore> MemoryConsolidationService<S> {
     }
 
     /// Merge a group of similar entries into one.
-    fn merge_entries(&self, user_id: &str, entries: &[MemoryEntry]) -> Result<usize> {
+    /// Single-user system - user_id parameter is ignored.
+    fn merge_entries(&self, _user_id: &str, entries: &[MemoryEntry]) -> Result<usize> {
         if entries.is_empty() {
             return Ok(0);
         }
@@ -368,16 +371,14 @@ impl<S: MemoryStore> MemoryConsolidationService<S> {
             priority: base.priority,
             confidence: Some(avg_confidence),
             relevance: Some((max_relevance + relevance_boost).min(1.0)),
-            ttl: base.ttl_seconds,
             metadata: base
                 .metadata_json
                 .as_ref()
                 .and_then(|s| serde_json::from_str(s).ok()),
         };
 
-        // Insert merged entry
+        // Insert merged entry (single-user system - no user_id)
         self.store.store(
-            user_id,
             base.session_id.as_deref(),
             base.folder_id.as_deref(),
             tier,

@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         Commands::Session(cmd) => commands::session::execute(cmd, &config).await,
         Commands::Monitor(cmd) => commands::monitor::execute(cmd, &config).await,
         Commands::Learn(cmd) => commands::learn::execute(cmd, &config).await,
-        Commands::Memory(cmd) => commands::memory::execute(cmd, &config),
+        Commands::Memory(cmd) => commands::memory::execute(cmd),
         Commands::Note(cmd) => commands::note::execute(cmd, &config),
         Commands::Notes(cmd) => commands::notes::execute(cmd, &config),
         Commands::Knowledge(cmd) => commands::knowledge::execute(cmd, &config),
@@ -56,6 +56,7 @@ async fn main() -> Result<()> {
         Commands::Ext(cmd) => commands::ext::execute(cmd, &config),
         Commands::Status { json } => commands::status::execute(json, &config).await,
         Commands::Meta(cmd) => commands::meta::execute(cmd, &config).await,
+        Commands::Hook(cmd) => commands::hook::execute(cmd, &config).await,
         Commands::Version => {
             println!("rdv {}", env!("CARGO_PKG_VERSION"));
             Ok(())

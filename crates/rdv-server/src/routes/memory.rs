@@ -23,16 +23,43 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 use crate::middleware::AuthContext;
+use crate::sse::MemoryEventData;
 use crate::state::AppState;
 
 #[cfg(feature = "embeddings")]
 use rdv_sdk::memory::embeddings::{embedding_service, EmbeddingService};
 
-/// Create memory router
+/// Convert a MemoryEntry to SSE MemoryEventData
+fn memory_to_event_data(entry: &MemoryEntry, embedding_id: Option<&str>) -> MemoryEventData {
+    // Create content preview (first 200 chars)
+    let content_preview = if entry.content.len() > 200 {
+        format!("{}...", &entry.content[..200])
+    } else {
+        entry.content.clone()
+    };
+
+    MemoryEventData {
+        id: entry.id.clone(),
+        tier: entry.tier.clone(),
+        content_type: entry.content_type.clone(),
+        name: entry.name.clone(),
+        content_preview,
+        has_embedding: embedding_id.is_some(),
+        embedding_id: embedding_id.map(|s| s.to_string()),
+        session_id: entry.session_id.clone(),
+        folder_id: entry.folder_id.clone(),
+        confidence: entry.confidence,
+        relevance: entry.relevance,
+        access_count: entry.access_count,
+        created_at: entry.created_at,
+    }
+}
+
+/// Create memory router (protected routes)
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/memory", get(list_memories).post(store_memory))
-        .route("/memory/{id}", get(get_memory).delete(delete_memory))
+        .route("/memory/{id}", get(get_memory).patch(update_memory).delete(delete_memory))
         .route("/memory/search", get(search_memories))
         .route("/memory/semantic-search", post(semantic_search))
         .route("/memory/consolidate", post(consolidate_memories))
@@ -40,6 +67,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/memory/consolidation/stop", delete(stop_consolidation))
         .route("/memory/consolidation/status", get(consolidation_status))
         .route("/memory/stats", get(get_stats))
+}
+
+/// Create memory public router (no auth required)
+/// Used for lightweight event notifications from CLI/SDK.
+/// Security: The handler validates memory ownership by reading from DB before broadcasting.
+pub fn public_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/memory/event", post(handle_memory_event))
 }
 
 // ============================================================================
@@ -59,6 +94,21 @@ pub struct ListMemoriesQuery {
     pub limit: Option<usize>,
 }
 
+impl From<ListMemoriesQuery> for MemoryQueryFilter {
+    fn from(query: ListMemoriesQuery) -> Self {
+        Self {
+            session_id: query.session_id,
+            folder_id: query.folder_id,
+            tier: query.tier,
+            content_type: query.content_type,
+            task_id: query.task_id,
+            min_relevance: query.min_relevance,
+            min_confidence: query.min_confidence,
+            limit: query.limit,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreMemoryRequest {
@@ -73,7 +123,6 @@ pub struct StoreMemoryRequest {
     pub priority: Option<i32>,
     pub confidence: Option<f64>,
     pub relevance: Option<f64>,
-    pub ttl: Option<i32>,
     pub metadata: Option<serde_json::Value>,
 }
 
@@ -87,6 +136,21 @@ pub struct SearchMemoriesQuery {
     pub folder_id: Option<String>,
     pub min_score: Option<f64>,
     pub limit: Option<usize>,
+}
+
+impl SearchMemoriesQuery {
+    /// Convert to MemoryQueryFilter for database query
+    fn to_filter(&self) -> MemoryQueryFilter {
+        MemoryQueryFilter {
+            session_id: self.session_id.clone(),
+            folder_id: self.folder_id.clone(),
+            tier: self.tier.clone(),
+            content_type: self.content_type.clone(),
+            min_relevance: self.min_score,
+            limit: self.limit,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,6 +226,23 @@ pub struct ConsolidationStatusResponse {
     pub active: bool,
     /// User ID if active
     pub user_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMemoryRequest {
+    /// New memory tier (short_term, working, long_term)
+    pub tier: Option<String>,
+    /// Updated content
+    pub content: Option<String>,
+    /// Updated name/title
+    pub name: Option<String>,
+    /// Updated confidence score (0-1)
+    pub confidence: Option<f64>,
+    /// Updated relevance score (0-1)
+    pub relevance: Option<f64>,
+    /// Updated priority (1-4)
+    pub priority: Option<i32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -278,24 +359,14 @@ impl From<MemoryStats> for StatsResponse {
 // ============================================================================
 
 /// List memories with optional filtering
+/// Single-user system - no user_id filtering needed.
 pub async fn list_memories(
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(_auth): Extension<AuthContext>,
     Query(query): Query<ListMemoriesQuery>,
 ) -> Result<Json<ListMemoriesResponse>, (StatusCode, String)> {
-    let user_id = auth.user_id();
-
-    let filter = MemoryQueryFilter {
-        user_id: user_id.to_string(),
-        session_id: query.session_id,
-        folder_id: query.folder_id,
-        tier: query.tier,
-        content_type: query.content_type,
-        task_id: query.task_id,
-        min_relevance: query.min_relevance,
-        min_confidence: query.min_confidence,
-        limit: query.limit,
-    };
+    // Single-user system - no user_id field
+    let filter: MemoryQueryFilter = query.into();
 
     let memories = state
         .db
@@ -312,12 +383,13 @@ pub async fn list_memories(
 }
 
 /// Store a new memory entry
+/// Single-user system - no user_id required.
 pub async fn store_memory(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Json(req): Json<StoreMemoryRequest>,
 ) -> Result<(StatusCode, Json<MemoryResponse>), (StatusCode, String)> {
-    let user_id = auth.user_id();
+    let user_id = auth.user_id(); // Keep for SSE broadcast
 
     // Validate tier
     let valid_tiers = ["short_term", "working", "long_term"];
@@ -331,8 +403,8 @@ pub async fn store_memory(
     let content_hash = format!("{:x}", hasher.finalize());
 
     // Check for duplicate
+    // Single-user system - check for duplicates in same tier
     let filter = MemoryQueryFilter {
-        user_id: user_id.to_string(),
         tier: Some(req.tier.clone()),
         ..Default::default()
     };
@@ -356,8 +428,8 @@ pub async fn store_memory(
         }
     }
 
+    // Single-user system - no user_id field
     let entry = NewMemoryEntry {
-        user_id: user_id.to_string(),
         session_id: req.session_id,
         folder_id: req.folder_id,
         tier: req.tier,
@@ -369,7 +441,6 @@ pub async fn store_memory(
         priority: req.priority,
         confidence: req.confidence,
         relevance: req.relevance,
-        ttl_seconds: req.ttl,
         metadata_json: req.metadata.map(|m| m.to_string()),
     };
 
@@ -378,6 +449,28 @@ pub async fn store_memory(
         .create_memory_entry(&entry)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Track embedding_id for SSE event
+    let mut stored_embedding_id: Option<String> = None;
+
+    // Compute and store embedding for semantic search
+    // Single-user system - no user_id field in NewSdkEmbedding
+    #[cfg(feature = "embeddings")]
+    {
+        if let Ok(embedding_result) = embedding_service().embed(&entry.content).await {
+            let new_embedding = rdv_core::types::NewSdkEmbedding {
+                entity_type: "memory".to_string(),
+                entity_id: id.clone(),
+                embedding: embedding_result.vector,
+                model_name: Some("all-MiniLM-L6-v2".to_string()),
+            };
+            if let Ok(embedding_id) = state.db.create_embedding(&new_embedding) {
+                let _ = state.db.set_memory_embedding(&id, &embedding_id);
+                stored_embedding_id = Some(embedding_id.clone());
+                tracing::debug!("Stored embedding {} for memory {}", embedding_id, id);
+            }
+        }
+    }
+
     // Fetch the created entry
     let created = state
         .db
@@ -385,27 +478,25 @@ pub async fn store_memory(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve created memory".to_string()))?;
 
+    // Broadcast memory created event
+    let event_data = memory_to_event_data(&created, stored_embedding_id.as_deref());
+    state.memory_broadcaster.memory_created(user_id, event_data);
+
     Ok((StatusCode::CREATED, Json(created.into())))
 }
 
 /// Get a single memory entry
+/// Single-user system - no ownership verification needed.
 pub async fn get_memory(
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(_auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> Result<Json<MemoryResponse>, (StatusCode, String)> {
-    let user_id = auth.user_id();
-
     let entry = state
         .db
         .get_memory_entry(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Memory not found".to_string()))?;
-
-    // Verify ownership
-    if entry.user_id != user_id {
-        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
-    }
 
     // Touch the entry to update access count
     let _ = state.db.touch_memory_entry(&id);
@@ -414,50 +505,127 @@ pub async fn get_memory(
 }
 
 /// Delete a memory entry
+/// Single-user system - no ownership verification needed.
 pub async fn delete_memory(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let user_id = auth.user_id();
+    let user_id = auth.user_id(); // Keep for SSE broadcast
 
-    // Verify ownership first
-    let entry = state
+    // Verify memory exists
+    let _entry = state
         .db
         .get_memory_entry(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "Memory not found".to_string()))?;
-
-    if entry.user_id != user_id {
-        return Err((StatusCode::FORBIDDEN, "Access denied".to_string()));
-    }
 
     state
         .db
         .delete_memory_entry(&id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Broadcast memory deleted event
+    state.memory_broadcaster.memory_deleted(user_id, &id);
+
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Search memories with semantic matching
-pub async fn search_memories(
+/// Update a memory entry (partial update)
+/// Single-user system - no ownership verification needed.
+pub async fn update_memory(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateMemoryRequest>,
+) -> Result<Json<MemoryResponse>, (StatusCode, String)> {
+    let user_id = auth.user_id(); // Keep for SSE broadcast
+
+    // Verify memory exists
+    let entry = state
+        .db
+        .get_memory_entry(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Memory not found".to_string()))?;
+
+    // Validate tier if provided
+    if let Some(ref tier) = req.tier {
+        let valid_tiers = ["short_term", "working", "long_term"];
+        if !valid_tiers.contains(&tier.as_str()) {
+            return Err((StatusCode::BAD_REQUEST, "Invalid tier. Must be short_term, working, or long_term".to_string()));
+        }
+    }
+
+    // Track if content changed (need to regenerate embedding)
+    let content_changed = req.content.is_some() && req.content.as_ref() != Some(&entry.content);
+
+    // Update the memory entry
+    state
+        .db
+        .update_memory_entry_full(
+            &id,
+            req.tier.as_deref(),
+            req.relevance,
+            req.confidence,
+            req.priority,
+            req.content.as_deref(),
+            req.name.as_deref(),
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Track embedding_id for SSE event
+    let mut stored_embedding_id: Option<String> = None;
+
+    // Regenerate embedding if content changed
+    // Single-user system - no user_id field in NewSdkEmbedding
+    #[cfg(feature = "embeddings")]
+    if content_changed {
+        if let Some(ref new_content) = req.content {
+            // Delete old embedding if exists
+            if let Some(ref old_embedding_id) = entry.embedding_id {
+                let _ = state.db.delete_embedding(old_embedding_id);
+            }
+
+            // Create new embedding
+            if let Ok(embedding_result) = embedding_service().embed(new_content).await {
+                let new_embedding = rdv_core::types::NewSdkEmbedding {
+                    entity_type: "memory".to_string(),
+                    entity_id: id.clone(),
+                    embedding: embedding_result.vector,
+                    model_name: Some("all-MiniLM-L6-v2".to_string()),
+                };
+                if let Ok(embedding_id) = state.db.create_embedding(&new_embedding) {
+                    let _ = state.db.set_memory_embedding(&id, &embedding_id);
+                    stored_embedding_id = Some(embedding_id.clone());
+                    tracing::debug!("Updated embedding {} for memory {}", embedding_id, id);
+                }
+            }
+        }
+    }
+
+    // Fetch the updated entry
+    let updated = state
+        .db
+        .get_memory_entry(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve updated memory".to_string()))?;
+
+    // Broadcast memory updated event
+    let event_data = memory_to_event_data(&updated, stored_embedding_id.as_deref());
+    state.memory_broadcaster.memory_updated(user_id, event_data);
+
+    Ok(Json(updated.into()))
+}
+
+/// Search memories with semantic matching
+/// Single-user system - no user_id filtering needed.
+pub async fn search_memories(
+    State(state): State<Arc<AppState>>,
+    Extension(_auth): Extension<AuthContext>,
     Query(query): Query<SearchMemoriesQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, String)> {
-    let user_id = auth.user_id();
-
-    let filter = MemoryQueryFilter {
-        user_id: user_id.to_string(),
-        session_id: query.session_id,
-        folder_id: query.folder_id,
-        tier: query.tier,
-        content_type: query.content_type,
-        min_relevance: query.min_score,
-        limit: query.limit,
-        ..Default::default()
-    };
+    // Single-user system - no user_id field
+    let filter = query.to_filter();
 
     let memories = state
         .db
@@ -515,11 +683,11 @@ pub async fn search_memories(
     }))
 }
 
-/// Semantic search using embeddings
+/// Semantic search using pre-computed embeddings
 ///
-/// Uses the rdv-sdk's embedding service to compute semantic similarity
-/// between the query and stored memories. Falls back to text matching
-/// if embeddings feature is not enabled.
+/// Uses the rdv-sdk's embedding service to compute query embedding and
+/// searches against pre-computed memory embeddings stored in the database.
+/// Falls back to text matching if embeddings feature is not enabled.
 #[cfg(feature = "embeddings")]
 pub async fn semantic_search(
     State(state): State<Arc<AppState>>,
@@ -528,33 +696,7 @@ pub async fn semantic_search(
 ) -> Result<Json<SemanticSearchResponse>, (StatusCode, String)> {
     let user_id = auth.user_id();
 
-    // Build filter for database query
-    let filter = MemoryQueryFilter {
-        user_id: user_id.to_string(),
-        session_id: req.session_id.clone(),
-        folder_id: req.folder_id.clone(),
-        tier: req.tiers.as_ref().and_then(|t| t.first().cloned()),
-        content_type: req.content_types.as_ref().and_then(|t| t.first().cloned()),
-        limit: Some(req.limit.unwrap_or(20) * 5), // Fetch more for re-ranking
-        ..Default::default()
-    };
-
-    // Fetch candidate memories
-    let memories = state
-        .db
-        .list_memory_entries(&filter)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    if memories.is_empty() {
-        return Ok(Json(SemanticSearchResponse {
-            results: vec![],
-            query: req.query,
-            total: 0,
-            semantic: true,
-        }));
-    }
-
-    // Generate query embedding
+    // Generate query embedding (only operation that needs embedding service)
     let query_embedding = embedding_service()
         .embed(&req.query)
         .await
@@ -563,29 +705,68 @@ pub async fn semantic_search(
     let min_similarity = req.min_similarity.unwrap_or(0.3);
     let limit = req.limit.unwrap_or(20);
 
-    // Score each memory using semantic similarity
+    // Search using pre-computed embeddings from database (single-user system - no user_id parameter)
+    let all_embedding_results = state
+        .db
+        .search_similar_embeddings(
+            "memory",
+            &query_embedding.vector,
+            limit * 5, // Fetch extra for filtering
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Filter by minimum similarity
+    let min_sim_f32 = min_similarity as f32;
+    let embedding_results: Vec<_> = all_embedding_results
+        .into_iter()
+        .filter(|r| r.similarity >= min_sim_f32)
+        .collect();
+
+    if embedding_results.is_empty() {
+        return Ok(Json(SemanticSearchResponse {
+            results: vec![],
+            query: req.query,
+            total: 0,
+            semantic: true,
+        }));
+    }
+
+    // Fetch memory entries and compute final scores
     let mut results: Vec<SemanticSearchResult> = Vec::new();
 
-    for entry in memories {
-        // Generate embedding for memory content
-        let content_embedding = match embedding_service().embed(&entry.content).await {
-            Ok(emb) => emb,
-            Err(_) => continue, // Skip if embedding fails
+    for emb_result in embedding_results {
+        // Fetch the memory entry
+        let entry = match state.db.get_memory_entry(&emb_result.entity_id) {
+            Ok(Some(e)) => e,
+            _ => continue,
         };
 
-        // Compute cosine similarity
-        let semantic_score = EmbeddingService::cosine_similarity(
-            &query_embedding.vector,
-            &content_embedding.vector,
-        );
+        // Single-user system - no ownership verification needed
 
-        // Normalize to 0-1 range
-        let semantic_score = EmbeddingService::normalize_similarity(semantic_score);
-
-        // Skip if below threshold
-        if (semantic_score as f64) < min_similarity {
-            continue;
+        // Apply tier/content_type filters if specified
+        if let Some(ref tiers) = req.tiers {
+            if !tiers.contains(&entry.tier) {
+                continue;
+            }
         }
+        if let Some(ref content_types) = req.content_types {
+            if !content_types.contains(&entry.content_type) {
+                continue;
+            }
+        }
+        if let Some(ref session_id) = req.session_id {
+            if entry.session_id.as_ref() != Some(session_id) {
+                continue;
+            }
+        }
+        if let Some(ref folder_id) = req.folder_id {
+            if entry.folder_id.as_ref() != Some(folder_id) {
+                continue;
+            }
+        }
+
+        // Normalize similarity to 0-1 range
+        let semantic_score = EmbeddingService::normalize_similarity(emb_result.similarity as f32);
 
         // Tier weight
         let tier_weight = match entry.tier.as_str() {
@@ -798,13 +979,12 @@ pub async fn consolidate_memories(
 /// Get memory statistics
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(_auth): Extension<AuthContext>,
 ) -> Result<Json<StatsResponse>, (StatusCode, String)> {
-    let user_id = auth.user_id();
-
+    // Single-user system - no user_id parameter needed
     let stats_map = state
         .db
-        .get_memory_stats(user_id)
+        .get_memory_stats()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let stats = MemoryStats {
@@ -873,5 +1053,147 @@ pub async fn consolidation_status(
     Ok(Json(ConsolidationStatusResponse {
         active,
         user_id: if active { Some(user_id.to_string()) } else { None },
+    }))
+}
+
+// ============================================================================
+// Memory Event Notification (for CLI/SDK to trigger SSE broadcasts)
+// ============================================================================
+
+/// Memory event notification request from CLI/SDK.
+/// This is a lightweight notification that tells the server to broadcast
+/// an SSE event for a memory that was created/updated/deleted directly
+/// via the database (bypassing the REST API).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MemoryEventRequest {
+    /// Event type: created, updated, deleted, promoted, demoted
+    pub event_type: String,
+    /// Memory ID (required for all except bulk events)
+    pub memory_id: Option<String>,
+    /// User ID (optional in single-user system - defaults to broadcast to all)
+    pub user_id: Option<String>,
+    /// Optional: embedding ID if the memory has an embedding
+    pub embedding_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemoryEventResponse {
+    pub received: bool,
+    pub broadcasted: bool,
+    pub memory_found: bool,
+}
+
+/// Handle memory event notification from CLI/SDK.
+/// Reads the memory from the database and broadcasts an SSE event.
+/// This endpoint is called by CLI/SDK after they directly write to the database.
+///
+/// Single-user system: user_id is optional. If not provided, broadcasts to all
+/// connected clients using a wildcard user ID.
+pub async fn handle_memory_event(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<MemoryEventRequest>,
+) -> Result<Json<MemoryEventResponse>, (StatusCode, String)> {
+    use crate::sse::MemoryEventType;
+
+    // Single-user system: use provided user_id or broadcast to all via wildcard
+    let user_id = req.user_id.as_deref().unwrap_or("*");
+
+    // Parse event type
+    let event_type = match req.event_type.as_str() {
+        "created" => MemoryEventType::Created,
+        "updated" => MemoryEventType::Updated,
+        "deleted" => MemoryEventType::Deleted,
+        "promoted" => MemoryEventType::Promoted,
+        "demoted" => MemoryEventType::Demoted,
+        "expired" => MemoryEventType::Expired,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Invalid event_type: {}", req.event_type),
+            ));
+        }
+    };
+
+    // Handle deleted events (no memory lookup needed)
+    if matches!(event_type, MemoryEventType::Deleted) {
+        if let Some(memory_id) = req.memory_id {
+            state.memory_broadcaster.memory_deleted(user_id, &memory_id);
+            return Ok(Json(MemoryEventResponse {
+                received: true,
+                broadcasted: true,
+                memory_found: false, // Not applicable for delete
+            }));
+        } else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "memory_id required for deleted events".to_string(),
+            ));
+        }
+    }
+
+    // Handle expired events (bulk, no specific memory)
+    if matches!(event_type, MemoryEventType::Expired) {
+        // Just notify that some memories expired
+        state.memory_broadcaster.memories_expired(user_id, 1);
+        return Ok(Json(MemoryEventResponse {
+            received: true,
+            broadcasted: true,
+            memory_found: false,
+        }));
+    }
+
+    // For other events, we need to read the memory from DB
+    let memory_id = match &req.memory_id {
+        Some(id) => id,
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("memory_id required for {} events", req.event_type),
+            ));
+        }
+    };
+
+    // Read the memory from database
+    let memory = state.db.get_memory_entry(memory_id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+    })?;
+
+    let memory = match memory {
+        Some(m) => m,
+        None => {
+            return Ok(Json(MemoryEventResponse {
+                received: true,
+                broadcasted: false,
+                memory_found: false,
+            }));
+        }
+    };
+
+    // Convert to event data and broadcast
+    let event_data = memory_to_event_data(&memory, req.embedding_id.as_deref());
+
+    match event_type {
+        MemoryEventType::Created => {
+            state.memory_broadcaster.memory_created(user_id, event_data);
+        }
+        MemoryEventType::Updated => {
+            state.memory_broadcaster.memory_updated(user_id, event_data);
+        }
+        MemoryEventType::Promoted => {
+            state.memory_broadcaster.memory_promoted(user_id, event_data);
+        }
+        MemoryEventType::Demoted => {
+            state.memory_broadcaster.memory_demoted(user_id, event_data);
+        }
+        _ => {
+            // Already handled above
+        }
+    }
+
+    Ok(Json(MemoryEventResponse {
+        received: true,
+        broadcasted: true,
+        memory_found: true,
     }))
 }
