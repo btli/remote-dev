@@ -15,6 +15,264 @@ use crate::config::{Config, FolderConfig};
 use crate::error::RdvError;
 use crate::tmux;
 
+/// Memory recall agent - retrieves relevant memories before main agent starts
+const MEMORY_RECALL_AGENT: &str = r#"---
+name: memory-recall
+description: Retrieves relevant memories before the main coding agent begins work. Use this agent at the start of a task to surface historical context, project conventions, patterns, and gotchas from the memory system. Invoke when working on features that may have prior context or when the user's query involves project architecture, conventions, or debugging.
+tools: Read, Glob, Grep
+---
+
+# Memory Recall Agent
+
+You are a context retrieval specialist. Your job is to search the memory system for relevant information that will help the main coding agent complete the user's task more effectively.
+
+## Your Task
+
+Given a user query or task description, you will:
+
+1. **Analyze the Query**: Extract key technical terms, problem domain, and action type
+2. **Search Memories**: Use the `rdv:memory_search` MCP tool to find relevant memories
+3. **Search Knowledge**: Use the `rdv:knowledge_get` MCP tool to find project-specific knowledge
+4. **Filter and Prioritize**: Rank results by relevance and importance
+5. **Format Context**: Return a structured context block for the main agent
+
+## Search Strategy
+
+### Step 1: Extract Keywords
+From the user's query, identify:
+- Technical terms (languages, frameworks, libraries)
+- Problem domain (authentication, database, API, UI)
+- Action type (implement, fix, refactor, debug, explain)
+- File or component names mentioned
+
+### Step 2: Perform Memory Search
+
+Use the MCP tool:
+
+```
+rdv:memory_search({
+  query: "<extracted keywords>",
+  limit: 10,
+  minScore: 0.3
+})
+```
+
+### Step 3: Prioritize Results
+
+Rank memories by:
+1. **Relevance score** from semantic search
+2. **Content type priority**:
+   - `gotcha` (1.0) - Critical warnings, must include
+   - `pattern` (0.9) - Reusable solutions
+   - `convention` (0.85) - Project rules
+   - `skill` (0.8) - How-to knowledge
+   - `observation` (0.6) - General notes
+3. **Tier weight**: long_term > working > short_term
+
+### Step 4: Format Output
+
+Return a markdown block with this structure:
+
+```markdown
+## Retrieved Context from Memory System
+
+### Project Knowledge
+- **[name]** ([content_type]): [brief summary or full content if critical]
+
+### Architecture & Conventions
+- [relevant architecture decisions]
+
+### Gotchas & Warnings
+- [any gotchas that apply to this task]
+
+### Related Patterns
+- [patterns that might help]
+
+### Commands & Skills
+- [relevant commands or procedures]
+```
+
+## Important Guidelines
+
+- **Be selective**: Only include memories that are directly relevant to the task
+- **Prioritize gotchas**: Always surface warnings and gotchas - these prevent mistakes
+- **Include architecture**: For implementation tasks, include relevant architecture conventions
+- **Summarize when appropriate**: For long memories, provide a summary unless the full content is critical
+- **Note gaps**: If you don't find relevant memories, say so explicitly
+"#;
+
+/// Claude Code settings.local.json with memory hooks
+const CLAUDE_SETTINGS_LOCAL: &str = r#"{
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook compact"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook session-start --agent claude"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook post-tool-use \"$TOOL_NAME\" --input \"$TOOL_INPUT\" --output \"$TOOL_OUTPUT\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook stop --agent claude --reason \"$STOP_REASON\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook session-end --agent claude"
+          }
+        ]
+      }
+    ]
+  }
+}
+"#;
+
+/// Memory capture agent - captures important context as working memories
+const MEMORY_CAPTURE_AGENT: &str = r#"---
+name: memory-capture
+description: Captures important context as working memories during a coding session. Use this agent after significant discoveries, decisions, or when the user explicitly wants to remember something. Invoke when patterns are discovered, gotchas are encountered, or important context should be preserved for future sessions.
+tools: Read, Glob, Grep
+---
+
+# Memory Capture Agent
+
+You are a context preservation specialist. Your job is to identify and store important information as memories that will help future coding sessions.
+
+## Your Task
+
+Monitor the conversation and capture:
+
+1. **Discoveries**: New information learned about the codebase
+2. **Decisions**: Architectural or implementation decisions made
+3. **Gotchas**: Problems encountered and their solutions
+4. **Patterns**: Reusable patterns identified
+5. **Context**: Important context that would be lost after the session
+
+## When to Capture
+
+Capture memories when:
+- A bug is fixed (capture the gotcha)
+- A pattern is discovered or explained
+- An architectural decision is made
+- The user explicitly asks to remember something
+- Important codebase knowledge is revealed
+- A workaround or hack is implemented (document why)
+
+## Memory Tiers
+
+Choose the appropriate tier based on importance:
+
+| Tier | TTL | Use For |
+|------|-----|---------|
+| `short_term` | 1 hour | Temporary notes, current task context |
+| `working` | 24 hours | Session context, in-progress work |
+| `long_term` | Permanent | Conventions, patterns, gotchas, architecture |
+
+## Content Types
+
+Use the appropriate content type:
+
+| Type | Description |
+|------|-------------|
+| `observation` | General discovery or note |
+| `convention` | Project rule or standard |
+| `pattern` | Reusable solution |
+| `gotcha` | Warning, pitfall, or bug fix |
+| `skill` | Command or procedure |
+| `tool` | Tool usage or integration |
+
+## How to Store
+
+Use the `rdv:memory_store` MCP tool:
+
+```
+rdv:memory_store({
+  tier: "long_term",
+  contentType: "gotcha",
+  content: "Description of the issue and solution",
+  name: "Short descriptive name",
+  confidence: 0.9,
+  relevance: 0.8
+})
+```
+
+## Memory Format Guidelines
+
+### For Gotchas
+```
+**Problem**: [What went wrong]
+**Cause**: [Root cause]
+**Solution**: [How to fix]
+**Prevention**: [How to avoid in future]
+```
+
+### For Patterns
+```
+**Pattern**: [Name]
+**Context**: [When to use]
+**Implementation**: [How to implement]
+**Example**: [Code or reference]
+```
+
+### For Conventions
+```
+**Rule**: [The convention]
+**Rationale**: [Why this convention exists]
+**Enforcement**: [How it's enforced]
+```
+
+### For Skills
+```
+**Command**: [The command or procedure]
+**Purpose**: [What it does]
+**Usage**: [How to use it]
+```
+
+## Important Guidelines
+
+- **Be concise**: Memories should be scannable, not essays
+- **Be specific**: Include file paths, function names, exact commands
+- **Be actionable**: Memories should help someone act, not just inform
+- **Avoid duplicates**: Check if similar memory exists before creating
+- **Use markdown**: Format for readability with headers, lists, code blocks
+"#;
+
 pub async fn execute(cmd: FolderCommand, config: &Config) -> Result<()> {
     match cmd.action {
         FolderAction::Add { path, name } => add(&path, name.as_deref(), config).await,
@@ -105,6 +363,35 @@ async fn init(path: &str, _config: &Config) -> Result<()> {
     std::fs::create_dir_all(&orch_dir)?;
     std::fs::create_dir_all(&knowledge_dir)?;
 
+    // Create .claude/agents directory for subagents
+    let agents_dir = folder_path.join(".claude").join("agents");
+    std::fs::create_dir_all(&agents_dir)?;
+
+    // Create memory-recall subagent
+    let memory_recall_path = agents_dir.join("memory-recall.md");
+    if !memory_recall_path.exists() {
+        std::fs::write(&memory_recall_path, MEMORY_RECALL_AGENT)?;
+        println!("  {} Created memory-recall agent", "✓".green());
+    }
+
+    // Create memory-capture subagent
+    let memory_capture_path = agents_dir.join("memory-capture.md");
+    if !memory_capture_path.exists() {
+        std::fs::write(&memory_capture_path, MEMORY_CAPTURE_AGENT)?;
+        println!("  {} Created memory-capture agent", "✓".green());
+    }
+
+    // Create Claude Code settings.local.json with memory hooks
+    let claude_dir = folder_path.join(".claude");
+    std::fs::create_dir_all(&claude_dir)?;
+    let settings_local_path = claude_dir.join("settings.local.json");
+    if !settings_local_path.exists() {
+        std::fs::write(&settings_local_path, CLAUDE_SETTINGS_LOCAL)?;
+        println!("  {} Created Claude Code hooks (settings.local.json)", "✓".green());
+    } else {
+        println!("  {} Claude Code hooks already exist", "→".yellow());
+    }
+
     // Create default config
     let folder_config = FolderConfig::default();
 
@@ -125,6 +412,7 @@ async fn init(path: &str, _config: &Config) -> Result<()> {
 
     println!("{}", "✓ Folder orchestrator initialized".green());
     println!("  Config: {:?}", orch_dir.join("config.toml"));
+    println!("  Agents: {:?}", agents_dir);
 
     Ok(())
 }

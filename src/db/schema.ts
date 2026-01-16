@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, blob, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 import type { SplitDirection } from "@/types/split";
@@ -161,6 +161,8 @@ export const sessionFolders = sqliteTable(
     parentId: text("parent_id"),
     name: text("name").notNull(),
     path: text("path"), // Filesystem path for folder-based orchestration
+    color: text("color"), // Optional color for UI display
+    icon: text("icon"), // Optional icon identifier for UI display
     collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -1989,9 +1991,9 @@ export const sdkMemoryEntries = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    // userId is nullable for single-user CLI operations (hooks, rdv commands)
+    // When present, cascades on user deletion
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     sessionId: text("session_id").references(() => terminalSessions.id, {
       onDelete: "set null",
     }),
@@ -2416,9 +2418,8 @@ export const sdkNotes = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    // userId is nullable for single-user CLI operations
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     sessionId: text("session_id").references(() => terminalSessions.id, {
       onDelete: "set null",
     }),
@@ -2498,9 +2499,8 @@ export const sdkInsights = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    // userId is nullable for single-user CLI operations
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     folderId: text("folder_id").references(() => sessionFolders.id, {
       onDelete: "set null",
     }),
@@ -2589,5 +2589,43 @@ export const sdkInsightApplications = sqliteTable(
     index("sdk_insight_app_session_idx").on(table.sessionId),
     index("sdk_insight_app_user_idx").on(table.userId),
     index("sdk_insight_app_feedback_idx").on(table.insightId, table.feedback),
+  ]
+);
+
+/**
+ * SDK Embedding - Vector embeddings for semantic search.
+ *
+ * Stores embedding vectors for memories, notes, and insights.
+ * Uses all-MiniLM-L6-v2 model (384 dimensions, ~1.5KB per embedding).
+ */
+export const sdkEmbeddings = sqliteTable(
+  "sdk_embedding",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Entity type: memory, note, or insight
+    entityType: text("entity_type")
+      .$type<"memory" | "note" | "insight">()
+      .notNull(),
+    // Entity ID (foreign key to respective table)
+    entityId: text("entity_id").notNull(),
+    // userId is nullable for single-user CLI operations
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+    // Embedding vector stored as BLOB (384 floats = 1536 bytes)
+    embeddingBlob: blob("embedding_blob", { mode: "buffer" }).notNull(),
+    // Model used to generate embedding (for future migrations)
+    modelName: text("model_name").notNull().default("all-MiniLM-L6-v2"),
+    // Number of dimensions (should be 384 for MiniLM)
+    dimensions: integer("dimensions").notNull().default(384),
+    // Timestamp
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("sdk_embedding_entity_idx").on(table.entityType, table.entityId),
+    index("sdk_embedding_user_idx").on(table.userId),
+    index("sdk_embedding_type_user_idx").on(table.entityType, table.userId),
   ]
 );
