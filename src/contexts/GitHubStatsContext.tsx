@@ -182,7 +182,6 @@ export function GitHubStatsProvider({
         totalNewPRs: data.changes.totalPRs,
         totalNewIssues: data.changes.totalIssues,
       });
-      dispatch({ type: "SET_LAST_REFRESH", lastRefresh: new Date() });
     } catch (error) {
       const err = error as Error;
       dispatch({ type: "SET_ERROR", error: err.message });

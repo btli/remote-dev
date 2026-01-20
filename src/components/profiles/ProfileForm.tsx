@@ -78,21 +78,13 @@ export function ProfileForm({
     setError(null);
 
     try {
-      if (isCreating) {
-        await onSubmit({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          provider,
-          isDefault,
-        } as CreateAgentProfileInput);
-      } else {
-        await onSubmit({
-          name: name.trim(),
-          description: description.trim() || undefined,
-          provider,
-          isDefault,
-        } as UpdateAgentProfileInput);
-      }
+      const input = {
+        name: name.trim(),
+        description: description.trim() || undefined,
+        provider,
+        isDefault,
+      };
+      await onSubmit(input);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save profile");
     } finally {

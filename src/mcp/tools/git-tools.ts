@@ -5,11 +5,11 @@
  * Essential for feature branch workflows.
  */
 import { z } from "zod";
-import { createTool } from "../registry";
-import { successResult } from "../utils/error-handler";
+import { createTool } from "../registry.js";
+import { successResult } from "../utils/error-handler.js";
 import * as WorktreeService from "@/services/worktree-service";
 import * as GitHubService from "@/services/github-service";
-import type { RegisteredTool } from "../types";
+import type { RegisteredTool } from "../types.js";
 
 /**
  * git_validate_repo - Check if a path is a valid git repository

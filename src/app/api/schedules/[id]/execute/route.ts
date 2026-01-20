@@ -24,12 +24,18 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
   } catch (error) {
     console.error("Error executing schedule:", error);
     if (error instanceof ScheduleService.ScheduleServiceError) {
-      const status =
-        error.code === "SCHEDULE_NOT_FOUND" || error.code === "SESSION_NOT_FOUND"
-          ? 404
-          : error.code === "SESSION_CLOSED"
-          ? 400
-          : 500;
+      let status: number;
+      switch (error.code) {
+        case "SCHEDULE_NOT_FOUND":
+        case "SESSION_NOT_FOUND":
+          status = 404;
+          break;
+        case "SESSION_CLOSED":
+          status = 400;
+          break;
+        default:
+          status = 500;
+      }
       return errorResponse(error.message, status, error.code);
     }
     return errorResponse("Failed to execute schedule", 500);

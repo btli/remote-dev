@@ -6,7 +6,7 @@ import { parse } from "url";
 import { execFile, execFileSync } from "child_process";
 import { createHmac, timingSafeEqual } from "crypto";
 import { resolve as pathResolve } from "path";
-import { schedulerOrchestrator } from "../services/scheduler-orchestrator";
+import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 
 /**
  * Validate a tmux session name to prevent command injection.
@@ -207,110 +207,84 @@ function attachToTmuxSession(
   return ptyProcess;
 }
 
-/**
- * Handle internal API requests (scheduler notifications, health checks)
- */
-async function handleInternalApi(
-  req: IncomingMessage,
-  res: ServerResponse
-): Promise<boolean> {
+function sendJson(res: ServerResponse, status: number, data: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+}
+
+async function readRequestBody(req: IncomingMessage): Promise<string> {
+  let body = "";
+  await new Promise<void>((resolve) => {
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", resolve);
+  });
+  return body;
+}
+
+async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const { pathname } = parse(req.url || "", true);
 
-  // Health check endpoint
   if (pathname === "/health" && req.method === "GET") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", scheduler: schedulerOrchestrator.isStarted() }));
+    sendJson(res, 200, { status: "ok", scheduler: schedulerOrchestrator.isStarted() });
     return true;
   }
 
-  // Internal scheduler API - requires internal secret
-  if (pathname?.startsWith("/internal/scheduler/")) {
-    const internalSecret = getAuthSecret();
-    const authHeader = req.headers.authorization;
+  if (!pathname?.startsWith("/internal/scheduler/")) {
+    return false;
+  }
 
-    if (authHeader !== `Bearer ${internalSecret}`) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Unauthorized" }));
-      return true;
-    }
-
-    // Parse request body for POST requests
-    let body = "";
-    if (req.method === "POST") {
-      await new Promise<void>((resolve) => {
-        req.on("data", (chunk) => (body += chunk));
-        req.on("end", resolve);
-      });
-    }
-
-    const action = pathname.replace("/internal/scheduler/", "");
-
-    try {
-      switch (action) {
-        case "add": {
-          const { scheduleId } = JSON.parse(body);
-          await schedulerOrchestrator.addJob(scheduleId);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-          break;
-        }
-        case "update": {
-          const { scheduleId } = JSON.parse(body);
-          await schedulerOrchestrator.updateJob(scheduleId);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-          break;
-        }
-        case "remove": {
-          const { scheduleId } = JSON.parse(body);
-          schedulerOrchestrator.removeJob(scheduleId);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-          break;
-        }
-        case "pause": {
-          const { scheduleId } = JSON.parse(body);
-          schedulerOrchestrator.pauseJob(scheduleId);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-          break;
-        }
-        case "resume": {
-          const { scheduleId } = JSON.parse(body);
-          schedulerOrchestrator.resumeJob(scheduleId);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-          break;
-        }
-        case "remove-session": {
-          const { sessionId } = JSON.parse(body);
-          schedulerOrchestrator.removeSessionJobs(sessionId);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ success: true }));
-          break;
-        }
-        case "status": {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({
-            running: schedulerOrchestrator.isStarted(),
-            jobCount: schedulerOrchestrator.getJobCount(),
-            jobs: schedulerOrchestrator.getStatus(),
-          }));
-          break;
-        }
-        default:
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Unknown action" }));
-      }
-    } catch (error) {
-      console.error("[InternalAPI] Scheduler error:", error);
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Internal error" }));
-    }
+  const authHeader = req.headers.authorization;
+  if (authHeader !== `Bearer ${getAuthSecret()}`) {
+    sendJson(res, 401, { error: "Unauthorized" });
     return true;
   }
 
-  return false;
+  const body = req.method === "POST" ? await readRequestBody(req) : "";
+  const action = pathname.replace("/internal/scheduler/", "");
+
+  try {
+    const parsed = body ? JSON.parse(body) : {};
+
+    switch (action) {
+      case "add":
+        await schedulerOrchestrator.addJob(parsed.scheduleId);
+        sendJson(res, 200, { success: true });
+        break;
+      case "update":
+        await schedulerOrchestrator.updateJob(parsed.scheduleId);
+        sendJson(res, 200, { success: true });
+        break;
+      case "remove":
+        schedulerOrchestrator.removeJob(parsed.scheduleId);
+        sendJson(res, 200, { success: true });
+        break;
+      case "pause":
+        schedulerOrchestrator.pauseJob(parsed.scheduleId);
+        sendJson(res, 200, { success: true });
+        break;
+      case "resume":
+        schedulerOrchestrator.resumeJob(parsed.scheduleId);
+        sendJson(res, 200, { success: true });
+        break;
+      case "remove-session":
+        schedulerOrchestrator.removeSessionJobs(parsed.sessionId);
+        sendJson(res, 200, { success: true });
+        break;
+      case "status":
+        sendJson(res, 200, {
+          running: schedulerOrchestrator.isStarted(),
+          jobCount: schedulerOrchestrator.getJobCount(),
+          jobs: schedulerOrchestrator.getStatus(),
+        });
+        break;
+      default:
+        sendJson(res, 404, { error: "Unknown action" });
+    }
+  } catch (error) {
+    console.error("[InternalAPI] Scheduler error:", error);
+    sendJson(res, 500, { error: "Internal error" });
+  }
+  return true;
 }
 
 interface ServerOptions {

@@ -1,7 +1,7 @@
 import { signOut } from "@/auth";
 import { getAuthSession } from "@/lib/auth-utils";
 import { db } from "@/db";
-import { terminalSessions, accounts } from "@/db/schema";
+import { terminalSessions, accounts, sessionFolders } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
@@ -36,6 +36,29 @@ export default async function Home() {
     orderBy: (sessions, { asc }) => [asc(sessions.tabOrder)],
   });
 
+  // Fetch user's folders
+  const dbFolders = await db.query.sessionFolders.findMany({
+    where: eq(sessionFolders.userId, session.user.id),
+    orderBy: (folders, { asc }) => [asc(folders.sortOrder)],
+  });
+
+  // Build sessionFolders map (sessionId -> folderId) from sessions that have a folderId
+  const sessionFoldersMap: Record<string, string> = {};
+  for (const s of dbSessions) {
+    if (s.folderId) {
+      sessionFoldersMap[s.id] = s.folderId;
+    }
+  }
+
+  // Map database folders to TypeScript type
+  const initialFolders = dbFolders.map((f) => ({
+    id: f.id,
+    parentId: f.parentId ?? null,
+    name: f.name,
+    collapsed: f.collapsed ?? false,
+    sortOrder: f.sortOrder ?? 0,
+  }));
+
   // Check if GitHub is connected
   const githubAccount = await db.query.accounts.findFirst({
     where: and(
@@ -69,40 +92,39 @@ export default async function Home() {
 
   return (
     <PreferencesProvider>
-      <FolderProvider>
+      <FolderProvider initialFolders={initialFolders} initialSessionFolders={sessionFoldersMap}>
         <SecretsProvider>
           <ProfileProvider>
             <TemplateProvider>
               <RecordingProvider>
                 <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
                   <GitHubIssuesProvider>
-                  <SessionProvider initialSessions={initialSessions}>
-                    <SplitProvider>
-                      <TrashProvider>
-                        <PortProvider>
-                          <ScheduleProvider>
-                          <div className="flex h-screen flex-col bg-background">
-                          {/* Header with glassmorphism - hidden on mobile, shown in sidebar instead */}
-                          <Header
-                            isGitHubConnected={isGitHubConnected}
-                            userEmail={session.user.email || ""}
-                            onSignOut={async () => {
-                              "use server";
-                              await signOut();
-                            }}
-                          />
-
-                          {/* Main content */}
-                          <SessionManager isGitHubConnected={isGitHubConnected} />
-                        </div>
-                          </ScheduleProvider>
-                        </PortProvider>
-                      </TrashProvider>
-                    </SplitProvider>
-                </SessionProvider>
+                    <SessionProvider initialSessions={initialSessions}>
+                      <SplitProvider>
+                        <TrashProvider>
+                          <PortProvider>
+                            <ScheduleProvider>
+                              <div className="flex h-screen flex-col bg-background">
+                                {/* Header - hidden on mobile, shown in sidebar instead */}
+                                <Header
+                                  isGitHubConnected={isGitHubConnected}
+                                  userEmail={session.user.email || ""}
+                                  onSignOut={async () => {
+                                    "use server";
+                                    await signOut();
+                                  }}
+                                />
+                                {/* Main content */}
+                                <SessionManager isGitHubConnected={isGitHubConnected} />
+                              </div>
+                            </ScheduleProvider>
+                          </PortProvider>
+                        </TrashProvider>
+                      </SplitProvider>
+                    </SessionProvider>
                   </GitHubIssuesProvider>
-              </GitHubStatsProvider>
-            </RecordingProvider>
+                </GitHubStatsProvider>
+              </RecordingProvider>
             </TemplateProvider>
           </ProfileProvider>
         </SecretsProvider>

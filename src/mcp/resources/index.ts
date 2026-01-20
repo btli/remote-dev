@@ -3,10 +3,10 @@
  *
  * Aggregates all resources from domain-specific modules.
  */
-import { sessionResources } from "./session-resources";
-import { folderResources } from "./folder-resources";
-import { matchUri } from "../registry";
-import type { RegisteredResource } from "../types";
+import { sessionResources } from "./session-resources.js";
+import { folderResources } from "./folder-resources.js";
+import { matchUri } from "../registry.js";
+import type { RegisteredResource } from "../types.js";
 
 /**
  * All registered MCP resources:

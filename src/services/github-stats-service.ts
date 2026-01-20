@@ -90,34 +90,10 @@ export async function getEnrichedRepositories(
     const repoPRs = prsMap.get(repo.id) ?? [];
     const [owner] = repo.fullName.split("/");
 
-    // Parse JSON fields
-    let ciStatusDetails = null;
-    let recentCommits: CommitInfo[] = [];
-    let branchProtection: BranchProtection | null = null;
-
-    if (stat?.ciStatusDetails) {
-      try {
-        ciStatusDetails = JSON.parse(stat.ciStatusDetails);
-      } catch (error) {
-        console.error(`[GitHubStatsService] Failed to parse ciStatusDetails for repo ${repo.id}:`, error);
-      }
-    }
-
-    if (stat?.recentCommits) {
-      try {
-        recentCommits = JSON.parse(stat.recentCommits);
-      } catch (error) {
-        console.error(`[GitHubStatsService] Failed to parse recentCommits for repo ${repo.id}:`, error);
-      }
-    }
-
-    if (stat?.branchProtectionDetails) {
-      try {
-        branchProtection = JSON.parse(stat.branchProtectionDetails);
-      } catch (error) {
-        console.error(`[GitHubStatsService] Failed to parse branchProtectionDetails for repo ${repo.id}:`, error);
-      }
-    }
+    // Parse JSON fields with safe fallback
+    const ciStatusDetails = safeParseJson(stat?.ciStatusDetails, null);
+    const recentCommits = safeParseJson<CommitInfo[]>(stat?.recentCommits, []);
+    const branchProtection = safeParseJson<BranchProtection | null>(stat?.branchProtectionDetails, null);
 
     const repositoryStats: RepositoryStats = {
       repositoryId: repo.id,
@@ -632,6 +608,18 @@ async function updatePullRequests(
         updatedAt: new Date(pr.updatedAt),
       }))
     );
+  }
+}
+
+/**
+ * Safely parse JSON string with fallback value
+ */
+function safeParseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
   }
 }
 

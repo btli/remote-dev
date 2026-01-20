@@ -3,43 +3,42 @@
  */
 
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as GitHubStatsService from "@/services/github-stats-service";
 import type { PRWorktreeRequest, PRWorktreeResponse } from "@/types/github-stats";
 
-export async function POST(request: Request) {
+/**
+ * Map error code to HTTP status
+ */
+function getStatusFromErrorCode(code: string | undefined): number {
+  switch (code) {
+    case "GITHUB_NOT_CONNECTED":
+      return 401;
+    case "REPO_NOT_FOUND":
+    case "PR_NOT_FOUND":
+      return 404;
+    default:
+      return 500;
+  }
+}
+
+export const POST = withAuth(async (request, { userId }) => {
+  const result = await parseJsonBody<PRWorktreeRequest>(request);
+  if ("error" in result) return result.error;
+  const body = result.data;
+
+  // Validate request
+  if (!body.repositoryId || typeof body.prNumber !== "number") {
+    return errorResponse(
+      "Missing required fields: repositoryId and prNumber",
+      400,
+      "INVALID_REQUEST"
+    );
+  }
+
   try {
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized", code: "UNAUTHORIZED" },
-        { status: 401 }
-      );
-    }
-
-    let body: PRWorktreeRequest;
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid JSON body", code: "INVALID_REQUEST" },
-        { status: 400 }
-      );
-    }
-
-    // Validate request
-    if (!body.repositoryId || typeof body.prNumber !== "number") {
-      return NextResponse.json(
-        {
-          error: "Missing required fields: repositoryId and prNumber",
-          code: "INVALID_REQUEST",
-        },
-        { status: 400 }
-      );
-    }
-
-    const result = await GitHubStatsService.createPRWorktree(
-      session.user.id,
+    const worktreeResult = await GitHubStatsService.createPRWorktree(
+      userId,
       body.repositoryId,
       body.prNumber,
       body.sessionName,
@@ -48,9 +47,9 @@ export async function POST(request: Request) {
 
     const response: PRWorktreeResponse = {
       success: true,
-      sessionId: result.sessionId,
-      worktreePath: result.worktreePath,
-      branch: result.branch,
+      sessionId: worktreeResult.sessionId,
+      worktreePath: worktreeResult.worktreePath,
+      branch: worktreeResult.branch,
     };
 
     return NextResponse.json(response);
@@ -66,13 +65,6 @@ export async function POST(request: Request) {
       error: err.message,
     };
 
-    const status =
-      err.code === "GITHUB_NOT_CONNECTED"
-        ? 401
-        : err.code === "REPO_NOT_FOUND" || err.code === "PR_NOT_FOUND"
-        ? 404
-        : 500;
-
-    return NextResponse.json(response, { status });
+    return NextResponse.json(response, { status: getStatusFromErrorCode(err.code) });
   }
-}
+});

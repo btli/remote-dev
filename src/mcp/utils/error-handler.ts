@@ -4,7 +4,7 @@
  * Provides verbose error formatting for debugging.
  * All errors include full context, stack traces, and recovery hints.
  */
-import type { ToolResult } from "../types";
+import type { ToolResult } from "../types.js";
 
 /**
  * Service error codes from the application.

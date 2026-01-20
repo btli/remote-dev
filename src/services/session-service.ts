@@ -71,27 +71,13 @@ export async function createSession(
     }
 
     // Create the worktree with new branch
-    try {
-      const result = await WorktreeService.createBranchWithWorktree(
-        input.projectPath,
-        sanitizedBranch,
-        input.baseBranch,
-        undefined // Auto-generate worktree path
-      );
-      workingPath = result.worktreePath;
-
-      // Copy .env files from main repo to worktree
-      WorktreeService.copyEnvFilesToWorktree(input.projectPath, result.worktreePath);
-    } catch (error) {
-      if (error instanceof WorktreeService.WorktreeServiceError) {
-        throw new SessionServiceError(
-          `Failed to create worktree: ${error.message}`,
-          error.code,
-          sessionId
-        );
-      }
-      throw error;
-    }
+    const result = await createWorktreeWithErrorHandling(
+      input.projectPath,
+      sanitizedBranch,
+      input.baseBranch,
+      sessionId
+    );
+    workingPath = result.worktreePath;
   }
 
   // Handle quick worktree creation from folder (New Worktree menu item)
@@ -161,31 +147,17 @@ export async function createSession(
     branchName = autoBranch;
 
     // Create the worktree with new branch
-    try {
-      const result = await WorktreeService.createBranchWithWorktree(
-        repoPath,
-        autoBranch,
-        input.baseBranch,
-        undefined // Auto-generate worktree path
-      );
-      workingPath = result.worktreePath;
+    const result = await createWorktreeWithErrorHandling(
+      repoPath,
+      autoBranch,
+      input.baseBranch,
+      sessionId
+    );
+    workingPath = result.worktreePath;
 
-      // Copy .env files from main repo to worktree
-      WorktreeService.copyEnvFilesToWorktree(repoPath, result.worktreePath);
-
-      // Update input for database record
-      if (repoId) {
-        input.githubRepoId = repoId;
-      }
-    } catch (error) {
-      if (error instanceof WorktreeService.WorktreeServiceError) {
-        throw new SessionServiceError(
-          `Failed to create worktree: ${error.message}`,
-          error.code,
-          sessionId
-        );
-      }
-      throw error;
+    // Update input for database record
+    if (repoId) {
+      input.githubRepoId = repoId;
     }
   }
 
@@ -602,4 +574,38 @@ function buildAgentCommand(provider: AgentProviderType, flags?: string[]): strin
   const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
 
   return `${config.command}${flagsStr}`;
+}
+
+/**
+ * Create a worktree with standardized error handling and env file copying.
+ * Wraps WorktreeService errors in SessionServiceError.
+ */
+async function createWorktreeWithErrorHandling(
+  repoPath: string,
+  branchName: string,
+  baseBranch: string | undefined,
+  sessionId: string
+): Promise<{ worktreePath: string }> {
+  try {
+    const result = await WorktreeService.createBranchWithWorktree(
+      repoPath,
+      branchName,
+      baseBranch,
+      undefined // Auto-generate worktree path
+    );
+
+    // Copy .env files from main repo to worktree
+    WorktreeService.copyEnvFilesToWorktree(repoPath, result.worktreePath);
+
+    return result;
+  } catch (error) {
+    if (error instanceof WorktreeService.WorktreeServiceError) {
+      throw new SessionServiceError(
+        `Failed to create worktree: ${error.message}`,
+        error.code,
+        sessionId
+      );
+    }
+    throw error;
+  }
 }

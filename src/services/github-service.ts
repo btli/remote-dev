@@ -12,16 +12,18 @@ import type {
   FolderNode,
   CloneResult,
 } from "@/types/github";
-import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from "fs";
 import { join } from "path";
 import { GitHubServiceError } from "@/lib/errors";
 import { decryptSafe } from "@/lib/encryption";
+import { getReposDir } from "@/lib/paths";
 
 // Re-export for backwards compatibility with API routes
 export { GitHubServiceError };
 
 const GITHUB_API_BASE = "https://api.github.com";
-const REPOS_CACHE_DIR = ".remote-dev/repos";
+// Use centralized path configuration for cloned repositories
+const getReposCacheDir = () => getReposDir();
 
 /**
  * Get the GitHub access token for a user.
@@ -231,10 +233,11 @@ export async function cacheRepository(
 }
 
 /**
- * Get the base directory for cloned repositories
+ * Get the base directory for cloned repositories.
+ * Uses centralized path configuration: ~/.remote-dev/repos/
  */
 export function getReposBaseDir(): string {
-  return join(process.env.HOME ?? "/tmp", REPOS_CACHE_DIR);
+  return getReposCacheDir();
 }
 
 /**
@@ -391,6 +394,40 @@ export async function getRepositoryByGitHubId(
 }
 
 /**
+ * Helper to determine if a string is a valid UUID
+ */
+function isUUID(str: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+}
+
+/**
+ * Get repository by either database UUID or GitHub numeric ID.
+ * This is a convenience function for API routes that accept both ID formats.
+ *
+ * @param id - Either a UUID (database ID) or numeric string (GitHub ID)
+ * @param userId - User ID for ownership verification
+ * @returns Repository if found, null otherwise
+ */
+export async function getRepositoryByIdOrGitHubId(
+  id: string,
+  userId: string
+): Promise<CachedGitHubRepository | null> {
+  // If it's a UUID, look up by database ID
+  if (isUUID(id)) {
+    return getRepository(id, userId);
+  }
+
+  // Otherwise, try parsing as a GitHub ID (number)
+  const githubId = parseInt(id, 10);
+  if (!isNaN(githubId)) {
+    return getRepositoryByGitHubId(githubId, userId);
+  }
+
+  return null;
+}
+
+/**
  * Get the folder structure of a cloned repository
  */
 export function getFolderStructure(
@@ -477,8 +514,6 @@ export async function deleteRepositoryCache(
   userId: string,
   removeLocalFiles: boolean = false
 ): Promise<void> {
-  const { rmSync } = await import("fs");
-
   // Get repo to verify ownership and get local path
   const repo = await db.query.githubRepositories.findFirst({
     where: and(
@@ -513,8 +548,6 @@ export async function clearAllRepositoryCache(
   userId: string,
   removeLocalFiles: boolean = false
 ): Promise<void> {
-  const { rmSync } = await import("fs");
-
   // Get all repos to potentially remove local files
   if (removeLocalFiles) {
     const repos = await db.query.githubRepositories.findMany({

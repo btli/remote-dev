@@ -3,40 +3,11 @@ import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 
 /**
- * Helper to determine if a string is a valid UUID
- */
-function isUUID(str: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(str);
-}
-
-/**
- * Helper to get repository by either database UUID or GitHub ID
- */
-async function getRepositoryByIdOrGitHubId(
-  id: string,
-  userId: string
-): Promise<Awaited<ReturnType<typeof GitHubService.getRepository>>> {
-  // If it's a UUID, look up by database ID
-  if (isUUID(id)) {
-    return GitHubService.getRepository(id, userId);
-  }
-
-  // Otherwise, try parsing as a GitHub ID (number)
-  const githubId = parseInt(id, 10);
-  if (!isNaN(githubId)) {
-    return GitHubService.getRepositoryByGitHubId(githubId, userId);
-  }
-
-  return null;
-}
-
-/**
  * GET /api/github/repositories/:id - Get a single repository
  * Accepts either database UUID or GitHub numeric ID
  */
 export const GET = withAuth(async (_request, { userId, params }) => {
-  const repository = await getRepositoryByIdOrGitHubId(params!.id, userId);
+  const repository = await GitHubService.getRepositoryByIdOrGitHubId(params!.id, userId);
 
   if (!repository) {
     return errorResponse("Repository not found", 404);
@@ -58,7 +29,7 @@ export const POST = withAuth(async (request, { userId, params }) => {
     return errorResponse("GitHub not connected", 400);
   }
 
-  const repository = await getRepositoryByIdOrGitHubId(params!.id, userId);
+  const repository = await GitHubService.getRepositoryByIdOrGitHubId(params!.id, userId);
 
   if (!repository) {
     return errorResponse("Repository not found", 404);
@@ -108,7 +79,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
   const { searchParams } = new URL(request.url);
   const removeFiles = searchParams.get("removeFiles") === "true";
 
-  const repository = await getRepositoryByIdOrGitHubId(params!.id, userId);
+  const repository = await GitHubService.getRepositoryByIdOrGitHubId(params!.id, userId);
 
   if (!repository) {
     return errorResponse("Repository not found", 404);

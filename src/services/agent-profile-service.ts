@@ -23,6 +23,7 @@ import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
+import { getProfilesDir } from "@/lib/paths";
 import type {
   AgentProfile,
   CreateAgentProfileInput,
@@ -35,8 +36,8 @@ import type {
   UpdateProfileSecretsConfigInput,
 } from "@/types/agent";
 
-// Profile base directory
-const PROFILES_BASE_DIR = join(homedir(), ".remote-dev", "profiles");
+// Profile base directory - use centralized path configuration
+const getProfilesBaseDir = () => getProfilesDir();
 
 /**
  * Sanitize a git config value to prevent injection attacks.
@@ -165,7 +166,7 @@ export async function createProfile(
 ): Promise<AgentProfile> {
   // Generate profile ID
   const profileId = crypto.randomUUID();
-  const configDir = join(PROFILES_BASE_DIR, profileId);
+  const configDir = join(getProfilesBaseDir(), profileId);
 
   // Use transaction to atomically unset existing default and create new profile
   // This prevents race conditions where multiple profiles could become default
@@ -322,7 +323,7 @@ export async function initializeProfileDirectory(
   profileId: string,
   provider: AgentProvider
 ): Promise<void> {
-  const configDir = join(PROFILES_BASE_DIR, profileId);
+  const configDir = join(getProfilesBaseDir(), profileId);
 
   // Create base directories
   const dirs = [

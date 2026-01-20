@@ -366,25 +366,10 @@ async function discoverViaStdio(
 
         // List tools
         const toolsResult = (await sendRequest("tools/list")) as MCPToolsListResult;
-        const tools: MCPTool[] = (toolsResult?.tools ?? []).map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-        }));
+        const tools = mapToolsResult(toolsResult);
 
-        // List resources
-        let resources: MCPResource[] = [];
-        try {
-          const resourcesResult = (await sendRequest("resources/list")) as MCPResourcesListResult;
-          resources = (resourcesResult?.resources ?? []).map((r) => ({
-            uri: r.uri,
-            name: r.name,
-            description: r.description,
-            mimeType: r.mimeType,
-          }));
-        } catch {
-          // resources/list may not be supported
-        }
+        // List resources (optional - may not be supported)
+        const resources = await fetchResourcesSafe(sendRequest);
 
         // Clean shutdown
         child.kill();
@@ -456,27 +441,49 @@ async function discoverViaHttp(
 
   // List tools
   const toolsResult = (await sendRequest("tools/list")) as MCPToolsListResult;
-  const tools: MCPTool[] = (toolsResult?.tools ?? []).map((t) => ({
+  const tools = mapToolsResult(toolsResult);
+
+  // List resources (optional - may not be supported)
+  const resources = await fetchResourcesSafe(sendRequest);
+
+  return { tools, resources };
+}
+
+/**
+ * Map raw tools result to domain type
+ */
+function mapToolsResult(result: MCPToolsListResult | null): MCPTool[] {
+  return (result?.tools ?? []).map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
   }));
+}
 
-  // List resources
-  let resources: MCPResource[] = [];
+/**
+ * Map raw resources result to domain type
+ */
+function mapResourcesResult(result: MCPResourcesListResult | null): MCPResource[] {
+  return (result?.resources ?? []).map((r) => ({
+    uri: r.uri,
+    name: r.name,
+    description: r.description,
+    mimeType: r.mimeType,
+  }));
+}
+
+/**
+ * Safely fetch resources (may not be supported by all servers)
+ */
+async function fetchResourcesSafe(
+  sendRequest: (method: string, params?: Record<string, unknown>) => Promise<unknown>
+): Promise<MCPResource[]> {
   try {
-    const resourcesResult = (await sendRequest("resources/list")) as MCPResourcesListResult;
-    resources = (resourcesResult?.resources ?? []).map((r) => ({
-      uri: r.uri,
-      name: r.name,
-      description: r.description,
-      mimeType: r.mimeType,
-    }));
+    const result = (await sendRequest("resources/list")) as MCPResourcesListResult;
+    return mapResourcesResult(result);
   } catch {
-    // resources/list may not be supported
+    return [];
   }
-
-  return { tools, resources };
 }
 
 /**

@@ -21,11 +21,11 @@ import {
   type GetPromptResult,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { allTools, getTool } from "./tools/index";
-import { allResources, findResource } from "./resources/index";
-import { allPrompts, findPrompt } from "./prompts/index";
-import { getUserContext } from "./utils/auth";
-import { formatError } from "./utils/error-handler";
+import { allTools, getTool } from "./tools/index.js";
+import { allResources, findResource } from "./resources/index.js";
+import { allPrompts, findPrompt } from "./prompts/index.js";
+import { getUserContext } from "./utils/auth.js";
+import { formatError } from "./utils/error-handler.js";
 
 let mcpServer: Server | null = null;
 let transport: StdioServerTransport | null = null;

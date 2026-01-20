@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
+import { validateEnvironmentVars } from "@/lib/api-validation";
 import {
   getFolderPreferences,
   updateFolderPreferences,
   deleteFolderPreferences,
 } from "@/services/preferences-service";
-import type { EnvironmentVariables } from "@/types/environment";
-import { validateEnvVarKey, validateEnvVarValue } from "@/types/environment";
 
 /**
  * GET /api/preferences/folders/[folderId]
@@ -19,48 +18,6 @@ export const GET = withAuth(async (_request, { userId, params }) => {
   }
   return NextResponse.json(prefs);
 });
-
-/**
- * Validate environment variables input
- */
-function validateEnvironmentVars(
-  envVars: unknown
-): { valid: true; value: EnvironmentVariables | null } | { valid: false; error: string } {
-  // null is allowed (clear all env vars)
-  if (envVars === null) {
-    return { valid: true, value: null };
-  }
-
-  // Must be an object
-  if (typeof envVars !== "object" || Array.isArray(envVars)) {
-    return { valid: false, error: "environmentVars must be an object or null" };
-  }
-
-  const validated: EnvironmentVariables = {};
-
-  for (const [key, value] of Object.entries(envVars as Record<string, unknown>)) {
-    // Validate key
-    const keyError = validateEnvVarKey(key);
-    if (keyError) {
-      return { valid: false, error: `Invalid key "${key}": ${keyError}` };
-    }
-
-    // Value must be a string
-    if (typeof value !== "string") {
-      return { valid: false, error: `Value for "${key}" must be a string` };
-    }
-
-    // Validate value
-    const valueError = validateEnvVarValue(value);
-    if (valueError) {
-      return { valid: false, error: `Invalid value for "${key}": ${valueError}` };
-    }
-
-    validated[key] = value;
-  }
-
-  return { valid: true, value: Object.keys(validated).length > 0 ? validated : null };
-}
 
 /**
  * PUT /api/preferences/folders/[folderId]

@@ -5,11 +5,11 @@
  * These are the core tools for agent workflows.
  */
 import { z } from "zod";
-import { createTool } from "../registry";
-import { successResult } from "../utils/error-handler";
+import { createTool } from "../registry.js";
+import { successResult } from "../utils/error-handler.js";
 import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
-import type { RegisteredTool } from "../types";
+import type { RegisteredTool } from "../types.js";
 
 /**
  * session_list - List all terminal sessions

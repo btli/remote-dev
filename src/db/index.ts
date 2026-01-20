@@ -1,10 +1,14 @@
 import { createClient } from "@libsql/client/node";
 import { drizzle } from "drizzle-orm/libsql";
 import * as schema from "./schema";
+import { getDatabaseUrl, ensureDataDirectories } from "@/lib/paths";
 
-// Use DATABASE_URL env var, defaulting to sqlite.db in current directory
-// For prod, set DATABASE_URL to absolute path so both Next.js and terminal server use same DB
-const databaseUrl = process.env.DATABASE_URL || "file:sqlite.db";
+// Ensure data directories exist before connecting to database
+ensureDataDirectories();
+
+// Use centralized path configuration
+// Priority: DATABASE_URL env var > RDV_DATA_DIR/sqlite.db > ~/.remote-dev/sqlite.db
+const databaseUrl = getDatabaseUrl();
 
 const client = createClient({
   url: databaseUrl,

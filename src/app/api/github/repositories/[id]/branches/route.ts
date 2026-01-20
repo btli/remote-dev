@@ -4,33 +4,11 @@ import * as GitHubService from "@/services/github-service";
 import * as WorktreeService from "@/services/worktree-service";
 
 /**
- * Helper to determine if a string is a valid UUID
- */
-function isUUID(str: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(str);
-}
-
-/**
  * GET /api/github/repositories/:id/branches - Get branches for a repository
  * Accepts either database UUID or GitHub numeric ID
  */
 export const GET = withAuth(async (_request, { userId, params }) => {
-  const id = params!.id;
-
-  let repository: Awaited<ReturnType<typeof GitHubService.getRepository>>;
-
-  if (isUUID(id)) {
-    // Look up by database ID
-    repository = await GitHubService.getRepository(id, userId);
-  } else {
-    // Try parsing as GitHub ID (number)
-    const githubId = parseInt(id, 10);
-    if (isNaN(githubId)) {
-      return errorResponse("Invalid repository ID", 400);
-    }
-    repository = await GitHubService.getRepositoryByGitHubId(githubId, userId);
-  }
+  const repository = await GitHubService.getRepositoryByIdOrGitHubId(params!.id, userId);
 
   if (!repository) {
     return errorResponse("Repository not found", 404);

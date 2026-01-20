@@ -4,7 +4,7 @@
  * For the local trust model, we use a default user ID from environment variables.
  * This can be extended for multi-user support in the future.
  */
-import type { MCPUserContext } from "../types";
+import type { MCPUserContext } from "../types.js";
 
 /**
  * Default user ID for local trust model.

@@ -3,8 +3,8 @@
  *
  * Aggregates all prompts from workflow modules.
  */
-import { workflowPrompts } from "./workflow-prompts";
-import type { RegisteredPrompt } from "../types";
+import { workflowPrompts } from "./workflow-prompts.js";
+import type { RegisteredPrompt } from "../types.js";
 
 /**
  * All registered MCP prompts:

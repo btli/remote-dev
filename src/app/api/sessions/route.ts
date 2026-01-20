@@ -1,32 +1,8 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { validateProjectPath } from "@/lib/api-validation";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput, SessionStatus } from "@/types/session";
-import { resolve } from "path";
-
-/**
- * Validate a project path to prevent path traversal attacks.
- * SECURITY: Ensures paths are within allowed directories.
- */
-function validateProjectPath(path: string | undefined): string | undefined {
-  if (!path) return undefined;
-
-  // Must be absolute path
-  if (!path.startsWith("/")) {
-    return undefined;
-  }
-
-  // Resolve to canonical path (removes .., ., etc.)
-  const resolved = resolve(path);
-
-  // Must be within home directory or /tmp
-  const home = process.env.HOME || "/tmp";
-  if (!resolved.startsWith(home) && !resolved.startsWith("/tmp")) {
-    return undefined;
-  }
-
-  return resolved;
-}
 
 /**
  * GET /api/sessions - List user's terminal sessions
