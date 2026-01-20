@@ -118,7 +118,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardFolderId, setWizardFolderId] = useState<string | null>(null);
-  const [sessionCounter, setSessionCounter] = useState(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   // Use useSyncExternalStore for localStorage values to avoid hydration mismatches
@@ -359,14 +358,33 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [folders]
   );
 
-  // Generate session name based on folder context
+  // Calculate next available session number for a given prefix
+  // Looks at existing session names like "Terminal 3" and returns max + 1
+  const getNextSessionNumber = useCallback(
+    (prefix: string): number => {
+      const pattern = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(\\d+)$`);
+      let maxNum = 0;
+      for (const session of sessions) {
+        const match = session.name.match(pattern);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > maxNum) maxNum = num;
+        }
+      }
+      return maxNum + 1;
+    },
+    [sessions]
+  );
+
+  // Generate session name based on folder context with smart numbering
   const generateSessionName = useCallback(
-    (folderId: string | null | undefined, counter: number): string => {
+    (folderId: string | null | undefined): string => {
       const folderName = getFolderName(folderId);
       const prefix = folderName || "Terminal";
-      return `${prefix} ${counter}`;
+      const nextNum = getNextSessionNumber(prefix);
+      return `${prefix} ${nextNum}`;
     },
-    [getFolderName]
+    [getFolderName, getNextSessionNumber]
   );
 
   const attachedSessionIds = useMemo(() => {
@@ -484,8 +502,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   const handleQuickNewSession = useCallback(async () => {
     const folderId = activeProject.folderId || undefined;
-    const name = generateSessionName(folderId, sessionCounter);
-    setSessionCounter((c) => c + 1);
+    const name = generateSessionName(folderId);
     // Pass folderId at creation time so preferences (including startupCommand) are applied
     try {
       const newSession = await createSession({
@@ -503,7 +520,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
   }, [
     createSession,
-    sessionCounter,
     generateSessionName,
     currentPreferences.defaultWorkingDirectory,
     activeProject.folderId,
@@ -769,8 +785,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleFolderNewSession = useCallback(
     async (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
-      const name = generateSessionName(folderId, sessionCounter);
-      setSessionCounter((c) => c + 1);
+      const name = generateSessionName(folderId);
       // Pass folderId at creation time so preferences (including startupCommand) are applied
       try {
         const newSession = await createSession({
@@ -789,7 +804,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     },
     [
       createSession,
-      sessionCounter,
       generateSessionName,
       resolvePreferencesForFolder,
       setActiveFolder,
@@ -919,8 +933,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     // Get the active session's folder to use for naming
     const activeSession = sessions.find(s => s.id === activeSessionId);
     const folderId = activeSession?.folderId || undefined;
-    const name = generateSessionName(folderId, sessionCounter);
-    setSessionCounter((c) => c + 1);
+    const name = generateSessionName(folderId);
 
     try {
       await createSplit(activeSessionId, direction, name);
@@ -929,7 +942,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     } catch (error) {
       logSessionError("create split", error);
     }
-  }, [activeSessionId, sessions, sessionCounter, generateSessionName, createSplit, refreshSessions, logSessionError]);
+  }, [activeSessionId, sessions, generateSessionName, createSplit, refreshSessions, logSessionError]);
 
   /** Enter split mode horizontally */
   const handleSplitHorizontal = useCallback(() => handleSplit("horizontal"), [handleSplit]);
@@ -944,9 +957,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       // useEffectEvent reads latest values automatically - no refs needed
-      const prefix = activeProject.folderName || "Terminal";
-      const name = `${prefix} ${sessionCounter}`;
-      setSessionCounter((c) => c + 1);
+      const name = generateSessionName(activeProject.folderId);
       // Pass folderId so environment variables from folder preferences are applied
       createSession({ name, folderId: activeProject.folderId ?? undefined }).catch((error) => {
         logSessionError("create session", error);
