@@ -22,7 +22,6 @@ import {
 import type {
   GitHubAccountInfo,
   CachedRepositoryWithStats,
-  GitHubAccountStats,
 } from "@/services/github-account-service";
 
 /**
@@ -67,7 +66,7 @@ interface GitHubContextValue {
   refreshRepositories: () => Promise<void>;
   deleteRepository: (repoId: string, removeFiles?: boolean) => Promise<void>;
   recloneRepository: (repoId: string) => Promise<void>;
-  clearAllCache: (removeFiles?: boolean) => Promise<void>;
+  clearAllCache: () => Promise<void>;
 
   // Account actions
   disconnect: (clearCache?: boolean) => Promise<void>;
@@ -313,42 +312,38 @@ export function GitHubProvider({
   }, []);
 
   // Clear all cache
-  const clearAllCache = useCallback(
-    async (removeFiles: boolean = false) => {
-      setLoading(true);
-      setError(null);
+  const clearAllCache = useCallback(async () => {
+    setLoading(true);
+    setError(null);
 
-      try {
-        // Clear via account API with clearCache flag
-        const response = await fetch(
-          `/api/github/account?clearCache=true`,
-          { method: "DELETE" }
-        );
+    try {
+      // Clear via account API with clearCache flag
+      const response = await fetch(`/api/github/account?clearCache=true`, {
+        method: "DELETE",
+      });
 
-        if (!response.ok) {
-          throw new Error("Failed to clear cache");
-        }
-
-        // This disconnects GitHub, so update state accordingly
-        setIsConnected(false);
-        setAccountInfo(null);
-        setRepositories([]);
-        setStats({
-          totalRepos: 0,
-          clonedRepos: 0,
-          totalDiskSize: 0,
-          totalDiskSizeFormatted: "0 B",
-          lastSync: null,
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unknown error");
-        throw err;
-      } finally {
-        setLoading(false);
+      if (!response.ok) {
+        throw new Error("Failed to clear cache");
       }
-    },
-    []
-  );
+
+      // This disconnects GitHub, so update state accordingly
+      setIsConnected(false);
+      setAccountInfo(null);
+      setRepositories([]);
+      setStats({
+        totalRepos: 0,
+        clonedRepos: 0,
+        totalDiskSize: 0,
+        totalDiskSizeFormatted: "0 B",
+        lastSync: null,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // Disconnect GitHub
   const disconnect = useCallback(async (clearCache: boolean = false) => {

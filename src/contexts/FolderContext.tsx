@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 
@@ -38,12 +39,22 @@ const FolderContext = createContext<FolderContextValue | null>(null);
 
 interface FolderProviderProps {
   children: ReactNode;
+  initialFolders?: SessionFolder[];
+  initialSessionFolders?: Record<string, string>;
 }
 
-export function FolderProvider({ children }: FolderProviderProps) {
-  const [folders, setFolders] = useState<SessionFolder[]>([]);
-  const [sessionFolders, setSessionFolders] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
+export function FolderProvider({
+  children,
+  initialFolders = [],
+  initialSessionFolders = {},
+}: FolderProviderProps) {
+  const [folders, setFolders] = useState<SessionFolder[]>(initialFolders);
+  const [sessionFolders, setSessionFolders] = useState<Record<string, string>>(initialSessionFolders);
+  const [loading, setLoading] = useState(initialFolders.length === 0);
+
+  // Track if we've already fetched folders (guard against duplicate fetches)
+  const hasFetchedFoldersRef = useRef(initialFolders.length > 0);
+  const initialFoldersLengthRef = useRef(initialFolders.length);
 
   const refreshFolders = useCallback(async () => {
     try {
@@ -68,9 +79,13 @@ export function FolderProvider({ children }: FolderProviderProps) {
     }
   }, []);
 
-  // Fetch folders on mount
+  // Fetch folders on mount if none provided (once on mount)
   useEffect(() => {
-    refreshFolders();
+    if (hasFetchedFoldersRef.current) return;
+    if (initialFoldersLengthRef.current === 0) {
+      hasFetchedFoldersRef.current = true;
+      refreshFolders();
+    }
   }, [refreshFolders]);
 
   const createFolder = useCallback(
@@ -130,15 +145,11 @@ export function FolderProvider({ children }: FolderProviderProps) {
     async (folderId: string) => {
       // Optimistic update
       setFolders((prev) => prev.filter((f) => f.id !== folderId));
-      setSessionFolders((prev) => {
-        const next = { ...prev };
-        Object.keys(next).forEach((sessionId) => {
-          if (next[sessionId] === folderId) {
-            delete next[sessionId];
-          }
-        });
-        return next;
-      });
+      setSessionFolders((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).filter(([, folder]) => folder !== folderId)
+        )
+      );
 
       try {
         const response = await fetch(`/api/folders/${folderId}`, {

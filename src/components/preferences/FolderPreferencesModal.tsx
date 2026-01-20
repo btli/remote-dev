@@ -105,6 +105,15 @@ const FONT_OPTIONS = [
 
 const INHERIT_VALUE = "__inherit__";
 
+/**
+ * Get the text color class for a repo based on its state
+ */
+function getRepoTextClass(isSelected: boolean, isCloned: boolean): string {
+  if (isSelected) return "text-foreground";
+  if (isCloned) return "text-foreground/90";
+  return "text-muted-foreground";
+}
+
 export function FolderPreferencesModal({
   open,
   onClose,
@@ -958,7 +967,7 @@ export function FolderPreferencesModal({
                                   <div className="flex-1 min-w-0">
                                     <span className={cn(
                                       "block text-xs font-medium truncate",
-                                      isSelected ? "text-foreground" : isCloned ? "text-foreground/90" : "text-muted-foreground"
+                                      getRepoTextClass(isSelected, isCloned)
                                     )}>
                                       {repo.name}
                                     </span>

@@ -18,29 +18,17 @@
 
 import { spawn, spawnSync } from "bun";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { join } from "path";
+import { homedir } from "os";
 
 const PROJECT_ROOT = join(import.meta.dir, "..");
-const PID_DIR = join(PROJECT_ROOT, ".pids");
+const DATA_DIR = process.env.RDV_DATA_DIR || join(homedir(), ".remote-dev");
+const PID_DIR = join(DATA_DIR, "server");
 const NEXT_PID_FILE = join(PID_DIR, "next.pid");
 const TERMINAL_PID_FILE = join(PID_DIR, "terminal.pid");
 const MODE_FILE = join(PID_DIR, "mode");
 const STANDALONE_DIR = join(PROJECT_ROOT, ".next", "standalone");
-const SOCKET_DIR = "/tmp/rdv";
-
-interface DevConfig {
-  type: "port";
-  nextPort: number;
-  terminalPort: number;
-  nextCmd: string[];
-}
-
-interface ProdConfig {
-  type: "socket";
-  nextSocket: string;
-  terminalSocket: string;
-  nextCmd: string[];
-}
+const SOCKET_DIR = join(DATA_DIR, "run");
 
 const CONFIG = {
   dev: {
@@ -48,12 +36,16 @@ const CONFIG = {
     nextPort: 6001,
     terminalPort: 6002,
     nextCmd: ["bun", "run", "next", "dev", "--turbopack", "-p", "6001"],
+    // Local development URL - credentials auth works here
+    nextAuthUrl: "http://localhost:6001",
   },
   prod: {
     type: "socket" as const,
-    nextSocket: join(SOCKET_DIR, "next.sock"),
+    nextSocket: join(SOCKET_DIR, "nextjs.sock"),
     terminalSocket: join(SOCKET_DIR, "terminal.sock"),
     nextCmd: ["node", "scripts/standalone-server.js"],
+    // Production URL - accessed via Cloudflare tunnel
+    nextAuthUrl: "https://dev.bryanli.net",
   },
 } as const;
 
@@ -71,7 +63,7 @@ function ensureSocketDir(): void {
     console.log(`Creating socket directory: ${SOCKET_DIR}`);
     try {
       mkdirSync(SOCKET_DIR, { recursive: true, mode: 0o755 });
-    } catch (err) {
+    } catch {
       console.error(`Failed to create socket directory. Try: sudo mkdir -p ${SOCKET_DIR} && sudo chown $(whoami) ${SOCKET_DIR}`);
       process.exit(1);
     }
@@ -304,7 +296,8 @@ async function start(mode: Mode): Promise<void> {
 
     console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode`);
     console.log(`  Next.js:  http://localhost:${config.nextPort}`);
-    console.log(`  Terminal: ws://localhost:${config.terminalPort}\n`);
+    console.log(`  Terminal: ws://localhost:${config.terminalPort}`);
+    console.log(`  Auth URL: ${config.nextAuthUrl}\n`);
 
     // Start terminal server first
     const terminalProc = await startServer(
@@ -317,13 +310,15 @@ async function start(mode: Mode): Promise<void> {
     console.log("Waiting for terminal server to initialize...");
     await Bun.sleep(1500);
 
-    // Start Next.js
+    // Start Next.js with correct NEXTAUTH_URL for local dev
     const nextProc = await startServer(
       "Next.js",
       [...config.nextCmd],
       {
         PORT: config.nextPort.toString(),
         NEXT_PUBLIC_TERMINAL_PORT: config.terminalPort.toString(),
+        NEXTAUTH_URL: config.nextAuthUrl,
+        AUTH_URL: config.nextAuthUrl, // NextAuth v5 also checks AUTH_URL
       },
       NEXT_PID_FILE
     );
@@ -338,13 +333,14 @@ async function start(mode: Mode): Promise<void> {
     cleanupSocket(config.nextSocket);
     cleanupSocket(config.terminalSocket);
 
-    // Use standalone database for both processes in prod mode
-    const prodDatabaseUrl = `file:${join(STANDALONE_DIR, "sqlite.db")}`;
+    // Use centralized database at ~/.remote-dev/sqlite.db for all modes
+    const prodDatabaseUrl = `file:${join(DATA_DIR, "sqlite.db")}`;
 
     console.log(`\nStarting Remote Dev in ${mode.toUpperCase()} mode (Unix sockets)`);
     console.log(`  Next.js:  ${config.nextSocket}`);
     console.log(`  Terminal: ${config.terminalSocket}`);
-    console.log(`  Database: ${join(STANDALONE_DIR, "sqlite.db")}\n`);
+    console.log(`  Auth URL: ${config.nextAuthUrl}`);
+    console.log(`  Database: ${join(DATA_DIR, "sqlite.db")}\n`);
 
     // Start terminal server first
     const terminalProc = await startServer(
@@ -360,7 +356,7 @@ async function start(mode: Mode): Promise<void> {
     console.log("Waiting for terminal server to initialize...");
     await Bun.sleep(1500);
 
-    // Start Next.js with socket
+    // Start Next.js with socket and correct NEXTAUTH_URL for prod
     const nextProc = await startServer(
       "Next.js",
       [...config.nextCmd],
@@ -368,6 +364,8 @@ async function start(mode: Mode): Promise<void> {
         SOCKET_PATH: config.nextSocket,
         TERMINAL_SOCKET: config.terminalSocket,
         DATABASE_URL: prodDatabaseUrl,
+        NEXTAUTH_URL: config.nextAuthUrl,
+        AUTH_URL: config.nextAuthUrl, // NextAuth v5 also checks AUTH_URL
       },
       NEXT_PID_FILE
     );

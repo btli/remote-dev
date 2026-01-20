@@ -25,7 +25,14 @@ export async function getFolders(userId: string): Promise<SessionFolder[]> {
     orderBy: [asc(sessionFolders.sortOrder)],
   });
 
-  return folders.map((f) => ({
+  return folders.map(mapDbFolder);
+}
+
+/**
+ * Map database folder record to SessionFolder type
+ */
+function mapDbFolder(f: typeof sessionFolders.$inferSelect): SessionFolder {
+  return {
     id: f.id,
     userId: f.userId,
     parentId: f.parentId ?? null,
@@ -34,7 +41,7 @@ export async function getFolders(userId: string): Promise<SessionFolder[]> {
     sortOrder: f.sortOrder,
     createdAt: new Date(f.createdAt),
     updatedAt: new Date(f.updatedAt),
-  }));
+  };
 }
 
 /**
@@ -107,16 +114,7 @@ export async function createFolder(
     })
     .returning();
 
-  return {
-    id: folder.id,
-    userId: folder.userId,
-    parentId: folder.parentId ?? null,
-    name: folder.name,
-    collapsed: folder.collapsed ?? false,
-    sortOrder: folder.sortOrder,
-    createdAt: new Date(folder.createdAt),
-    updatedAt: new Date(folder.updatedAt),
-  };
+  return mapDbFolder(folder);
 }
 
 /**
@@ -138,18 +136,7 @@ export async function updateFolder(
     )
     .returning();
 
-  if (!updated) return null;
-
-  return {
-    id: updated.id,
-    userId: updated.userId,
-    parentId: updated.parentId ?? null,
-    name: updated.name,
-    collapsed: updated.collapsed ?? false,
-    sortOrder: updated.sortOrder,
-    createdAt: new Date(updated.createdAt),
-    updatedAt: new Date(updated.updatedAt),
-  };
+  return updated ? mapDbFolder(updated) : null;
 }
 
 /**
@@ -223,18 +210,7 @@ export async function moveFolderToParent(
     )
     .returning();
 
-  if (!updated) return null;
-
-  return {
-    id: updated.id,
-    userId: updated.userId,
-    parentId: updated.parentId ?? null,
-    name: updated.name,
-    collapsed: updated.collapsed ?? false,
-    sortOrder: updated.sortOrder,
-    createdAt: new Date(updated.createdAt),
-    updatedAt: new Date(updated.updatedAt),
-  };
+  return updated ? mapDbFolder(updated) : null;
 }
 
 /**

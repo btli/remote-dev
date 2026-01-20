@@ -13,7 +13,6 @@ import { useState, useMemo } from "react";
 import {
   Github,
   RefreshCw,
-  Trash2,
   LogOut,
   Loader2,
   FolderGit2,
@@ -32,7 +31,6 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import {
@@ -47,7 +45,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useGitHubContext } from "@/contexts/GitHubContext";
 import { CachedRepositoryCard } from "./CachedRepositoryCard";
-import { cn } from "@/lib/utils";
 
 interface GitHubMaintenanceModalProps {
   open: boolean;
@@ -275,7 +272,7 @@ export function GitHubMaintenanceModal({
                   <div className="flex flex-col items-center justify-center py-12 gap-2">
                     <Search className="w-8 h-8 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">
-                      No repositories match "{searchQuery}"
+                      No repositories match &quot;{searchQuery}&quot;
                     </p>
                   </div>
                 ) : (
@@ -427,7 +424,7 @@ export function GitHubMaintenanceModal({
             <AlertDialogTitle>Disconnect GitHub?</AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               <p>
-                This will remove your GitHub connection. You'll need to
+                This will remove your GitHub connection. You&apos;ll need to
                 reconnect to access your repositories.
               </p>
               <label className="flex items-center gap-2 pt-2">

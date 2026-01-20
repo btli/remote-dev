@@ -4,8 +4,8 @@
  * Prompts provide conversation templates that guide agents
  * through multi-step operations.
  */
-import { createPrompt } from "../registry";
-import type { RegisteredPrompt } from "../types";
+import { createPrompt } from "../registry.js";
+import type { RegisteredPrompt } from "../types.js";
 
 /**
  * create_feature_session - Create a session for working on a feature

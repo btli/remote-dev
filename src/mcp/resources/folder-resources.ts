@@ -1,10 +1,10 @@
 /**
  * Folder Resources - Read-only access to folder data
  */
-import { createResource, extractUriParams } from "../registry";
+import { createResource, extractUriParams } from "../registry.js";
 import * as FolderService from "@/services/folder-service";
 import * as PreferencesService from "@/services/preferences-service";
-import type { RegisteredResource } from "../types";
+import type { RegisteredResource } from "../types.js";
 
 /**
  * rdv://folders - List all folders

@@ -21,6 +21,18 @@ const MODE_OPTIONS: { mode: AppearanceMode; icon: typeof Sun; label: string }[] 
   { mode: "dark", icon: Moon, label: "Dark" },
 ];
 
+const MODE_ICONS: Record<AppearanceMode, typeof Sun> = {
+  light: Sun,
+  system: Monitor,
+  dark: Moon,
+};
+
+const NEXT_MODE: Record<AppearanceMode, AppearanceMode> = {
+  light: "system",
+  system: "dark",
+  dark: "light",
+};
+
 export function AppearanceModeToggle({
   size = "default",
   showLabels = true,
@@ -71,19 +83,10 @@ export function AppearanceModeToggleCompact({ className }: { className?: string 
   const currentMode = settings?.appearanceMode ?? "system";
 
   const handleClick = () => {
-    // Cycle: light -> system -> dark -> light
-    const nextMode: AppearanceMode =
-      currentMode === "light"
-        ? "system"
-        : currentMode === "system"
-        ? "dark"
-        : "light";
-    setMode(nextMode);
+    setMode(NEXT_MODE[currentMode]);
   };
 
-  // Show icon based on current mode preference
-  const Icon =
-    currentMode === "system" ? Monitor : currentMode === "dark" ? Moon : Sun;
+  const Icon = MODE_ICONS[currentMode];
 
   return (
     <Button

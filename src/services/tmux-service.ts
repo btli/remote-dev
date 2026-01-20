@@ -132,6 +132,7 @@ export async function createSession(
 
     // Inject shell environment variables BEFORE startup command
     // These are exported in the shell session so they're available to all commands
+    // Using sendKeys ensures the user's shell config (aliases, functions) is loaded
     if (shellEnv && Object.keys(shellEnv).length > 0) {
       const exports = Object.entries(shellEnv)
         .map(([key, value]) => {
@@ -144,6 +145,7 @@ export async function createSession(
     }
 
     // Execute startup command if provided
+    // Using sendKeys allows aliases and shell functions to work
     if (startupCommand && startupCommand.trim()) {
       await sendKeys(sessionName, startupCommand.trim());
     }

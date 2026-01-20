@@ -2,11 +2,15 @@
  * Electron Configuration
  *
  * Central configuration for paths, ports, and platform detection.
+ *
+ * Data Directory:
+ * All application data is stored in ~/.remote-dev by default.
+ * This can be overridden with RDV_DATA_DIR environment variable.
  */
 
 import { app } from "electron";
 import { join } from "path";
-import { platform, arch } from "os";
+import { platform, arch, homedir } from "os";
 
 export type Platform = "darwin" | "linux" | "win32";
 export type Mode = "dev" | "prod";
@@ -45,20 +49,29 @@ export const Config = {
       : join(__dirname, "../..");
   },
 
+  /**
+   * Get the data directory - centralized at ~/.remote-dev
+   * Can be overridden with RDV_DATA_DIR environment variable
+   */
+  get dataDir(): string {
+    return process.env.RDV_DATA_DIR || join(homedir(), ".remote-dev");
+  },
+
   get userDataPath(): string {
-    return app.getPath("userData");
+    // Use centralized data directory instead of platform-specific app data
+    return this.dataDir;
   },
 
   get logsPath(): string {
-    return app.getPath("logs");
+    return join(this.dataDir, "logs");
   },
 
   get pidDir(): string {
-    return join(this.userDataPath, ".pids");
+    return join(this.dataDir, "server");
   },
 
   get dbPath(): string {
-    return join(this.userDataPath, "sqlite.db");
+    return join(this.dataDir, "sqlite.db");
   },
 
   // Port configuration

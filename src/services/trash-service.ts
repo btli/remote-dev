@@ -12,7 +12,7 @@
 
 import { db } from "@/db";
 import { trashItems, worktreeTrashMetadata, terminalSessions } from "@/db/schema";
-import { eq, and, lt, desc } from "drizzle-orm";
+import { eq, and, lt, desc, inArray } from "drizzle-orm";
 import type {
   TrashItem,
   TrashResourceType,
@@ -79,42 +79,46 @@ export async function listTrashItemsWithMetadata(
     orderBy: [desc(trashItems.trashedAt)],
   });
 
-  const result: TrashItemWithMetadata[] = [];
+  // Filter to worktree items only (currently the only supported type)
+  const worktreeItems = items.filter((item) => item.resourceType === "worktree");
+  if (worktreeItems.length === 0) return [];
 
-  for (const item of items) {
-    if (item.resourceType === "worktree") {
-      const metadata = await db.query.worktreeTrashMetadata.findFirst({
-        where: eq(worktreeTrashMetadata.trashItemId, item.id),
-      });
+  // Batch fetch all metadata in one query
+  const itemIds = worktreeItems.map((item) => item.id);
+  const allMetadata = await db.query.worktreeTrashMetadata.findMany({
+    where: inArray(worktreeTrashMetadata.trashItemId, itemIds),
+  });
 
-      if (metadata) {
-        result.push({
-          id: item.id,
-          userId: item.userId,
-          resourceType: "worktree",
-          resourceId: item.resourceId,
-          resourceName: item.resourceName,
-          trashedAt: item.trashedAt,
-          expiresAt: item.expiresAt,
-          metadata: {
-            id: metadata.id,
-            trashItemId: metadata.trashItemId,
-            githubRepoId: metadata.githubRepoId,
-            repoName: metadata.repoName,
-            repoLocalPath: metadata.repoLocalPath,
-            worktreeBranch: metadata.worktreeBranch,
-            worktreeOriginalPath: metadata.worktreeOriginalPath,
-            worktreeTrashPath: metadata.worktreeTrashPath,
-            originalFolderId: metadata.originalFolderId,
-            originalFolderName: metadata.originalFolderName,
-            createdAt: metadata.createdAt,
-          },
-        });
-      }
-    }
-  }
+  // Build lookup map
+  const metadataMap = new Map(allMetadata.map((m) => [m.trashItemId, m]));
 
-  return result;
+  return worktreeItems
+    .filter((item) => metadataMap.has(item.id))
+    .map((item) => {
+      const metadata = metadataMap.get(item.id)!;
+      return {
+        id: item.id,
+        userId: item.userId,
+        resourceType: "worktree" as const,
+        resourceId: item.resourceId,
+        resourceName: item.resourceName,
+        trashedAt: item.trashedAt,
+        expiresAt: item.expiresAt,
+        metadata: {
+          id: metadata.id,
+          trashItemId: metadata.trashItemId,
+          githubRepoId: metadata.githubRepoId,
+          repoName: metadata.repoName,
+          repoLocalPath: metadata.repoLocalPath,
+          worktreeBranch: metadata.worktreeBranch,
+          worktreeOriginalPath: metadata.worktreeOriginalPath,
+          worktreeTrashPath: metadata.worktreeTrashPath,
+          originalFolderId: metadata.originalFolderId,
+          originalFolderName: metadata.originalFolderName,
+          createdAt: metadata.createdAt,
+        },
+      };
+    });
 }
 
 /**

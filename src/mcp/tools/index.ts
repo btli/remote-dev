@@ -3,10 +3,10 @@
  *
  * Aggregates all tools from domain-specific modules.
  */
-import { sessionTools } from "./session-tools";
-import { gitTools } from "./git-tools";
-import { folderTools } from "./folder-tools";
-import type { RegisteredTool } from "../types";
+import { sessionTools } from "./session-tools.js";
+import { gitTools } from "./git-tools.js";
+import { folderTools } from "./folder-tools.js";
+import type { RegisteredTool } from "../types.js";
 
 /**
  * All registered MCP tools, grouped by domain:

@@ -4,11 +4,11 @@
  * Tools for organizing sessions into folders and managing preferences.
  */
 import { z } from "zod";
-import { createTool } from "../registry";
-import { successResult } from "../utils/error-handler";
+import { createTool } from "../registry.js";
+import { successResult } from "../utils/error-handler.js";
 import * as FolderService from "@/services/folder-service";
 import * as PreferencesService from "@/services/preferences-service";
-import type { RegisteredTool } from "../types";
+import type { RegisteredTool } from "../types.js";
 
 /**
  * folder_list - List all folders

@@ -14,8 +14,8 @@ import type {
   RegisteredPrompt,
   MCPUserContext,
   ToolResult,
-} from "./types";
-import { formatError } from "./utils/error-handler";
+} from "./types.js";
+import { formatError } from "./utils/error-handler.js";
 
 /**
  * Convert a Zod schema to JSON Schema format.

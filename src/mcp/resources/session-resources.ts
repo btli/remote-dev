@@ -4,10 +4,10 @@
  * MCP resources provide read access to application data.
  * Resources use URI patterns like rdv://sessions/{id}
  */
-import { createResource, extractUriParams } from "../registry";
+import { createResource, extractUriParams } from "../registry.js";
 import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
-import type { RegisteredResource } from "../types";
+import type { RegisteredResource } from "../types.js";
 
 /**
  * rdv://sessions - List all sessions

@@ -183,6 +183,12 @@ interface TrashItemRowProps {
   onDelete: () => void;
 }
 
+function formatDaysLeft(daysLeft: number): string {
+  if (daysLeft === 0) return "Expires today";
+  if (daysLeft === 1) return "1 day left";
+  return `${daysLeft}d left`;
+}
+
 function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
   const daysLeft = getDaysUntilExpiry(item.expiresAt);
   const isExpiringSoon = daysLeft <= 7;
@@ -249,11 +255,7 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
           )}
           <span className={cn("flex items-center gap-1", isExpiringSoon && "text-amber-400")}>
             <Calendar className="w-3 h-3" />
-            {daysLeft === 0
-              ? "Expires today"
-              : daysLeft === 1
-              ? "1 day left"
-              : `${daysLeft}d left`}
+            {formatDaysLeft(daysLeft)}
           </span>
         </div>
       </div>
