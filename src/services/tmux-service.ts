@@ -104,7 +104,7 @@ export async function createSession(
   }
 
   // Build execution options with environment overlay
-  // Cast to NodeJS.ProcessEnv since execFile merges with process.env
+  // Note: lib/exec.ts now filters out framework internal vars automatically
   const execOptions = env ? { env: env as NodeJS.ProcessEnv } : undefined;
 
   try {
