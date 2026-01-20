@@ -9,6 +9,25 @@ import { resolve as pathResolve } from "path";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 
 /**
+ * Filter out internal/private environment variables from frameworks.
+ * These should not leak into child terminal sessions.
+ */
+function getCleanEnvironment(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    // Filter out Next.js internal variables
+    if (key.startsWith("__NEXT_PRIVATE_")) continue;
+    if (key.startsWith("__NEXT_ACTION_")) continue;
+    // Filter out other framework internals
+    if (key.startsWith("__VITE_")) continue;
+    if (key.startsWith("__TURBOPACK_")) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
+/**
  * Validate a tmux session name to prevent command injection.
  * Only allows alphanumeric characters, hyphens, and underscores.
  */
@@ -196,12 +215,13 @@ function attachToTmuxSession(
   rows: number
 ): IPty {
   // SECURITY: Spawn tmux directly with array arguments - no shell interpolation
+  // Use clean environment to prevent framework internal vars from leaking
   const ptyProcess = pty.spawn("tmux", ["attach-session", "-t", sessionName], {
     name: "xterm-256color",
     cols,
     rows,
     cwd: process.env.HOME || process.cwd(),
-    env: process.env as Record<string, string>,
+    env: getCleanEnvironment(),
   });
 
   return ptyProcess;

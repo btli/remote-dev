@@ -6,6 +6,24 @@ import { promisify } from "util";
 
 const execFilePromise = promisify(execFileCallback);
 
+/**
+ * Get a clean environment with framework internal variables filtered out.
+ * These variables should not leak into child processes.
+ */
+function getCleanProcessEnv(): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    // Filter out Next.js internal variables
+    if (key.startsWith("__NEXT_PRIVATE_")) continue;
+    if (key.startsWith("__NEXT_ACTION_")) continue;
+    // Filter out other framework internals
+    if (key.startsWith("__VITE_")) continue;
+    if (key.startsWith("__TURBOPACK_")) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
 export interface ExecResult {
   stdout: string;
   stderr: string;
@@ -34,9 +52,11 @@ export async function execFile(
   }
 ): Promise<ExecResult> {
   try {
+    // Use clean environment to prevent framework internal vars from leaking
+    const cleanEnv = getCleanProcessEnv();
     const { stdout, stderr } = await execFilePromise(command, args, {
       cwd: options?.cwd,
-      env: { ...process.env, ...options?.env },
+      env: { ...cleanEnv, ...options?.env } as NodeJS.ProcessEnv,
       timeout: options?.timeout ?? 30000,
       maxBuffer: 10 * 1024 * 1024, // 10MB buffer
     });
@@ -110,9 +130,11 @@ export function spawnProcess(
   }
 ): Promise<number> {
   return new Promise((resolve, reject) => {
+    // Use clean environment to prevent framework internal vars from leaking
+    const cleanEnv = getCleanProcessEnv();
     const proc = spawn(command, args, {
       cwd: options?.cwd,
-      env: { ...process.env, ...options?.env },
+      env: { ...cleanEnv, ...options?.env } as NodeJS.ProcessEnv,
       // No shell: true - arguments are passed directly
     });
 
