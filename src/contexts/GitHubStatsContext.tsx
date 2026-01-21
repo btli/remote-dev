@@ -167,6 +167,7 @@ export function GitHubStatsProvider({
     try {
       const response = await fetch("/api/github/stats", {
         method: "POST",
+        cache: "no-store", // Prevent browser caching in production
       });
 
       if (!response.ok) {
@@ -197,7 +198,9 @@ export function GitHubStatsProvider({
     dispatch({ type: "SET_LOADING", isLoading: true });
 
     try {
-      const response = await fetch("/api/github/stats");
+      const response = await fetch("/api/github/stats", {
+        cache: "no-store", // Prevent browser caching in production
+      });
       if (!response.ok) {
         throw new Error("Failed to fetch stats");
       }

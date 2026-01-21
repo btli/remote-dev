@@ -200,7 +200,9 @@ export function GitHubIssuesProvider({ children }: GitHubIssuesProviderProps) {
           url.searchParams.set("refresh", "true");
         }
 
-        const response = await fetch(url.toString());
+        const response = await fetch(url.toString(), {
+          cache: "no-store", // Prevent browser caching in production
+        });
 
         if (!response.ok) {
           const error = await response.json();
