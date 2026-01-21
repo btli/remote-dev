@@ -29,6 +29,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "bun run src/db/seed.ts",
+    "db:migrate-agents": "bun run scripts/migrate-agent-sessions.ts",
     "terminal:build": "bun build src/server/index.ts --outdir dist-terminal --target node --external node-pty --external better-sqlite3 --sourcemap",
     "electron:build": "tsc -p electron/tsconfig.json",
     "electron:dev": "bun run electron:build && concurrently --kill-others -n next,term,electron -c blue,green,yellow \"bun run dev:next\" \"bun run dev:terminal\" \"electron .\"",
@@ -84,6 +85,8 @@
     "react": "19.2.3",
     "react-day-picker": "^9.13.0",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
     "ws": "^8.18.3",
     "zod": "^4.2.1"

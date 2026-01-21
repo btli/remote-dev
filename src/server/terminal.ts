@@ -127,6 +127,10 @@ interface TerminalSession {
   lastRows: number;
   pendingResize: { cols: number; rows: number } | null;
   resizeTimeout: ReturnType<typeof setTimeout> | null;
+  // Terminal type for agent exit detection
+  terminalType: "shell" | "agent" | "file" | string;
+  // User ID for session service calls
+  userId: string;
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -372,12 +376,15 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // Parse connection parameters
     const sessionId = authResult.sessionId;
+    const userId = authResult.userId;
     const tmuxSessionName = (query.tmuxSession as string) || `rdv-${sessionId}`;
     const cols = parseInt(query.cols as string) || 80;
     const rows = parseInt(query.rows as string) || 24;
     const rawCwd = query.cwd as string | undefined;
     // tmux history-limit (scrollback buffer) - default 50000 lines
     const tmuxHistoryLimit = parseInt(query.tmuxHistoryLimit as string) || 50000;
+    // Terminal type for agent exit detection
+    const terminalType = (query.terminalType as string) || "shell";
 
     // SECURITY: Validate tmux session name to prevent command injection
     if (!validateSessionName(tmuxSessionName)) {
@@ -439,6 +446,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       lastRows: rows,
       pendingResize: null,
       resizeTimeout: null,
+      terminalType,
+      userId,
     };
 
     sessions.set(sessionId, session);
@@ -457,10 +466,26 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
-      console.log(`Terminal session ${sessionId} PTY exited with code ${exitCode}`);
+      console.log(`Terminal session ${sessionId} PTY exited with code ${exitCode} (type: ${terminalType})`);
+
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "exit", code: exitCode }));
-        ws.close();
+        // For agent terminals, send a special agent_exited message
+        // The frontend will show an exit screen with restart/close options
+        if (terminalType === "agent") {
+          console.log(`Agent session ${sessionId} exited - sending agent_exited event`);
+          ws.send(JSON.stringify({
+            type: "agent_exited",
+            sessionId,
+            exitCode,
+            exitedAt: new Date().toISOString(),
+          }));
+          // Don't close the WebSocket yet - let the frontend handle it
+          // The user may want to restart the agent
+        } else {
+          // For shell terminals, just send exit and close
+          ws.send(JSON.stringify({ type: "exit", code: exitCode }));
+          ws.close();
+        }
       }
       cleanupSession(sessionId);
     });
@@ -532,6 +557,63 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             console.log(`Detaching from tmux session: ${tmuxSessionName}`);
             // Just close the PTY wrapper, tmux session stays
             ptyProcess.kill();
+            break;
+
+          case "restart_agent":
+            // Restart an agent session after it has exited
+            if (terminalType !== "agent") {
+              ws.send(JSON.stringify({
+                type: "error",
+                message: "restart_agent is only valid for agent sessions",
+              }));
+              break;
+            }
+
+            console.log(`Restarting agent session: ${sessionId}`);
+            try {
+              // Kill existing tmux session
+              execFile("tmux", ["kill-session", "-t", tmuxSessionName], () => {});
+
+              // Create a new tmux session
+              createTmuxSession(tmuxSessionName, session.lastCols, session.lastRows, cwd, tmuxHistoryLimit);
+
+              // Create new PTY and attach
+              const newPty = attachToTmuxSession(tmuxSessionName, session.lastCols, session.lastRows);
+
+              // Replace PTY in session
+              session.pty = newPty;
+
+              // Wire up new PTY events
+              newPty.onData((data) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: "output", data }));
+                }
+              });
+
+              newPty.onExit(({ exitCode: newExitCode }) => {
+                console.log(`Restarted agent session ${sessionId} exited with code ${newExitCode}`);
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({
+                    type: "agent_exited",
+                    sessionId,
+                    exitCode: newExitCode,
+                    exitedAt: new Date().toISOString(),
+                  }));
+                }
+              });
+
+              ws.send(JSON.stringify({
+                type: "agent_restarted",
+                sessionId,
+                tmuxSessionName,
+              }));
+            } catch (error) {
+              console.error(`Failed to restart agent session ${sessionId}:`, error);
+              ws.send(JSON.stringify({
+                type: "error",
+                message: `Failed to restart agent: ${(error as Error).message}`,
+              }));
+            }
             break;
         }
       } catch {

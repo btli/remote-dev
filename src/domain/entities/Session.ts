@@ -15,6 +15,7 @@ import { SessionStatus } from "../value-objects/SessionStatus";
 import { TmuxSessionName } from "../value-objects/TmuxSessionName";
 import { InvalidValueError } from "../errors/DomainError";
 import type { AgentProviderType } from "@/types/session";
+import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 
 export interface SessionProps {
   id: string;
@@ -27,7 +28,16 @@ export interface SessionProps {
   worktreeBranch: string | null;
   folderId: string | null;
   profileId: string | null;
+  // Terminal type: shell, agent, file, or custom
+  terminalType: TerminalType;
   agentProvider: AgentProviderType | null;
+  // Agent session state (for agent terminal type)
+  agentExitState: AgentExitState | null;
+  agentExitCode: number | null;
+  agentExitedAt: Date | null;
+  agentRestartCount: number;
+  // Plugin-specific metadata
+  typeMetadata: Record<string, unknown> | null;
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
@@ -46,7 +56,11 @@ export interface CreateSessionProps {
   worktreeBranch?: string | null;
   folderId?: string | null;
   profileId?: string | null;
+  // Terminal type: shell, agent, file, or custom (default: shell)
+  terminalType?: TerminalType;
   agentProvider?: AgentProviderType | null;
+  // Plugin-specific metadata
+  typeMetadata?: Record<string, unknown> | null;
   tabOrder?: number;
 }
 
@@ -73,6 +87,7 @@ export class Session {
   static create(props: CreateSessionProps): Session {
     const id = props.id ?? crypto.randomUUID();
     const now = new Date();
+    const terminalType = props.terminalType ?? "shell";
 
     return new Session({
       id,
@@ -85,7 +100,14 @@ export class Session {
       worktreeBranch: props.worktreeBranch ?? null,
       folderId: props.folderId ?? null,
       profileId: props.profileId ?? null,
+      terminalType,
       agentProvider: props.agentProvider ?? null,
+      // Agent state: set to "running" for agent type, null otherwise
+      agentExitState: terminalType === "agent" ? "running" : null,
+      agentExitCode: null,
+      agentExitedAt: null,
+      agentRestartCount: 0,
+      typeMetadata: props.typeMetadata ?? null,
       splitGroupId: null,
       splitOrder: 0,
       splitSize: 100,
@@ -148,8 +170,32 @@ export class Session {
     return this.props.profileId;
   }
 
+  get terminalType(): TerminalType {
+    return this.props.terminalType;
+  }
+
   get agentProvider(): AgentProviderType | null {
     return this.props.agentProvider;
+  }
+
+  get agentExitState(): AgentExitState | null {
+    return this.props.agentExitState;
+  }
+
+  get agentExitCode(): number | null {
+    return this.props.agentExitCode;
+  }
+
+  get agentExitedAt(): Date | null {
+    return this.props.agentExitedAt;
+  }
+
+  get agentRestartCount(): number {
+    return this.props.agentRestartCount;
+  }
+
+  get typeMetadata(): Record<string, unknown> | null {
+    return this.props.typeMetadata;
   }
 
   get splitGroupId(): string | null {
@@ -296,6 +342,63 @@ export class Session {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Agent State Methods (for agent terminal type)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Mark agent as exited with exit code.
+   */
+  markAgentExited(exitCode: number | null): Session {
+    if (this.props.terminalType !== "agent") {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as exited");
+    }
+    return this.withUpdates({
+      agentExitState: "exited",
+      agentExitCode: exitCode,
+      agentExitedAt: new Date(),
+    });
+  }
+
+  /**
+   * Mark agent as restarting.
+   */
+  markAgentRestarting(): Session {
+    if (this.props.terminalType !== "agent") {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as restarting");
+    }
+    return this.withUpdates({
+      agentExitState: "restarting",
+      agentRestartCount: this.props.agentRestartCount + 1,
+    });
+  }
+
+  /**
+   * Mark agent as running (after restart).
+   */
+  markAgentRunning(): Session {
+    if (this.props.terminalType !== "agent") {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as running");
+    }
+    return this.withUpdates({
+      agentExitState: "running",
+      agentExitCode: null,
+      agentExitedAt: null,
+    });
+  }
+
+  /**
+   * Mark agent session as closed (won't be restarted).
+   */
+  markAgentClosed(): Session {
+    if (this.props.terminalType !== "agent") {
+      throw new InvalidValueError("terminalType", this.props.terminalType, "Must be 'agent' to mark as closed");
+    }
+    return this.withUpdates({
+      agentExitState: "closed",
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // Query Methods
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -346,7 +449,11 @@ export class Session {
       this.worktreeBranch === other.worktreeBranch &&
       this.folderId === other.folderId &&
       this.profileId === other.profileId &&
+      this.terminalType === other.terminalType &&
       this.agentProvider === other.agentProvider &&
+      this.agentExitState === other.agentExitState &&
+      this.agentExitCode === other.agentExitCode &&
+      this.agentRestartCount === other.agentRestartCount &&
       this.splitGroupId === other.splitGroupId &&
       this.splitOrder === other.splitOrder &&
       this.splitSize === other.splitSize &&

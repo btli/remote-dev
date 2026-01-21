@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "71553f61-a807-48f9-9ae2-0a82d1dbe4d3",
-  "prevId": "de6211e0-1148-4b5f-a243-5226d0f6d77d",
+  "id": "81da4a85-ed90-4e95-933a-0920158ed5ed",
+  "prevId": "71553f61-a807-48f9-9ae2-0a82d1dbe4d3",
   "tables": {
     "account": {
       "name": "account",
@@ -4595,6 +4595,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "terminal_type": {
+          "name": "terminal_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'shell'"
+        },
         "agent_provider": {
           "name": "agent_provider",
           "type": "text",
@@ -4602,6 +4610,42 @@
           "notNull": false,
           "autoincrement": false,
           "default": "'claude'"
+        },
+        "agent_exit_state": {
+          "name": "agent_exit_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "agent_exit_code": {
+          "name": "agent_exit_code",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "agent_exited_at": {
+          "name": "agent_exited_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "agent_restart_count": {
+          "name": "agent_restart_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
+        },
+        "type_metadata": {
+          "name": "type_metadata",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "split_group_id": {
           "name": "split_group_id",
@@ -4700,6 +4744,14 @@
           "columns": [
             "user_id",
             "folder_id"
+          ],
+          "isUnique": false
+        },
+        "terminal_session_type_idx": {
+          "name": "terminal_session_type_idx",
+          "columns": [
+            "user_id",
+            "terminal_type"
           ],
           "isUnique": false
         }

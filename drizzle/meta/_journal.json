@@ -57,6 +57,13 @@
       "when": 1767881815096,
       "tag": "0008_add_scrollback_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1769006110188,
+      "tag": "0008_true_shotgun",
+      "breakpoints": true
     }
   ]
 }

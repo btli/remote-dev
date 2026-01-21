@@ -6,6 +6,7 @@ import type { CIStatusState, PRState } from "@/types/github-stats";
 import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
 import type { AgentProviderType } from "@/types/session";
+import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 
 export const users = sqliteTable("user", {
@@ -412,8 +413,17 @@ export const terminalSessions = sqliteTable(
     profileId: text("profile_id").references(() => agentProfiles.id, {
       onDelete: "set null",
     }),
+    // Terminal type: shell, agent, file, or custom plugin types
+    terminalType: text("terminal_type").$type<TerminalType>().default("shell"),
     // Agent-aware session: which AI agent is associated
     agentProvider: text("agent_provider").$type<AgentProviderType>().default("claude"),
+    // Agent session state (for agent terminal type)
+    agentExitState: text("agent_exit_state").$type<AgentExitState>(),
+    agentExitCode: integer("agent_exit_code"),
+    agentExitedAt: integer("agent_exited_at", { mode: "timestamp_ms" }),
+    agentRestartCount: integer("agent_restart_count").default(0),
+    // Plugin-specific metadata (JSON string)
+    typeMetadata: text("type_metadata"),
     // Split group membership (independent from folder)
     splitGroupId: text("split_group_id").references(() => splitGroups.id, {
       onDelete: "set null",
@@ -438,6 +448,8 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_split_group_idx").on(table.splitGroupId),
     // Composite index for filtering sessions by folder (used in folder views)
     index("terminal_session_user_folder_idx").on(table.userId, table.folderId),
+    // Index for filtering by terminal type
+    index("terminal_session_type_idx").on(table.userId, table.terminalType),
   ]
 );
 

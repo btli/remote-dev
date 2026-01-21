@@ -20,6 +20,10 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 
 export interface TerminalRef {
   focus: () => void;
+  /** Request agent restart (only valid for terminalType='agent') */
+  restartAgent: () => void;
+  /** Get the WebSocket instance (for advanced use) */
+  getWebSocket: () => WebSocket | null;
 }
 
 interface TerminalProps {
@@ -39,9 +43,15 @@ interface TerminalProps {
   isActive?: boolean;
   /** Environment variables to inject into new terminal sessions */
   environmentVars?: Record<string, string> | null;
+  /** Terminal type for agent exit detection */
+  terminalType?: "shell" | "agent" | "file" | string;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
+  /** Called when an agent session exits (only for terminalType='agent') */
+  onAgentExited?: (exitCode: number | null, exitedAt: string) => void;
+  /** Called when an agent session restarts successfully */
+  onAgentRestarted?: () => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
 }
@@ -60,9 +70,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   isRecording = false,
   isActive = false,
   environmentVars,
+  terminalType = "shell",
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
+  onAgentExited,
+  onAgentRestarted,
   onOutput,
   onDimensionsChange,
 }, ref) {
@@ -83,6 +96,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const intentionalExitRef = useRef(false);
   const maxReconnectAttempts = 5;
 
+  /**
+   * Atomically marks session exit as intentional and cancels any pending reconnect.
+   * This prevents race conditions where a reconnect timeout fires after exit.
+   */
+  const markIntentionalExit = useCallback(() => {
+    intentionalExitRef.current = true;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    reconnectAttemptsRef.current = 0;
+  }, []);
+
   // Notifications hook for command completion
   const { recordActivity } = useNotifications({
     enabled: notificationsEnabled,
@@ -97,6 +123,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onStatusChangeRef = useRef(onStatusChange);
   const onWebSocketReadyRef = useRef(onWebSocketReady);
   const onSessionExitRef = useRef(onSessionExit);
+  const onAgentExitedRef = useRef(onAgentExited);
+  const onAgentRestartedRef = useRef(onAgentRestarted);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
@@ -125,6 +153,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onStatusChangeRef.current = onStatusChange;
     onWebSocketReadyRef.current = onWebSocketReady;
     onSessionExitRef.current = onSessionExit;
+    onAgentExitedRef.current = onAgentExited;
+    onAgentRestartedRef.current = onAgentRestarted;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
@@ -138,13 +168,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
     focus: () => {
       xtermRef.current?.focus();
     },
+    restartAgent: () => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "restart_agent" }));
+      }
+    },
+    getWebSocket: () => wsRef.current,
   }), []);
 
   const updateStatus = useCallback(
@@ -406,6 +443,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           rows: String(rows),
           // Include tmux history-limit for new session creation
           tmuxHistoryLimit: String(tmuxHistoryLimitRef.current),
+          // Include terminal type for agent exit detection
+          terminalType,
         });
         // Include working directory if specified
         if (projectPath) {
@@ -471,9 +510,28 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 terminal.writeln(
                   `\r\n\x1b[33mSession ended (exit code ${msg.code})\x1b[0m`
                 );
-                // Mark as intentional exit to prevent reconnection
-                intentionalExitRef.current = true;
+                // Mark as intentional exit and cancel any pending reconnect
+                markIntentionalExit();
                 onSessionExitRef.current?.(msg.code);
+                break;
+              case "agent_exited":
+                // Agent process has exited - show exit info in terminal
+                terminal.writeln(
+                  `\r\n\x1b[33mAgent exited (exit code ${msg.exitCode ?? "unknown"})\x1b[0m`
+                );
+                // Mark as intentional exit and cancel any pending reconnect
+                markIntentionalExit();
+                // Notify parent component to show agent exit screen
+                onAgentExitedRef.current?.(msg.exitCode, msg.exitedAt);
+                break;
+              case "agent_restarted":
+                // Agent has been restarted successfully
+                terminal.clear();
+                terminal.writeln("\x1b[32mAgent restarted\x1b[0m\r\n");
+                // Clear intentional exit flag
+                intentionalExitRef.current = false;
+                // Notify parent component
+                onAgentRestartedRef.current?.();
                 break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
@@ -732,7 +790,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       searchAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType]);
 
   // Update terminal options when font preferences change
   useEffect(() => {
