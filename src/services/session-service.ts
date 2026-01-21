@@ -13,12 +13,18 @@ import type {
   AgentProviderType,
 } from "@/types/session";
 import { AGENT_PROVIDERS } from "@/types/session";
+import type { TerminalType } from "@/types/terminal-type";
 import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
 import * as GitHubService from "./github-service";
 import * as AgentProfileService from "./agent-profile-service";
 import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession } from "./preferences-service";
 import { SessionServiceError } from "@/lib/errors";
+import { TerminalTypeRegistry } from "@/lib/terminal-plugins/registry";
+import { initializeBuiltInPlugins } from "@/lib/terminal-plugins/init";
+
+// Initialize plugins on module load
+initializeBuiltInPlugins();
 
 // Re-export for backwards compatibility with API routes
 export { SessionServiceError };
@@ -214,6 +220,22 @@ export async function createSession(
   const createdWorktree = input.createWorktree && branchName && workingPath !== input.projectPath;
   const repoPath = input.projectPath;
 
+  // Determine terminal type from input
+  // Priority: explicit terminalType > agent type (if autoLaunch) > shell
+  let terminalType: TerminalType = input.terminalType ?? "shell";
+  if (!input.terminalType && input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
+    terminalType = "agent";
+  }
+
+  // Get plugin for validation (optional - plugins can validate input)
+  const plugin = TerminalTypeRegistry.get(terminalType);
+  if (plugin?.validateInput) {
+    const validationError = plugin.validateInput(input);
+    if (validationError) {
+      throw new SessionServiceError(validationError, "VALIDATION_ERROR", sessionId);
+    }
+  }
+
   // Insert the database record - clean up tmux session and worktree if this fails
   try {
     const now = new Date();
@@ -229,7 +251,13 @@ export async function createSession(
         worktreeBranch: branchName ?? null,
         folderId: input.folderId ?? null,
         profileId: input.profileId ?? null,
+        terminalType,
         agentProvider: input.agentProvider ?? "claude",
+        // Set agent state for agent terminal type
+        agentExitState: terminalType === "agent" ? "running" : null,
+        agentExitCode: null,
+        agentExitedAt: null,
+        agentRestartCount: 0,
         status: "active",
         tabOrder: nextTabOrder,
         lastActivityAt: now,
@@ -403,6 +431,129 @@ export async function touchSession(
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent State Management (for agent terminal type)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Mark agent as exited with exit code.
+ * Called by terminal server when it detects the agent process has exited.
+ */
+export async function markAgentExited(
+  sessionId: string,
+  userId: string,
+  exitCode: number | null
+): Promise<TerminalSession | null> {
+  const now = new Date();
+  const [updated] = await db
+    .update(terminalSessions)
+    .set({
+      agentExitState: "exited",
+      agentExitCode: exitCode,
+      agentExitedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId),
+        eq(terminalSessions.terminalType, "agent")
+      )
+    )
+    .returning();
+
+  return updated ? mapDbSessionToSession(updated) : null;
+}
+
+/**
+ * Mark agent as restarting (user clicked restart).
+ * Increments restart count.
+ */
+export async function markAgentRestarting(
+  sessionId: string,
+  userId: string
+): Promise<TerminalSession | null> {
+  const session = await getSession(sessionId, userId);
+  if (!session || session.terminalType !== "agent") {
+    return null;
+  }
+
+  const now = new Date();
+  const [updated] = await db
+    .update(terminalSessions)
+    .set({
+      agentExitState: "restarting",
+      agentRestartCount: (session.agentRestartCount ?? 0) + 1,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId)
+      )
+    )
+    .returning();
+
+  return updated ? mapDbSessionToSession(updated) : null;
+}
+
+/**
+ * Mark agent as running (after restart completes).
+ * Clears exit code and exit time.
+ */
+export async function markAgentRunning(
+  sessionId: string,
+  userId: string
+): Promise<TerminalSession | null> {
+  const now = new Date();
+  const [updated] = await db
+    .update(terminalSessions)
+    .set({
+      agentExitState: "running",
+      agentExitCode: null,
+      agentExitedAt: null,
+      lastActivityAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId),
+        eq(terminalSessions.terminalType, "agent")
+      )
+    )
+    .returning();
+
+  return updated ? mapDbSessionToSession(updated) : null;
+}
+
+/**
+ * Mark agent session as closed (won't be restarted).
+ * Called when user chooses to close instead of restart.
+ */
+export async function markAgentClosed(
+  sessionId: string,
+  userId: string
+): Promise<TerminalSession | null> {
+  const now = new Date();
+  const [updated] = await db
+    .update(terminalSessions)
+    .set({
+      agentExitState: "closed",
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(terminalSessions.id, sessionId),
+        eq(terminalSessions.userId, userId),
+        eq(terminalSessions.terminalType, "agent")
+      )
+    )
+    .returning();
+
+  return updated ? mapDbSessionToSession(updated) : null;
+}
+
 /**
  * Suspend a session (detach tmux, keep alive)
  * SECURITY: Includes userId in WHERE clause to prevent TOCTOU attacks
@@ -549,7 +700,13 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     worktreeBranch: dbSession.worktreeBranch,
     folderId: dbSession.folderId,
     profileId: dbSession.profileId,
+    terminalType: dbSession.terminalType ?? "shell",
     agentProvider: dbSession.agentProvider as AgentProviderType | null,
+    agentExitState: dbSession.agentExitState as TerminalSession["agentExitState"],
+    agentExitCode: dbSession.agentExitCode ?? null,
+    agentExitedAt: dbSession.agentExitedAt ? new Date(dbSession.agentExitedAt) : null,
+    agentRestartCount: dbSession.agentRestartCount ?? 0,
+    typeMetadata: dbSession.typeMetadata ? JSON.parse(dbSession.typeMetadata) : null,
     splitGroupId: dbSession.splitGroupId,
     splitOrder: dbSession.splitOrder,
     splitSize: dbSession.splitSize ?? 0.5,

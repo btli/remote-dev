@@ -2,6 +2,8 @@
  * Session types for terminal session management
  */
 
+import type { TerminalType, AgentExitState } from "./terminal-type";
+
 export type SessionStatus = "active" | "suspended" | "closed" | "trashed";
 
 /**
@@ -20,8 +22,17 @@ export interface TerminalSession {
   folderId: string | null;
   // Agent profile for environment isolation
   profileId: string | null;
+  // Terminal type: shell, agent, file, or custom
+  terminalType: TerminalType;
   // Agent-aware session fields
   agentProvider: AgentProviderType | null;
+  // Agent session state (for agent terminal type)
+  agentExitState: AgentExitState | null;
+  agentExitCode: number | null;
+  agentExitedAt: Date | null;
+  agentRestartCount: number;
+  // Plugin-specific metadata (parsed from JSON)
+  typeMetadata: Record<string, unknown> | null;
   // Split group membership (independent from folder)
   splitGroupId: string | null;
   splitOrder: number;
@@ -41,10 +52,14 @@ export interface CreateSessionInput {
   folderId?: string;
   // Agent profile for environment isolation
   profileId?: string;
+  // Terminal type: shell, agent, file (default: determined by agentProvider)
+  terminalType?: TerminalType;
   // Agent-aware session fields
   agentProvider?: AgentProviderType;  // Which AI agent to use
   autoLaunchAgent?: boolean;          // Whether to auto-launch the agent CLI
   agentFlags?: string[];              // Additional flags for the agent CLI
+  // For file terminal type
+  filePath?: string;                  // Path to file being edited
   // Feature session fields
   startupCommand?: string;      // Override resolved preferences
   featureDescription?: string;  // Original feature description

@@ -37,6 +37,12 @@ interface NewSessionWizardProps {
     createWorktree?: boolean;
     baseBranch?: string;
     profileId?: string;
+    // Terminal type for plugin-based rendering
+    terminalType?: "shell" | "agent" | "file";
+    // Agent-aware session fields
+    agentProvider?: "claude" | "codex" | "gemini" | "opencode" | "none";
+    autoLaunchAgent?: boolean;
+    agentFlags?: string[];
   }) => Promise<void>;
   isGitHubConnected: boolean;
 }
@@ -324,20 +330,27 @@ export function NewSessionWizard({
     setError(null);
 
     try {
-      const agentCommand =
-        selectedAgent === "custom"
-          ? customAgentCommand
-          : AGENT_PRESETS.find((a) => a.id === selectedAgent)?.command;
+      // For custom commands, still pass as startupCommand (shell type)
+      // For known agents, use the terminal type system
+      const isKnownAgent = selectedAgent !== "custom";
 
       await onCreate({
         name: sessionName || featureDescription || "Feature Session",
         projectPath: featureProjectPath || undefined,
-        startupCommand: agentCommand,
         featureDescription,
         createWorktree: featureCreateWorktree,
         baseBranch: featureBaseBranch,
         worktreeBranch: featureCreateWorktree ? generatedBranchName : undefined,
         profileId: selectedProfileId || undefined,
+        // Terminal type system: use "agent" type for known agents
+        terminalType: isKnownAgent ? "agent" : "shell",
+        // Map selected agent to provider (claude, codex, gemini, opencode)
+        agentProvider: isKnownAgent
+          ? (selectedAgent as "claude" | "codex" | "gemini" | "opencode")
+          : "none",
+        autoLaunchAgent: isKnownAgent,
+        // For custom commands, pass the command directly
+        startupCommand: !isKnownAgent ? customAgentCommand : undefined,
       });
       handleClose();
     } catch (err) {

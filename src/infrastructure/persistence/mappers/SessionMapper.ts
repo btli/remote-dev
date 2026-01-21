@@ -10,6 +10,7 @@ import { Session, type SessionProps } from "@/domain/entities/Session";
 import { SessionStatus } from "@/domain/value-objects/SessionStatus";
 import { TmuxSessionName } from "@/domain/value-objects/TmuxSessionName";
 import type { AgentProviderType } from "@/types/session";
+import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 
 /**
  * Raw database record type from Drizzle query.
@@ -25,7 +26,13 @@ export interface SessionDbRecord {
   worktreeBranch: string | null;
   folderId: string | null;
   profileId: string | null;
+  terminalType: string | null;
   agentProvider: string | null;
+  agentExitState: string | null;
+  agentExitCode: number | null;
+  agentExitedAt: Date | string | null;
+  agentRestartCount: number | null;
+  typeMetadata: string | null;
   splitGroupId: string | null;
   splitOrder: number | null;
   splitSize: number | null;
@@ -50,7 +57,13 @@ export interface SessionDbInsert {
   worktreeBranch: string | null;
   folderId: string | null;
   profileId: string | null;
+  terminalType: TerminalType;
   agentProvider: AgentProviderType | null;
+  agentExitState: AgentExitState | null;
+  agentExitCode: number | null;
+  agentExitedAt: Date | null;
+  agentRestartCount: number;
+  typeMetadata: string | null;
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
@@ -77,7 +90,13 @@ export class SessionMapper {
       worktreeBranch: record.worktreeBranch,
       folderId: record.folderId,
       profileId: record.profileId,
+      terminalType: (record.terminalType as TerminalType) ?? "shell",
       agentProvider: (record.agentProvider as AgentProviderType) ?? null,
+      agentExitState: (record.agentExitState as AgentExitState) ?? null,
+      agentExitCode: record.agentExitCode ?? null,
+      agentExitedAt: record.agentExitedAt ? toDate(record.agentExitedAt) : null,
+      agentRestartCount: record.agentRestartCount ?? 0,
+      typeMetadata: record.typeMetadata ? JSON.parse(record.typeMetadata) : null,
       splitGroupId: record.splitGroupId,
       splitOrder: record.splitOrder ?? 0,
       splitSize: record.splitSize ?? 100,
@@ -111,7 +130,13 @@ export class SessionMapper {
       worktreeBranch: session.worktreeBranch,
       folderId: session.folderId,
       profileId: session.profileId,
+      terminalType: session.terminalType,
       agentProvider: session.agentProvider,
+      agentExitState: session.agentExitState,
+      agentExitCode: session.agentExitCode,
+      agentExitedAt: session.agentExitedAt,
+      agentRestartCount: session.agentRestartCount,
+      typeMetadata: session.typeMetadata ? JSON.stringify(session.typeMetadata) : null,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
@@ -138,7 +163,13 @@ export class SessionMapper {
     worktreeBranch: string | null;
     folderId: string | null;
     profileId: string | null;
+    terminalType: TerminalType;
     agentProvider: AgentProviderType | null;
+    agentExitState: AgentExitState | null;
+    agentExitCode: number | null;
+    agentExitedAt: Date | null;
+    agentRestartCount: number;
+    typeMetadata: Record<string, unknown> | null;
     splitGroupId: string | null;
     splitOrder: number;
     splitSize: number;
@@ -158,7 +189,13 @@ export class SessionMapper {
       worktreeBranch: session.worktreeBranch,
       folderId: session.folderId,
       profileId: session.profileId,
+      terminalType: session.terminalType,
       agentProvider: session.agentProvider,
+      agentExitState: session.agentExitState,
+      agentExitCode: session.agentExitCode,
+      agentExitedAt: session.agentExitedAt,
+      agentRestartCount: session.agentRestartCount,
+      typeMetadata: session.typeMetadata,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,

@@ -71,6 +71,45 @@ Browser (xterm.js) <--WebSocket--> Terminal Server (node-pty) <--> tmux <--> She
 6. **Resume**: `POST /api/sessions/:id/resume` reattaches to existing tmux session
 7. **Close**: `DELETE /api/sessions/:id` kills tmux and marks session closed
 
+### Terminal Type Plugin System
+
+Sessions have a `terminalType` field that determines their behavior. The plugin architecture allows extensible terminal types:
+
+**Built-in Terminal Types:**
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `shell` | Standard terminal with bash/zsh | General command-line work |
+| `agent` | AI agent as shell process | Claude Code, Codex, Gemini sessions |
+| `file` | File viewer/editor (no terminal) | Editing CLAUDE.md configs |
+
+**Plugin Architecture:**
+```
+src/lib/terminal-plugins/
+├── registry.ts        # TerminalTypeRegistry singleton
+├── event-bus.ts       # SessionEventBus for lifecycle events
+├── init.ts            # Initializes built-in plugins
+└── plugins/
+    ├── shell-plugin.tsx   # Default terminal plugin
+    ├── agent-plugin.tsx   # AI agent plugin with exit screen
+    └── file-viewer-plugin.tsx  # Markdown editor plugin
+```
+
+**Plugin Interface:**
+Each plugin implements `TerminalTypePlugin` interface:
+- `createSession()` - Returns shell command, environment, and metadata
+- `renderContent()` - Renders the terminal/editor UI
+- `onSessionExit()` - Defines exit behavior (show exit screen, auto-close, etc.)
+- `onSessionRestart()` - Handles restart logic for agent sessions
+- `renderExitScreen()` - Custom exit UI (agent exit screen with restart option)
+
+**Database Columns (terminal_session):**
+- `terminal_type` - Plugin type identifier (shell/agent/file)
+- `agent_exit_state` - For agent type: running/exited/restarting/closed
+- `agent_exit_code` - Exit code when agent process exits
+- `agent_restarted_at` - Timestamp of last restart
+- `agent_restart_count` - Number of times restarted
+- `type_metadata` - JSON blob for plugin-specific data
+
 ### Authentication Flow
 
 - **Dual auth model**:
@@ -319,6 +358,10 @@ React Contexts in `src/contexts/`:
 | `src/components/split/SplitPaneLayout.tsx` | Split layout component |
 | `src/mcp/index.ts` | MCP server initialization |
 | `src/mcp/registry.ts` | MCP tool/resource registration |
+| `src/lib/terminal-plugins/registry.ts` | Terminal type plugin registry |
+| `src/lib/terminal-plugins/plugins/*.tsx` | Built-in terminal type plugins |
+| `src/types/terminal-type.ts` | Terminal type system interfaces |
+| `src/components/terminal/AgentExitScreen.tsx` | Agent exit screen UI |
 
 ## API Routes
 
