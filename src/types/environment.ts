@@ -155,6 +155,16 @@ export interface PortValidationResult {
 }
 
 /**
+ * Result of runtime port validation check.
+ *
+ * Extends PortValidationResult with runtime (lsof) checks.
+ */
+export interface PortValidationWithRuntimeResult extends PortValidationResult {
+  /** Ports that are currently in use on the system (detected via lsof) */
+  runtimeConflicts: number[];
+}
+
+/**
  * Port registry entry as stored in database.
  *
  * Tracks which ports are claimed by which folders for conflict detection.

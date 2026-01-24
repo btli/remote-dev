@@ -233,15 +233,23 @@ export interface AgentProfileWithAppearance extends AgentProfile {
 
 /**
  * Environment overlay for profile isolation.
+ *
+ * NOTE: HOME is intentionally NOT overridden. This allows the user's
+ * standard dotfiles (.bashrc, .zshrc, etc.) to be sourced normally.
+ * Profile isolation is achieved via XDG variables which redirect
+ * config/data paths without breaking user's shell environment.
+ *
+ * @see ProfileIsolation value object in domain layer
  */
 export interface ProfileEnvironment {
-  HOME: string;
   XDG_CONFIG_HOME: string;
   XDG_DATA_HOME: string;
+  XDG_CACHE_HOME?: string;
   CLAUDE_CONFIG_DIR?: string;
   CODEX_HOME?: string;
   GEMINI_HOME?: string;
-  GIT_CONFIG?: string;
+  OPENCODE_HOME?: string;
+  GIT_CONFIG_GLOBAL?: string;
   GIT_SSH_COMMAND?: string;
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;

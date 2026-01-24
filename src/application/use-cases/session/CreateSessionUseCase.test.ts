@@ -49,6 +49,16 @@ describe("CreateSessionUseCase", () => {
       sendKeys: vi.fn(),
       detachSession: vi.fn(),
       generateSessionName: vi.fn(),
+      // Environment management
+      setEnvironment: vi.fn().mockResolvedValue(undefined),
+      getEnvironment: vi.fn(),
+      unsetEnvironment: vi.fn().mockResolvedValue(undefined),
+      // Hooks management
+      setHook: vi.fn().mockResolvedValue(undefined),
+      removeHook: vi.fn().mockResolvedValue(undefined),
+      // Options management
+      setOption: vi.fn().mockResolvedValue(undefined),
+      getOption: vi.fn(),
     };
 
     mockWorktreeGateway = {

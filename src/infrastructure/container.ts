@@ -14,10 +14,12 @@ import { DrizzleGitHubIssueRepository } from "./persistence/repositories/Drizzle
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
 import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
+import { SystemEnvironmentGateway } from "./external/environment/SystemEnvironmentGateway";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import type { WorktreeGateway } from "@/application/ports/WorktreeGateway";
+import type { EnvironmentGateway } from "@/application/ports/EnvironmentGateway";
 import type { GitHubIssueRepository } from "@/application/ports/GitHubIssueRepository";
 import type { GitHubIssueGateway } from "@/application/ports/GitHubIssueGateway";
 
@@ -51,6 +53,9 @@ import {
   FetchIssuesForRepositoryUseCase,
   MarkIssuesSeenUseCase,
 } from "@/application/use-cases/github";
+
+// Agent Use Cases
+import { RestartAgentUseCase } from "@/application/use-cases/session/RestartAgentUseCase";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
@@ -95,6 +100,12 @@ export const worktreeGateway: WorktreeGateway = new WorktreeGatewayImpl();
  * Wraps the existing GitHubService issue functions.
  */
 export const githubIssueGateway: GitHubIssueGateway = new GitHubIssueGatewayImpl();
+
+/**
+ * Environment gateway instance.
+ * Provides access to system environment variables.
+ */
+export const environmentGateway: EnvironmentGateway = new SystemEnvironmentGateway();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Use Case Instances
@@ -154,6 +165,15 @@ export const updateSessionUseCase = new UpdateSessionUseCase(sessionRepository);
 export const moveSessionToFolderUseCase = new MoveSessionToFolderUseCase(
   sessionRepository,
   folderRepository
+);
+
+/**
+ * Restart agent use case.
+ * Handles restarting agent CLI processes with environment preservation.
+ */
+export const restartAgentUseCase = new RestartAgentUseCase(
+  sessionRepository,
+  tmuxGateway
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,6 +275,7 @@ export interface Container {
   tmuxGateway: TmuxGateway;
   worktreeGateway: WorktreeGateway;
   githubIssueGateway: GitHubIssueGateway;
+  environmentGateway: EnvironmentGateway;
 }
 
 /**
@@ -267,6 +288,7 @@ export const defaultContainer: Container = {
   tmuxGateway,
   worktreeGateway,
   githubIssueGateway,
+  environmentGateway,
 };
 
 /**

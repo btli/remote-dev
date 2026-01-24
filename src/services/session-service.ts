@@ -168,7 +168,11 @@ export async function createSession(
   }
 
   // Determine startup command (explicit override takes precedence)
-  let startupCommand = input.startupCommand || preferences.startupCommand || undefined;
+  // If startupCommand is explicitly provided (even as empty string), use it; otherwise use preferences
+  let startupCommand =
+    input.startupCommand !== undefined
+      ? input.startupCommand || undefined
+      : preferences.startupCommand || undefined;
 
   // Handle agent-aware session: auto-launch the agent CLI
   if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
@@ -193,17 +197,17 @@ export async function createSession(
     }
   }
 
-  // Fetch folder environment variables to inject into the shell
+  // Fetch folder environment variables for the session
   const folderEnv = await getEnvironmentForSession(userId, input.folderId);
 
-  // Create the tmux session with profile environment and folder shell environment
+  // Create the tmux session with profile environment for initial PTY spawn
+  // Note: profileEnv is used for initial shell environment (XDG paths, agent config dirs)
   try {
     await TmuxService.createSession(
       tmuxSessionName,
       workingPath ?? undefined,
       startupCommand,
-      profileEnv,
-      folderEnv ?? undefined
+      profileEnv
     );
   } catch (error) {
     if (error instanceof TmuxService.TmuxServiceError) {
@@ -214,6 +218,50 @@ export async function createSession(
       );
     }
     throw error;
+  }
+
+  // Set persistent session-level environment variables
+  // These survive shell exits and are inherited by all new shells in the session
+  // Merge profileEnv and folderEnv with folder taking precedence
+  const sessionEnv: Record<string, string> = {
+    ...(profileEnv ?? {}),
+    ...(folderEnv ?? {}),
+  };
+
+  if (Object.keys(sessionEnv).length > 0) {
+    try {
+      await TmuxService.setSessionEnvironment(tmuxSessionName, sessionEnv);
+    } catch (error) {
+      // Log but don't fail session creation - the session is already running
+      console.error(
+        `Failed to set session environment for ${tmuxSessionName}:`,
+        error
+      );
+    }
+  }
+
+  // Set up agent exit detection hook for agent-type sessions
+  // This allows the terminal server to be notified when the agent process exits
+  const isAgentSession =
+    input.agentProvider &&
+    input.agentProvider !== "none" &&
+    input.autoLaunchAgent;
+
+  if (isAgentSession) {
+    try {
+      const terminalPort = process.env.TERMINAL_PORT ?? "3001";
+      await TmuxService.setHook(
+        tmuxSessionName,
+        "pane-exited",
+        `run-shell "curl -sS -X POST http://localhost:${terminalPort}/internal/agent-exit?sessionId=${sessionId} || true"`
+      );
+    } catch (error) {
+      // Log but don't fail session creation - the session is already running
+      console.error(
+        `Failed to set agent exit hook for ${tmuxSessionName}:`,
+        error
+      );
+    }
   }
 
   // Track if we created a worktree so we can clean it up on failure

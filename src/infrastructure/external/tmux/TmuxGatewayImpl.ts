@@ -9,7 +9,9 @@ import type {
   TmuxGateway,
   TmuxSessionInfo,
   CreateTmuxSessionOptions,
+  TmuxHook,
 } from "@/application/ports/TmuxGateway";
+import { TmuxEnvironment } from "@/domain/value-objects/TmuxEnvironment";
 import * as TmuxService from "@/services/tmux-service";
 
 export class TmuxGatewayImpl implements TmuxGateway {
@@ -93,5 +95,77 @@ export class TmuxGatewayImpl implements TmuxGateway {
    */
   generateSessionName(sessionId: string): string {
     return TmuxService.generateSessionName(sessionId);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Environment Management
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Set environment variables at the tmux session level.
+   */
+  async setEnvironment(
+    sessionName: string,
+    vars: TmuxEnvironment
+  ): Promise<void> {
+    await TmuxService.setSessionEnvironment(sessionName, vars.toRecord());
+  }
+
+  /**
+   * Get environment variables from a tmux session.
+   */
+  async getEnvironment(sessionName: string): Promise<TmuxEnvironment> {
+    const env = await TmuxService.getSessionEnvironment(sessionName);
+    return TmuxEnvironment.create(env);
+  }
+
+  /**
+   * Unset environment variables from a tmux session.
+   */
+  async unsetEnvironment(sessionName: string, keys: string[]): Promise<void> {
+    await TmuxService.unsetSessionEnvironment(sessionName, keys);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Hooks Management
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Set a hook on a tmux session.
+   */
+  async setHook(sessionName: string, hook: TmuxHook): Promise<void> {
+    await TmuxService.setHook(sessionName, hook.name, hook.command);
+  }
+
+  /**
+   * Remove a hook from a tmux session.
+   */
+  async removeHook(sessionName: string, hookName: string): Promise<void> {
+    await TmuxService.removeHook(
+      sessionName,
+      hookName as TmuxService.TmuxHookName
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Options Management
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Set a tmux session option.
+   */
+  async setOption(
+    sessionName: string,
+    option: string,
+    value: string
+  ): Promise<void> {
+    await TmuxService.setOption(sessionName, option, value);
+  }
+
+  /**
+   * Get a tmux session option value.
+   */
+  async getOption(sessionName: string, option: string): Promise<string | null> {
+    return TmuxService.getOption(sessionName, option);
   }
 }

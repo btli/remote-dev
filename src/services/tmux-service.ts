@@ -67,12 +67,30 @@ export async function listSessions(): Promise<TmuxSessionInfo[]> {
 }
 
 /**
- * Create a new tmux session
+ * Create a new tmux session.
+ *
+ * This function creates the tmux session with basic configuration (mouse mode,
+ * history-limit) and optionally runs a startup command.
+ *
+ * ## Two-Layer Environment Model
+ *
+ * Environment variables are handled in two layers:
+ *
+ * 1. **PTY Environment** (`env` parameter): Passed to node-pty when spawning
+ *    the shell process. These are the initial shell environment variables.
+ *
+ * 2. **Session Environment**: Set via `setSessionEnvironment()` AFTER session
+ *    creation. These persist at the tmux session level and survive shell exits.
+ *    Callers should call `setSessionEnvironment()` after `createSession()` to
+ *    set persistent variables like API keys, XDG paths, etc.
+ *
+ * The separation is intentional - it allows different lifecycle management for
+ * different types of environment variables.
+ *
  * @param sessionName - Unique session name (e.g., "rdv-abc123")
  * @param cwd - Working directory for the session
  * @param startupCommand - Optional command to run after session creation
- * @param env - Optional environment variables to set for the session
- * @param shellEnv - Optional shell environment variables to export
+ * @param env - Optional environment variables for PTY spawn (initial shell env)
  * @param historyLimit - Optional tmux history-limit (scrollback buffer, default: 50000)
  */
 export async function createSession(
@@ -80,7 +98,6 @@ export async function createSession(
   cwd?: string,
   startupCommand?: string,
   env?: Record<string, string>,
-  shellEnv?: Record<string, string>,
   historyLimit: number = 50000
 ): Promise<void> {
   // Check if session already exists
@@ -130,19 +147,9 @@ export async function createSession(
       String(historyLimit),
     ]);
 
-    // Inject shell environment variables BEFORE startup command
-    // These are exported in the shell session so they're available to all commands
-    // Using sendKeys ensures the user's shell config (aliases, functions) is loaded
-    if (shellEnv && Object.keys(shellEnv).length > 0) {
-      const exports = Object.entries(shellEnv)
-        .map(([key, value]) => {
-          // SECURITY: Escape single quotes to prevent shell injection
-          const escapedValue = value.replace(/'/g, "'\\''");
-          return `export ${key}='${escapedValue}'`;
-        })
-        .join("; ");
-      await sendKeys(sessionName, exports);
-    }
+    // Note: Session-level environment variables should be set via
+    // setSessionEnvironment() after createSession() returns. This provides
+    // persistent environment that survives shell exits.
 
     // Execute startup command if provided
     // Using sendKeys allows aliases and shell functions to work
@@ -365,5 +372,255 @@ export async function capturePane(sessionName: string): Promise<string> {
       "CAPTURE_FAILED",
       (error as Error).message
     );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session Environment Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Set environment variables at the tmux session level.
+ *
+ * These variables persist across shell exits and are inherited by all
+ * processes spawned in the session. Uses `tmux set-environment`.
+ *
+ * @param sessionName - Tmux session name
+ * @param vars - Environment variables to set (key-value pairs)
+ */
+export async function setSessionEnvironment(
+  sessionName: string,
+  vars: Record<string, string>
+): Promise<void> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    // Set each variable using tmux set-environment
+    for (const [key, value] of Object.entries(vars)) {
+      await execFile("tmux", ["set-environment", "-t", sessionName, key, value]);
+    }
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to set environment: ${(error as Error).message}`,
+      "SET_ENV_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
+ * Get environment variables from a tmux session.
+ *
+ * @param sessionName - Tmux session name
+ * @returns Environment variables as key-value pairs
+ */
+export async function getSessionEnvironment(
+  sessionName: string
+): Promise<Record<string, string>> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    const { stdout } = await execFile("tmux", [
+      "show-environment",
+      "-t",
+      sessionName,
+    ]);
+
+    const env: Record<string, string> = {};
+    for (const line of stdout.split("\n")) {
+      if (!line.trim()) continue;
+      // Lines starting with - are unset variables, skip them
+      if (line.startsWith("-")) continue;
+      const match = line.match(/^([^=]+)=(.*)$/);
+      if (match) {
+        env[match[1]] = match[2];
+      }
+    }
+    return env;
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to get environment: ${(error as Error).message}`,
+      "GET_ENV_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
+ * Unset environment variables from a tmux session.
+ *
+ * @param sessionName - Tmux session name
+ * @param keys - Environment variable names to unset
+ */
+export async function unsetSessionEnvironment(
+  sessionName: string,
+  keys: string[]
+): Promise<void> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    for (const key of keys) {
+      await execFile("tmux", ["set-environment", "-t", sessionName, "-u", key]);
+    }
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to unset environment: ${(error as Error).message}`,
+      "UNSET_ENV_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session Hooks Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Hook trigger events for tmux.
+ */
+export type TmuxHookName =
+  | "pane-exited"
+  | "session-closed"
+  | "client-attached"
+  | "client-detached"
+  | "window-linked";
+
+/**
+ * Set a hook on a tmux session.
+ *
+ * @param sessionName - Tmux session name
+ * @param hookName - Hook trigger event name
+ * @param command - Shell command to run when hook triggers
+ */
+export async function setHook(
+  sessionName: string,
+  hookName: TmuxHookName,
+  command: string
+): Promise<void> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    await execFile("tmux", ["set-hook", "-t", sessionName, hookName, command]);
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to set hook: ${(error as Error).message}`,
+      "SET_HOOK_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
+ * Remove a hook from a tmux session.
+ *
+ * @param sessionName - Tmux session name
+ * @param hookName - Hook name to remove
+ */
+export async function removeHook(
+  sessionName: string,
+  hookName: TmuxHookName
+): Promise<void> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    await execFile("tmux", ["set-hook", "-t", sessionName, "-u", hookName]);
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to remove hook: ${(error as Error).message}`,
+      "REMOVE_HOOK_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session Options Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Set a tmux session option.
+ *
+ * @param sessionName - Tmux session name
+ * @param option - Option name
+ * @param value - Option value
+ */
+export async function setOption(
+  sessionName: string,
+  option: string,
+  value: string
+): Promise<void> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    await execFile("tmux", ["set-option", "-t", sessionName, option, value]);
+  } catch (error) {
+    throw new TmuxServiceError(
+      `Failed to set option: ${(error as Error).message}`,
+      "SET_OPTION_FAILED",
+      (error as Error).message
+    );
+  }
+}
+
+/**
+ * Get a tmux session option value.
+ *
+ * @param sessionName - Tmux session name
+ * @param option - Option name
+ * @returns Option value or null if not set
+ */
+export async function getOption(
+  sessionName: string,
+  option: string
+): Promise<string | null> {
+  if (!(await sessionExists(sessionName))) {
+    throw new TmuxServiceError(
+      `Tmux session "${sessionName}" does not exist`,
+      "SESSION_NOT_FOUND"
+    );
+  }
+
+  try {
+    const { stdout } = await execFile("tmux", [
+      "show-option",
+      "-t",
+      sessionName,
+      "-v",
+      option,
+    ]);
+    return stdout.trim() || null;
+  } catch {
+    // Option not set or doesn't exist
+    return null;
   }
 }
