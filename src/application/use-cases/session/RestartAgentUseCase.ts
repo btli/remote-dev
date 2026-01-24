@@ -121,8 +121,14 @@ export class RestartAgentUseCase {
     const tmuxExists = await this.tmuxGateway.sessionExists(tmuxName);
 
     if (!tmuxExists) {
-      // Tmux session is gone - this is an error case
+      // Tmux session is gone - revert to exited state and throw error
       // The session should be recreated via CreateSessionUseCase
+      try {
+        const revertedSession = restartingSession.markAgentExited(null);
+        await this.sessionRepository.save(revertedSession);
+      } catch {
+        console.error(`Failed to revert session state after tmux gone: ${input.sessionId}`);
+      }
       throw new RestartAgentError(
         `Tmux session ${tmuxName} no longer exists. Session must be recreated.`,
         "TMUX_SESSION_GONE",
@@ -136,6 +142,14 @@ export class RestartAgentUseCase {
       const agentCommand = getAgentCommand(session.agentProvider);
       await this.tmuxGateway.sendKeys(tmuxName, agentCommand);
     } catch (error) {
+      // Revert session to exited state on failure to avoid stuck "restarting" state
+      try {
+        const revertedSession = restartingSession.markAgentExited(null);
+        await this.sessionRepository.save(revertedSession);
+      } catch {
+        // Log but don't mask original error
+        console.error(`Failed to revert session state after restart failure: ${input.sessionId}`);
+      }
       throw new RestartAgentError(
         `Failed to send restart command: ${(error as Error).message}`,
         "RESTART_FAILED",
