@@ -12,10 +12,7 @@
  * - Check if ports are actually listening (lsof)
  */
 
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
+import { execFileNoThrow } from "@/lib/exec";
 
 /**
  * Information about an active port from a running session.
@@ -289,37 +286,34 @@ export class PortMonitor {
    * Uses lsof to detect if any process is listening on the port.
    */
   async checkPortInUse(port: number): Promise<boolean> {
-    try {
-      // Use lsof to check if port is in use
-      // -i :PORT checks for network connections on the port
-      // -t returns only PIDs (quiet mode)
-      await execAsync(`lsof -t -i :${port}`);
-      // If lsof returns successfully, the port is in use
-      return true;
-    } catch {
-      // If lsof fails (exit code non-zero), the port is not in use
-      return false;
-    }
+    // Use lsof to check if port is in use
+    // -i :PORT checks for network connections on the port
+    // -t returns only PIDs (quiet mode)
+    const result = await execFileNoThrow("lsof", ["-t", "-i", `:${port}`]);
+    // If lsof returns successfully (exit code 0), the port is in use
+    return result.exitCode === 0 && result.stdout.trim().length > 0;
   }
 
   /**
    * Get information about the process using a port.
    */
   private async getPortProcessInfo(port: number): Promise<{ pid: number; name: string } | null> {
-    try {
-      // Get PID and process name using lsof
-      const { stdout } = await execAsync(`lsof -t -i :${port} | head -1`);
-      const pid = parseInt(stdout.trim(), 10);
-      if (isNaN(pid)) return null;
-
-      // Get process name from PID
-      const { stdout: nameOutput } = await execAsync(`ps -p ${pid} -o comm= 2>/dev/null || true`);
-      const name = nameOutput.trim() || "unknown";
-
-      return { pid, name };
-    } catch {
+    // Get PID using lsof (no shell pipeline - use array args)
+    const lsofResult = await execFileNoThrow("lsof", ["-t", "-i", `:${port}`]);
+    if (lsofResult.exitCode !== 0 || !lsofResult.stdout.trim()) {
       return null;
     }
+
+    // lsof may return multiple PIDs, take the first one
+    const firstPid = lsofResult.stdout.trim().split("\n")[0];
+    const pid = parseInt(firstPid, 10);
+    if (isNaN(pid)) return null;
+
+    // Get process name from PID using ps (no shell pipeline)
+    const psResult = await execFileNoThrow("ps", ["-p", String(pid), "-o", "comm="]);
+    const name = psResult.stdout.trim() || "unknown";
+
+    return { pid, name };
   }
 
   /**

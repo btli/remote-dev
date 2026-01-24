@@ -252,7 +252,7 @@ describe("RestartAgentUseCase", () => {
       });
     });
 
-    it("saves restarting state before checking tmux", async () => {
+    it("reverts to exited state when tmux session is gone", async () => {
       const exitedSession = createAgentSession({ agentExitState: "exited" });
       (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
       (mockTmuxGateway.sessionExists as Mock).mockResolvedValue(false);
@@ -264,10 +264,11 @@ describe("RestartAgentUseCase", () => {
 
       await expect(useCase.execute(input)).rejects.toThrow();
 
-      // Should save restarting state before checking tmux
-      expect(mockSessionRepository.save).toHaveBeenCalledWith(
+      // Should save restarting state, then revert to exited state
+      expect(mockSessionRepository.save).toHaveBeenCalledTimes(2);
+      expect(mockSessionRepository.save).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          agentExitState: "restarting",
+          agentExitState: "exited",
         })
       );
     });
@@ -288,6 +289,27 @@ describe("RestartAgentUseCase", () => {
       await expect(useCase.execute(input)).rejects.toMatchObject({
         code: "RESTART_FAILED",
       });
+    });
+
+    it("reverts to exited state when sendKeys fails", async () => {
+      const exitedSession = createAgentSession({ agentExitState: "exited" });
+      (mockSessionRepository.findById as Mock).mockResolvedValue(exitedSession);
+      (mockTmuxGateway.sendKeys as Mock).mockRejectedValue(new Error("Send failed"));
+
+      const input: RestartAgentInput = {
+        sessionId: "123e4567-e89b-12d3-a456-426614174000",
+        userId: "user-123",
+      };
+
+      await expect(useCase.execute(input)).rejects.toThrow();
+
+      // Should save restarting state, then revert to exited state on failure
+      expect(mockSessionRepository.save).toHaveBeenCalledTimes(2);
+      expect(mockSessionRepository.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          agentExitState: "exited",
+        })
+      );
     });
   });
 });
