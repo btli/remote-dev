@@ -24,6 +24,7 @@ import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
 import { getProfilesDir } from "@/lib/paths";
+import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
 import type {
   AgentProfile,
   CreateAgentProfileInput,
@@ -416,7 +417,12 @@ OpenCode supports multiple AI providers. Configure your preferred provider in se
 }
 
 /**
- * Generate environment overlay for a profile
+ * Generate environment overlay for a profile.
+ *
+ * Uses ProfileIsolation value object to generate XDG-compliant paths.
+ * HOME is intentionally NOT overridden - this allows user's dotfiles
+ * (.bashrc, .zshrc, etc.) to work normally while still achieving
+ * profile isolation via XDG variables.
  */
 export async function getProfileEnvironment(
   profileId: string,
@@ -427,36 +433,32 @@ export async function getProfileEnvironment(
 
   const configDir = profile.configDir;
 
-  // Build environment overlay
+  // Get git identity for SSH key path
+  const gitIdentity = await getProfileGitIdentity(profileId);
+
+  // Use ProfileIsolation to generate environment with XDG paths
+  // Note: HOME is NOT overridden - user's dotfiles work normally
+  const isolation = ProfileIsolation.create({
+    profileDir: configDir,
+    realHome: homedir(),
+    provider: profile.provider,
+    sshKeyPath: gitIdentity?.sshKeyPath,
+    gitIdentity: gitIdentity
+      ? { name: gitIdentity.userName, email: gitIdentity.userEmail }
+      : undefined,
+  });
+
+  // Convert TmuxEnvironment to ProfileEnvironment record
+  const isolationEnv = isolation.toEnvironment();
   const env: ProfileEnvironment = {
-    HOME: configDir,
-    XDG_CONFIG_HOME: join(configDir, ".config"),
-    XDG_DATA_HOME: join(configDir, ".local", "share"),
+    XDG_CONFIG_HOME: isolationEnv.get("XDG_CONFIG_HOME") ?? join(configDir, ".config"),
+    XDG_DATA_HOME: isolationEnv.get("XDG_DATA_HOME") ?? join(configDir, ".local", "share"),
   };
 
-  // Add provider-specific environment variables
-  if (profile.provider === "all" || profile.provider === "claude") {
-    env.CLAUDE_CONFIG_DIR = join(configDir, ".claude");
-  }
-  if (profile.provider === "all" || profile.provider === "codex") {
-    env.CODEX_HOME = join(configDir, ".codex");
-  }
-  if (profile.provider === "all" || profile.provider === "gemini") {
-    env.GEMINI_HOME = join(configDir, ".gemini");
-  }
-
-  // Git configuration
-  env.GIT_CONFIG = join(configDir, ".gitconfig");
-
-  // SSH key if configured (with validation to prevent command injection)
-  const gitIdentity = await getProfileGitIdentity(profileId);
-  if (gitIdentity?.sshKeyPath) {
-    try {
-      const validatedPath = validateSshKeyPath(gitIdentity.sshKeyPath);
-      env.GIT_SSH_COMMAND = `ssh -i "${validatedPath}" -o IdentitiesOnly=yes`;
-    } catch (error) {
-      console.error(`Invalid SSH key path for profile ${profileId}:`, error);
-      // Don't set GIT_SSH_COMMAND if path is invalid
+  // Copy all other variables from isolation
+  for (const [key, value] of isolationEnv) {
+    if (key !== "XDG_CONFIG_HOME" && key !== "XDG_DATA_HOME") {
+      env[key] = value;
     }
   }
 

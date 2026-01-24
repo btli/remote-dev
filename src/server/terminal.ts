@@ -4,9 +4,12 @@ import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 import { parse } from "url";
 import { execFile, execFileSync } from "child_process";
-import { createHmac, timingSafeEqual } from "crypto";
 import { resolve as pathResolve } from "path";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
+import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
+
+// Re-export for backwards compatibility with API routes
+export { generateWsToken } from "../lib/ws-token.js";
 
 /**
  * Filter out internal/private environment variables from frameworks.
@@ -57,65 +60,6 @@ function validatePath(path: string | undefined): string | undefined {
   return resolved;
 }
 
-/**
- * Get AUTH_SECRET with production guard.
- * Throws an error if AUTH_SECRET is not set in production.
- */
-function getAuthSecret(): string {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("AUTH_SECRET is required in production");
-    }
-    console.warn("AUTH_SECRET not set - using development secret (not safe for production)");
-    return "development-secret";
-  }
-  return secret;
-}
-
-/**
- * Generate a WebSocket authentication token for a session.
- * This should be called by the Next.js server and passed to the client.
- */
-export function generateWsToken(sessionId: string, userId: string): string {
-  const secret = getAuthSecret();
-  const timestamp = Date.now();
-  const data = `${sessionId}:${userId}:${timestamp}`;
-  const hmac = createHmac("sha256", secret).update(data).digest("hex");
-  return Buffer.from(`${data}:${hmac}`).toString("base64");
-}
-
-/**
- * Validate a WebSocket authentication token.
- * Tokens expire after 5 minutes.
- */
-function validateWsToken(token: string): { sessionId: string; userId: string } | null {
-  try {
-    const secret = getAuthSecret();
-    const decoded = Buffer.from(token, "base64").toString("utf8");
-    const parts = decoded.split(":");
-    if (parts.length !== 4) return null;
-
-    const [sessionId, userId, timestampStr, providedHmac] = parts;
-    const timestamp = parseInt(timestampStr, 10);
-
-    // Check token expiry (5 minutes)
-    if (Date.now() - timestamp > 5 * 60 * 1000) return null;
-
-    // Verify HMAC
-    const data = `${sessionId}:${userId}:${timestampStr}`;
-    const expectedHmac = createHmac("sha256", secret).update(data).digest("hex");
-
-    // Use timing-safe comparison
-    if (!timingSafeEqual(Buffer.from(providedHmac), Buffer.from(expectedHmac))) {
-      return null;
-    }
-
-    return { sessionId, userId };
-  } catch {
-    return null;
-  }
-}
 
 interface TerminalSession {
   pty: IPty;
@@ -246,10 +190,43 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
 }
 
 async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-  const { pathname } = parse(req.url || "", true);
+  const { pathname, query } = parse(req.url || "", true);
 
   if (pathname === "/health" && req.method === "GET") {
     sendJson(res, 200, { status: "ok", scheduler: schedulerOrchestrator.isStarted() });
+    return true;
+  }
+
+  // Handle agent exit notification from tmux hook
+  // Called when agent process exits: POST /internal/agent-exit?sessionId=xxx&exitCode=0
+  if (pathname === "/internal/agent-exit" && req.method === "POST") {
+    const sessionId = query.sessionId as string;
+    const exitCode = query.exitCode ? parseInt(query.exitCode as string, 10) : null;
+
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId parameter" });
+      return true;
+    }
+
+    console.log(`[Agent Exit] Session ${sessionId} exited with code ${exitCode ?? "unknown"}`);
+
+    // Find the WebSocket connection for this session and notify the client
+    const session = sessions.get(sessionId);
+    if (session && session.ws.readyState === WebSocket.OPEN) {
+      session.ws.send(
+        JSON.stringify({
+          type: "agent_exited",
+          sessionId,
+          exitCode,
+          exitedAt: new Date().toISOString(),
+        })
+      );
+      console.log(`[Agent Exit] Notified client for session ${sessionId}`);
+    } else {
+      console.log(`[Agent Exit] No active WebSocket for session ${sessionId}`);
+    }
+
+    sendJson(res, 200, { success: true, sessionId, exitCode });
     return true;
   }
 

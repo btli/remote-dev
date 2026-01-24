@@ -11,9 +11,14 @@ import type {
   EnvironmentVariables,
   PortConflict,
   PortValidationResult,
+  PortValidationWithRuntimeResult,
   PortRegistryEntry,
 } from "@/types/environment";
 import { extractPortVariables, RESERVED_PORTS } from "@/types/environment";
+import { execFile as execFileCallback } from "child_process";
+import { promisify } from "util";
+
+const execFile = promisify(execFileCallback);
 
 /**
  * Sync port registry for a folder based on its environment variables.
@@ -209,6 +214,84 @@ export async function isPortAvailable(
   });
 
   return !existing;
+}
+
+// ============================================================================
+// Runtime Port Checking
+// ============================================================================
+
+/**
+ * Check if ports are actually listening on the system.
+ *
+ * Uses lsof to detect if any process is listening on each port.
+ * This provides runtime validation beyond database-level conflict detection.
+ *
+ * @param ports - Array of port numbers to check
+ * @returns Array of port check results with inUse boolean
+ */
+export async function checkPortsInUse(
+  ports: number[]
+): Promise<Array<{ port: number; inUse: boolean }>> {
+  const results = await Promise.all(
+    ports.map(async (port) => {
+      try {
+        // Use lsof to check if port is in use
+        // -i :PORT checks for network connections on the port
+        // -sTCP:LISTEN filters to only listening sockets
+        // -t returns only PIDs (quiet mode)
+        const { stdout } = await execFile("lsof", [
+          "-i",
+          `:${port}`,
+          "-sTCP:LISTEN",
+          "-t",
+        ]);
+        return { port, inUse: stdout.trim().length > 0 };
+      } catch {
+        // lsof exits non-zero if nothing found
+        return { port, inUse: false };
+      }
+    })
+  );
+  return results;
+}
+
+/**
+ * Validate ports with both database and runtime checks.
+ *
+ * Performs database-level conflict detection (same port allocated to
+ * multiple folders) and runtime detection (port actually in use on system).
+ *
+ * @param folderId - Folder to validate ports for
+ * @param userId - User owning the folder
+ * @param envVars - Environment variables to check for port definitions
+ * @returns Validation result with database conflicts and runtime conflicts
+ */
+export async function validatePortsRuntime(
+  folderId: string,
+  userId: string,
+  envVars: EnvironmentVariables | null
+): Promise<PortValidationWithRuntimeResult> {
+  const dbResult = await validatePorts(folderId, userId, envVars);
+
+  if (!envVars) {
+    return { ...dbResult, runtimeConflicts: [] };
+  }
+
+  const ports = extractPortVariables(envVars).map((p) => p.port);
+  if (ports.length === 0) {
+    return { ...dbResult, runtimeConflicts: [] };
+  }
+
+  const runtimeChecks = await checkPortsInUse(ports);
+  const runtimeConflicts = runtimeChecks
+    .filter((c) => c.inUse)
+    .map((c) => c.port);
+
+  return {
+    ...dbResult,
+    runtimeConflicts,
+    hasConflicts: dbResult.hasConflicts || runtimeConflicts.length > 0,
+  };
 }
 
 // ============================================================================
