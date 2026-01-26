@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
-import { generateWsToken } from "@/server/terminal";
+import { generateWsToken } from "@/lib/ws-token";
 import * as SessionService from "@/services/session-service";
 
 /**

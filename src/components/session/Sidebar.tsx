@@ -87,6 +87,7 @@ interface SidebarProps {
   onSessionReorder: (sessionIds: string[]) => void;
   onNewSession: () => void;
   onQuickNewSession: () => void;
+  onNewAgent: () => void;
   onFolderCreate: (name: string, parentId?: string | null) => void;
   onFolderRename: (folderId: string, newName: string) => void;
   onFolderDelete: (folderId: string) => void;
@@ -94,6 +95,7 @@ interface SidebarProps {
   onFolderClick: (folderId: string) => void;
   onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onFolderNewSession: (folderId: string) => void;
+  onFolderNewAgent: (folderId: string) => void;
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
   onFolderMove: (folderId: string, newParentId: string | null) => void;
@@ -131,6 +133,7 @@ export function Sidebar({
   onSessionReorder,
   onNewSession,
   onQuickNewSession,
+  onNewAgent,
   onFolderCreate,
   onFolderRename,
   onFolderDelete,
@@ -138,6 +141,7 @@ export function Sidebar({
   onFolderClick,
   onFolderSettings,
   onFolderNewSession,
+  onFolderNewAgent,
   onFolderAdvancedSession,
   onFolderNewWorktree,
   onFolderMove,
@@ -1426,7 +1430,11 @@ export function Sidebar({
                   <DropdownMenuContent align="end" className="w-40">
                     <DropdownMenuItem onClick={onQuickNewSession}>
                       <Terminal className="w-3.5 h-3.5 mr-2" />
-                      Quick Terminal
+                      New Terminal
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={onNewAgent}>
+                      <Sparkles className="w-3.5 h-3.5 mr-2" />
+                      New Agent
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={onNewSession}>
@@ -1799,10 +1807,14 @@ export function Sidebar({
                             <>
                               <ContextMenuItem onClick={() => onFolderNewSession(node.id)}>
                                 <Terminal className="w-3.5 h-3.5 mr-2" />
-                                New Session
+                                New Terminal
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => onFolderNewAgent(node.id)}>
+                                <Sparkles className="w-3.5 h-3.5 mr-2" />
+                                New Agent
                               </ContextMenuItem>
                               <ContextMenuItem onClick={() => onFolderAdvancedSession(node.id)}>
-                                <Sparkles className="w-3.5 h-3.5 mr-2" />
+                                <Settings className="w-3.5 h-3.5 mr-2" />
                                 Advanced...
                               </ContextMenuItem>
                               <ContextMenuItem

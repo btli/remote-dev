@@ -25,7 +25,7 @@ import { PROVIDER_DISPLAY_NAMES } from "@/types/agent";
 interface ProfileFormProps {
   profile?: AgentProfile | null;
   onSubmit: (input: CreateAgentProfileInput | UpdateAgentProfileInput) => Promise<void>;
-  onCancel: () => void;
+  onCancel?: () => void;
   isCreating?: boolean;
 }
 
@@ -172,15 +172,17 @@ export function ProfileForm({
 
       {/* Actions */}
       <div className="flex justify-end gap-2 pt-2">
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={onCancel}
-          disabled={saving}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          Cancel
-        </Button>
+        {onCancel && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            disabled={saving}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Cancel
+          </Button>
+        )}
         <Button
           type="submit"
           disabled={saving}

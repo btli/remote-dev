@@ -503,12 +503,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleQuickNewSession = useCallback(async () => {
     const folderId = activeProject.folderId || undefined;
     const name = generateSessionName(folderId);
-    // Pass folderId at creation time so preferences (including startupCommand) are applied
+    // Pass empty startupCommand to get a plain shell (no agent/startup command)
     try {
       const newSession = await createSession({
         name,
         projectPath: currentPreferences.defaultWorkingDirectory || undefined,
         folderId,
+        startupCommand: "", // Explicitly skip startup command for plain terminal
       });
       // Register session-folder mapping in FolderContext for UI update
       if (newSession && folderId) {
@@ -786,12 +787,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     async (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
       const name = generateSessionName(folderId);
-      // Pass folderId at creation time so preferences (including startupCommand) are applied
+      // Pass empty startupCommand to get a plain shell (no agent/startup command)
       try {
         const newSession = await createSession({
           name,
           projectPath: prefs.defaultWorkingDirectory || undefined,
           folderId,
+          startupCommand: "", // Explicitly skip startup command for plain terminal
         });
         // Register session-folder mapping in FolderContext for UI update
         if (newSession) {
@@ -845,6 +847,64 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setWizardFolderId(activeProject.folderId);
     setIsWizardOpen(true);
   }, [activeProject.folderId]);
+
+  // Handler for creating a new agent session using folder's startupCommand
+  const handleNewAgent = useCallback(async () => {
+    const folderId = activeProject.folderId || undefined;
+    const name = generateSessionName(folderId);
+    try {
+      const newSession = await createSession({
+        name,
+        projectPath: currentPreferences.defaultWorkingDirectory || undefined,
+        folderId,
+        terminalType: "agent",
+      });
+      if (newSession && folderId) {
+        registerSessionFolder(newSession.id, folderId);
+      }
+      maybeAutoFollowFolder(folderId ?? null);
+    } catch (error) {
+      logSessionError("create agent session", error);
+    }
+  }, [
+    createSession,
+    generateSessionName,
+    currentPreferences.defaultWorkingDirectory,
+    activeProject.folderId,
+    registerSessionFolder,
+    logSessionError,
+    maybeAutoFollowFolder,
+  ]);
+
+  // Handler for creating a new agent session in a specific folder
+  const handleFolderNewAgent = useCallback(
+    async (folderId: string) => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      const name = generateSessionName(folderId);
+      try {
+        const newSession = await createSession({
+          name,
+          projectPath: prefs.defaultWorkingDirectory || undefined,
+          folderId,
+          terminalType: "agent",
+        });
+        if (newSession) {
+          registerSessionFolder(newSession.id, folderId);
+          setActiveFolder(folderId);
+        }
+      } catch (error) {
+        logSessionError("create agent session", error);
+      }
+    },
+    [
+      createSession,
+      generateSessionName,
+      resolvePreferencesForFolder,
+      setActiveFolder,
+      registerSessionFolder,
+      logSessionError,
+    ]
+  );
 
   const handleFolderClick = useCallback(
     (folderId: string) => {
@@ -1190,6 +1250,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onSessionReorder={handleReorderSessions}
             onNewSession={handleOpenWizard}
             onQuickNewSession={handleQuickNewSession}
+            onNewAgent={handleNewAgent}
             onFolderCreate={handleCreateFolder}
             onFolderRename={handleRenameFolder}
             onFolderDelete={handleDeleteFolder}
@@ -1197,6 +1258,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderClick={handleFolderClick}
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
+            onFolderNewAgent={handleFolderNewAgent}
             onFolderAdvancedSession={handleFolderAdvancedSession}
             onFolderNewWorktree={handleFolderNewWorktree}
             onFolderMove={handleMoveFolder}
