@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
-  X, Plus, Terminal, Settings,
+  X, Plus, Terminal, Settings, Bot,
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
@@ -951,14 +951,26 @@ export function Sidebar({
               {showDropBefore && (
                 <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
               )}
-              <span
-                className={cn(
-                  "w-2 h-2 rounded-full",
-                  isActive
-                    ? "bg-primary animate-pulse"
-                    : "bg-muted-foreground"
-                )}
-              />
+              {/* Status indicator - Bot icon for agent, dot for shell */}
+              {session.terminalType === "agent" ? (
+                <Bot
+                  className={cn(
+                    "w-3.5 h-3.5",
+                    isActive
+                      ? "text-primary"
+                      : "text-muted-foreground"
+                  )}
+                />
+              ) : (
+                <span
+                  className={cn(
+                    "w-2 h-2 rounded-full",
+                    isActive
+                      ? "bg-primary animate-pulse"
+                      : "bg-muted-foreground"
+                  )}
+                />
+              )}
               {/* Drop indicator - after */}
               {showDropAfter && (
                 <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
@@ -966,7 +978,10 @@ export function Sidebar({
             </div>
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
-            {session.name}
+            <div className="flex items-center gap-1.5">
+              {session.terminalType === "agent" && <Bot className="w-3 h-3" />}
+              <span>{session.name}</span>
+            </div>
           </TooltipContent>
         </Tooltip>
       );
@@ -1017,15 +1032,26 @@ export function Sidebar({
                 isDragOverSession && "bg-primary/20 border-primary/30"
               )}
             >
-            {/* Status indicator */}
-            <Terminal
-              className={cn(
-                "w-3.5 h-3.5 shrink-0",
-                isActive
-                  ? "text-primary"
-                  : "text-muted-foreground"
-              )}
-            />
+            {/* Status indicator - Bot for agent, Terminal for shell */}
+            {session.terminalType === "agent" ? (
+              <Bot
+                className={cn(
+                  "w-3.5 h-3.5 shrink-0",
+                  isActive
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                )}
+              />
+            ) : (
+              <Terminal
+                className={cn(
+                  "w-3.5 h-3.5 shrink-0",
+                  isActive
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                )}
+              />
+            )}
 
             {/* Session name - editable */}
             <div className="flex-1 min-w-0">
