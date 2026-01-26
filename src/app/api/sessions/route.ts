@@ -53,6 +53,10 @@ export const POST = withApiAuth(async (request, { userId }) => {
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
+      terminalType?: "shell" | "agent" | "file";
+      profileId?: string;
+      agentProvider?: string;
+      autoLaunchAgent?: boolean;
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -69,6 +73,11 @@ export const POST = withApiAuth(async (request, { userId }) => {
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
       folderId: body.folderId,
+      // Terminal type (shell, agent, file)
+      terminalType: body.terminalType,
+      profileId: body.profileId,
+      agentProvider: body.agentProvider as CreateSessionInput["agentProvider"],
+      autoLaunchAgent: body.autoLaunchAgent,
       // Feature session fields
       startupCommand: body.startupCommand,
       featureDescription: body.featureDescription,
