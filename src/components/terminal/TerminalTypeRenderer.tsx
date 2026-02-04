@@ -13,7 +13,7 @@ import { useState, useRef, useCallback } from "react";
 import type { TerminalSession } from "@/types/session";
 import { Terminal, type TerminalRef } from "./Terminal";
 import { AgentExitScreen } from "./AgentExitScreen";
-import { MarkdownEditor } from "./MarkdownEditor";
+import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { FileViewerMetadata } from "@/types/terminal-type";
 
@@ -103,13 +103,11 @@ export function TerminalTypeRenderer({
       const metadata = session.typeMetadata as FileViewerMetadata | null;
       const filePath = metadata?.filePath ?? "";
       const fileName = metadata?.fileName ?? "Untitled";
-      const isAgentConfig = metadata?.isAgentConfig ?? false;
 
       return (
-        <MarkdownEditor
+        <CodeMirrorEditor
           filePath={filePath}
           fileName={fileName}
-          isAgentConfig={isAgentConfig}
           fontSize={fontSize}
           fontFamily={fontFamily}
         />

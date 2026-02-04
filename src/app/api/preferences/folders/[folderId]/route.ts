@@ -40,6 +40,7 @@ export const PUT = withAuth(async (request, { userId, params }) => {
     "githubRepoId",
     "localRepoPath",
     "environmentVars",
+    "pinnedFiles",
   ];
 
   const filteredUpdates: Record<string, unknown> = {};

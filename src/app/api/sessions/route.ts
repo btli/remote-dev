@@ -54,6 +54,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       createWorktree?: boolean;
       baseBranch?: string;
       terminalType?: "shell" | "agent" | "file";
+      filePath?: string;
       profileId?: string;
       agentProvider?: string;
       autoLaunchAgent?: boolean;
@@ -67,6 +68,12 @@ export const POST = withApiAuth(async (request, { userId }) => {
       return errorResponse("Invalid project path", 400, "INVALID_PATH");
     }
 
+    // SECURITY: Validate filePath to prevent path traversal
+    const validatedFilePath = body.filePath ? validateProjectPath(body.filePath) : undefined;
+    if (body.filePath && !validatedFilePath) {
+      return errorResponse("Invalid file path", 400, "INVALID_FILE_PATH");
+    }
+
     const input: CreateSessionInput = {
       name: body.name || "Terminal",
       projectPath: validatedPath,
@@ -75,6 +82,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       folderId: body.folderId,
       // Terminal type (shell, agent, file)
       terminalType: body.terminalType,
+      filePath: validatedFilePath,
       profileId: body.profileId,
       agentProvider: body.agentProvider as CreateSessionInput["agentProvider"],
       autoLaunchAgent: body.autoLaunchAgent,
