@@ -29,6 +29,10 @@ import {
   serializeEnvironmentVars,
 } from "@/lib/environment";
 import {
+  parsePinnedFiles,
+  serializePinnedFiles,
+} from "@/types/pinned-files";
+import {
   syncPortRegistry,
   validatePorts,
   deletePortsForFolder,
@@ -230,10 +234,13 @@ export async function updateFolderPreferences(
     throw new PreferencesServiceError("Folder not found", "FOLDER_NOT_FOUND");
   }
 
-  // Prepare database values - serialize environmentVars to JSON
+  // Prepare database values - serialize JSON fields
   const dbUpdates: Record<string, unknown> = { ...updates };
   if ("environmentVars" in updates) {
     dbUpdates.environmentVars = serializeEnvironmentVars(updates.environmentVars);
+  }
+  if ("pinnedFiles" in updates) {
+    dbUpdates.pinnedFiles = serializePinnedFiles(updates.pinnedFiles ?? null);
   }
 
   const existing = await getFolderPreferences(folderId, userId);
@@ -442,6 +449,7 @@ function mapDbFolderPreferences(
     githubRepoId: dbRow.githubRepoId,
     localRepoPath: dbRow.localRepoPath,
     environmentVars: parseEnvironmentVars(dbRow.environmentVars),
+    pinnedFiles: parsePinnedFiles(dbRow.pinnedFiles),
     createdAt: new Date(dbRow.createdAt),
     updatedAt: new Date(dbRow.updatedAt),
   };

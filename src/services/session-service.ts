@@ -200,67 +200,70 @@ export async function createSession(
   // Fetch folder environment variables for the session
   const folderEnv = await getEnvironmentForSession(userId, input.folderId);
 
-  // Create the tmux session with profile environment for initial PTY spawn
-  // Note: profileEnv is used for initial shell environment (XDG paths, agent config dirs)
-  try {
-    await TmuxService.createSession(
-      tmuxSessionName,
-      workingPath ?? undefined,
-      startupCommand,
-      profileEnv
-    );
-  } catch (error) {
-    if (error instanceof TmuxService.TmuxServiceError) {
-      throw new SessionServiceError(
-        `Failed to create tmux session: ${error.message}`,
-        "TMUX_CREATE_FAILED",
-        sessionId
-      );
-    }
-    throw error;
-  }
-
-  // Set persistent session-level environment variables
-  // These survive shell exits and are inherited by all new shells in the session
-  // Merge profileEnv and folderEnv with folder taking precedence
-  const sessionEnv: Record<string, string> = {
-    ...(profileEnv ?? {}),
-    ...(folderEnv ?? {}),
-  };
-
-  if (Object.keys(sessionEnv).length > 0) {
+  // File-type sessions don't need tmux — they're pure UI (CodeMirror editor)
+  if (input.terminalType !== "file") {
+    // Create the tmux session with profile environment for initial PTY spawn
+    // Note: profileEnv is used for initial shell environment (XDG paths, agent config dirs)
     try {
-      await TmuxService.setSessionEnvironment(tmuxSessionName, sessionEnv);
-    } catch (error) {
-      // Log but don't fail session creation - the session is already running
-      console.error(
-        `Failed to set session environment for ${tmuxSessionName}:`,
-        error
-      );
-    }
-  }
-
-  // Set up agent exit detection hook for agent-type sessions
-  // This allows the terminal server to be notified when the agent process exits
-  const isAgentSession =
-    input.agentProvider &&
-    input.agentProvider !== "none" &&
-    input.autoLaunchAgent;
-
-  if (isAgentSession) {
-    try {
-      const terminalPort = process.env.TERMINAL_PORT ?? "3001";
-      await TmuxService.setHook(
+      await TmuxService.createSession(
         tmuxSessionName,
-        "pane-exited",
-        `run-shell "curl -sS -X POST http://localhost:${terminalPort}/internal/agent-exit?sessionId=${sessionId} || true"`
+        workingPath ?? undefined,
+        startupCommand,
+        profileEnv
       );
     } catch (error) {
-      // Log but don't fail session creation - the session is already running
-      console.error(
-        `Failed to set agent exit hook for ${tmuxSessionName}:`,
-        error
-      );
+      if (error instanceof TmuxService.TmuxServiceError) {
+        throw new SessionServiceError(
+          `Failed to create tmux session: ${error.message}`,
+          "TMUX_CREATE_FAILED",
+          sessionId
+        );
+      }
+      throw error;
+    }
+
+    // Set persistent session-level environment variables
+    // These survive shell exits and are inherited by all new shells in the session
+    // Merge profileEnv and folderEnv with folder taking precedence
+    const sessionEnv: Record<string, string> = {
+      ...(profileEnv ?? {}),
+      ...(folderEnv ?? {}),
+    };
+
+    if (Object.keys(sessionEnv).length > 0) {
+      try {
+        await TmuxService.setSessionEnvironment(tmuxSessionName, sessionEnv);
+      } catch (error) {
+        // Log but don't fail session creation - the session is already running
+        console.error(
+          `Failed to set session environment for ${tmuxSessionName}:`,
+          error
+        );
+      }
+    }
+
+    // Set up agent exit detection hook for agent-type sessions
+    // This allows the terminal server to be notified when the agent process exits
+    const isAgentSession =
+      input.agentProvider &&
+      input.agentProvider !== "none" &&
+      input.autoLaunchAgent;
+
+    if (isAgentSession) {
+      try {
+        const terminalPort = process.env.TERMINAL_PORT ?? "3001";
+        await TmuxService.setHook(
+          tmuxSessionName,
+          "pane-exited",
+          `run-shell "curl -sS -X POST http://localhost:${terminalPort}/internal/agent-exit?sessionId=${sessionId} || true"`
+        );
+      } catch (error) {
+        // Log but don't fail session creation - the session is already running
+        console.error(
+          `Failed to set agent exit hook for ${tmuxSessionName}:`,
+          error
+        );
+      }
     }
   }
 
@@ -284,6 +287,13 @@ export async function createSession(
     }
   }
 
+  // Build typeMetadata for file-type sessions
+  let typeMetadata: string | null = null;
+  if (terminalType === "file" && input.filePath) {
+    const fileName = input.filePath.split("/").pop() ?? input.filePath;
+    typeMetadata = JSON.stringify({ filePath: input.filePath, fileName });
+  }
+
   // Insert the database record - clean up tmux session and worktree if this fails
   try {
     const now = new Date();
@@ -300,6 +310,7 @@ export async function createSession(
         folderId: input.folderId ?? null,
         profileId: input.profileId ?? null,
         terminalType,
+        typeMetadata,
         agentProvider: input.agentProvider ?? "claude",
         // Set agent state for agent terminal type
         agentExitState: terminalType === "agent" ? "running" : null,
@@ -650,6 +661,15 @@ export async function resumeSession(
     );
   }
 
+  // File-type sessions have no tmux session — nothing to resume
+  if (session.terminalType === "file") {
+    await db
+      .update(terminalSessions)
+      .set({ status: "active", updatedAt: new Date() })
+      .where(and(eq(terminalSessions.id, sessionId), eq(terminalSessions.userId, userId)));
+    return;
+  }
+
   // Check if tmux session still exists
   const exists = await TmuxService.sessionExists(session.tmuxSessionName);
   if (!exists) {
@@ -691,8 +711,10 @@ export async function closeSession(
     );
   }
 
-  // Kill the tmux session
-  await TmuxService.killSession(session.tmuxSessionName);
+  // Kill the tmux session (file-type sessions have no tmux session)
+  if (session.terminalType !== "file") {
+    await TmuxService.killSession(session.tmuxSessionName);
+  }
 
   // Mark as closed in database
   await db

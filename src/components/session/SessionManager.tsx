@@ -30,6 +30,7 @@ import {
   prefetchSecretsForFolder,
 } from "@/hooks/useEnvironmentWithSecrets";
 import type { FolderRepoStats } from "./Sidebar";
+import type { PinnedFile } from "@/types/pinned-files";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,15 @@ const TerminalWithKeyboard = dynamic(
   () =>
     import("@/components/terminal/TerminalWithKeyboard").then(
       (mod) => mod.TerminalWithKeyboard
+    ),
+  { ssr: false }
+);
+
+// Dynamically import CodeMirrorEditor for file-type sessions
+const CodeMirrorEditor = dynamic(
+  () =>
+    import("@/components/terminal/CodeMirrorEditor").then(
+      (mod) => mod.CodeMirrorEditor
     ),
   { ssr: false }
 );
@@ -284,6 +294,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setActiveFolder,
     resolvePreferencesForFolder,
     getEnvironmentForFolder,
+    getFolderPreferences,
+    updateFolderPreferences,
   } = usePreferencesContext();
 
   // Secrets state from context
@@ -759,6 +771,53 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [resolvePreferencesForFolder, getRepositoryById]
   );
 
+  // Get pinned files for a folder
+  const handleGetFolderPinnedFiles = useCallback(
+    (folderId: string): PinnedFile[] => {
+      const prefs = getFolderPreferences(folderId);
+      return prefs?.pinnedFiles ?? [];
+    },
+    [getFolderPreferences]
+  );
+
+  // Open a pinned file as a file editor session, reusing an existing session if one matches
+  const handleOpenPinnedFile = useCallback(
+    async (folderId: string, file: PinnedFile) => {
+      // Find an existing active file session for this path
+      const existing = activeSessions.find(
+        (s) => s.terminalType === "file" && s.status === "active" && s.typeMetadata?.filePath === file.path
+      );
+      if (existing) {
+        setActiveSession(existing.id);
+        return;
+      }
+      // Close any stale (suspended) file sessions for this path before creating a new one
+      const stale = activeSessions.filter(
+        (s) => s.terminalType === "file" && s.status !== "active" && s.typeMetadata?.filePath === file.path
+      );
+      await Promise.all(stale.map((s) => closeSession(s.id)));
+      await createSession({
+        name: file.name,
+        folderId,
+        terminalType: "file",
+        filePath: file.path,
+      });
+    },
+    [activeSessions, setActiveSession, createSession, closeSession]
+  );
+
+  // Reorder pinned files within a folder
+  const handleReorderPinnedFiles = useCallback(
+    async (folderId: string, files: PinnedFile[]) => {
+      try {
+        await updateFolderPreferences(folderId, { pinnedFiles: files });
+      } catch (error) {
+        console.error("Failed to reorder pinned files:", error);
+      }
+    },
+    [updateFolderPreferences]
+  );
+
   // Handle creating a worktree from an issue
   const handleCreateWorktreeFromIssue = useCallback(
     async (issue: GitHubIssueDTO, repositoryId: string) => {
@@ -1101,10 +1160,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, []);
 
   // Listen for open-folder-preferences event from Port Manager
+  // Use ref for folders to keep a single stable listener instead of re-adding on every folders change
+  const foldersRef = useRef(folders);
+  foldersRef.current = folders;
+
   useEffect(() => {
     const handleOpenFolderPrefs = (e: CustomEvent<{ folderId: string }>) => {
       const { folderId } = e.detail;
-      const folder = folders.find((f) => f.id === folderId);
+      const folder = foldersRef.current.find((f) => f.id === folderId);
       if (folder) {
         setFolderSettingsModal({
           folderId,
@@ -1117,7 +1180,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
     window.addEventListener("open-folder-preferences", handleOpenFolderPrefs as EventListener);
     return () => window.removeEventListener("open-folder-preferences", handleOpenFolderPrefs as EventListener);
-  }, [folders]);
+  }, []);
 
   /** Close a session in a split pane */
   const handlePaneSessionExit = useCallback(async (sessionId: string) => {
@@ -1280,6 +1343,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onPortsOpen={() => setIsPortsModalOpen(true)}
             onViewIssues={handleViewIssues}
             onViewPRs={handleViewPRs}
+            getFolderPinnedFiles={handleGetFolderPinnedFiles}
+            onOpenPinnedFile={handleOpenPinnedFile}
+            onReorderPinnedFiles={handleReorderPinnedFiles}
           />
       </div>
 
@@ -1375,8 +1441,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                 <div className="absolute inset-[1px] rounded-xl bg-background" />
               </div>
 
-              {/* Split pane controls */}
-              {activeSessionId && (
+              {/* Split pane controls (hidden for file editor sessions) */}
+              {activeSessionId && activeSessions.find((s) => s.id === activeSessionId)?.terminalType !== "file" && (
                 <div className="absolute top-2 right-2 z-20 flex gap-1">
                   <Button
                     variant="ghost"
@@ -1438,6 +1504,22 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     if (!session) return null;
                     const folderId = session.folderId || null;
                     const prefs = resolvePreferencesForFolder(folderId);
+
+                    if (session.terminalType === "file") {
+                      const metadata = session.typeMetadata;
+                      return (
+                        <div className="absolute inset-0 z-10">
+                          <CodeMirrorEditor
+                            key={session.id}
+                            filePath={String(metadata?.filePath ?? "")}
+                            fileName={String(metadata?.fileName ?? session.name)}
+                            fontSize={prefs.fontSize}
+                            fontFamily={prefs.fontFamily}
+                          />
+                        </div>
+                      );
+                    }
+
                     return (
                       <div className="absolute inset-0 z-10">
                         <TerminalWithKeyboard

@@ -199,6 +199,8 @@ export const folderPreferences = sqliteTable(
     // Environment variables as JSON: { "PORT": "3000", "API_URL": "..." }
     // Use "__DISABLED__" value to explicitly disable an inherited variable
     environmentVars: text("environment_vars"),
+    // Pinned files as JSON: PinnedFile[]
+    pinnedFiles: text("pinned_files"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

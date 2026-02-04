@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint, FileText } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,7 @@ import { FolderBrowserModal } from "@/components/filesystem/FolderBrowserModal";
 import { UnsavedChangesDialog } from "@/components/common/UnsavedChangesDialog";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { useProfileContext } from "@/contexts/ProfileContext";
+import { PinnedFilesTab } from "./PinnedFilesTab";
 
 // Helper to get electron API for directory selection (only in Electron)
 function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
@@ -60,7 +61,7 @@ interface FolderPreferencesModalProps {
   folderId: string;
   folderName: string;
   /** Initial tab to show when opening the modal */
-  initialTab?: "general" | "appearance" | "repository" | "environment" | "profile";
+  initialTab?: "general" | "appearance" | "repository" | "environment" | "profile" | "files";
 }
 
 const SHELL_OPTIONS = [
@@ -471,6 +472,7 @@ export function FolderPreferencesModal({
   const hasAppearanceOverrides = isOverridden("theme") || isOverridden("fontSize") || isOverridden("fontFamily");
   const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
   const hasEnvOverrides = isOverridden("environmentVars");
+  const hasPinnedFiles = !!(folderPrefs?.pinnedFiles?.length || (localSettings.pinnedFiles && localSettings.pinnedFiles.length > 0));
   const hasProfileLink = !!linkedProfileId;
 
   // Get unique owners from repos for filtering
@@ -549,6 +551,11 @@ export function FolderPreferencesModal({
               <Fingerprint className="w-3.5 h-3.5" />
               Profile
               {hasProfileLink && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
+            </TabsTrigger>
+            <TabsTrigger value="files" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-muted">
+              <FileText className="w-3.5 h-3.5" />
+              Files
+              {hasPinnedFiles && <span className="w-1.5 h-1.5 rounded-full bg-primary" />}
             </TabsTrigger>
           </TabsList>
 
@@ -1108,6 +1115,25 @@ export function FolderPreferencesModal({
                   </p>
                 </div>
               )}
+            </TabsContent>
+
+            {/* Files Tab */}
+            <TabsContent value="files" className="mt-0 space-y-4">
+              <PinnedFilesTab
+                pinnedFiles={
+                  "pinnedFiles" in localSettings
+                    ? localSettings.pinnedFiles ?? null
+                    : folderPrefs?.pinnedFiles ?? null
+                }
+                onUpdate={(files) =>
+                  setLocalSettings((prev) => ({ ...prev, pinnedFiles: files }))
+                }
+                initialBrowsePath={
+                  folderPrefs?.defaultWorkingDirectory ??
+                  inheritedPreferences.defaultWorkingDirectory ??
+                  undefined
+                }
+              />
             </TabsContent>
           </div>
         </Tabs>

@@ -9,6 +9,7 @@
  */
 
 import type { EnvironmentVariables } from "./environment";
+import type { PinnedFile } from "./pinned-files";
 
 /**
  * Core preference keys that can be customized at any level
@@ -86,6 +87,8 @@ export interface FolderPreferences {
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars: EnvironmentVariables | null;
+  // Pinned files for quick access in sidebar
+  pinnedFiles: PinnedFile[] | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -164,4 +167,6 @@ export interface UpdateFolderPreferencesInput {
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars?: EnvironmentVariables | null;
+  // Pinned files for quick access in sidebar
+  pinnedFiles?: PinnedFile[] | null;
 }

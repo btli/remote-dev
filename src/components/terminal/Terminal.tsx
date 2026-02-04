@@ -5,6 +5,7 @@ import type { Terminal as XTermType } from "@xterm/xterm";
 import type { FitAddon as FitAddonType } from "@xterm/addon-fit";
 import type { ImageAddon as ImageAddonType } from "@xterm/addon-image";
 import type { SearchAddon as SearchAddonType } from "@xterm/addon-search";
+import type { WebglAddon as WebglAddonType } from "@xterm/addon-webgl";
 import type { ConnectionStatus } from "@/types/terminal";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -84,6 +85,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const fitAddonRef = useRef<FitAddonType | null>(null);
   const imageAddonRef = useRef<ImageAddonType | null>(null);
   const searchAddonRef = useRef<SearchAddonType | null>(null);
+  const webglAddonRef = useRef<WebglAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -289,6 +291,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       terminal.open(terminalRef.current);
 
+      // Load WebGL renderer for better performance (falls back to DOM renderer)
+      try {
+        const { WebglAddon } = await import("@xterm/addon-webgl");
+        const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => {
+          webglAddon.dispose();
+          webglAddonRef.current = null;
+        });
+        terminal.loadAddon(webglAddon);
+        webglAddonRef.current = webglAddon;
+      } catch {
+        // WebGL not supported — DOM renderer is used automatically
+      }
+
       // Configure the xterm textarea to disable mobile predictive text/autocomplete
       // This helps prevent the duplication issue where mobile keyboards replace
       // the entire input field content when accepting autocomplete suggestions
@@ -402,9 +418,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       });
 
       // Prevent browser's context menu so tmux's context menu can be used
-      terminalRef.current.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-      });
+      const preventContextMenu = (e: Event) => e.preventDefault();
+      terminalRef.current.addEventListener("contextmenu", preventContextMenu);
 
       xtermRef.current = terminal;
       fitAddonRef.current = fitAddon;
@@ -763,6 +778,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
         window.removeEventListener("resize", handleResize);
         document.removeEventListener("visibilitychange", handleVisibilityChange);
+        terminalRef.current?.removeEventListener("contextmenu", preventContextMenu);
         resizeObserver.disconnect();
         if (resizeTimeout) clearTimeout(resizeTimeout);
       };
@@ -782,12 +798,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         clearTimeout(reconnectTimeoutRef.current);
       }
       wsRef.current?.close();
+      webglAddonRef.current?.dispose();
       imageAddonRef.current?.dispose();
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
       imageAddonRef.current = null;
       searchAddonRef.current = null;
+      webglAddonRef.current = null;
       wsRef.current = null;
     };
   }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType]);
