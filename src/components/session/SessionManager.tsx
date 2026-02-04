@@ -434,7 +434,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     if (sessions.length === 0) return;
 
     for (const session of sessions) {
-      if (session.status === "closed") continue;
+      // Skip terminal states (closed/trashed) - they can't be suspended or resumed
+      if (session.status === "closed" || session.status === "trashed") continue;
       const shouldBeActive = attachedSessionIds.has(session.id);
       const targetStatus = shouldBeActive ? "active" : "suspended";
       if (session.status === targetStatus) continue;

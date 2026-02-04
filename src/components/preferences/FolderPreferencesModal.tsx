@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint, FileText } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint, FileText, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -168,6 +168,9 @@ export function FolderPreferencesModal({
 
   // Profile linking state
   const [linkingProfile, setLinkingProfile] = useState(false);
+
+  // Appearance tab collapsible sections
+  const [expandedAppearanceSections, setExpandedAppearanceSections] = useState<Set<string>>(new Set());
   const linkedProfileId = folderProfileLinks.get(folderId) || null;
   const linkedProfile = linkedProfileId
     ? profiles.find((p) => p.id === linkedProfileId) || null
@@ -512,7 +515,7 @@ export function FolderPreferencesModal({
   return (
     <>
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[500px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
+      <DialogContent className="sm:max-w-[600px] max-h-[85vh] bg-popover/95 backdrop-blur-xl border-border flex flex-col">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 text-foreground">
             <Folder className="w-5 h-5 text-primary fill-primary/30" />
@@ -526,7 +529,7 @@ export function FolderPreferencesModal({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex-1 min-h-0 flex flex-col">
-          <TabsList className="w-full bg-muted/50 flex-shrink-0">
+          <TabsList className="w-full bg-muted/50 flex-shrink-0 flex-wrap h-auto gap-1">
             <TabsTrigger value="general" className="flex-1 gap-1.5 text-xs data-[state=active]:bg-muted">
               <Settings className="w-3.5 h-3.5" />
               General
@@ -675,108 +678,178 @@ export function FolderPreferencesModal({
             </TabsContent>
 
             {/* Appearance Tab */}
-            <TabsContent value="appearance" className="mt-0 space-y-4">
-              {/* Theme */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-muted-foreground">Theme</Label>
-                  {isOverridden("theme") && (
-                    <span className="text-xs text-primary">Overridden</span>
-                  )}
-                </div>
-                <Select
-                  value={getValue("theme") || INHERIT_VALUE}
-                  onValueChange={(value) => setValue("theme", value === INHERIT_VALUE ? null : value)}
+            <TabsContent value="appearance" className="mt-0 space-y-2">
+              {/* Theme Section */}
+              <div className="rounded-lg border border-border bg-card/50">
+                <button
+                  type="button"
+                  onClick={() => setExpandedAppearanceSections(prev => {
+                    const next = new Set(prev);
+                    if (next.has("theme")) next.delete("theme");
+                    else next.add("theme");
+                    return next;
+                  })}
+                  className="w-full flex items-center justify-between p-3 hover:bg-accent/50 transition-colors"
                 >
-                  <SelectTrigger
-                    className={cn(
-                      "bg-card border-border text-foreground",
-                      isOverridden("theme") && "border-primary/50"
+                  <div className="flex items-center gap-2">
+                    {expandedAppearanceSections.has("theme") ? (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
                     )}
-                  >
-                    <SelectValue
-                      placeholder={`Inherit: ${
-                        THEME_OPTIONS.find((o) => o.value === getInherited("theme"))
-                          ?.label || getInherited("theme")
-                      }`}
-                    />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card border-border">
-                    <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
-                      {getInheritedSourceLabel("theme")}
-                    </SelectItem>
-                    {THEME_OPTIONS.map((option) => (
-                      <SelectItem
-                        key={option.value}
-                        value={option.value}
-                        className="text-foreground focus:bg-primary/20"
-                      >
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Font Size */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-muted-foreground">Font Size</Label>
-                  <span className="text-sm text-muted-foreground">
-                    {getValue("fontSize") || `Inherit: ${getInherited("fontSize")}`}px
+                    <span className="text-sm font-medium text-foreground">Theme</span>
+                    {isOverridden("theme") && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {getValue("theme")
+                      ? THEME_OPTIONS.find((o) => o.value === getValue("theme"))?.label
+                      : `Inherit: ${THEME_OPTIONS.find((o) => o.value === getInherited("theme"))?.label || getInherited("theme")}`}
                   </span>
-                </div>
-                <Slider
-                  value={[getValue("fontSize") || Number(getInherited("fontSize"))]}
-                  onValueChange={([value]) => setValue("fontSize", value)}
-                  min={10}
-                  max={24}
-                  step={1}
-                  className="w-full"
-                />
+                </button>
+                {expandedAppearanceSections.has("theme") && (
+                  <div className="px-3 pb-3 pt-1 border-t border-border/50">
+                    <Select
+                      value={getValue("theme") || INHERIT_VALUE}
+                      onValueChange={(value) => setValue("theme", value === INHERIT_VALUE ? null : value)}
+                    >
+                      <SelectTrigger
+                        className={cn(
+                          "bg-card border-border text-foreground",
+                          isOverridden("theme") && "border-primary/50"
+                        )}
+                      >
+                        <SelectValue placeholder="Select theme..." />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card border-border">
+                        <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
+                          {getInheritedSourceLabel("theme")}
+                        </SelectItem>
+                        {THEME_OPTIONS.map((option) => (
+                          <SelectItem
+                            key={option.value}
+                            value={option.value}
+                            className="text-foreground focus:bg-primary/20"
+                          >
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
 
-              {/* Font Family */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-muted-foreground">Font Family</Label>
-                  {isOverridden("fontFamily") && (
-                    <span className="text-xs text-primary">Overridden</span>
-                  )}
-                </div>
-                <Select
-                  value={getValue("fontFamily") || INHERIT_VALUE}
-                  onValueChange={(value) => setValue("fontFamily", value === INHERIT_VALUE ? null : value)}
+              {/* Font Size Section */}
+              <div className="rounded-lg border border-border bg-card/50">
+                <button
+                  type="button"
+                  onClick={() => setExpandedAppearanceSections(prev => {
+                    const next = new Set(prev);
+                    if (next.has("fontSize")) next.delete("fontSize");
+                    else next.add("fontSize");
+                    return next;
+                  })}
+                  className="w-full flex items-center justify-between p-3 hover:bg-accent/50 transition-colors"
                 >
-                  <SelectTrigger
-                    className={cn(
-                      "bg-card border-border text-foreground",
-                      isOverridden("fontFamily") && "border-primary/50"
+                  <div className="flex items-center gap-2">
+                    {expandedAppearanceSections.has("fontSize") ? (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
                     )}
-                  >
-                    <SelectValue
-                      placeholder={`Inherit: ${
-                        FONT_OPTIONS.find((o) => o.value === getInherited("fontFamily"))
-                          ?.label || "JetBrains Mono"
-                      }`}
+                    <span className="text-sm font-medium text-foreground">Font Size</span>
+                    {isOverridden("fontSize") && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {getValue("fontSize") ? `${getValue("fontSize")}px` : `Inherit: ${getInherited("fontSize")}px`}
+                  </span>
+                </button>
+                {expandedAppearanceSections.has("fontSize") && (
+                  <div className="px-3 pb-3 pt-1 border-t border-border/50 space-y-2">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>10px</span>
+                      <span className="font-medium text-foreground">
+                        {getValue("fontSize") || Number(getInherited("fontSize"))}px
+                      </span>
+                      <span>24px</span>
+                    </div>
+                    <Slider
+                      value={[getValue("fontSize") || Number(getInherited("fontSize"))]}
+                      onValueChange={([value]) => setValue("fontSize", value)}
+                      min={10}
+                      max={24}
+                      step={1}
+                      className="w-full"
                     />
-                  </SelectTrigger>
-                  <SelectContent className="bg-card border-border max-h-60">
-                    <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
-                      {getInheritedSourceLabel("fontFamily")}
-                    </SelectItem>
-                    {FONT_OPTIONS.map((option) => (
-                      <SelectItem
-                        key={option.value}
-                        value={option.value}
-                        className="text-foreground focus:bg-primary/20"
-                        style={{ fontFamily: option.value }}
+                  </div>
+                )}
+              </div>
+
+              {/* Font Family Section */}
+              <div className="rounded-lg border border-border bg-card/50">
+                <button
+                  type="button"
+                  onClick={() => setExpandedAppearanceSections(prev => {
+                    const next = new Set(prev);
+                    if (next.has("fontFamily")) next.delete("fontFamily");
+                    else next.add("fontFamily");
+                    return next;
+                  })}
+                  className="w-full flex items-center justify-between p-3 hover:bg-accent/50 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    {expandedAppearanceSections.has("fontFamily") ? (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                    )}
+                    <span className="text-sm font-medium text-foreground">Font Family</span>
+                    {isOverridden("fontFamily") && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+                    {getValue("fontFamily")
+                      ? FONT_OPTIONS.find((o) => o.value === getValue("fontFamily"))?.label
+                      : `Inherit: ${FONT_OPTIONS.find((o) => o.value === getInherited("fontFamily"))?.label || "JetBrains Mono"}`}
+                  </span>
+                </button>
+                {expandedAppearanceSections.has("fontFamily") && (
+                  <div className="px-3 pb-3 pt-1 border-t border-border/50">
+                    <Select
+                      value={getValue("fontFamily") || INHERIT_VALUE}
+                      onValueChange={(value) => setValue("fontFamily", value === INHERIT_VALUE ? null : value)}
+                    >
+                      <SelectTrigger
+                        className={cn(
+                          "bg-card border-border text-foreground",
+                          isOverridden("fontFamily") && "border-primary/50"
+                        )}
                       >
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                        <SelectValue placeholder="Select font..." />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card border-border max-h-60">
+                        <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
+                          {getInheritedSourceLabel("fontFamily")}
+                        </SelectItem>
+                        {FONT_OPTIONS.map((option) => (
+                          <SelectItem
+                            key={option.value}
+                            value={option.value}
+                            className="text-foreground focus:bg-primary/20"
+                            style={{ fontFamily: option.value }}
+                          >
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
             </TabsContent>
 

@@ -100,11 +100,40 @@ export async function getAuthSession(): Promise<AuthSession | null> {
   // Fall back to NextAuth session (local development)
   const session = await auth();
   if (session?.user?.id && session.user.email) {
+    // Verify user exists in database (JWT tokens persist but DB may be reset)
+    let dbUser = await db.query.users.findFirst({
+      where: eq(users.id, session.user.id),
+    });
+
+    // If user doesn't exist but email is authorized, create them
+    if (!dbUser && session.user.email) {
+      const authorized = await db.query.authorizedUsers.findFirst({
+        where: eq(authorizedUsers.email, session.user.email),
+      });
+
+      if (authorized) {
+        const [newUser] = await db
+          .insert(users)
+          .values({
+            id: session.user.id, // Preserve the ID from JWT to avoid session invalidation
+            email: session.user.email,
+            name: session.user.name ?? session.user.email.split("@")[0],
+          })
+          .returning();
+        dbUser = newUser;
+      }
+    }
+
+    if (!dbUser) {
+      console.warn(`User ${session.user.id} from JWT not found in database and email not authorized`);
+      return null;
+    }
+
     return {
       user: {
-        id: session.user.id,
-        email: session.user.email,
-        name: session.user.name ?? null,
+        id: dbUser.id,
+        email: dbUser.email!,
+        name: dbUser.name,
       },
     };
   }
