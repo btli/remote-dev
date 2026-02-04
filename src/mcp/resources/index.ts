@@ -5,6 +5,7 @@
  */
 import { sessionResources } from "./session-resources.js";
 import { folderResources } from "./folder-resources.js";
+import { profileResources } from "./profile-resources.js";
 import { matchUri } from "../registry.js";
 import type { RegisteredResource } from "../types.js";
 
@@ -20,10 +21,15 @@ import type { RegisteredResource } from "../types.js";
  * - rdv://folders - List all folders
  * - rdv://folders/{id} - Folder details with preferences
  * - rdv://preferences - User settings
+ *
+ * Profile Resources:
+ * - rdv://profiles - List all agent profiles
+ * - rdv://profiles/{id} - Profile details with environment
  */
 export const allResources: RegisteredResource[] = [
   ...sessionResources,
   ...folderResources,
+  ...profileResources,
 ];
 
 /**
