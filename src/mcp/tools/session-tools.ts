@@ -9,6 +9,8 @@ import { createTool } from "../registry.js";
 import { successResult } from "../utils/error-handler.js";
 import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
+import { restartAgentUseCase } from "@/infrastructure/container";
+import { RestartAgentError } from "@/application/use-cases/session/RestartAgentUseCase";
 import type { RegisteredTool } from "../types.js";
 
 /**
@@ -51,6 +53,10 @@ const sessionList = createTool({
         projectPath: s.projectPath,
         folderId: s.folderId,
         worktreeBranch: s.worktreeBranch,
+        terminalType: s.terminalType,
+        agentProvider: s.agentProvider,
+        agentExitState: s.agentExitState,
+        profileId: s.profileId,
         lastActivityAt: s.lastActivityAt,
         createdAt: s.createdAt,
       })),
@@ -65,7 +71,8 @@ const sessionCreate = createTool({
   name: "session_create",
   description:
     "Create a new terminal session with optional working directory and startup command. " +
-    "Returns the session ID which can be used with session_execute to run commands.",
+    "Returns the session ID which can be used with session_execute to run commands. " +
+    "Supports agent sessions (AI coding agents) with profile-based environment isolation.",
   inputSchema: z.object({
     name: z.string().optional().describe("Display name for the session"),
     projectPath: z
@@ -89,6 +96,27 @@ const sessionCreate = createTool({
       .string()
       .optional()
       .describe("Base branch for worktree creation"),
+    terminalType: z
+      .enum(["shell", "agent", "file"])
+      .optional()
+      .describe("Terminal type: shell (default), agent (AI agent), file (editor)"),
+    agentProvider: z
+      .enum(["claude", "codex", "gemini", "opencode", "none"])
+      .optional()
+      .describe("AI agent provider when terminalType is 'agent'"),
+    autoLaunchAgent: z
+      .boolean()
+      .optional()
+      .describe("Whether to auto-launch the agent CLI"),
+    agentFlags: z
+      .array(z.string())
+      .optional()
+      .describe("Additional flags for the agent CLI"),
+    profileId: z
+      .string()
+      .uuid()
+      .optional()
+      .describe("Agent profile ID for environment isolation"),
   }),
   handler: async (input, context) => {
     // Generate a default name if not provided
@@ -102,6 +130,11 @@ const sessionCreate = createTool({
       createWorktree: input.createWorktree,
       featureDescription: input.featureDescription,
       baseBranch: input.baseBranch,
+      terminalType: input.terminalType,
+      agentProvider: input.agentProvider === "none" ? undefined : input.agentProvider,
+      autoLaunchAgent: input.autoLaunchAgent,
+      agentFlags: input.agentFlags,
+      profileId: input.profileId,
     });
 
     return successResult({
@@ -113,8 +146,14 @@ const sessionCreate = createTool({
         status: session.status,
         projectPath: session.projectPath,
         worktreeBranch: session.worktreeBranch,
+        terminalType: session.terminalType,
+        agentProvider: session.agentProvider,
+        agentExitState: session.agentExitState,
+        profileId: session.profileId,
       },
-      hint: `Use session_execute with sessionId "${session.id}" to run commands.`,
+      hint: input.terminalType === "agent"
+        ? `Agent session created. Use session_restart_agent to restart if the agent exits.`
+        : `Use session_execute with sessionId "${session.id}" to run commands.`,
     });
   },
 });
@@ -157,6 +196,12 @@ const sessionGet = createTool({
         folderId: session.folderId,
         worktreeBranch: session.worktreeBranch,
         repository: session.repository,
+        terminalType: session.terminalType,
+        agentProvider: session.agentProvider,
+        agentExitState: session.agentExitState,
+        agentExitCode: session.agentExitCode,
+        agentRestartCount: session.agentRestartCount,
+        profileId: session.profileId,
         lastActivityAt: session.lastActivityAt,
         createdAt: session.createdAt,
       },
@@ -396,6 +441,73 @@ const sessionUpdate = createTool({
 });
 
 /**
+ * session_restart_agent - Restart an exited agent in an agent-type session
+ */
+const sessionRestartAgent = createTool({
+  name: "session_restart_agent",
+  description:
+    "Restart an exited agent in an agent-type session. " +
+    "Only works for sessions with terminalType 'agent' that are in 'exited' state.",
+  inputSchema: z.object({
+    sessionId: z.string().uuid().describe("The agent session UUID"),
+  }),
+  handler: async (input, context) => {
+    try {
+      const result = await restartAgentUseCase.execute({
+        sessionId: input.sessionId,
+        userId: context.userId,
+      });
+      return successResult({
+        success: true,
+        sessionId: input.sessionId,
+        agentExitState: result.session.agentExitState,
+        restartCount: result.session.agentRestartCount,
+      });
+    } catch (error) {
+      if (error instanceof RestartAgentError) {
+        return successResult({
+          success: false,
+          error: error.message,
+          code: error.code,
+        });
+      }
+      throw error;
+    }
+  },
+});
+
+/**
+ * session_close_agent - Mark an agent session as closed (won't be restarted)
+ */
+const sessionCloseAgent = createTool({
+  name: "session_close_agent",
+  description:
+    "Mark an agent session as closed (won't be restarted). " +
+    "Use this when you want to close an agent session without killing the terminal.",
+  inputSchema: z.object({
+    sessionId: z.string().uuid().describe("The agent session UUID"),
+  }),
+  handler: async (input, context) => {
+    const session = await SessionService.markAgentClosed(
+      input.sessionId,
+      context.userId
+    );
+    if (!session) {
+      return successResult({
+        success: false,
+        error: "Session not found or not an agent session",
+        code: "SESSION_NOT_FOUND",
+      });
+    }
+    return successResult({
+      success: true,
+      sessionId: input.sessionId,
+      agentExitState: "closed",
+    });
+  },
+});
+
+/**
  * Export all session tools
  */
 export const sessionTools: RegisteredTool[] = [
@@ -408,4 +520,6 @@ export const sessionTools: RegisteredTool[] = [
   sessionResume,
   sessionClose,
   sessionUpdate,
+  sessionRestartAgent,
+  sessionCloseAgent,
 ];

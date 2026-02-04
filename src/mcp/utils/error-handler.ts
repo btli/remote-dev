@@ -21,6 +21,10 @@ const ERROR_RECOVERY_HINTS: Record<string, string> = {
   HAS_UNPUSHED_COMMITS: "Push commits before removing the worktree, or use force.",
   FOLDER_NOT_FOUND: "Check the folder ID is correct and the folder exists.",
   GITHUB_NOT_CONNECTED: "Connect GitHub account in settings first.",
+  PROFILE_NOT_FOUND: "Check the profile ID is correct and the profile exists.",
+  NOT_AGENT_SESSION: "This operation is only valid for agent-type sessions.",
+  INVALID_STATE: "The agent is in an invalid state for this operation.",
+  RESTART_FAILED: "Failed to restart the agent. Check tmux session status.",
 };
 
 /**

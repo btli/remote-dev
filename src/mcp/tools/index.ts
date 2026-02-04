@@ -6,6 +6,7 @@
 import { sessionTools } from "./session-tools.js";
 import { gitTools } from "./git-tools.js";
 import { folderTools } from "./folder-tools.js";
+import { profileTools } from "./profile-tools.js";
 import type { RegisteredTool } from "../types.js";
 
 /**
@@ -15,6 +16,7 @@ import type { RegisteredTool } from "../types.js";
  * - session_list, session_create, session_get
  * - session_execute, session_read_output
  * - session_suspend, session_resume, session_close, session_update
+ * - session_restart_agent, session_close_agent
  *
  * Git Tools:
  * - git_validate_repo, git_branches
@@ -24,11 +26,16 @@ import type { RegisteredTool } from "../types.js";
  * Folder Tools:
  * - folder_list, folder_create, folder_update, folder_delete
  * - preferences_get, preferences_set
+ *
+ * Profile Tools:
+ * - profile_list, profile_create, profile_get, profile_update, profile_delete
+ * - profile_set_git_identity, profile_link_folder, profile_unlink_folder
  */
 export const allTools: RegisteredTool[] = [
   ...sessionTools,
   ...gitTools,
   ...folderTools,
+  ...profileTools,
 ];
 
 /**
