@@ -338,8 +338,18 @@ export function SessionProvider({
         });
 
         if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+
+          // If tmux session is gone (410), auto-close the session
+          if (response.status === 410) {
+            console.warn(`Tmux session gone for ${sessionId}, auto-closing...`);
+            dispatch({ type: "DELETE", sessionId });
+            await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+            return; // Don't throw - session has been cleaned up
+          }
+
           await refreshSessions();
-          throw new Error("Failed to resume session");
+          throw new Error(errorData.error || `Failed to resume session (${response.status})`);
         }
       } catch (error) {
         console.error("Error resuming session:", error);
