@@ -79,12 +79,18 @@ interface TerminalSession {
 
 const sessions = new Map<string, TerminalSession>();
 
+// Track sessions currently in the process of connecting to prevent rapid reconnection
+// that can exhaust PTY/FD resources and cause posix_spawnp failures
+const connectingSessionIds = new Set<string>();
+
 /**
  * Safely cleanup a terminal session, preventing double-cleanup race conditions.
  * Multiple events (PTY exit, WebSocket close, WebSocket error) can fire simultaneously,
  * so we use a guard pattern to ensure cleanup only happens once.
  */
 function cleanupSession(sessionId: string): void {
+  // Always remove from connecting set on cleanup
+  connectingSessionIds.delete(sessionId);
   const session = sessions.get(sessionId);
   if (!session) return; // Already cleaned up by another event
 
@@ -373,6 +379,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // SECURITY: Validate cwd to prevent path traversal
     const cwd = validatePath(rawCwd);
 
+    // Prevent rapid reconnection attempts that can exhaust PTY resources
+    // If this session is already in the process of connecting, reject
+    if (connectingSessionIds.has(sessionId)) {
+      console.warn(`Connection rejected: session ${sessionId} is already connecting`);
+      ws.send(JSON.stringify({ type: "error", message: "Connection in progress, please wait" }));
+      ws.close(4004, "Connection in progress");
+      return;
+    }
+    connectingSessionIds.add(sessionId);
+
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
 
@@ -405,6 +421,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       }
     } catch (error) {
       console.error(`Failed to create/attach tmux session: ${error}`);
+      connectingSessionIds.delete(sessionId);
       ws.send(JSON.stringify({
         type: "error",
         message: `Failed to create terminal session: ${(error as Error).message}`,
@@ -428,6 +445,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     };
 
     sessions.set(sessionId, session);
+    // Connection established, allow future reconnection attempts
+    connectingSessionIds.delete(sessionId);
 
     console.log(`Terminal session ${sessionId} started (${cols}x${rows}) - tmux: ${tmuxSessionName}`);
 
