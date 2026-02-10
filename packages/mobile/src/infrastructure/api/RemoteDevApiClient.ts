@@ -10,9 +10,27 @@ interface ApiConfig {
   apiKey?: string;
 }
 
-interface ApiError extends Error {
-  statusCode: number;
-  response?: unknown;
+/**
+ * Custom error class for API errors with status code and response data.
+ */
+export class ApiError extends Error {
+  readonly statusCode: number;
+  readonly response?: unknown;
+
+  constructor(message: string, statusCode: number, response?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.statusCode = statusCode;
+    this.response = response;
+    // Maintains proper stack trace for where error was thrown
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, ApiError);
+    }
+  }
+
+  static isApiError(error: unknown): error is ApiError {
+    return error instanceof ApiError;
+  }
 }
 
 /**
@@ -148,12 +166,10 @@ export class RemoteDevApiClient {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        const error = new Error(
-          errorData.message || `HTTP ${response.status}: ${response.statusText}`
-        ) as ApiError;
-        error.statusCode = response.status;
-        error.response = errorData;
-        throw error;
+        const message = typeof errorData?.message === "string"
+          ? errorData.message
+          : `HTTP ${response.status}: ${response.statusText}`;
+        throw new ApiError(message, response.status, errorData);
       }
 
       // Handle empty responses
@@ -164,10 +180,13 @@ export class RemoteDevApiClient {
 
       return JSON.parse(text) as T;
     } catch (error) {
-      if ((error as ApiError).statusCode) {
+      // Re-throw ApiError as-is
+      if (ApiError.isApiError(error)) {
         throw error;
       }
-      throw new Error(`Network error: ${(error as Error).message}`);
+      // Wrap other errors as network errors
+      const message = error instanceof Error ? error.message : "Unknown error";
+      throw new Error(`Network error: ${message}`);
     }
   }
 }

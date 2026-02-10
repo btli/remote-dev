@@ -69,6 +69,9 @@ export class BiometricService {
         fallbackLabel: "Use Passcode",
       });
 
+      // authenticateAsync handles both biometric and passcode fallback internally
+      // When disableDeviceFallback is false, the system handles the fallback flow
+      // and only returns success: true if the user successfully authenticated
       if (result.success) {
         return { success: true };
       }
@@ -77,13 +80,12 @@ export class BiometricService {
       if (result.error === "user_cancel") {
         return { success: false, error: "Authentication cancelled" };
       }
-      if (result.error === "user_fallback") {
-        // User chose passcode fallback - this is still a valid auth
-        return { success: true };
-      }
       if (result.error === "lockout") {
         return { success: false, error: "Too many failed attempts. Try again later." };
       }
+      // Note: "user_fallback" with disableDeviceFallback: false means the system
+      // is handling the passcode prompt - we should not see this error in that case.
+      // If we do see it, treat as failure since auth is incomplete.
 
       return { success: false, error: result.error || "Authentication failed" };
     } catch (error) {
@@ -171,9 +173,19 @@ export class BiometricService {
   }
 
   /**
-   * Store user credentials.
+   * Store user credentials securely.
+   * If biometric is enabled, requires authentication first.
    */
   async storeCredentials(userId: string, email: string, apiKey: string): Promise<void> {
+    const biometricEnabled = await this.isBiometricEnabled();
+
+    if (biometricEnabled) {
+      const authResult = await this.authenticate("Authenticate to save credentials");
+      if (!authResult.success) {
+        throw new Error(authResult.error || "Authentication required");
+      }
+    }
+
     await Promise.all([
       SecureStore.setItemAsync(SECURE_KEYS.USER_ID, userId, {
         keychainAccessible: SecureStore.WHEN_UNLOCKED,

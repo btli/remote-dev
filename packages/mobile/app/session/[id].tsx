@@ -17,11 +17,14 @@ export default function SessionScreen() {
   const { getSession, updateSession } = useSessionStore();
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const wsManagerRef = useRef(getWebSocketManager());
+  const isMountedRef = useRef(true);
 
   const session = getSession(id);
 
   // Connect to WebSocket on mount
   useEffect(() => {
+    isMountedRef.current = true;
+
     if (!session) {
       router.back();
       return;
@@ -35,16 +38,20 @@ export default function SessionScreen() {
         const token = await apiClient.getSessionToken(id);
         await wsManager.connect(id, token);
       } catch (error) {
-        console.error("[SessionScreen] Failed to connect:", error);
-        setConnectionError(
-          error instanceof Error ? error.message : "Failed to connect"
-        );
+        // Only update state if still mounted
+        if (isMountedRef.current) {
+          console.error("[SessionScreen] Failed to connect:", error);
+          setConnectionError(
+            error instanceof Error ? error.message : "Failed to connect"
+          );
+        }
       }
     };
 
     connectToSession();
 
     return () => {
+      isMountedRef.current = false;
       wsManager.disconnect(id);
     };
   }, [session, id, router]);

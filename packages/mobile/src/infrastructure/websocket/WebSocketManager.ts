@@ -81,15 +81,29 @@ export class WebSocketManager {
    * Connect to a terminal session.
    */
   async connect(sessionId: string, token: string): Promise<void> {
-    // Check if already connected
+    // Check if already connected or connecting (prevents race condition)
     const existing = this.connections.get(sessionId);
-    if (existing && existing.state === "connected") {
-      return;
-    }
-
-    // Cancel any pending reconnect
-    if (existing?.reconnectTimer) {
-      clearTimeout(existing.reconnectTimer);
+    if (existing) {
+      if (existing.state === "connected") {
+        return;
+      }
+      if (existing.state === "connecting") {
+        // Already connecting - don't start another connection
+        if (__DEV__) {
+          console.log(`[WebSocketManager] Already connecting: ${sessionId}`);
+        }
+        return;
+      }
+      // Cancel any pending reconnect timer
+      if (existing.reconnectTimer) {
+        clearTimeout(existing.reconnectTimer);
+        existing.reconnectTimer = null;
+      }
+      // Close existing socket if not already closed
+      if (existing.ws.readyState === WebSocket.OPEN ||
+          existing.ws.readyState === WebSocket.CONNECTING) {
+        existing.ws.close(1000, "Reconnecting");
+      }
     }
 
     return new Promise((resolve, reject) => {
@@ -331,4 +345,16 @@ export function getWebSocketManager(): WebSocketManager {
     wsManager.startNetworkMonitoring();
   }
   return wsManager;
+}
+
+/**
+ * Clean up the WebSocket manager singleton.
+ * Call this on app shutdown or for testing.
+ */
+export function destroyWebSocketManager(): void {
+  if (wsManager) {
+    wsManager.stopNetworkMonitoring();
+    wsManager.disconnectAll();
+    wsManager = null;
+  }
 }

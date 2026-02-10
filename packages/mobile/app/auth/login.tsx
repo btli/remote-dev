@@ -18,7 +18,7 @@ import { useAuthStore } from "@/application/state/stores/authStore";
  */
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, loginWithCloudflareAccess, loading, error } = useAuthStore();
+  const { loginWithApiKey, loginWithCloudflareAccess, loading, error } = useAuthStore();
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
 
@@ -29,7 +29,7 @@ export default function LoginScreen() {
     }
 
     try {
-      await login(apiKey.trim());
+      await loginWithApiKey(apiKey.trim());
       router.replace("/(tabs)");
     } catch (err) {
       Alert.alert("Login Failed", (err as Error).message);

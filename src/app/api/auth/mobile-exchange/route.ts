@@ -59,7 +59,20 @@ export async function POST(request: Request) {
     // Hash the key for storage (we'll return the unhashed version once)
     const keyHash = await hashApiKey(fullKey);
 
-    // Store the API key
+    // Revoke any existing mobile app keys for this user (prevents key accumulation)
+    // Each new login gets a fresh key, invalidating old devices
+    const existingMobileKeys = await db.query.apiKeys.findMany({
+      where: (keys, { and, eq: eq2 }) =>
+        and(eq2(keys.userId, user.id), eq2(keys.keyPrefix, "rdv_mobile_")),
+    });
+
+    if (existingMobileKeys.length > 0) {
+      for (const key of existingMobileKeys) {
+        await db.delete(apiKeys).where(eq(apiKeys.id, key.id));
+      }
+    }
+
+    // Store the new API key
     await db.insert(apiKeys).values({
       id: crypto.randomUUID(),
       userId: user.id,
