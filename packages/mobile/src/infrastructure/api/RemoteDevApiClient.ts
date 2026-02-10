@@ -124,10 +124,6 @@ export class RemoteDevApiClient {
     return this.request<T>("POST", path, body);
   }
 
-  private async patch<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("PATCH", path, body);
-  }
-
   private async delete(path: string): Promise<void> {
     await this.request<void>("DELETE", path);
   }

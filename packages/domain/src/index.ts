@@ -13,6 +13,9 @@ export type { SessionProps, CreateSessionProps, FolderProps, CreateFolderProps }
 // Value Objects
 export { SessionStatus, TmuxSessionName } from "./value-objects";
 
+// Utilities
+export { generateUUID } from "./utils";
+
 // Errors
 export {
   DomainError,

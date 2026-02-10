@@ -1,15 +1,8 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-import {
-  View,
-  StyleSheet,
-  Dimensions,
-  PanResponder,
-  Animated,
-  Platform,
-} from "react-native";
-import { useSessionStore } from "@/application/state/stores/sessionStore";
+import { useEffect, useState } from "react";
+import { View, StyleSheet, Dimensions } from "react-native";
 import { TerminalView } from "./TerminalView";
 import { FolderSidebar } from "./FolderSidebar";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
 interface TabletSplitLayoutProps {
   leftSessionId: string | null;
@@ -30,12 +23,13 @@ export function TabletSplitLayout({
   onSessionSelect,
 }: TabletSplitLayoutProps) {
   const [dimensions, setDimensions] = useState(Dimensions.get("window"));
-  const [splitRatio, setSplitRatio] = useState(0.5); // 50/50 split
-  const splitPosition = useRef(new Animated.Value(0.5)).current;
+  const [splitRatio, setSplitRatio] = useState(0.5);
 
-  // Track orientation
   const isLandscape = dimensions.width > dimensions.height;
   const isTablet = Math.min(dimensions.width, dimensions.height) >= 600;
+  const contentWidth = dimensions.width - (isLandscape ? SIDEBAR_WIDTH : 0);
+  const leftPaneWidth = rightSessionId ? contentWidth * splitRatio : contentWidth;
+  const rightPaneWidth = contentWidth - leftPaneWidth;
 
   useEffect(() => {
     const subscription = Dimensions.addEventListener("change", ({ window }) => {
@@ -44,36 +38,15 @@ export function TabletSplitLayout({
     return () => subscription.remove();
   }, []);
 
-  // Calculate pane widths
-  const contentWidth = dimensions.width - (isLandscape ? SIDEBAR_WIDTH : 0);
-  const leftPaneWidth = rightSessionId
-    ? contentWidth * splitRatio
-    : contentWidth;
-  const rightPaneWidth = contentWidth - leftPaneWidth;
-
-  // Pan responder for resize handle
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderMove: (_, gestureState) => {
-        const newRatio = (leftPaneWidth + gestureState.dx) / contentWidth;
-        const clampedRatio = Math.max(
-          MIN_PANE_WIDTH / contentWidth,
-          Math.min(1 - MIN_PANE_WIDTH / contentWidth, newRatio)
-        );
-        splitPosition.setValue(clampedRatio);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        const newRatio = (leftPaneWidth + gestureState.dx) / contentWidth;
-        const clampedRatio = Math.max(
-          MIN_PANE_WIDTH / contentWidth,
-          Math.min(1 - MIN_PANE_WIDTH / contentWidth, newRatio)
-        );
-        setSplitRatio(clampedRatio);
-      },
-    })
-  ).current;
+  // Pan gesture for resize handle using react-native-gesture-handler
+  const panGesture = Gesture.Pan().onEnd((event) => {
+    const newRatio = (leftPaneWidth + event.translationX) / contentWidth;
+    const clampedRatio = Math.max(
+      MIN_PANE_WIDTH / contentWidth,
+      Math.min(1 - MIN_PANE_WIDTH / contentWidth, newRatio)
+    );
+    setSplitRatio(clampedRatio);
+  });
 
   // Don't render split layout on phones or portrait tablets
   if (!isTablet || !isLandscape) {
@@ -92,11 +65,7 @@ export function TabletSplitLayout({
         {/* Left pane */}
         <View style={[styles.pane, { width: leftPaneWidth }]}>
           {leftSessionId ? (
-            <TerminalView
-              sessionId={leftSessionId}
-              onConnectionStateChange={() => {}}
-              onError={() => {}}
-            />
+            <TerminalView sessionId={leftSessionId} />
           ) : (
             <View style={styles.emptyPane} />
           )}
@@ -104,19 +73,17 @@ export function TabletSplitLayout({
 
         {/* Resize handle (only shown when split) */}
         {rightSessionId && (
-          <View style={styles.resizeHandleContainer} {...panResponder.panHandlers}>
-            <View style={styles.resizeHandle} />
-          </View>
+          <GestureDetector gesture={panGesture}>
+            <View style={styles.resizeHandleContainer}>
+              <View style={styles.resizeHandle} />
+            </View>
+          </GestureDetector>
         )}
 
         {/* Right pane */}
         {rightSessionId && (
           <View style={[styles.pane, { width: rightPaneWidth }]}>
-            <TerminalView
-              sessionId={rightSessionId}
-              onConnectionStateChange={() => {}}
-              onError={() => {}}
-            />
+            <TerminalView sessionId={rightSessionId} />
           </View>
         )}
       </View>
@@ -145,42 +112,6 @@ export function useTabletLandscape(): boolean {
   }, []);
 
   return isTabletLandscape;
-}
-
-/**
- * Hook for hardware keyboard shortcuts.
- */
-export function useKeyboardShortcuts(callbacks: {
-  onNewSession?: () => void;
-  onCloseSession?: () => void;
-  onSwitchSession?: (index: number) => void;
-  onNextSession?: () => void;
-  onPrevSession?: () => void;
-}): void {
-  useEffect(() => {
-    // React Native doesn't have built-in keyboard shortcut support
-    // This would require a native module or react-native-keyevent
-    // For now, this is a placeholder
-
-    // On iOS with hardware keyboard:
-    // - Cmd+T: New session
-    // - Cmd+W: Close session
-    // - Cmd+1-9: Switch to session
-    // - Cmd+Shift+]: Next session
-    // - Cmd+Shift+[: Previous session
-
-    if (Platform.OS === "ios") {
-      // Could use MenuBarExtraItemGroup for keyboard shortcuts
-      // or react-native-keyboardinput
-    }
-
-    // On Android with hardware keyboard:
-    // Similar shortcuts but with Ctrl instead of Cmd
-
-    return () => {
-      // Cleanup
-    };
-  }, [callbacks]);
 }
 
 const styles = StyleSheet.create({

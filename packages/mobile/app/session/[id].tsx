@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useSessionStore } from "@/application/state/stores/sessionStore";
 import { TerminalView } from "@/presentation/components/TerminalView";
-import { getWebSocketManager, ConnectionState } from "@/infrastructure/websocket/WebSocketManager";
+import { getWebSocketManager } from "@/infrastructure/websocket/WebSocketManager";
 import { getApiClient } from "@/infrastructure/api/RemoteDevApiClient";
 
 /**
@@ -15,7 +15,6 @@ export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { getSession, updateSession } = useSessionStore();
-  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const wsManagerRef = useRef(getWebSocketManager());
 
@@ -28,14 +27,13 @@ export default function SessionScreen() {
       return;
     }
 
-    const connectToSession = async () => {
+    const wsManager = wsManagerRef.current;
+
+    const connectToSession = async (): Promise<void> => {
       try {
-        // Get WebSocket token from API
         const apiClient = getApiClient();
         const token = await apiClient.getSessionToken(id);
-
-        // Connect to WebSocket
-        await wsManagerRef.current.connect(id, token);
+        await wsManager.connect(id, token);
       } catch (error) {
         console.error("[SessionScreen] Failed to connect:", error);
         setConnectionError(
@@ -46,9 +44,8 @@ export default function SessionScreen() {
 
     connectToSession();
 
-    // Cleanup on unmount
     return () => {
-      wsManagerRef.current.disconnect(id);
+      wsManager.disconnect(id);
     };
   }, [session, id, router]);
 
@@ -139,9 +136,6 @@ export default function SessionScreen() {
           /* Terminal WebView */
           <TerminalView
             sessionId={id}
-            onConnectionStateChange={(state) => {
-              setConnectionState(state);
-            }}
             onError={(error) => {
               setConnectionError(error.message);
             }}
