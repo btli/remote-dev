@@ -1190,6 +1190,111 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [sendImageToTerminal]);
 
+  // Mobile touch scrolling support
+  // xterm.js has limited touch support, so we handle touch events manually
+  // to enable scrollback navigation on mobile devices
+  useEffect(() => {
+    const terminal = xtermRef.current;
+    const container = terminalRef.current;
+    if (!terminal || !container) return;
+
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let lastTouchY = 0;
+    let velocityY = 0;
+    let isScrolling = false;
+    let momentumAnimationId: number | null = null;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      // Cancel any ongoing momentum scroll
+      if (momentumAnimationId) {
+        cancelAnimationFrame(momentumAnimationId);
+        momentumAnimationId = null;
+      }
+
+      if (e.touches.length === 1) {
+        touchStartY = e.touches[0].clientY;
+        lastTouchY = touchStartY;
+        touchStartTime = Date.now();
+        velocityY = 0;
+        isScrolling = false;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+
+      const currentY = e.touches[0].clientY;
+      const deltaY = lastTouchY - currentY;
+      const timeDelta = Date.now() - touchStartTime;
+
+      // Track velocity for momentum scrolling
+      if (timeDelta > 0) {
+        velocityY = deltaY / timeDelta * 16; // Normalize to ~60fps
+      }
+
+      // Determine if this is a scroll gesture (vertical movement > threshold)
+      if (!isScrolling && Math.abs(currentY - touchStartY) > 10) {
+        isScrolling = true;
+      }
+
+      if (isScrolling) {
+        // Prevent default to stop page scrolling
+        e.preventDefault();
+
+        // Scroll the terminal: positive deltaY = scroll up (show older content)
+        // Each "line" in xterm is about 16-20px depending on font size
+        const lines = Math.round(deltaY / 18);
+        if (lines !== 0) {
+          terminal.scrollLines(lines);
+          lastTouchY = currentY;
+          touchStartTime = Date.now();
+        }
+      }
+    };
+
+    const handleTouchEnd = () => {
+      if (!isScrolling) return;
+
+      // Apply momentum scrolling
+      const applyMomentum = () => {
+        if (Math.abs(velocityY) < 0.5) {
+          momentumAnimationId = null;
+          return;
+        }
+
+        const lines = Math.round(velocityY / 18);
+        if (lines !== 0) {
+          terminal.scrollLines(lines);
+        }
+
+        // Decay velocity
+        velocityY *= 0.92;
+        momentumAnimationId = requestAnimationFrame(applyMomentum);
+      };
+
+      if (Math.abs(velocityY) > 2) {
+        momentumAnimationId = requestAnimationFrame(applyMomentum);
+      }
+
+      isScrolling = false;
+    };
+
+    // Use passive: false to allow preventDefault in touchmove
+    container.addEventListener("touchstart", handleTouchStart, { passive: true });
+    container.addEventListener("touchmove", handleTouchMove, { passive: false });
+    container.addEventListener("touchend", handleTouchEnd, { passive: true });
+
+    return () => {
+      if (momentumAnimationId) {
+        cancelAnimationFrame(momentumAnimationId);
+      }
+      container.removeEventListener("touchstart", handleTouchStart);
+      container.removeEventListener("touchmove", handleTouchMove);
+      container.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, []);
+
   // Focus terminal on left-click/touch to ensure it maintains focus
   // This fixes the issue where selecting text would quickly lose focus, preventing copy
   // Also ensures mobile keyboard appears when tapping the terminal
