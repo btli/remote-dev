@@ -5,6 +5,34 @@ All notable changes to Remote Dev will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-02-10
+
+### Added
+
+- **MCP Tool Discovery for Agent Sessions**: Agents can now discover and use MCP tools within sessions
+- **MCP Agent Sessions**: Profile management support for MCP-based agent sessions
+- **Mobile Touch Scrolling**: Touch scrolling support for terminal on mobile devices
+- **Pinned File Editor**: CodeMirror 6-powered file editor for pinned files
+- **Terminal Type Plugin System**: Extensible plugin architecture for different session types
+- **Separate Agent Creation**: Distinct New Terminal and New Agent session creation flows
+- **Clean Architecture Tmux Environment & Profile Refactor**: Domain-driven tmux environment management and profile handling
+
+### Changed
+
+- Code simplification and linting fixes across the codebase
+- Simplified codebase with extracted helpers and reduced duplication
+- Session numbering now finds next available number instead of always incrementing
+- Bot icon shown for agent sessions in sidebar
+
+### Fixed
+
+- Prevent rapid reconnection that can exhaust PTY resources
+- Skip trashed sessions in status sync and improve auth resilience
+- Pass terminalType correctly to API for agent sessions
+- Address code review findings in PortMonitor and RestartAgentUseCase
+- Prevent browser caching on GitHub API fetch requests
+- Filter out framework internal env vars from child processes
+
 ## [0.2.0] - 2026-01-09
 
 ### Added
@@ -137,6 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.2.1]: https://github.com/btli/remote-dev/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/btli/remote-dev/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/btli/remote-dev/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/btli/remote-dev/compare/v0.1.0...v0.1.1
