@@ -4,6 +4,9 @@
   "description": "Web-based terminal interface with persistent tmux sessions and GitHub integration",
   "author": "Remote Dev Team",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "concurrently --kill-others --kill-signal SIGTERM -n next,term -c blue,green \"bun run dev:next\" \"bun run dev:terminal\"",
