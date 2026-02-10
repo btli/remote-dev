@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { users, apiKeys } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { validateAccessJWT } from "@/lib/auth-utils";
 import { randomBytes } from "crypto";
 
@@ -61,16 +61,9 @@ export async function POST(request: Request) {
 
     // Revoke any existing mobile app keys for this user (prevents key accumulation)
     // Each new login gets a fresh key, invalidating old devices
-    const existingMobileKeys = await db.query.apiKeys.findMany({
-      where: (keys, { and, eq: eq2 }) =>
-        and(eq2(keys.userId, user.id), eq2(keys.keyPrefix, "rdv_mobile_")),
-    });
-
-    if (existingMobileKeys.length > 0) {
-      for (const key of existingMobileKeys) {
-        await db.delete(apiKeys).where(eq(apiKeys.id, key.id));
-      }
-    }
+    await db.delete(apiKeys).where(
+      sql`${apiKeys.userId} = ${user.id} AND ${apiKeys.keyPrefix} = 'rdv_mobile_'`
+    );
 
     // Store the new API key
     await db.insert(apiKeys).values({

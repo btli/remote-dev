@@ -51,14 +51,12 @@ export default function LoginScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <View style={styles.content}>
-        {/* Logo */}
         <View style={styles.logo}>
           <Ionicons name="terminal" size={64} color="#7aa2f7" />
         </View>
         <Text style={styles.title}>Remote Dev</Text>
         <Text style={styles.subtitle}>Mobile Terminal Client</Text>
 
-        {/* Cloudflare Access Button */}
         <TouchableOpacity
           style={styles.cfButton}
           onPress={handleCloudflareLogin}
@@ -70,14 +68,12 @@ export default function LoginScreen() {
           </Text>
         </TouchableOpacity>
 
-        {/* Divider */}
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
           <Text style={styles.dividerText}>or</Text>
           <View style={styles.dividerLine} />
         </View>
 
-        {/* API Key Input */}
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.input}
@@ -112,7 +108,6 @@ export default function LoginScreen() {
           </Text>
         </TouchableOpacity>
 
-        {/* Error Message */}
         {error && (
           <View style={styles.errorContainer}>
             <Ionicons name="alert-circle" size={18} color="#f7768e" />
@@ -120,7 +115,6 @@ export default function LoginScreen() {
           </View>
         )}
 
-        {/* Help Text */}
         <Text style={styles.helpText}>
           Generate an API key from the web interface at Settings → API Keys
         </Text>

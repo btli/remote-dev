@@ -168,23 +168,13 @@ export class CloudflareAccessService {
    * Returns user info if successful.
    */
   async restoreSession(): Promise<CloudflareAccessResult> {
-    try {
-      const credentials = await this.getValidCredentials();
+    const credentials = await this.getValidCredentials();
 
-      if (!credentials) {
-        return { success: false, error: "No valid credentials" };
-      }
-
-      return {
-        success: true,
-        ...credentials,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to restore session",
-      };
+    if (!credentials) {
+      return { success: false, error: "No valid credentials" };
     }
+
+    return { success: true, ...credentials };
   }
 
   /**

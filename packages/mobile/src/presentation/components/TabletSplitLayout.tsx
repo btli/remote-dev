@@ -46,19 +46,14 @@ export function TabletSplitLayout({
     return Math.max(minRatio, Math.min(maxRatio, ratio));
   };
 
-  // Pan gesture for resize handle with real-time feedback
   const panGesture = Gesture.Pan()
     .onStart(() => {
       startRatioRef.current = splitRatio;
     })
     .onUpdate((event) => {
-      // Real-time visual feedback as user drags
       const startLeftWidth = contentWidth * startRatioRef.current;
       const newRatio = (startLeftWidth + event.translationX) / contentWidth;
       setSplitRatio(clampRatio(newRatio));
-    })
-    .onEnd(() => {
-      // Final ratio is already set by onUpdate
     });
 
   // Don't render split layout on phones or portrait tablets
