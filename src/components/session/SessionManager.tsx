@@ -1163,7 +1163,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Listen for open-folder-preferences event from Port Manager
   // Use ref for folders to keep a single stable listener instead of re-adding on every folders change
   const foldersRef = useRef(folders);
-  foldersRef.current = folders;
+  useEffect(() => {
+    foldersRef.current = folders;
+  }, [folders]);
 
   useEffect(() => {
     const handleOpenFolderPrefs = (e: CustomEvent<{ folderId: string }>) => {

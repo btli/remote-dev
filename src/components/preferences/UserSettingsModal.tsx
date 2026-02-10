@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Bot } from "lucide-react";
+import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -166,7 +166,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
               <span className="hidden sm:inline">Appearance</span>
             </TabsTrigger>
             <TabsTrigger value="agents" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
-              <Bot className="w-4 h-4 shrink-0" />
+              <Sparkles className="w-4 h-4 shrink-0" />
               <span className="hidden sm:inline">Agents</span>
             </TabsTrigger>
             <TabsTrigger value="project" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">

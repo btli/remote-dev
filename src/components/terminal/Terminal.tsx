@@ -808,7 +808,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       webglAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit]);
 
   // Update terminal options when font preferences change
   useEffect(() => {

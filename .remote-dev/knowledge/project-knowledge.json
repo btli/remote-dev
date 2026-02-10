@@ -1,0 +1,54 @@
+{
+  "project_name": "remote-dev",
+  "project_path": "/Users/bryanli/Projects/btli/remote-dev",
+  "learnings": [
+    {
+      "id": "d029fcd9-db35-45a8-8e5b-384aa119fa32",
+      "learning_type": "gotcha",
+      "title": "Encountered 10 error(s) during session",
+      "description": "     439b42bf Fix readonly array type error in rdv.ts\n     39b06828 feat(domain): Add orchestrator value objects and domain errors\n  ⎿  65:439b42bf Fix readonly array type error in rdv.ts\n  - Error boundaries and performance improvements\n  ⎿  Error: Exit code 128",
+      "source_session": null,
+      "source_folder": null,
+      "confidence": 0.6,
+      "tags": [
+        "error",
+        "debugging"
+      ],
+      "created_at": "2026-01-17T18:27:29.919218Z",
+      "validated_at": null,
+      "application_count": 0
+    },
+    {
+      "id": "b2ce7938-f00c-4aba-a80f-523dc6b65284",
+      "learning_type": "pattern",
+      "title": "  ⎿  Interrupted · What should Claude do instead?",
+      "description": "  ⎿  Interrupted · What should Claude do instead?",
+      "source_session": null,
+      "source_folder": null,
+      "confidence": 0.7,
+      "tags": [
+        "pattern"
+      ],
+      "created_at": "2026-01-17T18:27:29.919218Z",
+      "validated_at": null,
+      "application_count": 0
+    },
+    {
+      "id": "db7e7482-9bc1-42a7-a616-f05ccd4b82eb",
+      "learning_type": "pattern",
+      "title": "  ⎿  Interrupted · What should Claude do instead?",
+      "description": "  ⎿  Interrupted · What should Claude do instead?",
+      "source_session": null,
+      "source_folder": null,
+      "confidence": 0.7,
+      "tags": [
+        "pattern"
+      ],
+      "created_at": "2026-01-17T18:27:29.919218Z",
+      "validated_at": null,
+      "application_count": 0
+    }
+  ],
+  "updated_at": "2026-01-17T18:27:29.919263Z",
+  "version": 1
+}
