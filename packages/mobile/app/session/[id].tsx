@@ -1,11 +1,11 @@
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
-import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState, useCallback, useRef } from "react";
 import { useSessionStore } from "@/application/state/stores/sessionStore";
-import { TerminalView } from "@/presentation/components/TerminalView";
-import { getWebSocketManager } from "@/infrastructure/websocket/WebSocketManager";
 import { getApiClient } from "@/infrastructure/api/RemoteDevApiClient";
+import { getWebSocketManager } from "@/infrastructure/websocket/WebSocketManager";
+import { TerminalView } from "@/presentation/components/TerminalView";
 
 /**
  * Terminal session screen.
@@ -21,24 +21,21 @@ export default function SessionScreen() {
 
   const session = getSession(id);
 
-  // Connect to WebSocket on mount
   useEffect(() => {
     isMountedRef.current = true;
+    const wsManager = wsManagerRef.current;
 
     if (!session) {
       router.back();
       return;
     }
 
-    const wsManager = wsManagerRef.current;
-
-    const connectToSession = async (): Promise<void> => {
+    async function connect(): Promise<void> {
       try {
         const apiClient = getApiClient();
         const token = await apiClient.getSessionToken(id);
         await wsManager.connect(id, token);
       } catch (error) {
-        // Only update state if still mounted
         if (isMountedRef.current) {
           console.error("[SessionScreen] Failed to connect:", error);
           setConnectionError(
@@ -46,9 +43,9 @@ export default function SessionScreen() {
           );
         }
       }
-    };
+    }
 
-    connectToSession();
+    connect();
 
     return () => {
       isMountedRef.current = false;

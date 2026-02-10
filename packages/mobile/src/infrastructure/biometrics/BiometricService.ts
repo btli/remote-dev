@@ -137,19 +137,25 @@ export class BiometricService {
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
+   * Require biometric authentication if enabled.
+   * Throws if authentication fails.
+   */
+  private async requireBiometricIfEnabled(reason: string): Promise<void> {
+    const biometricEnabled = await this.isBiometricEnabled();
+    if (!biometricEnabled) return;
+
+    const authResult = await this.authenticate(reason);
+    if (!authResult.success) {
+      throw new Error(authResult.error || "Authentication required");
+    }
+  }
+
+  /**
    * Store API key securely.
    * If biometric is enabled, requires authentication.
    */
   async storeApiKey(apiKey: string): Promise<void> {
-    const biometricEnabled = await this.isBiometricEnabled();
-
-    if (biometricEnabled) {
-      const authResult = await this.authenticate("Authenticate to save API key");
-      if (!authResult.success) {
-        throw new Error(authResult.error || "Authentication required");
-      }
-    }
-
+    await this.requireBiometricIfEnabled("Authenticate to save API key");
     await SecureStore.setItemAsync(SECURE_KEYS.API_KEY, apiKey, {
       keychainAccessible: SecureStore.WHEN_UNLOCKED,
     });
@@ -160,15 +166,7 @@ export class BiometricService {
    * If biometric is enabled, requires authentication.
    */
   async getApiKey(): Promise<string | null> {
-    const biometricEnabled = await this.isBiometricEnabled();
-
-    if (biometricEnabled) {
-      const authResult = await this.authenticate("Authenticate to access Remote Dev");
-      if (!authResult.success) {
-        throw new Error(authResult.error || "Authentication required");
-      }
-    }
-
+    await this.requireBiometricIfEnabled("Authenticate to access Remote Dev");
     return await SecureStore.getItemAsync(SECURE_KEYS.API_KEY);
   }
 
@@ -177,15 +175,7 @@ export class BiometricService {
    * If biometric is enabled, requires authentication first.
    */
   async storeCredentials(userId: string, email: string, apiKey: string): Promise<void> {
-    const biometricEnabled = await this.isBiometricEnabled();
-
-    if (biometricEnabled) {
-      const authResult = await this.authenticate("Authenticate to save credentials");
-      if (!authResult.success) {
-        throw new Error(authResult.error || "Authentication required");
-      }
-    }
-
+    await this.requireBiometricIfEnabled("Authenticate to save credentials");
     await Promise.all([
       SecureStore.setItemAsync(SECURE_KEYS.USER_ID, userId, {
         keychainAccessible: SecureStore.WHEN_UNLOCKED,
