@@ -14,6 +14,7 @@
 import { SessionStatus } from "../value-objects/SessionStatus";
 import { TmuxSessionName } from "../value-objects/TmuxSessionName";
 import { InvalidValueError } from "../errors/DomainError";
+import { generateUUID } from "../utils/uuid";
 import type { AgentProviderType, TerminalType, AgentExitState } from "../types";
 
 export interface SessionProps {
@@ -56,20 +57,6 @@ export interface CreateSessionProps {
   agentProvider?: AgentProviderType | null;
   typeMetadata?: Record<string, unknown> | null;
   tabOrder?: number;
-}
-
-/**
- * Generate a UUID using the standard crypto API.
- */
-function generateUUID(): string {
-  if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
-    return globalThis.crypto.randomUUID();
-  }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
 }
 
 export class Session {

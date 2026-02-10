@@ -12,6 +12,14 @@ interface TerminalViewProps {
   onError?: (error: Error) => void;
 }
 
+const CONNECTION_STATE_LABELS: Record<ConnectionState, string> = {
+  connecting: "Connecting...",
+  connected: "Connected",
+  reconnecting: "Reconnecting...",
+  disconnecting: "Disconnecting...",
+  disconnected: "Disconnected",
+};
+
 /**
  * Terminal view using WebView with xterm.js.
  *
@@ -25,9 +33,12 @@ export function TerminalView({
 }: TerminalViewProps) {
   const webViewRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
-  const [connectionState, setConnectionState] =
-    useState<ConnectionState>("disconnected");
   const wsManager = getWebSocketManager();
+
+  // Initialize connection state from wsManager
+  const [connectionState, setConnectionState] = useState<ConnectionState>(
+    () => wsManager.getState(sessionId)
+  );
 
   // Send data to terminal
   const writeToTerminal = useCallback((data: string) => {
@@ -88,10 +99,8 @@ export function TerminalView({
       onConnectionStateChange?.(state);
     });
 
-    // Get initial state
-    const initialState = wsManager.getState(sessionId);
-    setConnectionState(initialState);
-    onConnectionStateChange?.(initialState);
+    // Notify parent of initial state
+    onConnectionStateChange?.(wsManager.getState(sessionId));
 
     return () => {
       unsubscribeMessage();
@@ -241,13 +250,7 @@ export function TerminalView({
             ]}
           />
           <Text style={styles.statusText}>
-            {connectionState === "connecting"
-              ? "Connecting..."
-              : connectionState === "reconnecting"
-                ? "Reconnecting..."
-                : connectionState === "disconnecting"
-                  ? "Disconnecting..."
-                  : "Disconnected"}
+            {CONNECTION_STATE_LABELS[connectionState]}
           </Text>
         </View>
       )}

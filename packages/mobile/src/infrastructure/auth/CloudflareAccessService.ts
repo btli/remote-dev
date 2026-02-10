@@ -106,35 +106,48 @@ export class CloudflareAccessService {
   }
 
   /**
+   * Retrieve and validate stored credentials.
+   * Returns credentials if valid, null otherwise.
+   */
+  private async getValidCredentials(): Promise<{
+    apiKey: string;
+    userId: string;
+    email: string;
+  } | null> {
+    const biometricService = getBiometricService();
+
+    const hasCredentials = await biometricService.hasStoredCredentials();
+    if (!hasCredentials) {
+      return null;
+    }
+
+    const apiKey = await biometricService.getApiKey();
+    const userId = await biometricService.getUserId();
+    const email = await biometricService.getUserEmail();
+
+    if (!apiKey || !userId || !email) {
+      return null;
+    }
+
+    const apiClient = getApiClient();
+    apiClient.setApiKey(apiKey);
+
+    try {
+      await apiClient.validateApiKey();
+      return { apiKey, userId, email };
+    } catch {
+      await biometricService.clearCredentials();
+      return null;
+    }
+  }
+
+  /**
    * Check if we have valid stored credentials.
    */
   async hasValidSession(): Promise<boolean> {
     try {
-      const biometricService = getBiometricService();
-      const hasCredentials = await biometricService.hasStoredCredentials();
-
-      if (!hasCredentials) {
-        return false;
-      }
-
-      // Try to get API key (may require biometric auth)
-      const apiKey = await biometricService.getApiKey();
-      if (!apiKey) {
-        return false;
-      }
-
-      // Validate with backend
-      const apiClient = getApiClient();
-      apiClient.setApiKey(apiKey);
-
-      try {
-        await apiClient.validateApiKey();
-        return true;
-      } catch {
-        // Invalid or expired key
-        await biometricService.clearCredentials();
-        return false;
-      }
+      const credentials = await this.getValidCredentials();
+      return credentials !== null;
     } catch {
       return false;
     }
@@ -146,41 +159,15 @@ export class CloudflareAccessService {
    */
   async restoreSession(): Promise<CloudflareAccessResult> {
     try {
-      const biometricService = getBiometricService();
+      const credentials = await this.getValidCredentials();
 
-      // Check if we have stored credentials
-      const hasCredentials = await biometricService.hasStoredCredentials();
-      if (!hasCredentials) {
-        return { success: false, error: "No stored credentials" };
-      }
-
-      // Get credentials (may prompt for biometric)
-      const apiKey = await biometricService.getApiKey();
-      const userId = await biometricService.getUserId();
-      const email = await biometricService.getUserEmail();
-
-      if (!apiKey || !userId || !email) {
-        return { success: false, error: "Missing credentials" };
-      }
-
-      // Configure API client
-      const apiClient = getApiClient();
-      apiClient.setApiKey(apiKey);
-
-      // Validate with backend
-      try {
-        await apiClient.validateApiKey();
-      } catch {
-        // Clear invalid credentials
-        await biometricService.clearCredentials();
-        return { success: false, error: "Session expired" };
+      if (!credentials) {
+        return { success: false, error: "No valid credentials" };
       }
 
       return {
         success: true,
-        apiKey,
-        userId,
-        email,
+        ...credentials,
       };
     } catch (error) {
       return {

@@ -9,11 +9,18 @@ import {
 } from "react-native";
 import { useSessionStore } from "@/application/state/stores/sessionStore";
 import { useFolderStore } from "@/application/state/stores/folderStore";
-import type { FolderDTO, TerminalSessionDTO } from "@remote-dev/domain";
+import type { FolderDTO, TerminalSessionDTO, SessionStatusType } from "@remote-dev/domain";
 
 interface FolderSidebarProps {
   onSessionSelect: (sessionId: string) => void;
 }
+
+const STATUS_COLORS: Record<SessionStatusType, string> = {
+  active: "#9ece6a",
+  suspended: "#e0af68",
+  closed: "#565f89",
+  trashed: "#565f89",
+};
 
 interface FolderItemProps {
   folder: FolderDTO;
@@ -76,14 +83,7 @@ function FolderItem({
             <View
               style={[
                 styles.statusDot,
-                {
-                  backgroundColor:
-                    session.status === "active"
-                      ? "#9ece6a"
-                      : session.status === "suspended"
-                        ? "#e0af68"
-                        : "#565f89",
-                },
+                { backgroundColor: STATUS_COLORS[session.status] },
               ]}
             />
           </TouchableOpacity>
@@ -158,14 +158,7 @@ export function FolderSidebar({ onSessionSelect }: FolderSidebarProps) {
                 <View
                   style={[
                     styles.statusDot,
-                    {
-                      backgroundColor:
-                        session.status === "active"
-                          ? "#9ece6a"
-                          : session.status === "suspended"
-                            ? "#e0af68"
-                            : "#565f89",
-                    },
+                    { backgroundColor: STATUS_COLORS[session.status] },
                   ]}
                 />
               </TouchableOpacity>

@@ -12,6 +12,7 @@
  */
 
 import { InvalidValueError, BusinessRuleViolationError } from "../errors/DomainError";
+import { generateUUID } from "../utils/uuid";
 
 export interface FolderProps {
   id: string;
@@ -30,20 +31,6 @@ export interface CreateFolderProps {
   name: string;
   parentId?: string | null;
   sortOrder?: number;
-}
-
-/**
- * Generate a UUID using the standard crypto API.
- */
-function generateUUID(): string {
-  if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
-    return globalThis.crypto.randomUUID();
-  }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
 }
 
 export class Folder {
