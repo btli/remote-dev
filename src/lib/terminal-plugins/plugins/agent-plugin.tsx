@@ -7,7 +7,7 @@
  * - Supports multiple agent providers (Claude, Codex, Gemini, OpenCode)
  */
 
-import { Bot } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
   TerminalTypePlugin,
@@ -75,14 +75,11 @@ export function createAgentPlugin(
     type: "agent",
     displayName: "AI Agent",
     description: "AI coding assistant (Claude, Codex, Gemini, etc.)",
-    icon: Bot,
+    icon: Sparkles,
     priority: 90, // Second highest priority
     builtIn: true,
 
-    createSession(
-      input: CreateSessionInput,
-      _session: Partial<TerminalSession>
-    ): SessionConfig {
+    createSession(input: CreateSessionInput): SessionConfig {
       const providerId = input.agentProvider ?? config.defaultProvider ?? "claude";
       const provider = getProviderConfig(providerId);
 
