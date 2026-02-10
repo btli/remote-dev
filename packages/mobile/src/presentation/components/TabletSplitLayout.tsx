@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { View, StyleSheet, Dimensions } from "react-native";
 import { TerminalView } from "./TerminalView";
 import { FolderSidebar } from "./FolderSidebar";
@@ -24,6 +24,7 @@ export function TabletSplitLayout({
 }: TabletSplitLayoutProps) {
   const [dimensions, setDimensions] = useState(Dimensions.get("window"));
   const [splitRatio, setSplitRatio] = useState(0.5);
+  const startRatioRef = useRef(0.5);
 
   const isLandscape = dimensions.width > dimensions.height;
   const isTablet = Math.min(dimensions.width, dimensions.height) >= 600;
@@ -38,15 +39,27 @@ export function TabletSplitLayout({
     return () => subscription.remove();
   }, []);
 
-  // Pan gesture for resize handle using react-native-gesture-handler
-  const panGesture = Gesture.Pan().onEnd((event) => {
-    const newRatio = (leftPaneWidth + event.translationX) / contentWidth;
-    const clampedRatio = Math.max(
-      MIN_PANE_WIDTH / contentWidth,
-      Math.min(1 - MIN_PANE_WIDTH / contentWidth, newRatio)
-    );
-    setSplitRatio(clampedRatio);
-  });
+  // Helper to clamp ratio within valid bounds
+  const clampRatio = (ratio: number): number => {
+    const minRatio = MIN_PANE_WIDTH / contentWidth;
+    const maxRatio = 1 - MIN_PANE_WIDTH / contentWidth;
+    return Math.max(minRatio, Math.min(maxRatio, ratio));
+  };
+
+  // Pan gesture for resize handle with real-time feedback
+  const panGesture = Gesture.Pan()
+    .onStart(() => {
+      startRatioRef.current = splitRatio;
+    })
+    .onUpdate((event) => {
+      // Real-time visual feedback as user drags
+      const startLeftWidth = contentWidth * startRatioRef.current;
+      const newRatio = (startLeftWidth + event.translationX) / contentWidth;
+      setSplitRatio(clampRatio(newRatio));
+    })
+    .onEnd(() => {
+      // Final ratio is already set by onUpdate
+    });
 
   // Don't render split layout on phones or portrait tablets
   if (!isTablet || !isLandscape) {

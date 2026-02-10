@@ -1,12 +1,15 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getCloudflareAccessService } from "@/infrastructure/auth/CloudflareAccessService";
+import { getApiClient } from "@/infrastructure/api/RemoteDevApiClient";
+import { getBiometricService } from "@/infrastructure/biometrics/BiometricService";
 
 interface AuthState {
   isAuthenticated: boolean;
   userId: string | null;
   email: string | null;
-  apiKey: string | null;
+  // NOTE: API key is NEVER stored in state - only in SecureStore via BiometricService
   biometricsEnabled: boolean;
   loading: boolean;
   error: Error | null;
@@ -15,13 +18,13 @@ interface AuthState {
 interface AuthActions {
   // State mutations
   setAuthenticated: (userId: string, email: string) => void;
-  setApiKey: (apiKey: string) => void;
+  clearAuth: () => void;
   toggleBiometrics: () => void;
   setLoading: (loading: boolean) => void;
   setError: (error: Error | null) => void;
 
   // Auth actions
-  login: (apiKey: string) => Promise<void>;
+  loginWithApiKey: (apiKey: string) => Promise<void>;
   loginWithCloudflareAccess: () => Promise<void>;
   logout: () => Promise<void>;
   checkAuthStatus: () => Promise<boolean>;
@@ -43,7 +46,6 @@ export const useAuthStore = create<AuthStore>()(
       isAuthenticated: false,
       userId: null,
       email: null,
-      apiKey: null, // This will be stored in SecureStore in production
       biometricsEnabled: false,
       loading: false,
       error: null,
@@ -51,31 +53,41 @@ export const useAuthStore = create<AuthStore>()(
       // State mutations
       setAuthenticated: (userId, email) =>
         set({ isAuthenticated: true, userId, email, error: null }),
-      setApiKey: (apiKey) => set({ apiKey }),
+      clearAuth: () =>
+        set({ isAuthenticated: false, userId: null, email: null, error: null }),
       toggleBiometrics: () =>
         set((state) => ({ biometricsEnabled: !state.biometricsEnabled })),
       setLoading: (loading) => set({ loading }),
       setError: (error) => set({ error }),
 
       // Auth actions
-      login: async (apiKey) => {
+      loginWithApiKey: async (apiKey: string) => {
         set({ loading: true, error: null });
         try {
-          // TODO: Validate API key with backend
-          // const user = await apiClient.validateApiKey(apiKey);
-          // set({ isAuthenticated: true, userId: user.id, email: user.email, apiKey });
+          // Validate the API key with the server
+          const apiClient = getApiClient();
+          apiClient.setApiKey(apiKey);
+          const userInfo = await apiClient.validateApiKey();
 
-          // Temporary: assume valid
+          // Store credentials securely in SecureStore (NOT in state)
+          const biometricService = getBiometricService();
+          await biometricService.storeCredentials(
+            userInfo.userId,
+            userInfo.email,
+            apiKey
+          );
+
           set({
             isAuthenticated: true,
-            userId: "mock-user",
-            email: "user@example.com",
-            apiKey,
+            userId: userInfo.userId,
+            email: userInfo.email,
             loading: false,
           });
         } catch (error) {
+          // Clear the invalid key from API client
+          getApiClient().clearApiKey();
           set({
-            error: error instanceof Error ? error : new Error("Login failed"),
+            error: error instanceof Error ? error : new Error("Invalid API key"),
             loading: false,
           });
           throw error;
@@ -85,17 +97,19 @@ export const useAuthStore = create<AuthStore>()(
       loginWithCloudflareAccess: async () => {
         set({ loading: true, error: null });
         try {
-          // TODO: Implement Cloudflare Access OAuth flow
-          // 1. Open WebBrowser with CF Access URL
-          // 2. Handle redirect with CF token
-          // 3. Exchange CF token for API key
-          // 4. Store API key in SecureStore
+          // Use CloudflareAccessService for the actual OAuth flow
+          // API key is stored in SecureStore, NOT in this state
+          const cfService = getCloudflareAccessService();
+          const result = await cfService.authenticate();
 
-          // Temporary: simulate success
+          if (!result.success) {
+            throw new Error(result.error || "Authentication failed");
+          }
+
           set({
             isAuthenticated: true,
-            userId: "cf-user",
-            email: "cf-user@example.com",
+            userId: result.userId || null,
+            email: result.email || null,
             loading: false,
           });
         } catch (error) {
@@ -108,24 +122,38 @@ export const useAuthStore = create<AuthStore>()(
       },
 
       logout: async () => {
-        // TODO: Clear SecureStore credentials
+        // Clear SecureStore credentials via CloudflareAccessService
+        const cfService = getCloudflareAccessService();
+        await cfService.logout();
+
         set({
           isAuthenticated: false,
           userId: null,
           email: null,
-          apiKey: null,
           error: null,
         });
       },
 
       checkAuthStatus: async () => {
         try {
-          // TODO: Check if we have valid credentials in SecureStore
-          // If biometrics enabled, prompt for biometric auth
-          // Then validate API key with backend
+          // Check if we have valid credentials in SecureStore
+          const cfService = getCloudflareAccessService();
+          const hasSession = await cfService.hasValidSession();
 
-          const state = get();
-          return state.isAuthenticated && !!state.apiKey;
+          if (hasSession) {
+            const result = await cfService.restoreSession();
+            if (result.success) {
+              set({
+                isAuthenticated: true,
+                userId: result.userId || null,
+                email: result.email || null,
+              });
+              return true;
+            }
+          }
+
+          get().clearAuth();
+          return false;
         } catch {
           return false;
         }

@@ -69,7 +69,10 @@ export class PushNotificationService {
       }
 
       this.pushToken = token;
-      console.log("[PushNotification] Push token:", token);
+      if (__DEV__) {
+        // Only log token prefix in dev to avoid exposing full token
+        console.log("[PushNotification] Push token obtained:", token.slice(0, 20) + "...");
+      }
 
       // Register token with backend
       await this.registerTokenWithBackend(token);

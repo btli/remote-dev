@@ -40,8 +40,10 @@ export class CloudflareAccessService {
       // Build the login URL with redirect
       const loginUrl = `${this.baseUrl}/login?mobile=true&redirect=${encodeURIComponent(this.redirectUri)}`;
 
-      console.log("[CloudflareAccess] Opening browser for authentication");
-      console.log("[CloudflareAccess] Redirect URI:", this.redirectUri);
+      if (__DEV__) {
+        console.log("[CloudflareAccess] Opening browser for authentication");
+        console.log("[CloudflareAccess] Redirect URI:", this.redirectUri);
+      }
 
       // Open the browser for authentication
       const result = await WebBrowser.openAuthSessionAsync(loginUrl, this.redirectUri, {
@@ -56,7 +58,11 @@ export class CloudflareAccessService {
         return { success: false, error: "Authentication failed" };
       }
 
-      console.log("[CloudflareAccess] Received callback URL:", result.url);
+      if (__DEV__) {
+        // Log URL without sensitive token params in dev only
+        const sanitizedUrl = result.url.split("?")[0];
+        console.log("[CloudflareAccess] Received callback from:", sanitizedUrl);
+      }
 
       // Parse the callback URL
       const url = new URL(result.url);
@@ -71,13 +77,17 @@ export class CloudflareAccessService {
         return { success: false, error: "No token received from Cloudflare Access" };
       }
 
-      console.log("[CloudflareAccess] Received CF token, exchanging for API key");
+      if (__DEV__) {
+        console.log("[CloudflareAccess] Exchanging CF token for API key");
+      }
 
       // Exchange CF token for API key
       const apiClient = getApiClient();
       const exchangeResult = await apiClient.exchangeCfToken(cfToken);
 
-      console.log("[CloudflareAccess] Got API key for user:", exchangeResult.email);
+      if (__DEV__) {
+        console.log("[CloudflareAccess] Authenticated user:", exchangeResult.email);
+      }
 
       // Store credentials securely
       const biometricService = getBiometricService();
