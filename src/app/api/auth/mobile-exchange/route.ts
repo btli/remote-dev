@@ -5,12 +5,14 @@
  * Used by the mobile app after CF Access browser authentication.
  */
 
+import { createHash, randomBytes } from "crypto";
+
 import { NextResponse } from "next/server";
+import { and, eq } from "drizzle-orm";
+
 import { db } from "@/db";
 import { users, apiKeys } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
-import { validateAccessJWT } from "@/lib/auth-utils";
-import { randomBytes } from "crypto";
+import { validateAccessJWT } from "@/lib/cloudflare-access";
 
 export async function POST(request: Request) {
   try {
@@ -39,7 +41,6 @@ export async function POST(request: Request) {
     });
 
     if (!user) {
-      // Create new user
       const [newUser] = await db
         .insert(users)
         .values({
@@ -56,13 +57,11 @@ export async function POST(request: Request) {
     const keyValue = randomBytes(32).toString("base64url");
     const fullKey = `${keyPrefix}${keyValue}`;
 
-    // Hash the key for storage (we'll return the unhashed version once)
-    const keyHash = await hashApiKey(fullKey);
+    const keyHash = hashApiKey(fullKey);
 
-    // Revoke any existing mobile app keys for this user (prevents key accumulation)
-    // Each new login gets a fresh key, invalidating old devices
+    // Revoke existing mobile keys so each login gets a fresh key
     await db.delete(apiKeys).where(
-      sql`${apiKeys.userId} = ${user.id} AND ${apiKeys.keyPrefix} = 'rdv_mobile_'`
+      and(eq(apiKeys.userId, user.id), eq(apiKeys.keyPrefix, keyPrefix))
     );
 
     // Store the new API key
@@ -91,13 +90,6 @@ export async function POST(request: Request) {
   }
 }
 
-/**
- * Hash an API key for secure storage.
- */
-async function hashApiKey(key: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(key);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+function hashApiKey(key: string): string {
+  return createHash("sha256").update(key).digest("hex");
 }
