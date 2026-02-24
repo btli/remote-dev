@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { TerminalSessionDTO } from "@remote-dev/domain";
+import { getApiClient } from "@/infrastructure/api/RemoteDevApiClient";
 
 interface SessionState {
   sessions: TerminalSessionDTO[];
@@ -71,17 +72,13 @@ export const useSessionStore = create<SessionStore>()(
       setLoading: (loading) => set({ loading }),
       setError: (error) => set({ error }),
 
-      // Async actions - placeholder implementations
-      // These will be connected to the API client
+      // Async actions - connected to Remote Dev API client
       fetchSessions: async () => {
         set({ loading: true, error: null });
         try {
-          // TODO: Call API client
-          // const sessions = await apiClient.getSessions();
-          // set({ sessions, loading: false });
-
-          // Temporary: simulate empty response
-          set({ sessions: [], loading: false });
+          const apiClient = getApiClient();
+          const sessions = await apiClient.getSessions();
+          set({ sessions, loading: false });
         } catch (error) {
           set({
             error: error instanceof Error ? error : new Error("Failed to fetch sessions"),
@@ -93,38 +90,11 @@ export const useSessionStore = create<SessionStore>()(
       createSession: async (input) => {
         set({ loading: true, error: null });
         try {
-          // TODO: Call API client
-          // const session = await apiClient.createSession(input);
-          // get().addSession(session);
-          // return session;
-
-          // Temporary: create mock session
-          const session: TerminalSessionDTO = {
-            id: crypto.randomUUID(),
-            userId: "mock-user",
+          const apiClient = getApiClient();
+          const session = await apiClient.createSession({
             name: input.name,
-            tmuxSessionName: `rdv-${crypto.randomUUID()}`,
-            projectPath: null,
-            githubRepoId: null,
-            worktreeBranch: null,
-            folderId: null,
-            profileId: null,
-            terminalType: input.terminalType || "shell",
-            agentProvider: null,
-            agentExitState: null,
-            agentExitCode: null,
-            agentExitedAt: null,
-            agentRestartCount: 0,
-            typeMetadata: null,
-            splitGroupId: null,
-            splitOrder: 0,
-            splitSize: 100,
-            status: "active",
-            tabOrder: get().sessions.length,
-            lastActivityAt: new Date(),
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
+            terminalType: input.terminalType as any,
+          });
           get().addSession(session);
           set({ loading: false });
           return session;
@@ -139,8 +109,8 @@ export const useSessionStore = create<SessionStore>()(
 
       closeSession: async (id) => {
         try {
-          // TODO: Call API client
-          // await apiClient.closeSession(id);
+          const apiClient = getApiClient();
+          await apiClient.closeSession(id);
           get().removeSession(id);
         } catch (error) {
           set({
@@ -152,9 +122,9 @@ export const useSessionStore = create<SessionStore>()(
 
       suspendSession: async (id) => {
         try {
-          // TODO: Call API client
-          // await apiClient.suspendSession(id);
-          get().updateSession(id, { status: "suspended" });
+          const apiClient = getApiClient();
+          const updated = await apiClient.suspendSession(id);
+          get().updateSession(id, updated);
         } catch (error) {
           set({
             error: error instanceof Error ? error : new Error("Failed to suspend session"),
@@ -165,9 +135,9 @@ export const useSessionStore = create<SessionStore>()(
 
       resumeSession: async (id) => {
         try {
-          // TODO: Call API client
-          // await apiClient.resumeSession(id);
-          get().updateSession(id, { status: "active" });
+          const apiClient = getApiClient();
+          const updated = await apiClient.resumeSession(id);
+          get().updateSession(id, updated);
         } catch (error) {
           set({
             error: error instanceof Error ? error : new Error("Failed to resume session"),
