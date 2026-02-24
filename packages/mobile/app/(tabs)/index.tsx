@@ -1,6 +1,7 @@
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Alert, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { Swipeable } from "react-native-gesture-handler";
 import { useSessionStore } from "@/application/state/stores/sessionStore";
 import { useEffect, useState, useCallback } from "react";
 
@@ -91,28 +92,72 @@ export default function SessionsScreen() {
           />
         }
         renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.sessionCard}
-            onPress={() => handleSessionPress(item.id)}
+          <Swipeable
+            renderRightActions={() => (
+              <View style={styles.swipeActions}>
+                {item.status === "active" && (
+                  <TouchableOpacity
+                    style={[styles.swipeAction, styles.suspendAction]}
+                    onPress={async () => {
+                      try {
+                        await suspendSession(item.id);
+                      } catch {
+                        Alert.alert("Error", "Failed to suspend session");
+                      }
+                    }}
+                  >
+                    <Ionicons name="pause" size={20} color="#fff" />
+                    <Text style={styles.swipeActionText}>Suspend</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.swipeAction, styles.closeAction]}
+                  onPress={() => {
+                    Alert.alert("Close Session", `Close "${item.name}"?`, [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Close",
+                        style: "destructive",
+                        onPress: async () => {
+                          try {
+                            await closeSession(item.id);
+                          } catch {
+                            Alert.alert("Error", "Failed to close session");
+                          }
+                        },
+                      },
+                    ]);
+                  }}
+                >
+                  <Ionicons name="close" size={20} color="#fff" />
+                  <Text style={styles.swipeActionText}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           >
-            <View style={styles.sessionIcon}>
-              <Ionicons
-                name={item.terminalType === "agent" ? "sparkles" : "terminal"}
-                size={24}
-                color="#7aa2f7"
-              />
-            </View>
-            <View style={styles.sessionInfo}>
-              <Text style={styles.sessionName}>{item.name}</Text>
-              <Text style={styles.sessionMeta}>
-                {item.status} • {item.terminalType}
-                {item.agentProvider && item.agentProvider !== "none"
-                  ? ` • ${item.agentProvider}`
-                  : ""}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#565f89" />
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.sessionCard}
+              onPress={() => handleSessionPress(item.id)}
+            >
+              <View style={styles.sessionIcon}>
+                <Ionicons
+                  name={item.terminalType === "agent" ? "sparkles" : "terminal"}
+                  size={24}
+                  color="#7aa2f7"
+                />
+              </View>
+              <View style={styles.sessionInfo}>
+                <Text style={styles.sessionName}>{item.name}</Text>
+                <Text style={styles.sessionMeta}>
+                  {item.status} • {item.terminalType}
+                  {item.agentProvider && item.agentProvider !== "none"
+                    ? ` • ${item.agentProvider}`
+                    : ""}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#565f89" />
+            </TouchableOpacity>
+          </Swipeable>
         )}
         ListEmptyComponent={
           !loading ? (
@@ -215,6 +260,32 @@ const styles = StyleSheet.create({
     color: "#565f89",
     fontSize: 14,
     marginTop: 8,
+  },
+  swipeActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 6,
+    marginRight: 16,
+  },
+  swipeAction: {
+    justifyContent: "center",
+    alignItems: "center",
+    width: 72,
+    height: "100%",
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  swipeActionText: {
+    color: "#fff",
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: "500",
+  },
+  suspendAction: {
+    backgroundColor: "#e0af68",
+  },
+  closeAction: {
+    backgroundColor: "#f7768e",
   },
   fab: {
     position: "absolute",
