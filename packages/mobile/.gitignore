@@ -1,4 +1,6 @@
 node_modules/
 .expo/
 *.lock
+android/
+ios/
 
