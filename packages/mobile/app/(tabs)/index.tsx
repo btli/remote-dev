@@ -1,4 +1,4 @@
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Alert, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSessionStore } from "@/application/state/stores/sessionStore";
@@ -10,7 +10,7 @@ import { useEffect, useState, useCallback } from "react";
  */
 export default function SessionsScreen() {
   const router = useRouter();
-  const { sessions, loading, error, fetchSessions, setActiveSession } = useSessionStore();
+  const { sessions, loading, error, fetchSessions, setActiveSession, createSession, suspendSession, closeSession } = useSessionStore();
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -28,10 +28,43 @@ export default function SessionsScreen() {
     router.push(`/session/${sessionId}`);
   };
 
-  const handleNewSession = () => {
-    // TODO: Navigate to new session wizard
-    console.log("Create new session");
-  };
+  const handleNewSession = useCallback(() => {
+    if (Platform.OS === "ios") {
+      Alert.prompt(
+        "New Session",
+        "Enter a name for the terminal session:",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Create",
+            onPress: async (name?: string) => {
+              if (!name?.trim()) return;
+              try {
+                const session = await createSession({ name: name.trim() });
+                setActiveSession(session.id);
+                router.push(`/session/${session.id}`);
+              } catch (error) {
+                Alert.alert("Error", error instanceof Error ? error.message : "Failed to create session");
+              }
+            },
+          },
+        ],
+        "plain-text"
+      );
+    } else {
+      // Android: create with default name since Alert.prompt is iOS-only
+      (async () => {
+        try {
+          const name = `Session ${sessions.length + 1}`;
+          const session = await createSession({ name });
+          setActiveSession(session.id);
+          router.push(`/session/${session.id}`);
+        } catch (error) {
+          Alert.alert("Error", error instanceof Error ? error.message : "Failed to create session");
+        }
+      })();
+    }
+  }, [createSession, setActiveSession, router, sessions.length]);
 
   if (error) {
     return (
