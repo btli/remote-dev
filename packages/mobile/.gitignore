@@ -1,4 +1,12 @@
 node_modules/
 .expo/
 *.lock
+android/
+ios/
+*.apk
+build-tools/
+platforms/
+platform-tools/
+licenses/
+.knownPackages
 

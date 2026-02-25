@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { FolderDTO } from "@remote-dev/domain";
+import { getApiClient } from "@/infrastructure/api/RemoteDevApiClient";
 
 interface FolderState {
   folders: FolderDTO[];
@@ -65,8 +66,9 @@ export const useFolderStore = create<FolderStore>()(
       fetchFolders: async () => {
         set({ loading: true, error: null });
         try {
-          // TODO: Call API client
-          set({ folders: [], loading: false });
+          const apiClient = getApiClient();
+          const folders = await apiClient.getFolders();
+          set({ folders, loading: false });
         } catch (error) {
           set({
             error: error instanceof Error ? error : new Error("Failed to fetch folders"),
@@ -78,17 +80,8 @@ export const useFolderStore = create<FolderStore>()(
       createFolder: async (name, parentId) => {
         set({ loading: true, error: null });
         try {
-          // TODO: Call API client
-          const folder: FolderDTO = {
-            id: crypto.randomUUID(),
-            userId: "mock-user",
-            parentId: parentId || null,
-            name,
-            collapsed: false,
-            sortOrder: get().folders.length,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
+          const apiClient = getApiClient();
+          const folder = await apiClient.createFolder({ name, parentId });
           get().addFolder(folder);
           set({ loading: false });
           return folder;
@@ -103,7 +96,8 @@ export const useFolderStore = create<FolderStore>()(
 
       deleteFolder: async (id) => {
         try {
-          // TODO: Call API client
+          const apiClient = getApiClient();
+          await apiClient.deleteFolder(id);
           get().removeFolder(id);
         } catch (error) {
           set({

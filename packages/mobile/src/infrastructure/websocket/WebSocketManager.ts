@@ -358,3 +358,16 @@ export function destroyWebSocketManager(): void {
     wsManager = null;
   }
 }
+
+/**
+ * Reinitialize the WebSocket manager with a new server URL.
+ * Disconnects all existing connections.
+ */
+export function updateWebSocketUrl(serverUrl: string): void {
+  if (wsManager) {
+    wsManager.disconnectAll();
+    wsManager.stopNetworkMonitoring();
+  }
+  wsManager = new WebSocketManager({ serverUrl });
+  wsManager.startNetworkMonitoring();
+}
