@@ -214,16 +214,21 @@ export function TrashProvider({ children }: TrashProviderProps) {
         });
 
         if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
           // Rollback on error
           await refreshTrash();
-          return false;
+          throw new Error(data.error || "Failed to restore from trash");
         }
 
         return true;
       } catch (error) {
+        if (error instanceof Error && error.message !== "Failed to restore from trash") {
+          // Re-throw errors with server messages
+          throw error;
+        }
         console.error("Error restoring from trash:", error);
         await refreshTrash();
-        return false;
+        throw error;
       }
     },
     [refreshTrash]

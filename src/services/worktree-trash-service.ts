@@ -20,6 +20,7 @@ import { join, dirname, basename } from "path";
 import type { TrashItem, RestoreResult } from "@/types/trash";
 import * as TmuxService from "./tmux-service";
 import { sanitizeBranchName, getRepoRoot } from "./worktree-service";
+import { execFileNoThrow } from "@/lib/exec";
 import { WorktreeTrashServiceError } from "@/lib/errors";
 
 // Re-export for backwards compatibility
@@ -341,22 +342,40 @@ export async function restoreWorktreeFromTrash(
     );
   }
 
+  // Repair git worktree registration after moving directory back
+  // The move breaks git's internal path references between the worktree's
+  // .git file and the main repo's .git/worktrees/ entry
+  if (metadata.repoLocalPath && existsSync(metadata.repoLocalPath)) {
+    const repairResult = await execFileNoThrow("git", [
+      "-C", metadata.repoLocalPath,
+      "worktree", "repair", targetPath,
+    ]);
+    if (repairResult.exitCode !== 0) {
+      console.warn(
+        `git worktree repair failed (non-fatal): ${repairResult.stderr}`
+      );
+    }
+  }
+
   // Determine target folder
   // Priority: provided targetFolderId > original folder (if still exists) > null
   let folderId: string | null = null;
   if (targetFolderId !== undefined) {
     folderId = targetFolderId;
   } else if (metadata.originalFolderId) {
-    // Check if original folder still exists
+    // Check if original folder still exists and belongs to this user
     const originalFolder = await db.query.sessionFolders.findFirst({
-      where: eq(sessionFolders.id, metadata.originalFolderId),
+      where: and(
+        eq(sessionFolders.id, metadata.originalFolderId),
+        eq(sessionFolders.userId, userId)
+      ),
     });
     if (originalFolder) {
       folderId = metadata.originalFolderId;
     }
   }
 
-  // Update session back to active
+  // Update session back to active and delete trash records
   await db
     .update(terminalSessions)
     .set({
@@ -367,7 +386,6 @@ export async function restoreWorktreeFromTrash(
     })
     .where(eq(terminalSessions.id, trashItem.resourceId));
 
-  // Delete trash records (cascade will delete metadata)
   await db.delete(trashItems).where(eq(trashItems.id, trashItemId));
 
   return {

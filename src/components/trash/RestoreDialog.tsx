@@ -30,6 +30,7 @@ interface RestoreDialogProps {
   originalFolderId: string | null;
   onRestore: (restorePath?: string, targetFolderId?: string | null) => Promise<void>;
   isProcessing: boolean;
+  error?: string | null;
 }
 
 export function RestoreDialog({
@@ -40,6 +41,7 @@ export function RestoreDialog({
   originalFolderId,
   onRestore,
   isProcessing,
+  error,
 }: RestoreDialogProps) {
   const { folders } = useFolderContext();
   // Track user's override selection - undefined means use original
@@ -156,6 +158,13 @@ export function RestoreDialog({
             </div>
           )}
         </div>
+
+        {error && (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <div className="text-xs text-red-200">{error}</div>
+          </div>
+        )}
 
         <DialogFooter>
           <Button variant="ghost" onClick={handleClose} disabled={isProcessing}>
