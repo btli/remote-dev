@@ -1,7 +1,11 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch } from "react-native";
+import { useState } from "react";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, TextInput, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAuthStore } from "@/application/state/stores/authStore";
+import { useConfigStore } from "@/application/state/stores/configStore";
+import { updateApiClientUrl } from "@/infrastructure/api/RemoteDevApiClient";
+import { updateWebSocketUrl } from "@/infrastructure/websocket/WebSocketManager";
 
 /**
  * Settings screen - app configuration and account settings.
@@ -9,6 +13,8 @@ import { useAuthStore } from "@/application/state/stores/authStore";
 export default function SettingsScreen() {
   const router = useRouter();
   const { isAuthenticated, biometricsEnabled, logout, toggleBiometrics } = useAuthStore();
+  const { serverUrl, setServerUrl, getEffectiveServerUrl, getEffectiveWsUrl } = useConfigStore();
+  const [urlInput, setUrlInput] = useState(serverUrl);
 
   const handleLogout = async () => {
     await logout();
@@ -30,6 +36,43 @@ export default function SettingsScreen() {
               {isAuthenticated ? "Connected" : "Not connected"}
             </Text>
           </View>
+        </View>
+      </View>
+
+      {/* Server Section */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Server</Text>
+        <View style={styles.card}>
+          <View style={styles.serverRow}>
+            <View style={styles.rowLeft}>
+              <Ionicons name="server" size={24} color="#7dcfff" />
+              <Text style={styles.rowLabel}>Server URL</Text>
+            </View>
+          </View>
+          <View style={styles.serverInputContainer}>
+            <TextInput
+              style={styles.serverInput}
+              value={urlInput}
+              onChangeText={setUrlInput}
+              placeholder={getEffectiveServerUrl()}
+              placeholderTextColor="#565f89"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+          </View>
+          <TouchableOpacity
+            style={styles.saveButton}
+            onPress={() => {
+              const url = urlInput.trim();
+              setServerUrl(url);
+              updateApiClientUrl(url || getEffectiveServerUrl());
+              updateWebSocketUrl(getEffectiveWsUrl());
+              Alert.alert("Saved", "Server URL updated. Restart sessions to reconnect.");
+            }}
+          >
+            <Text style={styles.saveButtonText}>Save</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -157,6 +200,39 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: "#1a1b26",
     marginLeft: 52,
+  },
+  serverRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  serverInputContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  serverInput: {
+    backgroundColor: "#1a1b26",
+    borderRadius: 8,
+    padding: 12,
+    color: "#c0caf5",
+    fontSize: 14,
+    fontFamily: "monospace",
+  },
+  saveButton: {
+    margin: 16,
+    marginTop: 4,
+    paddingVertical: 10,
+    backgroundColor: "#7aa2f7",
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  saveButtonText: {
+    color: "#1a1b26",
+    fontSize: 14,
+    fontWeight: "600",
   },
   logoutButton: {
     flexDirection: "row",

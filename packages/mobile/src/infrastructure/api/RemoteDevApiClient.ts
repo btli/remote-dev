@@ -207,3 +207,13 @@ export function initApiClient(config: ApiConfig): RemoteDevApiClient {
   apiClient = new RemoteDevApiClient(config);
   return apiClient;
 }
+
+/**
+ * Reinitialize the API client with a new base URL.
+ * Called when server URL changes in config store.
+ * Preserves existing API key.
+ */
+export function updateApiClientUrl(baseUrl: string): void {
+  const existingKey = apiClient?.["config"]?.apiKey;
+  apiClient = new RemoteDevApiClient({ baseUrl, apiKey: existingKey });
+}

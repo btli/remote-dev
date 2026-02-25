@@ -16,6 +16,7 @@ export default function SessionScreen() {
   const router = useRouter();
   const { getSession, updateSession } = useSessionStore();
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [ctrlActive, setCtrlActive] = useState(false);
   const wsManagerRef = useRef(getWebSocketManager());
   const isMountedRef = useRef(true);
 
@@ -69,6 +70,14 @@ export default function SessionScreen() {
   const handleClose = useCallback(() => {
     router.back();
   }, [router]);
+
+  const sendKey = useCallback((key: string) => {
+    wsManagerRef.current.sendInput(id, key);
+  }, [id]);
+
+  const handleCtrlToggle = useCallback(() => {
+    setCtrlActive((prev) => !prev);
+  }, []);
 
   if (!session) {
     return (
@@ -148,19 +157,22 @@ export default function SessionScreen() {
 
         {/* Mobile keyboard toolbar */}
         <View style={styles.keyboardToolbar}>
-          <TouchableOpacity style={styles.keyButton}>
+          <TouchableOpacity style={styles.keyButton} onPress={() => sendKey("\x1b")}>
             <Text style={styles.keyText}>ESC</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.keyButton}>
+          <TouchableOpacity style={styles.keyButton} onPress={() => sendKey("\t")}>
             <Text style={styles.keyText}>TAB</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.keyButton}>
-            <Text style={styles.keyText}>CTRL</Text>
+          <TouchableOpacity
+            style={[styles.keyButton, ctrlActive && styles.keyButtonActive]}
+            onPress={handleCtrlToggle}
+          >
+            <Text style={[styles.keyText, ctrlActive && styles.keyTextActive]}>CTRL</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.keyButton}>
+          <TouchableOpacity style={styles.keyButton} onPress={() => sendKey("\x1b[A")}>
             <Ionicons name="arrow-up" size={18} color="#c0caf5" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.keyButton}>
+          <TouchableOpacity style={styles.keyButton} onPress={() => sendKey("\x1b[B")}>
             <Ionicons name="arrow-down" size={18} color="#c0caf5" />
           </TouchableOpacity>
         </View>
@@ -288,5 +300,11 @@ const styles = StyleSheet.create({
     color: "#c0caf5",
     fontSize: 12,
     fontWeight: "600",
+  },
+  keyButtonActive: {
+    backgroundColor: "#7aa2f7",
+  },
+  keyTextActive: {
+    color: "#1a1b26",
   },
 });
