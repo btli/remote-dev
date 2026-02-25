@@ -44,6 +44,7 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
   const [isPathAvailable, setIsPathAvailable] = useState(true);
   const [originalFolderId, setOriginalFolderId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   // Trigger cleanup when modal opens
   useEffect(() => {
@@ -72,6 +73,7 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
     if (!selectedItem) return;
 
     setIsProcessing(true);
+    setRestoreError(null);
     try {
       const success = await restoreItem(selectedItem.id, { restorePath, targetFolderId });
       if (success) {
@@ -80,6 +82,9 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
         // Refresh both trash and sessions to update UI
         await Promise.all([refreshTrash(), refreshSessions()]);
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to restore";
+      setRestoreError(message);
     } finally {
       setIsProcessing(false);
     }
@@ -154,12 +159,14 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
         onClose={() => {
           setShowRestoreDialog(false);
           setSelectedItem(null);
+          setRestoreError(null);
         }}
         item={selectedItem as WorktreeTrashItem}
         isPathAvailable={isPathAvailable}
         originalFolderId={originalFolderId}
         onRestore={handleRestore}
         isProcessing={isProcessing}
+        error={restoreError}
       />
 
       {/* Delete confirmation dialog */}

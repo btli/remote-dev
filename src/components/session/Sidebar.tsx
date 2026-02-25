@@ -1106,7 +1106,7 @@ export function Sidebar({
                   {session.worktreeBranch && (
                     <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground truncate">
                       <GitBranch className="w-2.5 h-2.5" />
-                      {session.worktreeBranch}
+                      {session.worktreeBranch.replace(/^wt-/, "")}
                     </span>
                   )}
                 </>

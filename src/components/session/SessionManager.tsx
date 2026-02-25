@@ -31,8 +31,17 @@ import {
 } from "@/hooks/useEnvironmentWithSecrets";
 import type { FolderRepoStats } from "./Sidebar";
 import type { PinnedFile } from "@/types/pinned-files";
-import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2 } from "lucide-react";
+import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
@@ -241,6 +250,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Port manager modal state
   const [isPortsModalOpen, setIsPortsModalOpen] = useState(false);
+
+  // Worktree name prompt state
+  const [worktreePrompt, setWorktreePrompt] = useState<{ folderId: string } | null>(null);
+  const [worktreeNameInput, setWorktreeNameInput] = useState("");
 
   // Issues modal state
   const [issuesModal, setIssuesModal] = useState<{
@@ -885,20 +898,39 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handleFolderNewWorktree = useCallback(
-    async (folderId: string) => {
-      // Quick worktree creation - generates branch name and creates session
+    (folderId: string) => {
+      setWorktreeNameInput("");
+      setWorktreePrompt({ folderId });
+    },
+    []
+  );
+
+  const handleWorktreePromptConfirm = useCallback(
+    async () => {
+      if (!worktreePrompt) return;
+      const { folderId } = worktreePrompt;
+      const branchName = worktreeNameInput.trim() || undefined;
+      const prefs = resolvePreferencesForFolder(folderId);
+      const name = branchName || generateSessionName(folderId);
+      setWorktreePrompt(null);
       try {
         const newSession = await createSession({
-          name: "Worktree",
+          name,
+          projectPath: prefs.defaultWorkingDirectory || undefined,
           folderId,
           createWorktree: true,
+          terminalType: "agent",
+          featureDescription: branchName,
         });
-        setActiveSession(newSession.id);
+        if (newSession) {
+          registerSessionFolder(newSession.id, folderId);
+          setActiveFolder(folderId);
+        }
       } catch (error) {
         console.error("Failed to create worktree session:", error);
       }
     },
-    [createSession, setActiveSession]
+    [worktreePrompt, worktreeNameInput, createSession, resolvePreferencesForFolder, generateSessionName, registerSessionFolder, setActiveFolder]
   );
 
   // Handler for opening the wizard from Plus button or command palette
@@ -1698,6 +1730,39 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           repositoryUrl={prsModal.repositoryUrl}
         />
       )}
+
+      {/* Worktree Name Prompt */}
+      <Dialog open={!!worktreePrompt} onOpenChange={(open) => !open && setWorktreePrompt(null)}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GitBranch className="w-4 h-4" />
+              New Worktree
+            </DialogTitle>
+            <DialogDescription>
+              Enter a name for the worktree branch. Leave blank for an auto-generated name.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            placeholder="e.g. fix-auth-bug"
+            value={worktreeNameInput}
+            onChange={(e) => setWorktreeNameInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleWorktreePromptConfirm();
+              if (e.key === "Escape") setWorktreePrompt(null);
+            }}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="ghost" size="sm" onClick={() => setWorktreePrompt(null)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleWorktreePromptConfirm}>
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
