@@ -80,17 +80,15 @@ interface TerminalSession {
 const sessions = new Map<string, TerminalSession>();
 
 /**
- * Properly destroy a PTY, closing its file descriptors (master fd, kqueue, socket).
- * IPty.kill() only sends SIGHUP but does NOT release the underlying FDs.
- * The runtime UnixTerminal class has destroy() which closes the socket and FDs,
- * but it's not exposed on the IPty interface.
+ * Destroy a PTY and release its file descriptors.
+ * Uses the runtime's destroy() method which closes the socket/FDs,
+ * falling back to kill() (SIGHUP only) if destroy() is unavailable.
  */
 function destroyPty(ptyProcess: IPty): void {
-  const ptyAny = ptyProcess as IPty & { destroy?: () => void };
-  if (typeof ptyAny.destroy === "function") {
-    ptyAny.destroy();
+  const withDestroy = ptyProcess as IPty & { destroy?: () => void };
+  if (typeof withDestroy.destroy === "function") {
+    withDestroy.destroy();
   } else {
-    // Fallback for platforms where destroy doesn't exist
     ptyProcess.kill();
   }
 }
@@ -100,33 +98,26 @@ function destroyPty(ptyProcess: IPty): void {
 const connectingSessionIds = new Set<string>();
 
 /**
- * Safely cleanup a terminal session, preventing double-cleanup race conditions.
- * Multiple events (PTY exit, WebSocket close, WebSocket error) can fire simultaneously,
- * so we use a guard pattern to ensure cleanup only happens once.
+ * Safely cleanup a terminal session. Guards against double-cleanup from
+ * concurrent events (PTY exit, WebSocket close, WebSocket error).
  */
 function cleanupSession(sessionId: string): void {
-  // Always remove from connecting set on cleanup
   connectingSessionIds.delete(sessionId);
-  const session = sessions.get(sessionId);
-  if (!session) return; // Already cleaned up by another event
 
-  // Remove from map FIRST (prevents other events from double-cleaning)
+  const session = sessions.get(sessionId);
+  if (!session) return;
+
+  // Remove first to prevent concurrent cleanup from other event handlers
   sessions.delete(sessionId);
 
-  // Clear any pending resize timeout
   if (session.resizeTimeout) {
     clearTimeout(session.resizeTimeout);
-    session.resizeTimeout = null;
-    session.pendingResize = null;
   }
 
-  // Destroy the PTY to close file descriptors (master fd, kqueue, socket).
-  // pty.kill() only sends SIGHUP but does NOT release the underlying FDs,
-  // which causes fd leaks (revoked fds, orphaned kqueues) over time.
   try {
     destroyPty(session.pty);
   } catch {
-    // PTY may already be dead — ignore
+    // PTY may already be dead
   }
 }
 
@@ -574,14 +565,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             break;
           }
           case "detach":
-            // Detach from tmux but keep session alive
             console.log(`Detaching from tmux session: ${tmuxSessionName}`);
-            // Destroy PTY wrapper (closes FDs), tmux session stays
             cleanupSession(sessionId);
+            ws.close();
             break;
 
-          case "restart_agent":
-            // Restart an agent session after it has exited
+          case "restart_agent": {
             if (terminalType !== "agent") {
               ws.send(JSON.stringify({
                 type: "error",
@@ -592,26 +581,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
             console.log(`Restarting agent session: ${sessionId}`);
             try {
-              // Destroy the old PTY first to release its file descriptors
-              try {
-                destroyPty(session.pty);
-              } catch {
-                // Old PTY may already be dead
-              }
+              try { destroyPty(session.pty); } catch { /* old PTY may be dead */ }
 
-              // Kill existing tmux session
               execFile("tmux", ["kill-session", "-t", tmuxSessionName], () => {});
-
-              // Create a new tmux session
               createTmuxSession(tmuxSessionName, session.lastCols, session.lastRows, cwd, tmuxHistoryLimit);
 
-              // Create new PTY and attach
               const newPty = attachToTmuxSession(tmuxSessionName, session.lastCols, session.lastRows);
-
-              // Replace PTY in session
               session.pty = newPty;
 
-              // Wire up new PTY events
               newPty.onData((data) => {
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify({ type: "output", data }));
@@ -638,23 +615,24 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               }));
             } catch (error) {
               console.error(`Failed to restart agent session ${sessionId}:`, error);
+              cleanupSession(sessionId);
               ws.send(JSON.stringify({
                 type: "error",
                 message: `Failed to restart agent: ${(error as Error).message}`,
               }));
             }
             break;
+          }
         }
       } catch {
-        // Raw input fallback
-        ptyProcess.write(message.toString());
+        if (sessions.has(sessionId)) {
+          ptyProcess.write(message.toString());
+        }
       }
     });
 
     ws.on("close", () => {
       console.log(`WebSocket closed for session ${sessionId}`);
-      // Destroy PTY wrapper (closes FDs) but NOT the tmux session.
-      // tmux session survives independently for reconnection.
       cleanupSession(sessionId);
     });
 
@@ -670,16 +648,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   return wss;
 }
 
-// Cleanup on exit - DON'T kill tmux sessions, only PTY wrappers
+// Graceful shutdown: destroy PTY wrappers but preserve tmux sessions for reconnection
 function cleanup() {
-  console.log("Shutting down terminal server...");
-  console.log("Note: tmux sessions are preserved for reconnection");
+  console.log("Shutting down terminal server (tmux sessions preserved)...");
   for (const [id, session] of sessions) {
-    try {
-      destroyPty(session.pty);
-    } catch {
-      // PTY may already be dead
-    }
+    try { destroyPty(session.pty); } catch { /* PTY may already be dead */ }
     session.ws.close();
     console.log(`Closed PTY wrapper for session ${id}`);
   }
