@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
-import { parse } from "url";
+
 import { execFile, execFileSync } from "child_process";
 import { resolve as pathResolve } from "path";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
@@ -212,7 +212,9 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
 }
 
 async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-  const { pathname, query } = parse(req.url || "", true);
+  const parsedUrl = new URL(req.url || "", "http://localhost");
+  const pathname = parsedUrl.pathname;
+  const query = Object.fromEntries(parsedUrl.searchParams);
 
   if (pathname === "/health" && req.method === "GET") {
     sendJson(res, 200, { status: "ok", scheduler: schedulerOrchestrator.isStarted() });
@@ -356,7 +358,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   }
 
   wss.on("connection", (ws, req) => {
-    const query = parse(req.url || "", true).query;
+    const query = Object.fromEntries(new URL(req.url || "", "http://localhost").searchParams);
 
     // SECURITY: Validate authentication token
     const token = query.token as string | undefined;
