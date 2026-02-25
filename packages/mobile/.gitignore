@@ -3,4 +3,10 @@ node_modules/
 *.lock
 android/
 ios/
+*.apk
+build-tools/
+platforms/
+platform-tools/
+licenses/
+.knownPackages
 
