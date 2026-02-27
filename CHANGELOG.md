@@ -5,6 +5,12 @@ All notable changes to Remote Dev will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Worktree sessions now show GitBranch icon instead of generic terminal icon in sidebar
+
 ## [0.2.1] - 2026-02-10
 
 ### Added
