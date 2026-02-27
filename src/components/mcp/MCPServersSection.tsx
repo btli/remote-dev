@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useSessionMCP } from "@/contexts/SessionMCPContext";
 import type { ParsedMCPServer } from "@/types/agent-mcp";
-import { getServerKey } from "@/lib/mcp-utils";
+import { getServerKey, TRANSPORT_CONFIG } from "@/lib/mcp-utils";
 import { MCPServerDetailsModal } from "./MCPServerDetailsModal";
 import {
   Tooltip,
@@ -23,15 +23,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Switch } from "@/components/ui/switch";
-
-/**
- * Transport type badge colors and labels.
- */
-const TRANSPORT_CONFIG: Record<string, { label: string; className: string }> = {
-  stdio: { label: "stdio", className: "bg-blue-500/20 text-blue-400" },
-  http: { label: "http", className: "bg-green-500/20 text-green-400" },
-  sse: { label: "sse", className: "bg-purple-500/20 text-purple-400" },
-};
 
 interface MCPServersSectionProps {
   /** Whether the section is collapsed */
@@ -68,10 +59,6 @@ export function MCPServersSection({ collapsed = false }: MCPServersSectionProps)
     }
   };
 
-  const handleToggleEnabled = async (server: ParsedMCPServer, enabled: boolean) => {
-    await toggleServerEnabled(server, enabled);
-  };
-
   // Collapsed view - just show icon with count
   if (collapsed) {
     return (
@@ -79,7 +66,7 @@ export function MCPServersSection({ collapsed = false }: MCPServersSectionProps)
         <TooltipTrigger asChild>
           <button
             className={cn(
-              "w-full flex items-center justify-center p-2 rounded-md",
+              "relative w-full flex items-center justify-center p-2 rounded-md",
               "text-muted-foreground hover:text-foreground hover:bg-accent/50",
               "transition-colors"
             )}
@@ -167,7 +154,7 @@ export function MCPServersSection({ collapsed = false }: MCPServersSectionProps)
               <MCPServerItem
                 key={`${server.name}-${server.sourceFile}`}
                 server={server}
-                onToggleEnabled={handleToggleEnabled}
+                onToggleEnabled={toggleServerEnabled}
                 onClick={() => setSelectedServer(server)}
               />
             ))}

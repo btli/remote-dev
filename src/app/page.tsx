@@ -16,6 +16,7 @@ import { ProfileProvider } from "@/contexts/ProfileContext";
 import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
+import { SessionMCPProvider } from "@/contexts/SessionMCPContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
 import type { TerminalSession } from "@/types/session";
@@ -110,19 +111,21 @@ export default async function Home() {
                         <TrashProvider>
                           <PortProvider>
                             <ScheduleProvider>
-                              <div className="flex h-screen flex-col bg-background">
-                                {/* Header - hidden on mobile, shown in sidebar instead */}
-                                <Header
-                                  isGitHubConnected={isGitHubConnected}
-                                  userEmail={session.user.email || ""}
-                                  onSignOut={async () => {
-                                    "use server";
-                                    await signOut();
-                                  }}
-                                />
-                                {/* Main content */}
-                                <SessionManager isGitHubConnected={isGitHubConnected} />
-                              </div>
+                              <SessionMCPProvider>
+                                <div className="flex h-screen flex-col bg-background">
+                                  {/* Header - hidden on mobile, shown in sidebar instead */}
+                                  <Header
+                                    isGitHubConnected={isGitHubConnected}
+                                    userEmail={session.user.email || ""}
+                                    onSignOut={async () => {
+                                      "use server";
+                                      await signOut();
+                                    }}
+                                  />
+                                  {/* Main content */}
+                                  <SessionManager isGitHubConnected={isGitHubConnected} />
+                                </div>
+                              </SessionMCPProvider>
                             </ScheduleProvider>
                           </PortProvider>
                         </TrashProvider>
