@@ -35,6 +35,8 @@ interface TerminalTypeRendererProps {
   onDimensionsChange?: (cols: number, rows: number) => void;
   onSessionClose?: (sessionId: string) => void;
   onAgentStateChange?: (sessionId: string, state: "running" | "exited" | "restarting" | "closed") => void;
+  /** Called when agent activity status changes (from Claude Code hooks) */
+  onAgentActivityStatus?: (sessionId: string, status: string) => void;
 }
 
 export function TerminalTypeRenderer({
@@ -55,6 +57,7 @@ export function TerminalTypeRenderer({
   onDimensionsChange,
   onSessionClose,
   onAgentStateChange,
+  onAgentActivityStatus,
 }: TerminalTypeRendererProps) {
   const terminalRef = useRef<TerminalRef>(null);
   const [agentExitInfo, setAgentExitInfo] = useState<{
@@ -138,6 +141,7 @@ export function TerminalTypeRenderer({
             onSessionExit={onSessionExit}
             onAgentExited={handleAgentExited}
             onAgentRestarted={handleAgentRestarted}
+            onAgentActivityStatus={onAgentActivityStatus}
             onOutput={onOutput}
             onDimensionsChange={onDimensionsChange}
           />

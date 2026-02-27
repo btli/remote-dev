@@ -8,6 +8,7 @@ import {
   useEffect,
   useRef,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
 import type {
@@ -17,6 +18,7 @@ import type {
   CreateSessionInput,
   SessionStatus,
 } from "@/types/session";
+import type { AgentActivityStatus } from "@/types/terminal-type";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 
@@ -62,6 +64,10 @@ interface SessionContextValue extends SessionState {
   setActiveSession: (sessionId: string | null) => void;
   reorderSessions: (sessionIds: string[]) => Promise<void>;
   refreshSessions: () => Promise<void>;
+  /** Agent activity statuses for real-time sidebar indicators */
+  agentActivityStatuses: Record<string, AgentActivityStatus>;
+  setAgentActivityStatus: (sessionId: string, status: AgentActivityStatus) => void;
+  getAgentActivityStatus: (sessionId: string) => AgentActivityStatus;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -177,6 +183,37 @@ export function SessionProvider({
     loading: false,
     error: null,
   });
+
+  // Agent activity statuses (client-side only, not persisted)
+  const [agentActivityStatuses, setAgentActivityStatuses] = useState<Record<string, AgentActivityStatus>>({});
+
+  const setAgentActivityStatus = useCallback((sessionId: string, status: AgentActivityStatus) => {
+    setAgentActivityStatuses((prev) => {
+      if (prev[sessionId] === status) return prev;
+      return { ...prev, [sessionId]: status };
+    });
+  }, []);
+
+  const getAgentActivityStatus = useCallback((sessionId: string): AgentActivityStatus => {
+    // If we have hook-reported status, use it
+    const hookStatus = agentActivityStatuses[sessionId];
+    if (hookStatus) return hookStatus;
+
+    // Fallback: infer from session state (only for definitive states)
+    const session = state.sessions.find((s) => s.id === sessionId);
+    if (session?.terminalType === "agent") {
+      if (session.agentExitState === "exited" && session.agentExitCode != null && session.agentExitCode !== 0) {
+        return "error";
+      }
+      if (session.agentExitState === "restarting") {
+        return "running";
+      }
+      // Without hook data, we can't know if the agent is actively working.
+      // Default to idle — hooks will provide real-time status for new sessions.
+    }
+
+    return "idle";
+  }, [agentActivityStatuses, state.sessions]);
 
   // Track initialization state with refs
   const hasRestoredSessionRef = useRef(false);
@@ -398,6 +435,9 @@ export function SessionProvider({
       setActiveSession,
       reorderSessions,
       refreshSessions,
+      agentActivityStatuses,
+      setAgentActivityStatus,
+      getAgentActivityStatus,
     }),
     [
       state,
@@ -409,6 +449,9 @@ export function SessionProvider({
       setActiveSession,
       reorderSessions,
       refreshSessions,
+      agentActivityStatuses,
+      setAgentActivityStatus,
+      getAgentActivityStatus,
     ]
   );
 

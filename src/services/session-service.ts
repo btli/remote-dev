@@ -200,16 +200,29 @@ export async function createSession(
   // Fetch folder environment variables for the session
   const folderEnv = await getEnvironmentForSession(userId, input.folderId);
 
+  // Determine if this is an agent session early — needed for env var injection
+  const isAgentSession =
+    input.agentProvider &&
+    input.agentProvider !== "none" &&
+    input.autoLaunchAgent;
+
+  // RDV env vars for agent hook callbacks (session ID + terminal server port)
+  const rdvEnv: Record<string, string> = isAgentSession
+    ? { RDV_SESSION_ID: sessionId, RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "3001" }
+    : {};
+
   // File-type sessions don't need tmux — they're pure UI (CodeMirror editor)
   if (input.terminalType !== "file") {
-    // Create the tmux session with profile environment for initial PTY spawn
-    // Note: profileEnv is used for initial shell environment (XDG paths, agent config dirs)
+    // Initial environment: profile env + RDV vars for agent hook callbacks
+    const initialEnv: Record<string, string> = { ...(profileEnv ?? {}), ...rdvEnv };
+
+    // Create the tmux session with initial environment for PTY spawn
     try {
       await TmuxService.createSession(
         tmuxSessionName,
         workingPath ?? undefined,
         startupCommand,
-        profileEnv
+        Object.keys(initialEnv).length > 0 ? initialEnv : undefined
       );
     } catch (error) {
       if (error instanceof TmuxService.TmuxServiceError) {
@@ -222,12 +235,13 @@ export async function createSession(
       throw error;
     }
 
-    // Set persistent session-level environment variables
+    // Persistent session-level environment variables
     // These survive shell exits and are inherited by all new shells in the session
-    // Merge profileEnv and folderEnv with folder taking precedence
+    // Merge: profileEnv < folderEnv < rdvEnv (later values take precedence)
     const sessionEnv: Record<string, string> = {
       ...(profileEnv ?? {}),
       ...(folderEnv ?? {}),
+      ...rdvEnv,
     };
 
     if (Object.keys(sessionEnv).length > 0) {
@@ -244,18 +258,12 @@ export async function createSession(
 
     // Set up agent exit detection hook for agent-type sessions
     // This allows the terminal server to be notified when the agent process exits
-    const isAgentSession =
-      input.agentProvider &&
-      input.agentProvider !== "none" &&
-      input.autoLaunchAgent;
-
     if (isAgentSession) {
       try {
-        const terminalPort = process.env.TERMINAL_PORT ?? "3001";
         await TmuxService.setHook(
           tmuxSessionName,
           "pane-exited",
-          `run-shell "curl -sS -X POST http://localhost:${terminalPort}/internal/agent-exit?sessionId=${sessionId} || true"`
+          `run-shell "curl -sS -X POST http://localhost:${rdvEnv.RDV_TERMINAL_PORT}/internal/agent-exit?sessionId=${sessionId} || true"`
         );
       } catch (error) {
         // Log but don't fail session creation - the session is already running
@@ -263,6 +271,24 @@ export async function createSession(
           `Failed to set agent exit hook for ${tmuxSessionName}:`,
           error
         );
+      }
+
+      // Install Claude Code hooks for real-time activity status reporting
+      if (input.agentProvider === "claude") {
+        try {
+          // Profile sessions use profile config dir; non-profile sessions use HOME
+          const configDir = input.profileId
+            ? (await AgentProfileService.getProfile(input.profileId, userId))?.configDir
+            : process.env.HOME;
+          if (configDir) {
+            await AgentProfileService.installAgentHooks(configDir, input.agentProvider);
+          }
+        } catch (error) {
+          console.error(
+            `Failed to install agent hooks for ${tmuxSessionName}:`,
+            error
+          );
+        }
       }
     }
   }
