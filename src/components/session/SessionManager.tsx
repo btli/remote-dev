@@ -1021,6 +1021,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           projectPath: session.projectPath ?? undefined,
           githubRepoId: session.githubRepoId ?? undefined,
           worktreeBranch: session.worktreeBranch ?? undefined,
+          terminalType: session.terminalType,
+          agentProvider: session.agentProvider ?? undefined,
+          profileId: session.profileId ?? undefined,
         });
       } catch (error) {
         logSessionError("restart session", error);
