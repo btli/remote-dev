@@ -982,9 +982,18 @@ export function Sidebar({
               {showDropBefore && (
                 <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
               )}
-              {/* Status indicator - Sparkles icon for agent, dot for shell */}
+              {/* Status indicator - Sparkles for agent, GitBranch for worktree, dot for shell */}
               {session.terminalType === "agent" ? (
                 <Sparkles
+                  className={cn(
+                    "w-3.5 h-3.5",
+                    isActive
+                      ? "text-primary"
+                      : "text-muted-foreground"
+                  )}
+                />
+              ) : session.worktreeBranch ? (
+                <GitBranch
                   className={cn(
                     "w-3.5 h-3.5",
                     isActive
@@ -1010,7 +1019,11 @@ export function Sidebar({
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
             <div className="flex items-center gap-1.5">
-              {session.terminalType === "agent" && <Sparkles className="w-3 h-3" />}
+              {session.terminalType === "agent" ? (
+                <Sparkles className="w-3 h-3" />
+              ) : session.worktreeBranch ? (
+                <GitBranch className="w-3 h-3" />
+              ) : null}
               <span>{session.name}</span>
             </div>
           </TooltipContent>
@@ -1063,9 +1076,18 @@ export function Sidebar({
                 isDragOverSession && "bg-primary/20 border-primary/30"
               )}
             >
-            {/* Status indicator - Sparkles for agent, Terminal for shell */}
+            {/* Status indicator - Sparkles for agent, GitBranch for worktree, Terminal for shell */}
             {session.terminalType === "agent" ? (
               <Sparkles
+                className={cn(
+                  "w-3.5 h-3.5 shrink-0",
+                  isActive
+                    ? "text-primary"
+                    : "text-muted-foreground"
+                )}
+              />
+            ) : session.worktreeBranch ? (
+              <GitBranch
                 className={cn(
                   "w-3.5 h-3.5 shrink-0",
                   isActive
