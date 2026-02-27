@@ -41,6 +41,8 @@ import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
+import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
+import { MCPServersSection } from "@/components/mcp";
 
 export interface SessionFolder {
   id: string;
@@ -263,6 +265,14 @@ export function Sidebar({
   // Schedule context for showing schedule indicators
   const { schedules, getSchedulesForSession } = useScheduleContext();
   const activeScheduleCount = schedules.filter(s => s.enabled).length;
+
+  // Find active session and check if it's an agent session
+  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const isAgentSession = activeSession?.terminalType === "agent";
+
+  // MCP context for showing MCP servers when agent session is selected
+  useSessionMCPAutoLoad(activeSessionId, isAgentSession);
+  const { mcpSupported } = useSessionMCP();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
@@ -2187,6 +2197,11 @@ export function Sidebar({
             </>
           )}
       </div>
+
+      {/* MCP Servers Section - only show when agent session is selected */}
+      {isAgentSession && mcpSupported && (
+        <MCPServersSection collapsed={collapsed} />
+      )}
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (

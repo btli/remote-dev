@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ParsedMCPServer } from "@/types/agent-mcp";
-import { getServerKey } from "@/lib/mcp-utils";
+import { getServerKey, TRANSPORT_CONFIG } from "@/lib/mcp-utils";
 import {
   Dialog,
   DialogContent,
@@ -29,13 +29,11 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useSessionMCP } from "@/contexts/SessionMCPContext";
 
-/**
- * Transport type badge colors and labels.
- */
-const TRANSPORT_CONFIG: Record<string, { label: string; className: string; icon: typeof Globe }> = {
-  stdio: { label: "stdio", className: "bg-blue-500/20 text-blue-400", icon: Terminal },
-  http: { label: "http", className: "bg-green-500/20 text-green-400", icon: Globe },
-  sse: { label: "sse", className: "bg-purple-500/20 text-purple-400", icon: Globe },
+/** Transport icon mapping (extends shared TRANSPORT_CONFIG with icons for the details view). */
+const TRANSPORT_ICONS: Record<string, typeof Globe> = {
+  stdio: Terminal,
+  http: Globe,
+  sse: Globe,
 };
 
 interface MCPServerDetailsModalProps {
@@ -62,16 +60,12 @@ export function MCPServerDetailsModal({
   const discoveryStatus = discovery?.discoveryStatus ?? "idle";
 
   const transport = TRANSPORT_CONFIG[server.transport] || TRANSPORT_CONFIG.stdio;
-  const TransportIcon = transport.icon;
+  const TransportIcon = TRANSPORT_ICONS[server.transport] || Terminal;
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
     setCopied(key);
     setTimeout(() => setCopied(null), 2000);
-  };
-
-  const handleToggleEnabled = async (enabled: boolean) => {
-    await toggleServerEnabled(server, enabled);
   };
 
   // Build full command string
@@ -130,7 +124,7 @@ export function MCPServerDetailsModal({
                 <Switch
                   id="enabled"
                   checked={server.enabled}
-                  onCheckedChange={handleToggleEnabled}
+                  onCheckedChange={(enabled) => toggleServerEnabled(server, enabled)}
                 />
               </div>
 
@@ -231,100 +225,120 @@ export function MCPServerDetailsModal({
 
             {/* Tools Tab */}
             <TabsContent value="tools" className="mt-0">
-              {isDiscovering ? (
-                // Discovering state
-                <div className="flex flex-col items-center justify-center py-8 gap-3">
-                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                  <p className="text-sm text-muted-foreground">
-                    Discovering tools...
-                  </p>
-                </div>
-              ) : discoveryError ? (
-                // Error state
-                <div className="flex flex-col items-center justify-center py-8 gap-3 text-destructive">
-                  <AlertCircle className="w-6 h-6" />
-                  <p className="text-sm font-medium">Discovery Failed</p>
-                  <p className="text-xs text-center max-w-xs text-muted-foreground">
-                    {discoveryError}
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => discoverServer(server)}
-                    className="mt-2"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5 mr-2" />
-                    Retry
-                  </Button>
-                </div>
-              ) : discoveryStatus === "idle" || tools.length === 0 ? (
-                // Not yet discovered or no tools found
-                <div className="flex flex-col items-center justify-center py-8 gap-3">
-                  <Wrench className="w-8 h-8 text-muted-foreground/50" />
-                  <p className="text-sm text-muted-foreground">
-                    {discoveryStatus === "completed"
-                      ? "No tools found on this server"
-                      : "Tools not yet discovered"}
-                  </p>
-                  {!server.enabled ? (
-                    <p className="text-xs text-muted-foreground text-center">
-                      Enable the server to discover tools
-                    </p>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => discoverServer(server)}
-                      className="mt-2"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 mr-2" />
-                      {discoveryStatus === "completed" ? "Refresh" : "Discover Tools"}
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                // Tool list
-                <>
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs text-muted-foreground">
-                      {tools.length} {tools.length === 1 ? "tool" : "tools"} discovered
-                    </p>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => discoverServer(server)}
-                      className="h-7 px-2"
-                    >
-                      <RefreshCw className="w-3 h-3 mr-1.5" />
-                      Refresh
-                    </Button>
-                  </div>
-                  <div className="space-y-2">
-                    {tools.map((tool) => (
-                      <div
-                        key={tool.name}
-                        className="p-3 rounded-lg bg-muted/30 border border-border/50"
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <Wrench className="w-3.5 h-3.5 text-primary" />
-                          <span className="font-mono text-sm font-medium">
-                            {tool.name}
-                          </span>
-                        </div>
-                        {tool.description && (
-                          <p className="text-xs text-muted-foreground ml-5">
-                            {tool.description}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
+              <ToolsTabContent
+                server={server}
+                tools={tools}
+                discoveryStatus={discoveryStatus}
+                discoveryError={discoveryError}
+                isDiscovering={isDiscovering}
+                onDiscover={() => discoverServer(server)}
+              />
             </TabsContent>
           </div>
         </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// =============================================================================
+// Tools Tab Content
+// =============================================================================
+
+interface ToolsTabContentProps {
+  server: ParsedMCPServer;
+  tools: { name: string; description?: string }[];
+  discoveryStatus: string;
+  discoveryError: string | null;
+  isDiscovering: boolean;
+  onDiscover: () => void;
+}
+
+function ToolsTabContent({
+  server,
+  tools,
+  discoveryStatus,
+  discoveryError,
+  isDiscovering,
+  onDiscover,
+}: ToolsTabContentProps): React.ReactNode {
+  if (isDiscovering) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 gap-3">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Discovering tools...</p>
+      </div>
+    );
+  }
+
+  if (discoveryError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 gap-3 text-destructive">
+        <AlertCircle className="w-6 h-6" />
+        <p className="text-sm font-medium">Discovery Failed</p>
+        <p className="text-xs text-center max-w-xs text-muted-foreground">
+          {discoveryError}
+        </p>
+        <Button variant="outline" size="sm" onClick={onDiscover} className="mt-2">
+          <RefreshCw className="w-3.5 h-3.5 mr-2" />
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (discoveryStatus === "idle" || tools.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 gap-3">
+        <Wrench className="w-8 h-8 text-muted-foreground/50" />
+        <p className="text-sm text-muted-foreground">
+          {discoveryStatus === "completed"
+            ? "No tools found on this server"
+            : "Tools not yet discovered"}
+        </p>
+        {!server.enabled ? (
+          <p className="text-xs text-muted-foreground text-center">
+            Enable the server to discover tools
+          </p>
+        ) : (
+          <Button variant="outline" size="sm" onClick={onDiscover} className="mt-2">
+            <RefreshCw className="w-3.5 h-3.5 mr-2" />
+            {discoveryStatus === "completed" ? "Refresh" : "Discover Tools"}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs text-muted-foreground">
+          {tools.length} {tools.length === 1 ? "tool" : "tools"} discovered
+        </p>
+        <Button variant="ghost" size="sm" onClick={onDiscover} className="h-7 px-2">
+          <RefreshCw className="w-3 h-3 mr-1.5" />
+          Refresh
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {tools.map((tool) => (
+          <div
+            key={tool.name}
+            className="p-3 rounded-lg bg-muted/30 border border-border/50"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Wrench className="w-3.5 h-3.5 text-primary" />
+              <span className="font-mono text-sm font-medium">{tool.name}</span>
+            </div>
+            {tool.description && (
+              <p className="text-xs text-muted-foreground ml-5">
+                {tool.description}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

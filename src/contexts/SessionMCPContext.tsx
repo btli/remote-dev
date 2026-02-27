@@ -136,11 +136,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
   }, []);
 
   const clearSessionMCP = useCallback(() => {
-    setState({
-      ...initialState,
-      discovery: new Map(),
-      discovering: new Set(),
-    });
+    setState(initialState);
   }, []);
 
   const refreshMCPServers = useCallback(async () => {
@@ -338,10 +334,10 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
 
       setState((prev) => {
         const newDiscovery = new Map(prev.discovery);
-        results.forEach((result) => {
+        for (const result of results) {
           const key = makeServerKey(result.serverName, result.sourceFile);
           newDiscovery.set(key, result);
-        });
+        }
 
         return {
           ...prev,
@@ -353,7 +349,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
       // Mark all as error
       setState((prev) => {
         const newDiscovery = new Map(prev.discovery);
-        enabledServers.forEach((server) => {
+        for (const server of enabledServers) {
           const key = getServerKey(server);
           newDiscovery.set(key, {
             serverName: server.name,
@@ -364,7 +360,7 @@ export function SessionMCPProvider({ children }: SessionMCPProviderProps) {
             error: error instanceof Error ? error.message : "Discovery failed",
             discoveredAt: new Date(),
           });
-        });
+        }
 
         return {
           ...prev,
