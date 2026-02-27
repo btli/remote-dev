@@ -53,6 +53,9 @@ interface TerminalProps {
   onAgentExited?: (exitCode: number | null, exitedAt: string) => void;
   /** Called when an agent session restarts successfully */
   onAgentRestarted?: () => void;
+  /** Called when agent activity status changes (from Claude Code hooks).
+   *  Includes sessionId so broadcast messages correctly target the right session. */
+  onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
 }
@@ -77,6 +80,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onSessionExit,
   onAgentExited,
   onAgentRestarted,
+  onAgentActivityStatus,
   onOutput,
   onDimensionsChange,
 }, ref) {
@@ -127,6 +131,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onSessionExitRef = useRef(onSessionExit);
   const onAgentExitedRef = useRef(onAgentExited);
   const onAgentRestartedRef = useRef(onAgentRestarted);
+  const onAgentActivityStatusRef = useRef(onAgentActivityStatus);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
@@ -157,6 +162,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onSessionExitRef.current = onSessionExit;
     onAgentExitedRef.current = onAgentExited;
     onAgentRestartedRef.current = onAgentRestarted;
+    onAgentActivityStatusRef.current = onAgentActivityStatus;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
@@ -170,7 +176,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -536,6 +542,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 );
                 // Mark as intentional exit and cancel any pending reconnect
                 markIntentionalExit();
+                // Update activity status: error if non-zero exit, idle if clean exit
+                onAgentActivityStatusRef.current?.(
+                  msg.sessionId ?? sessionId,
+                  msg.exitCode != null && msg.exitCode !== 0 ? "error" : "idle"
+                );
                 // Notify parent component to show agent exit screen
                 onAgentExitedRef.current?.(msg.exitCode, msg.exitedAt);
                 break;
@@ -545,8 +556,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 terminal.writeln("\x1b[32mAgent restarted\x1b[0m\r\n");
                 // Clear intentional exit flag
                 intentionalExitRef.current = false;
+                // Reset activity status to running
+                onAgentActivityStatusRef.current?.(sessionId, "running");
                 // Notify parent component
                 onAgentRestartedRef.current?.();
+                break;
+              case "agent_activity_status":
+                // Agent activity status from Claude Code hooks (broadcast — may be for any session)
+                onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
                 break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);

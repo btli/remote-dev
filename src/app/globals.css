@@ -698,3 +698,13 @@
   pointer-events: none;
 }
 
+/* Agent activity breathing animation */
+@keyframes agent-breathing {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.agent-breathing {
+  animation: agent-breathing 2s ease-in-out infinite;
+}
+

@@ -47,6 +47,7 @@ import dynamic from "next/dynamic";
 import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
 
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
+import type { AgentActivityStatus } from "@/types/terminal-type";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -133,6 +134,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setActiveSession,
     reorderSessions,
     refreshSessions,
+    setAgentActivityStatus,
   } = useSessionContext();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -1587,6 +1589,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onDimensionsChange={isRecording ? updateDimensions : undefined}
                           onSessionRestart={() => handleSessionRestart(session)}
                           onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
+                          onAgentActivityStatus={(sid, status) =>
+                            setAgentActivityStatus(sid, status as AgentActivityStatus)
+                          }
                         />
                       </div>
                     );

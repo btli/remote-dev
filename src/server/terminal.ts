@@ -254,6 +254,35 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // Handle agent activity status from Claude Code hooks
+  // Called by hooks: POST /internal/agent-status?sessionId=xxx&status=running|waiting
+  if (pathname === "/internal/agent-status" && req.method === "POST") {
+    const sessionId = query.sessionId as string;
+    const status = query.status as string;
+
+    if (!sessionId || !status) {
+      sendJson(res, 400, { error: "Missing sessionId or status parameter" });
+      return true;
+    }
+
+    // Broadcast status to ALL connected WebSockets.
+    // The target session may not have its own WebSocket (only the active terminal does),
+    // but any connected client can update the sidebar indicator.
+    const message = JSON.stringify({
+      type: "agent_activity_status",
+      sessionId,
+      status,
+    });
+    for (const [, s] of sessions) {
+      if (s.ws.readyState === WebSocket.OPEN) {
+        s.ws.send(message);
+      }
+    }
+
+    sendJson(res, 200, { success: true });
+    return true;
+  }
+
   if (!pathname?.startsWith("/internal/scheduler/")) {
     return false;
   }

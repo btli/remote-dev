@@ -43,6 +43,7 @@ import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { MCPServersSection } from "@/components/mcp";
+import { useSessionContext } from "@/contexts/SessionContext";
 
 export interface SessionFolder {
   id: string;
@@ -117,6 +118,33 @@ interface SidebarProps {
   getFolderPinnedFiles?: (folderId: string) => PinnedFile[];
   onOpenPinnedFile?: (folderId: string, file: PinnedFile) => void;
   onReorderPinnedFiles?: (folderId: string, files: PinnedFile[]) => void;
+}
+
+/**
+ * Resolve sidebar icon color class for a session based on agent activity status.
+ * Agent sessions get color-coded by their real-time activity; non-agent sessions
+ * use simple active/inactive styling.
+ */
+function getSessionIconColor(
+  session: TerminalSession,
+  isActive: boolean,
+  getAgentActivityStatus: (sessionId: string) => string
+): string {
+  if (session.terminalType !== "agent") {
+    return isActive ? "text-primary" : "text-muted-foreground";
+  }
+
+  const status = getAgentActivityStatus(session.id);
+  switch (status) {
+    case "running":
+      return "text-green-500 agent-breathing";
+    case "waiting":
+      return "text-yellow-500 agent-breathing";
+    case "error":
+      return "text-red-500";
+    default:
+      return isActive ? "text-primary" : "text-muted-foreground";
+  }
 }
 
 export function Sidebar({
@@ -197,6 +225,7 @@ export function Sidebar({
   const { folderConfigs } = useSecretsContext();
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
+  const { getAgentActivityStatus } = useSessionContext();
 
   // Touch drag state for mobile
   const touchDragRef = useRef<{
@@ -982,35 +1011,22 @@ export function Sidebar({
               {showDropBefore && (
                 <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
               )}
-              {/* Status indicator - Sparkles for agent, GitBranch for worktree, dot for shell */}
-              {session.terminalType === "agent" ? (
-                <Sparkles
-                  className={cn(
-                    "w-3.5 h-3.5",
-                    isActive
-                      ? "text-primary"
-                      : "text-muted-foreground"
-                  )}
-                />
-              ) : session.worktreeBranch ? (
-                <GitBranch
-                  className={cn(
-                    "w-3.5 h-3.5",
-                    isActive
-                      ? "text-primary"
-                      : "text-muted-foreground"
-                  )}
-                />
-              ) : (
-                <span
-                  className={cn(
+              {/* Status indicator - icon colored by agent activity status */}
+              {(() => {
+                const iconColor = getSessionIconColor(session, isActive, getAgentActivityStatus);
+                if (session.worktreeBranch) {
+                  return <GitBranch className={cn("w-3.5 h-3.5", iconColor)} />;
+                }
+                if (session.terminalType === "agent") {
+                  return <Sparkles className={cn("w-3.5 h-3.5", iconColor)} />;
+                }
+                return (
+                  <span className={cn(
                     "w-2 h-2 rounded-full",
-                    isActive
-                      ? "bg-primary animate-pulse"
-                      : "bg-muted-foreground"
-                  )}
-                />
-              )}
+                    isActive ? "bg-primary animate-pulse" : "bg-muted-foreground"
+                  )} />
+                );
+              })()}
               {/* Drop indicator - after */}
               {showDropAfter && (
                 <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
@@ -1076,35 +1092,17 @@ export function Sidebar({
                 isDragOverSession && "bg-primary/20 border-primary/30"
               )}
             >
-            {/* Status indicator - Sparkles for agent, GitBranch for worktree, Terminal for shell */}
-            {session.terminalType === "agent" ? (
-              <Sparkles
-                className={cn(
-                  "w-3.5 h-3.5 shrink-0",
-                  isActive
-                    ? "text-primary"
-                    : "text-muted-foreground"
-                )}
-              />
-            ) : session.worktreeBranch ? (
-              <GitBranch
-                className={cn(
-                  "w-3.5 h-3.5 shrink-0",
-                  isActive
-                    ? "text-primary"
-                    : "text-muted-foreground"
-                )}
-              />
-            ) : (
-              <Terminal
-                className={cn(
-                  "w-3.5 h-3.5 shrink-0",
-                  isActive
-                    ? "text-primary"
-                    : "text-muted-foreground"
-                )}
-              />
-            )}
+            {/* Status indicator - icon colored by agent activity status */}
+            {(() => {
+              const iconColor = getSessionIconColor(session, isActive, getAgentActivityStatus);
+              if (session.terminalType === "agent") {
+                return <Sparkles className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+              }
+              if (session.worktreeBranch) {
+                return <GitBranch className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+              }
+              return <Terminal className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+            })()}
 
             {/* Session name - editable */}
             <div className="flex-1 min-w-0">

@@ -17,7 +17,7 @@ import {
   terminalSessions,
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
-import { mkdir, writeFile, access } from "fs/promises";
+import { mkdir, writeFile, readFile, access } from "fs/promises";
 import { join, resolve as pathResolve, isAbsolute } from "path";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
@@ -586,6 +586,94 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.updatedAt),
   };
+}
+
+// ============================================================================
+// Agent Hooks Installation
+// ============================================================================
+
+/**
+ * Install activity-reporting hooks into the agent's settings file.
+ * Currently supports Claude Code only (hooks in .claude/settings.json).
+ *
+ * Hooks call back to the terminal server's /internal/agent-status endpoint
+ * using RDV_SESSION_ID and RDV_TERMINAL_PORT env vars (set at session creation).
+ *
+ * - PreToolUse → status "running" (agent is executing a tool)
+ * - Stop → status "waiting" (agent finished a turn, waiting for input)
+ */
+export async function installAgentHooks(
+  configDir: string,
+  provider: string
+): Promise<void> {
+  // Only Claude Code supports hooks currently
+  if (provider !== "claude") return;
+
+  const settingsPath = join(configDir, ".claude", "settings.json");
+
+  // Read existing settings (if any) to merge hooks
+  let existingSettings: Record<string, unknown> = {};
+  try {
+    const content = await readFile(settingsPath, "utf-8");
+    existingSettings = JSON.parse(content);
+  } catch {
+    // File doesn't exist or is invalid JSON - start fresh
+  }
+
+  // Marker to identify our activity hooks (for deduplication)
+  const HOOK_MARKER = "/internal/agent-status";
+
+  // Activity status hooks using shell variable expansion.
+  // $RDV_TERMINAL_PORT and $RDV_SESSION_ID are set as tmux env vars per session.
+  const preToolUseHook = {
+    matcher: "",
+    hooks: [
+      {
+        type: "command",
+        command: "curl -s -X POST \"http://localhost:${RDV_TERMINAL_PORT}/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=running\" || true",
+        timeout: 5,
+      },
+    ],
+  };
+
+  const stopHook = {
+    hooks: [
+      {
+        type: "command",
+        command: "curl -s -X POST \"http://localhost:${RDV_TERMINAL_PORT}/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=waiting\" || true",
+        timeout: 5,
+      },
+    ],
+  };
+
+  // Merge with existing hooks (don't overwrite user's hooks)
+  const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
+
+  // Helper: check if our hook is already installed in an array
+  const hasActivityHook = (arr: unknown[]): boolean =>
+    arr.some((entry) => JSON.stringify(entry).includes(HOOK_MARKER));
+
+  const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
+  const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
+
+  const mergedHooks = {
+    ...existingHooks,
+    PreToolUse: hasActivityHook(existingPreToolUse)
+      ? existingPreToolUse
+      : [...existingPreToolUse, preToolUseHook],
+    Stop: hasActivityHook(existingStop)
+      ? existingStop
+      : [...existingStop, stopHook],
+  };
+
+  const updatedSettings = {
+    ...existingSettings,
+    hooks: mergedHooks,
+  };
+
+  // Ensure .claude directory exists
+  await mkdir(join(configDir, ".claude"), { recursive: true });
+  await writeFile(settingsPath, JSON.stringify(updatedSettings, null, 2) + "\n");
 }
 
 // ============================================================================
