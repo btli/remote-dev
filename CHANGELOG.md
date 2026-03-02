@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent Activity Status Indicators**: Real-time agent activity shown in sidebar via colored Sparkles icons
+  - Green breathing animation when agent is running (tool use in progress)
+  - Yellow breathing animation when agent is waiting for user input
+  - Solid red when agent exited with error
+  - Gray when idle or no recent activity
+  - Uses Claude Code hooks (PreToolUse/Stop) to report status back to terminal server
+  - Hooks are automatically installed and merged with existing settings at session creation
+  - Status broadcast via WebSocket to all connected clients for cross-tab visibility
+
 ### Fixed
 
 - Worktree sessions now show GitBranch icon instead of generic terminal icon in sidebar

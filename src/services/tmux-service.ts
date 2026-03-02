@@ -120,12 +120,17 @@ export async function createSession(
     args.push("-c", cwd);
   }
 
-  // Build execution options with environment overlay
-  // Note: lib/exec.ts now filters out framework internal vars automatically
-  const execOptions = env ? { env: env as NodeJS.ProcessEnv } : undefined;
+  // Inject environment variables directly into the session using -e flags.
+  // This ensures the shell inside the session inherits these vars, regardless
+  // of whether a tmux server is already running (tmux 3.2+).
+  if (env) {
+    for (const [key, value] of Object.entries(env)) {
+      args.push("-e", `${key}=${value}`);
+    }
+  }
 
   try {
-    await execFile("tmux", args, execOptions);
+    await execFile("tmux", args);
 
     // Enable mouse mode for scrolling in alternate screen apps (vim, less, claude code, etc.)
     // Use Shift+click to bypass and select text with xterm.js
