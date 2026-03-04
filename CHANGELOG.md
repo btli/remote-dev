@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rendered Markdown View**: Markdown files (.md/.mdx) now open in a rendered view by default with GitHub-style prose styling
+  - Pencil/eye toggle in the toolbar switches between rendered and CodeMirror editor modes
+  - Syntax highlighting for fenced code blocks using rehype-highlight
+  - GFM support: tables, task lists, strikethrough, autolinks
+  - XSS protection: allowlist-based URL sanitization blocks unsafe URI schemes
+
 - **Resume Claude Session**: Discover and resume previous Claude Code conversations from the folder context menu
   - Scans `~/.claude/projects/<encoded-path>/` (or profile-isolated equivalent) for `.jsonl` session files
   - Modal shows recent sessions sorted by last activity with branch, timestamp, and first message preview
@@ -61,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **MarkdownEditor component**: Consolidated into CodeMirrorEditor with rendered markdown support
 - Drag-to-reorder for pinned files in the sidebar (use folder settings to reorder)
 
 ### Fixed
