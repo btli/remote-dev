@@ -237,10 +237,44 @@ export async function createSession(
     }
   }
 
+  // Resolve GitHub account environment for the session's folder binding
+  // This MUST happen before tmux session creation so agent processes inherit it at spawn
+  let ghAccountEnv: Record<string, string> | null = null;
+  try {
+    // Find the GitHub account bound to this folder (or fall back to default)
+    const account = input.folderId
+      ? await githubAccountRepository.findByFolder(input.folderId, userId)
+      : null;
+    const effectiveAccount = account ?? await githubAccountRepository.findDefault(userId);
+
+    if (effectiveAccount) {
+      const token = await githubAccountRepository.getAccessToken(
+        effectiveAccount.providerAccountId,
+        userId
+      );
+      if (token) {
+        const ghEnv = GitHubAccountEnvironment.create(
+          token,
+          effectiveAccount.configDir,
+          effectiveAccount.login
+        );
+        ghAccountEnv = ghEnv.toEnvironment().toRecord();
+      }
+    }
+  } catch (error) {
+    console.error(`[session:${sessionId}] Failed to resolve GitHub account env:`, error);
+  }
+
   // File-type sessions don't need tmux — they're pure UI (CodeMirror editor)
   if (input.terminalType !== "file") {
-    // Initial environment: profile env + RDV vars for agent hook callbacks
-    const initialEnv: Record<string, string> = { ...(profileEnv ?? {}), ...rdvEnv };
+    // Initial environment: profile env + folder env + GitHub account env + RDV vars
+    // All must be present at PTY spawn so agent processes inherit them immediately
+    const initialEnv: Record<string, string> = {
+      ...(profileEnv ?? {}),
+      ...(folderEnv ?? {}),
+      ...(ghAccountEnv ?? {}),
+      ...rdvEnv,
+    };
     console.log(`[session:${sessionId}] initialEnv keys: [${Object.keys(initialEnv).join(', ')}]`);
 
     // Create the tmux session with initial environment for PTY spawn
@@ -260,33 +294,6 @@ export async function createSession(
         );
       }
       throw error;
-    }
-
-    // Resolve GitHub account environment for the session's folder binding
-    let ghAccountEnv: Record<string, string> | null = null;
-    try {
-      // Find the GitHub account bound to this folder (or fall back to default)
-      const account = input.folderId
-        ? await githubAccountRepository.findByFolder(input.folderId, userId)
-        : null;
-      const effectiveAccount = account ?? await githubAccountRepository.findDefault(userId);
-
-      if (effectiveAccount) {
-        const token = await githubAccountRepository.getAccessToken(
-          effectiveAccount.providerAccountId,
-          userId
-        );
-        if (token) {
-          const ghEnv = GitHubAccountEnvironment.create(
-            token,
-            effectiveAccount.configDir,
-            effectiveAccount.login
-          );
-          ghAccountEnv = ghEnv.toEnvironment().toRecord();
-        }
-      }
-    } catch (error) {
-      console.error(`[session:${sessionId}] Failed to resolve GitHub account env:`, error);
     }
 
     // Persistent session-level environment variables
