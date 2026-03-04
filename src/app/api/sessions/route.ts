@@ -58,6 +58,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       profileId?: string;
       agentProvider?: string;
       autoLaunchAgent?: boolean;
+      agentFlags?: string[];
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -86,6 +87,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       profileId: body.profileId,
       agentProvider: body.agentProvider as CreateSessionInput["agentProvider"],
       autoLaunchAgent: body.autoLaunchAgent,
+      agentFlags: body.agentFlags,
       // Feature session fields
       startupCommand: body.startupCommand,
       featureDescription: body.featureDescription,
