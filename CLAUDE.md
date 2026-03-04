@@ -109,7 +109,7 @@ src/lib/terminal-plugins/
 └── plugins/
     ├── shell-plugin.tsx   # Default terminal plugin
     ├── agent-plugin.tsx   # AI agent plugin with exit screen
-    └── file-viewer-plugin.tsx  # Markdown editor plugin
+    └── file-viewer-plugin.tsx  # File viewer/editor plugin (rendered markdown + CodeMirror)
 ```
 
 **Plugin Interface:**
