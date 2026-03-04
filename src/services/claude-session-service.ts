@@ -47,8 +47,9 @@ function parseSessionFile(filePath: string): Promise<{
   firstUserMessage?: string;
 } | null> {
   return new Promise((resolve) => {
+    const stream = createReadStream(filePath, { encoding: "utf8" });
     const rl = createInterface({
-      input: createReadStream(filePath, { encoding: "utf8" }),
+      input: stream,
       crlfDelay: Infinity,
     });
 
@@ -106,6 +107,7 @@ function parseSessionFile(filePath: string): Promise<{
         // Stop reading once we have both pieces
         if (header && firstUserMessage) {
           rl.close();
+          stream.destroy();
         }
       } catch {
         // Skip malformed lines

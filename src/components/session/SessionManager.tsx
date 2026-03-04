@@ -1013,8 +1013,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
       const profileId = sessions.find(
-        (s: { folderId: string | null; profileId: string | null }) =>
-          s.folderId === folderId && s.profileId
+        (s) => s.folderId === folderId && s.profileId
       )?.profileId ?? undefined;
 
       setResumeModalFolderId(folderId);
@@ -1034,19 +1033,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleResumeClaudeSession = useCallback(
     async (claudeSessionId: string) => {
       const folderId = resumeModalFolderId ?? undefined;
-      const prefs = folderId
-        ? resolvePreferencesForFolder(folderId)
-        : currentPreferences;
 
       try {
         const newSession = await createSession({
           name: `Resume ${claudeSessionId.slice(0, 8)}`,
-          projectPath: prefs.defaultWorkingDirectory || undefined,
+          projectPath: resumeModalProjectPath || undefined,
           folderId,
           terminalType: "agent",
           agentProvider: "claude",
           autoLaunchAgent: true,
-          agentFlags: ["--resume", claudeSessionId],
+          agentFlags: ["--resume", claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "")],
         });
         if (newSession && folderId) {
           registerSessionFolder(newSession.id, folderId);
@@ -1059,8 +1055,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     },
     [
       resumeModalFolderId,
-      currentPreferences,
-      resolvePreferencesForFolder,
+      resumeModalProjectPath,
       createSession,
       registerSessionFolder,
       setActiveFolder,

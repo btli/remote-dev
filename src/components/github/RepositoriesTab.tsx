@@ -5,7 +5,7 @@
  */
 
 import { useState } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 import {
   RefreshCw,
   ExternalLink,
@@ -78,20 +78,7 @@ export function RepositoriesTab({
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  const formatRelativeTime = (dateString: string) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return "now";
-    if (diffMins < 60) return `${diffMins}m`;
-    if (diffHours < 24) return `${diffHours}h`;
-    if (diffDays < 30) return `${diffDays}d`;
-    return date.toLocaleDateString();
-  };
 
   // Group repositories by owner
   const groupedRepos = state.repositories.reduce(
@@ -163,7 +150,6 @@ export function RepositoriesTab({
                   : undefined
               }
               creatingWorktree={creatingWorktree}
-              formatRelativeTime={formatRelativeTime}
             />
           ))
         )}
@@ -194,7 +180,6 @@ interface OwnerGroupProps {
   onOpenGitHub: (url: string) => void;
   onCreateWorktree?: (repoId: string, prNumber: number) => void;
   creatingWorktree: number | null;
-  formatRelativeTime: (dateString: string) => string;
 }
 
 function OwnerGroup({
@@ -205,7 +190,6 @@ function OwnerGroup({
   onOpenGitHub,
   onCreateWorktree,
   creatingWorktree,
-  formatRelativeTime,
 }: OwnerGroupProps) {
   return (
     <div className="space-y-0.5">
@@ -227,7 +211,6 @@ function OwnerGroup({
           onOpenGitHub={onOpenGitHub}
           onCreateWorktree={onCreateWorktree}
           creatingWorktree={creatingWorktree}
-          formatRelativeTime={formatRelativeTime}
         />
       ))}
     </div>
@@ -245,7 +228,6 @@ interface RepoItemProps {
   onOpenGitHub: (url: string) => void;
   onCreateWorktree?: (repoId: string, prNumber: number) => void;
   creatingWorktree: number | null;
-  formatRelativeTime: (dateString: string) => string;
 }
 
 function RepoItem({
@@ -255,7 +237,6 @@ function RepoItem({
   onOpenGitHub,
   onCreateWorktree,
   creatingWorktree,
-  formatRelativeTime,
 }: RepoItemProps) {
   const hasPRs = repo.pullRequests.length > 0;
   const hasContent = hasPRs;
@@ -369,7 +350,6 @@ function RepoItem({
               onOpenGitHub={onOpenGitHub}
               onCreateWorktree={onCreateWorktree}
               isCreating={creatingWorktree === pr.number}
-              formatRelativeTime={formatRelativeTime}
             />
           ))}
           {repo.pullRequests.length > 5 && (
@@ -396,7 +376,6 @@ interface PRItemProps {
   onOpenGitHub: (url: string) => void;
   onCreateWorktree?: (repoId: string, prNumber: number) => void;
   isCreating: boolean;
-  formatRelativeTime: (dateString: string) => string;
 }
 
 function PRItem({
@@ -405,7 +384,6 @@ function PRItem({
   onOpenGitHub,
   onCreateWorktree,
   isCreating,
-  formatRelativeTime,
 }: PRItemProps) {
   return (
     <ContextMenu>
