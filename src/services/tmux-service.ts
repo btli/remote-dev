@@ -120,9 +120,10 @@ export async function createSession(
     args.push("-c", cwd);
   }
 
-  // Build execution options with environment overlay
-  // Note: lib/exec.ts now filters out framework internal vars automatically
-  const execOptions = env ? { env: env as NodeJS.ProcessEnv } : undefined;
+  // Pass environment variables as the process environment for tmux.
+  // This sets the initial PTY shell environment (Layer 1 of Two-Layer Model).
+  // Session-level persistent env (Layer 2) is set via setSessionEnvironment().
+  const execOptions = env ? { env: { ...process.env, ...env } } : undefined;
 
   try {
     await execFile("tmux", args, execOptions);
