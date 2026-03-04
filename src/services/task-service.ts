@@ -19,6 +19,7 @@ function parseTaskRow(row: typeof projectTasks.$inferSelect): ProjectTask {
     id: row.id,
     userId: row.userId,
     folderId: row.folderId,
+    sessionId: row.sessionId ?? null,
     title: row.title,
     description: row.description,
     status: row.status,
@@ -94,6 +95,7 @@ export async function createTask(
     .values({
       userId,
       folderId: input.folderId ?? null,
+      sessionId: input.sessionId ?? null,
       title: input.title,
       description: input.description ?? null,
       status: input.status ?? "open",
@@ -103,6 +105,7 @@ export async function createTask(
       subtasks: JSON.stringify(input.subtasks ?? []),
       dueDate: input.dueDate ? new Date(input.dueDate) : null,
       githubIssueUrl: input.githubIssueUrl ?? null,
+      sortOrder: input.sortOrder ?? 0,
     })
     .returning();
 
@@ -158,4 +161,23 @@ export async function deleteTask(
     .returning({ id: projectTasks.id });
 
   return result.length > 0;
+}
+
+/** Get all agent tasks for a specific session */
+export async function getTasksBySession(
+  sessionId: string,
+  userId: string
+): Promise<ProjectTask[]> {
+  const rows = await db
+    .select()
+    .from(projectTasks)
+    .where(
+      and(
+        eq(projectTasks.sessionId, sessionId),
+        eq(projectTasks.userId, userId),
+        eq(projectTasks.source, "agent")
+      )
+    )
+    .orderBy(asc(projectTasks.sortOrder), desc(projectTasks.createdAt));
+  return rows.map(parseTaskRow);
 }

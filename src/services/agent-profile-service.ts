@@ -581,32 +581,35 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
 // Agent Hooks Installation
 // ============================================================================
 
-/** Marker substring used to identify RDV activity hooks (for deduplication) */
+/** Marker substrings used to identify RDV hooks (for deduplication) */
 const ACTIVITY_HOOK_MARKER = "/internal/agent-status";
+const TODO_HOOK_MARKER = "/internal/agent-todos";
 
-/** Check if a single hook entry is an RDV activity hook */
-function isActivityHook(entry: unknown): boolean {
+/** Check if a hook entry contains the given marker substring */
+function isRdvHook(entry: unknown, marker: string): boolean {
   return typeof entry === "object" && entry !== null &&
-    JSON.stringify(entry).includes(ACTIVITY_HOOK_MARKER);
+    JSON.stringify(entry).includes(marker);
 }
 
-/** Filter out any existing RDV activity hooks from an array (preserves user hooks) */
-function withoutActivityHooks(arr: unknown[]): unknown[] {
-  return arr.filter((entry) => !isActivityHook(entry));
+/** Filter out RDV hooks matching the given marker (preserves user hooks) */
+function withoutRdvHooks(arr: unknown[], marker: string): unknown[] {
+  return arr.filter((entry) => !isRdvHook(entry, marker));
 }
 
 /**
- * Install activity-reporting hooks into the agent's settings file.
+ * Install hooks into the agent's settings file.
  * Currently supports Claude Code only (hooks in .claude/settings.json).
  *
- * Hooks call back to the terminal server's /internal/agent-status endpoint.
  * Supports both socket mode (RDV_TERMINAL_SOCKET) and port mode (RDV_TERMINAL_PORT).
  * These env vars plus RDV_SESSION_ID are set as tmux env vars per session.
  *
+ * Activity-reporting hooks (→ /internal/agent-status):
  * - PreToolUse → status "running" (agent is executing a tool)
  * - Notification (permission/elicitation) → status "waiting" (needs user input)
  * - Stop → status "idle" (agent finished its turn)
  *
+ * TodoWrite sync hook (→ /internal/agent-todos):
+ * - PostToolUse (matcher: "TodoWrite") → syncs task list to project_task table
  */
 export async function installAgentHooks(
   configDir: string,
@@ -657,6 +660,24 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: curlForStatus("idle"), timeout: 5 }],
   };
 
+  // TodoWrite sync hook: reads PostToolUse JSON from stdin, POSTs to /internal/agent-todos
+  const todoSyncCommand =
+    'INPUT=$(cat); ' +
+    '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
+    '[ -z "$_RDV_SN" ] && exit 0; ' +
+    'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
+    '[ -z "$RDV_SESSION_ID" ] && exit 0; ' +
+    'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
+    'printf \'%s\' "$INPUT" | curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST -H "Content-Type: application/json" -d @- "http://localhost/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
+    'else ' +
+    'printf \'%s\' "$INPUT" | curl -s -X POST -H "Content-Type: application/json" -d @- "http://localhost:${RDV_TERMINAL_PORT}/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
+    'fi || true';
+
+  const postToolUseTodoHook = {
+    matcher: "TodoWrite",
+    hooks: [{ type: "command", command: todoSyncCommand, timeout: 10 }],
+  };
+
   // Merge with existing hooks — replace any old RDV hooks with current version,
   // preserving user-defined hooks. This handles upgrades (e.g., port-only → socket-aware).
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
@@ -664,13 +685,15 @@ export async function installAgentHooks(
   const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
   const existingNotification = Array.isArray(existingHooks.Notification) ? existingHooks.Notification : [];
   const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
+  const existingPostToolUse = Array.isArray(existingHooks.PostToolUse) ? existingHooks.PostToolUse : [];
 
   // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
-    PreToolUse: [...withoutActivityHooks(existingPreToolUse), preToolUseHook],
-    Notification: [...withoutActivityHooks(existingNotification), notificationHook],
-    Stop: [...withoutActivityHooks(existingStop), stopHook],
+    PreToolUse: [...withoutRdvHooks(existingPreToolUse, ACTIVITY_HOOK_MARKER), preToolUseHook],
+    PostToolUse: [...withoutRdvHooks(existingPostToolUse, TODO_HOOK_MARKER), postToolUseTodoHook],
+    Notification: [...withoutRdvHooks(existingNotification, ACTIVITY_HOOK_MARKER), notificationHook],
+    Stop: [...withoutRdvHooks(existingStop, ACTIVITY_HOOK_MARKER), stopHook],
   };
 
   const updatedSettings = {

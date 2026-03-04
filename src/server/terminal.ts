@@ -79,6 +79,16 @@ interface TerminalSession {
 
 const sessions = new Map<string, TerminalSession>();
 
+/** Broadcast a JSON message to all connected WebSocket clients */
+function broadcastToClients(data: Record<string, unknown>): void {
+  const message = JSON.stringify(data);
+  for (const [, s] of sessions) {
+    if (s.ws.readyState === WebSocket.OPEN) {
+      s.ws.send(message);
+    }
+  }
+}
+
 /**
  * Destroy a PTY and release its file descriptors.
  * Uses the runtime's destroy() method which closes the socket/FDs,
@@ -265,21 +275,38 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
 
-    // Broadcast status to ALL connected WebSockets.
-    // The target session may not have its own WebSocket (only the active terminal does),
-    // but any connected client can update the sidebar indicator.
-    const message = JSON.stringify({
-      type: "agent_activity_status",
-      sessionId,
-      status,
-    });
-    for (const [, s] of sessions) {
-      if (s.ws.readyState === WebSocket.OPEN) {
-        s.ws.send(message);
-      }
-    }
+    // Broadcast to all clients so any connected client can update the sidebar indicator
+    broadcastToClients({ type: "agent_activity_status", sessionId, status });
 
     sendJson(res, 200, { success: true });
+    return true;
+  }
+
+  // Handle agent TodoWrite sync from Claude Code PostToolUse hooks
+  // Called by hooks: POST /internal/agent-todos?sessionId=xxx
+  // Body: Claude Code PostToolUse stdin JSON (contains tool_input.tasks)
+  if (pathname === "/internal/agent-todos" && req.method === "POST") {
+    const sessionId = query.sessionId as string;
+
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId parameter" });
+      return true;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const payload = JSON.parse(body);
+      const { syncAgentTodos } = await import("@/services/agent-todo-sync");
+      const result = await syncAgentTodos(sessionId, payload);
+      broadcastToClients({ type: "agent_todos_updated", sessionId, ...result });
+      sendJson(res, 200, { success: true, ...result });
+    } catch (error) {
+      console.error("[Agent Todos] Sync error:", error);
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : "Sync failed",
+      });
+    }
+
     return true;
   }
 
