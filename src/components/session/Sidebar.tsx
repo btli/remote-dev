@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
-  X, Plus, Terminal, Settings, FileText,
+  X, Plus, Terminal, Settings,
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
@@ -44,6 +44,7 @@ import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { MCPServersSection } from "@/components/mcp";
+import { FilesSection } from "./FilesSection";
 import { useSessionContext } from "@/contexts/SessionContext";
 
 export interface SessionFolder {
@@ -119,7 +120,6 @@ interface SidebarProps {
   onViewPRs?: (folderId: string) => void;
   getFolderPinnedFiles?: (folderId: string) => PinnedFile[];
   onOpenPinnedFile?: (folderId: string, file: PinnedFile) => void;
-  onReorderPinnedFiles?: (folderId: string, files: PinnedFile[]) => void;
 }
 
 /**
@@ -196,7 +196,6 @@ export function Sidebar({
   onViewPRs,
   getFolderPinnedFiles,
   onOpenPinnedFile,
-  onReorderPinnedFiles,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -217,10 +216,6 @@ export function Sidebar({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const resizeStartXRef = useRef<number>(0);
   const resizeStartWidthRef = useRef<number>(0);
-
-  // Pinned file drag-reorder state
-  const [draggingPinnedFile, setDraggingPinnedFile] = useState<{ folderId: string; fileId: string } | null>(null);
-  const [pinnedDropTarget, setPinnedDropTarget] = useState<{ fileId: string; position: "before" | "after" } | null>(null);
 
   // Secrets modal state
   const [secretsModalOpen, setSecretsModalOpen] = useState(false);
@@ -673,9 +668,6 @@ export function Sidebar({
   }, [folders, dropFolderPosition, dropTargetFolderId, dragOverFolderId, onFolderReorder, onFolderMove, isDescendantOf]);
 
   const handleDragOver = (e: React.DragEvent, folderId: string | null) => {
-    // Don't interfere with pinned file reordering
-    if (draggingPinnedFile) return;
-
     e.preventDefault();
     e.stopPropagation();
 
@@ -712,7 +704,6 @@ export function Sidebar({
 
   // Handler for dragging a folder over another folder (for reordering or nesting)
   const handleFolderDragOver = (e: React.DragEvent, targetFolderId: string, targetParentId: string | null) => {
-    if (draggingPinnedFile) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -773,7 +764,6 @@ export function Sidebar({
 
   // Handler for dropping a folder on another folder (for reordering or moving)
   const handleFolderDrop = (e: React.DragEvent, targetFolderId: string) => {
-    if (draggingPinnedFile) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -831,9 +821,6 @@ export function Sidebar({
   };
 
   const handleDrop = (e: React.DragEvent, folderId: string | null) => {
-    // Don't interfere with pinned file reordering
-    if (draggingPinnedFile) return;
-
     e.preventDefault();
     e.stopPropagation();
     const id = e.dataTransfer.getData("text/plain");
@@ -858,7 +845,6 @@ export function Sidebar({
 
   // Handler for dropping on a session (for reordering)
   const handleSessionDrop = (e: React.DragEvent, targetSessionId: string, targetFolderId: string | null) => {
-    if (draggingPinnedFile) return;
     e.preventDefault();
     e.stopPropagation();
     const draggedId = e.dataTransfer.getData("text/plain");
@@ -952,7 +938,6 @@ export function Sidebar({
 
   // Handler for dragging over a session (for reordering)
   const handleSessionDragOver = (e: React.DragEvent, targetSessionId: string, targetFolderId: string | null) => {
-    if (draggingPinnedFile) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
@@ -2115,103 +2100,6 @@ export function Sidebar({
                             treeLineLeft: node.depth * 12 + 8 + 7,
                             trashCount: getFolderTrashCount(node.id),
                           })}
-                          {/* Pinned files for this folder */}
-                          {getFolderPinnedFiles && onOpenPinnedFile &&
-                            getFolderPinnedFiles(node.id).map((file, idx, arr) => {
-                              const isLast = getFolderTrashCount(node.id) === 0 && idx === arr.length - 1;
-                              // Check if this pinned file's session is currently active
-                              const fileSession = activeSessions.find(
-                                (s) => s.terminalType === "file" && s.typeMetadata?.filePath === file.path
-                              );
-                              const isFileActive = fileSession?.id === activeSessionId;
-                              const isDraggingThis = draggingPinnedFile?.fileId === file.id;
-                              const isDropBefore = pinnedDropTarget?.fileId === file.id && pinnedDropTarget.position === "before";
-                              const isDropAfter = pinnedDropTarget?.fileId === file.id && pinnedDropTarget.position === "after";
-                              return (
-                                <div
-                                  key={`pinned-${file.id}`}
-                                  className="tree-item"
-                                  data-tree-last={isLast ? "true" : undefined}
-                                  style={{
-                                    '--tree-connector-left': `${node.depth * 12 + 8 + 7}px`,
-                                    '--tree-connector-width': '8px',
-                                  } as React.CSSProperties}
-                                >
-                                  {isDropBefore && (
-                                    <div className="h-0.5 bg-primary rounded-full mx-2" style={{ marginLeft: `${(node.depth + 1) * 12 + 8}px` }} />
-                                  )}
-                                  <div
-                                    role="button"
-                                    tabIndex={0}
-                                    draggable
-                                    onDragStart={(e) => {
-                                      e.stopPropagation();
-                                      e.dataTransfer.effectAllowed = "move";
-                                      e.dataTransfer.setData("text/x-pinned-file", file.id);
-                                      setDraggingPinnedFile({ folderId: node.id, fileId: file.id });
-                                    }}
-                                    onDragEnd={() => {
-                                      setDraggingPinnedFile(null);
-                                      setPinnedDropTarget(null);
-                                    }}
-                                    onDragOver={(e) => {
-                                      // Only accept pinned file drags within the same folder
-                                      if (!draggingPinnedFile || draggingPinnedFile.folderId !== node.id || draggingPinnedFile.fileId === file.id) return;
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      const rect = e.currentTarget.getBoundingClientRect();
-                                      const midY = rect.top + rect.height / 2;
-                                      setPinnedDropTarget({ fileId: file.id, position: e.clientY < midY ? "before" : "after" });
-                                    }}
-                                    onDragLeave={(e) => {
-                                      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                                        setPinnedDropTarget(null);
-                                      }
-                                    }}
-                                    onDrop={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      if (!draggingPinnedFile || !pinnedDropTarget || !onReorderPinnedFiles || !getFolderPinnedFiles) return;
-                                      const files = [...getFolderPinnedFiles(node.id)];
-                                      const fromIdx = files.findIndex((f) => f.id === draggingPinnedFile.fileId);
-                                      const toIdx = files.findIndex((f) => f.id === pinnedDropTarget.fileId);
-                                      if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
-                                      const [moved] = files.splice(fromIdx, 1);
-                                      const insertIdx = pinnedDropTarget.position === "before" ? toIdx : toIdx + 1;
-                                      files.splice(fromIdx < toIdx ? insertIdx - 1 : insertIdx, 0, moved);
-                                      // Update sortOrder based on new positions
-                                      const reordered = files.map((f, i) => ({ ...f, sortOrder: i }));
-                                      onReorderPinnedFiles(node.id, reordered);
-                                      setDraggingPinnedFile(null);
-                                      setPinnedDropTarget(null);
-                                    }}
-                                    onClick={() => onOpenPinnedFile(node.id, file)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter" || e.key === " ") {
-                                        e.preventDefault();
-                                        onOpenPinnedFile(node.id, file);
-                                      }
-                                    }}
-                                    style={{ marginLeft: `${(node.depth + 1) * 12}px` }}
-                                    className={cn(
-                                      "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-                                      "transition-colors duration-150",
-                                      isDraggingThis && "opacity-50",
-                                      isFileActive
-                                        ? "text-foreground bg-primary/20 border border-border"
-                                        : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                                    )}
-                                    title={file.path}
-                                  >
-                                    <FileText className={cn("w-3.5 h-3.5 shrink-0", isFileActive ? "text-primary" : "text-blue-400")} />
-                                    <span className="text-xs truncate">{file.name}</span>
-                                  </div>
-                                  {isDropAfter && (
-                                    <div className="h-0.5 bg-primary rounded-full mx-2" style={{ marginLeft: `${(node.depth + 1) * 12 + 8}px` }} />
-                                  )}
-                                </div>
-                              );
-                            })}
                           {/* Trash indicator for folder - always last when present */}
                           {getFolderTrashCount(node.id) > 0 && (
                             <div
@@ -2283,6 +2171,17 @@ export function Sidebar({
             </>
           )}
       </div>
+
+      {/* Files Section - default + pinned files for active folder */}
+      {getFolderPinnedFiles && onOpenPinnedFile && (
+        <FilesSection
+          activeFolderId={activeFolderId}
+          collapsed={collapsed}
+          getFolderPinnedFiles={getFolderPinnedFiles}
+          onOpenFile={onOpenPinnedFile}
+          activeSessionId={activeSessionId}
+        />
+      )}
 
       {/* MCP Servers Section - only show when agent session is selected */}
       {isAgentSession && mcpSupported && (

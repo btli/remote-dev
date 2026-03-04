@@ -311,7 +311,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     resolvePreferencesForFolder,
     getEnvironmentForFolder,
     getFolderPreferences,
-    updateFolderPreferences,
   } = usePreferencesContext();
 
   // Secrets state from context
@@ -834,18 +833,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       });
     },
     [activeSessions, setActiveSession, createSession, closeSession]
-  );
-
-  // Reorder pinned files within a folder
-  const handleReorderPinnedFiles = useCallback(
-    async (folderId: string, files: PinnedFile[]) => {
-      try {
-        await updateFolderPreferences(folderId, { pinnedFiles: files });
-      } catch (error) {
-        console.error("Failed to reorder pinned files:", error);
-      }
-    },
-    [updateFolderPreferences]
   );
 
   // Handle creating a worktree from an issue
@@ -1410,7 +1397,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onViewPRs={handleViewPRs}
             getFolderPinnedFiles={handleGetFolderPinnedFiles}
             onOpenPinnedFile={handleOpenPinnedFile}
-            onReorderPinnedFiles={handleReorderPinnedFiles}
           />
       </div>
 

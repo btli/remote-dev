@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Files Section in Sidebar**: New collapsible "Files" section above MCP Servers showing default project files (.env, .env.local, CLAUDE.md, README.md) and pinned files
+  - Automatically detects which default files exist on disk for the active folder's project directory
+  - Pinned files moved from inline folder tree to this dedicated section, reducing clutter
+  - Active file highlighting matches the current editor session
+  - Pin icon indicator distinguishes user-pinned files from auto-discovered defaults
+  - Collapsed sidebar shows file count badge
+  - New `/api/files/exists` batch endpoint for lightweight file existence checks
 - **Pin Session**: Pin sessions to the top of their folder via right-click context menu
   - Pinned sessions render above subfolders within their folder
   - Pinned root sessions appear above all folders in sidebar
@@ -32,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Uses Claude Code hooks (PreToolUse/Stop) to report status back to terminal server
   - Hooks are automatically installed and merged with existing settings at session creation
   - Status broadcast via WebSocket to all connected clients for cross-tab visibility
+
+### Changed
+
+- Pinned files now scoped to the active folder in the Files section (previously visible inline across all folders simultaneously)
+
+### Removed
+
+- Drag-to-reorder for pinned files in the sidebar (use folder settings to reorder)
 
 ### Fixed
 
