@@ -323,7 +323,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // GitHub stats for repo badges on folders
   const { getRepositoryById } = useGitHubStats();
 
-  // Task state from context (for agent todo sync refresh)
   const { refreshTasks } = useTaskContext();
 
   // Split state from context
@@ -1034,8 +1033,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     async (claudeSessionId: string) => {
       const folderId = resumeModalFolderId ?? undefined;
 
-      // Build startup command: use folder's startup command with --resume flag
-      // This produces e.g. "clauded --resume" instead of "clauded && claude --resume"
+      // Build startup command using folder's base command (or default "claude") with --resume flag
       const prefs = folderId ? resolvePreferencesForFolder(folderId) : undefined;
       const baseCommand = prefs?.startupCommand || "claude";
       const sanitizedId = claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "");

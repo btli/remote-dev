@@ -581,32 +581,19 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
 // Agent Hooks Installation
 // ============================================================================
 
-/** Marker substring used to identify RDV activity hooks (for deduplication) */
+/** Marker substrings used to identify RDV hooks (for deduplication) */
 const ACTIVITY_HOOK_MARKER = "/internal/agent-status";
-
-/** Marker substring used to identify RDV todo sync hooks (for deduplication) */
 const TODO_HOOK_MARKER = "/internal/agent-todos";
 
-/** Check if a single hook entry is an RDV activity hook */
-function isActivityHook(entry: unknown): boolean {
+/** Check if a hook entry contains the given marker substring */
+function isRdvHook(entry: unknown, marker: string): boolean {
   return typeof entry === "object" && entry !== null &&
-    JSON.stringify(entry).includes(ACTIVITY_HOOK_MARKER);
+    JSON.stringify(entry).includes(marker);
 }
 
-/** Check if a single hook entry is an RDV todo sync hook */
-function isTodoHook(entry: unknown): boolean {
-  return typeof entry === "object" && entry !== null &&
-    JSON.stringify(entry).includes(TODO_HOOK_MARKER);
-}
-
-/** Filter out any existing RDV activity hooks from an array (preserves user hooks) */
-function withoutActivityHooks(arr: unknown[]): unknown[] {
-  return arr.filter((entry) => !isActivityHook(entry));
-}
-
-/** Filter out any existing RDV todo hooks from an array (preserves user hooks) */
-function withoutTodoHooks(arr: unknown[]): unknown[] {
-  return arr.filter((entry) => !isTodoHook(entry));
+/** Filter out RDV hooks matching the given marker (preserves user hooks) */
+function withoutRdvHooks(arr: unknown[], marker: string): unknown[] {
+  return arr.filter((entry) => !isRdvHook(entry, marker));
 }
 
 /**
@@ -701,10 +688,10 @@ export async function installAgentHooks(
   // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
-    PreToolUse: [...withoutActivityHooks(existingPreToolUse), preToolUseHook],
-    PostToolUse: [...withoutTodoHooks(existingPostToolUse), postToolUseTodoHook],
-    Notification: [...withoutActivityHooks(existingNotification), notificationHook],
-    Stop: [...withoutActivityHooks(existingStop), stopHook],
+    PreToolUse: [...withoutRdvHooks(existingPreToolUse, ACTIVITY_HOOK_MARKER), preToolUseHook],
+    PostToolUse: [...withoutRdvHooks(existingPostToolUse, TODO_HOOK_MARKER), postToolUseTodoHook],
+    Notification: [...withoutRdvHooks(existingNotification, ACTIVITY_HOOK_MARKER), notificationHook],
+    Stop: [...withoutRdvHooks(existingStop, ACTIVITY_HOOK_MARKER), stopHook],
   };
 
   const updatedSettings = {

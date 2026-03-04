@@ -163,9 +163,6 @@ export async function deleteTask(
   return result.length > 0;
 }
 
-// Re-export from pure module for backward compatibility
-export { mapTodoWriteStatus } from "./agent-todo-sync-pure";
-
 /** Get all agent tasks for a specific session */
 export async function getTasksBySession(
   sessionId: string,

@@ -11,10 +11,6 @@ import { eq } from "drizzle-orm";
 import * as TaskService from "./task-service";
 import { buildTodoSyncPlan, type TodoWriteItem } from "./agent-todo-sync-pure";
 
-// Re-export pure functions for convenience
-export { buildTodoSyncPlan, mapTodoWriteStatus } from "./agent-todo-sync-pure";
-export type { TodoSyncPlan, TodoWriteItem } from "./agent-todo-sync-pure";
-
 /**
  * Look up a session by ID (without requiring userId).
  * Used by the internal endpoint which only has sessionId from the hook.
