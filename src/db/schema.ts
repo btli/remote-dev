@@ -8,6 +8,7 @@ import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent
 import type { AgentProviderType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
+import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -1434,5 +1435,45 @@ export const profileAppearanceSettings = sqliteTable(
   (table) => [
     index("profile_appearance_profile_idx").on(table.profileId),
     index("profile_appearance_user_idx").on(table.userId),
+  ]
+);
+
+/**
+ * Project tasks for the task tracker sidebar.
+ * Tasks are folder-scoped and can be created manually or by agents.
+ */
+export const projectTasks = sqliteTable(
+  "project_task",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").references(() => sessionFolders.id, {
+      onDelete: "cascade",
+    }),
+    title: text("title").notNull(),
+    description: text("description"),
+    status: text("status").$type<TaskStatus>().notNull().default("open"),
+    priority: text("priority").$type<TaskPriority>().notNull().default("medium"),
+    source: text("source").$type<TaskSource>().notNull().default("manual"),
+    labels: text("labels").notNull().default("[]"), // JSON: TaskLabel[]
+    subtasks: text("subtasks").notNull().default("[]"), // JSON: TaskSubtask[]
+    dueDate: integer("due_date", { mode: "timestamp_ms" }),
+    githubIssueUrl: text("github_issue_url"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("project_task_user_idx").on(table.userId),
+    index("project_task_folder_idx").on(table.folderId),
+    index("project_task_user_folder_idx").on(table.userId, table.folderId),
   ]
 );

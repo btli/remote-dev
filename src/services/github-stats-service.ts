@@ -13,6 +13,7 @@ import {
   githubChangeNotifications,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
+import { safeJsonParse } from "@/lib/utils";
 import * as GitHubService from "./github-service";
 import * as GraphQLService from "./github-graphql-service";
 import * as CacheService from "./cache-service";
@@ -91,9 +92,9 @@ export async function getEnrichedRepositories(
     const [owner] = repo.fullName.split("/");
 
     // Parse JSON fields with safe fallback
-    const ciStatusDetails = safeParseJson(stat?.ciStatusDetails, null);
-    const recentCommits = safeParseJson<CommitInfo[]>(stat?.recentCommits, []);
-    const branchProtection = safeParseJson<BranchProtection | null>(stat?.branchProtectionDetails, null);
+    const ciStatusDetails = safeJsonParse(stat?.ciStatusDetails, null);
+    const recentCommits = safeJsonParse<CommitInfo[]>(stat?.recentCommits, []);
+    const branchProtection = safeJsonParse<BranchProtection | null>(stat?.branchProtectionDetails, null);
 
     const repositoryStats: RepositoryStats = {
       repositoryId: repo.id,
@@ -611,17 +612,7 @@ async function updatePullRequests(
   }
 }
 
-/**
- * Safely parse JSON string with fallback value
- */
-function safeParseJson<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
+// safeJsonParse imported from @/lib/utils
 
 /**
  * Update branch protection in database

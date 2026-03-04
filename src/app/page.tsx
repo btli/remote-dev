@@ -17,6 +17,7 @@ import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
 import { SessionMCPProvider } from "@/contexts/SessionMCPContext";
+import { TaskProvider } from "@/contexts/TaskContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
 import type { TerminalSession } from "@/types/session";
@@ -111,6 +112,7 @@ export default async function Home() {
                         <TrashProvider>
                           <PortProvider>
                             <ScheduleProvider>
+                              <TaskProvider>
                               <SessionMCPProvider>
                                 <div className="flex h-screen flex-col bg-background">
                                   {/* Header - hidden on mobile, shown in sidebar instead */}
@@ -126,6 +128,7 @@ export default async function Home() {
                                   <SessionManager isGitHubConnected={isGitHubConnected} />
                                 </div>
                               </SessionMCPProvider>
+                              </TaskProvider>
                             </ScheduleProvider>
                           </PortProvider>
                         </TrashProvider>
