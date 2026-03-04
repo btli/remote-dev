@@ -1,24 +1,8 @@
 /**
  * Tests for pure functions used in agent todo sync.
- *
- * Note: mapTodoWriteStatus is imported from task-service which depends on
- * @/db (node: modules). The happy-dom test environment can't resolve these.
- * We test the mapping logic inline here to avoid the import chain.
  */
 import { describe, it, expect } from "vitest";
-
-// Inline the pure mapping function to test without DB import chain
-function mapTodoWriteStatus(status: string): string {
-  switch (status) {
-    case "in_progress":
-      return "in_progress";
-    case "completed":
-      return "done";
-    case "pending":
-    default:
-      return "open";
-  }
-}
+import { mapTodoWriteStatus } from "../agent-todo-sync-pure";
 
 describe("mapTodoWriteStatus", () => {
   it("maps in_progress to in_progress", () => {

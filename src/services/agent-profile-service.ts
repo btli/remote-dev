@@ -597,17 +597,19 @@ function withoutRdvHooks(arr: unknown[], marker: string): unknown[] {
 }
 
 /**
- * Install activity-reporting hooks into the agent's settings file.
+ * Install hooks into the agent's settings file.
  * Currently supports Claude Code only (hooks in .claude/settings.json).
  *
- * Hooks call back to the terminal server's /internal/agent-status endpoint.
  * Supports both socket mode (RDV_TERMINAL_SOCKET) and port mode (RDV_TERMINAL_PORT).
  * These env vars plus RDV_SESSION_ID are set as tmux env vars per session.
  *
+ * Activity-reporting hooks (→ /internal/agent-status):
  * - PreToolUse → status "running" (agent is executing a tool)
  * - Notification (permission/elicitation) → status "waiting" (needs user input)
  * - Stop → status "idle" (agent finished its turn)
  *
+ * TodoWrite sync hook (→ /internal/agent-todos):
+ * - PostToolUse (matcher: "TodoWrite") → syncs task list to project_task table
  */
 export async function installAgentHooks(
   configDir: string,
@@ -666,9 +668,9 @@ export async function installAgentHooks(
     'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
     '[ -z "$RDV_SESSION_ID" ] && exit 0; ' +
     'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
-    'echo "$INPUT" | curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST -H "Content-Type: application/json" -d @- "http://localhost/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
+    'printf \'%s\' "$INPUT" | curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST -H "Content-Type: application/json" -d @- "http://localhost/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
     'else ' +
-    'echo "$INPUT" | curl -s -X POST -H "Content-Type: application/json" -d @- "http://localhost:${RDV_TERMINAL_PORT}/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
+    'printf \'%s\' "$INPUT" | curl -s -X POST -H "Content-Type: application/json" -d @- "http://localhost:${RDV_TERMINAL_PORT}/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
     'fi || true';
 
   const postToolUseTodoHook = {
