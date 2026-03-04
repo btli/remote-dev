@@ -259,12 +259,43 @@ export async function createSession(
       throw error;
     }
 
+    // Resolve GitHub account environment for the session's folder binding
+    let ghAccountEnv: Record<string, string> | null = null;
+    try {
+      const { githubAccountRepository } = await import("@/infrastructure/container");
+      const { GitHubAccountEnvironment } = await import("@/domain/value-objects/GitHubAccountEnvironment");
+
+      // Find the GitHub account bound to this folder (or fall back to default)
+      const account = input.folderId
+        ? await githubAccountRepository.findByFolder(input.folderId, userId)
+        : null;
+      const effectiveAccount = account ?? await githubAccountRepository.findDefault(userId);
+
+      if (effectiveAccount) {
+        const token = await githubAccountRepository.getAccessToken(
+          effectiveAccount.providerAccountId,
+          userId
+        );
+        if (token) {
+          const ghEnv = GitHubAccountEnvironment.create(
+            token,
+            effectiveAccount.configDir,
+            effectiveAccount.login
+          );
+          ghAccountEnv = ghEnv.toEnvironment().toRecord();
+        }
+      }
+    } catch (error) {
+      console.error(`[session:${sessionId}] Failed to resolve GitHub account env:`, error);
+    }
+
     // Persistent session-level environment variables
     // These survive shell exits and are inherited by all new shells in the session
-    // Merge: profileEnv < folderEnv < rdvEnv (later values take precedence)
+    // Merge: profileEnv < folderEnv < ghAccountEnv < rdvEnv (later values take precedence)
     const sessionEnv: Record<string, string> = {
       ...(profileEnv ?? {}),
       ...(folderEnv ?? {}),
+      ...(ghAccountEnv ?? {}),
       ...rdvEnv,
     };
 

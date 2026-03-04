@@ -77,3 +77,30 @@ export class BusinessRuleViolationError extends DomainError {
     );
   }
 }
+
+/**
+ * Thrown when a GitHub account is already linked to a different user.
+ */
+export class GitHubAccountConflictError extends DomainError {
+  constructor(
+    public readonly login: string,
+    public readonly existingUserId: string
+  ) {
+    super(
+      `GitHub account @${login} is already linked to another user`,
+      "GITHUB_ACCOUNT_CONFLICT"
+    );
+  }
+}
+
+/**
+ * Thrown when no default GitHub account is configured but one is required.
+ */
+export class NoDefaultGitHubAccountError extends DomainError {
+  constructor(public readonly userId: string) {
+    super(
+      "No default GitHub account configured",
+      "NO_DEFAULT_GITHUB_ACCOUNT"
+    );
+  }
+}
