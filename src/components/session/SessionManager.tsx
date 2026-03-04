@@ -13,6 +13,7 @@ import { TrashModal } from "@/components/trash/TrashModal";
 import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
+import { TaskSidebar } from "@/components/tasks/TaskSidebar";
 import { IssuesModal } from "@/components/github/IssuesModal";
 import { PRsModal } from "@/components/github/PRsModal";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
@@ -1300,6 +1301,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     return map;
   }, [activeSessions]);
 
+  /** Resolve GitHub repo ID for the task sidebar */
+  const taskSidebarRepoId = useMemo(() => {
+    if (!activeProject.folderId) return null;
+    return resolvePreferencesForFolder(activeProject.folderId)?.githubRepoId ?? null;
+  }, [activeProject.folderId, resolvePreferencesForFolder]);
+
   // On mobile, sidebar is collapsed when drawer is not open
   const effectiveCollapsed = isMobile ? !isMobileSidebarOpen : sidebarCollapsed;
 
@@ -1602,6 +1609,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
         )}
       </div>
+
+      {/* Right sidebar - Task Tracker */}
+      <TaskSidebar
+        githubRepoId={taskSidebarRepoId}
+      />
 
       {/* New Session Wizard */}
       <NewSessionWizard
