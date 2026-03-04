@@ -358,6 +358,11 @@ async function execFileWithToken(
         ...process.env,
         GIT_ASKPASS: scriptPath,
         GIT_TERMINAL_PROMPT: "0",
+        // Override any credential helpers (e.g. gh auth) so GIT_ASKPASS is used
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "credential.helper",
+        GIT_CONFIG_VALUE_0: "",
       },
     });
     return result;

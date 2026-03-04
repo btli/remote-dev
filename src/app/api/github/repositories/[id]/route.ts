@@ -24,7 +24,23 @@ export const GET = withAuth(async (_request, { userId, params }) => {
  * - targetPath: Custom directory to clone into (default: ~/.remote-dev/repos/{owner}/{repo})
  */
 export const POST = withAuth(async (request, { userId, params }) => {
-  const accessToken = await GitHubService.getAccessToken(userId);
+  // Parse optional body for custom target path and account selection
+  let targetPath: string | undefined;
+  let providerAccountId: string | undefined;
+  try {
+    const body = await request.json();
+    if (body.targetPath && typeof body.targetPath === "string") {
+      targetPath = body.targetPath;
+    }
+    if (body.providerAccountId && typeof body.providerAccountId === "string") {
+      providerAccountId = body.providerAccountId;
+    }
+  } catch {
+    // No body or invalid JSON - use defaults
+  }
+
+  // Use folder-bound account if specified, otherwise fall back to default
+  const accessToken = await GitHubService.getAccessToken(userId, providerAccountId);
   if (!accessToken) {
     return errorResponse("GitHub not connected", 400);
   }
@@ -33,17 +49,6 @@ export const POST = withAuth(async (request, { userId, params }) => {
 
   if (!repository) {
     return errorResponse("Repository not found", 404);
-  }
-
-  // Parse optional body for custom target path
-  let targetPath: string | undefined;
-  try {
-    const body = await request.json();
-    if (body.targetPath && typeof body.targetPath === "string") {
-      targetPath = body.targetPath;
-    }
-  } catch {
-    // No body or invalid JSON - use default path
   }
 
   // Clone the repository

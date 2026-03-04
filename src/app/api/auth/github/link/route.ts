@@ -20,6 +20,8 @@ export const GET = withAuth(async (_request, { userId }) => {
   githubAuthUrl.searchParams.set("redirect_uri", redirectUri);
   githubAuthUrl.searchParams.set("scope", scope);
   githubAuthUrl.searchParams.set("state", state);
+  // Force GitHub to show the account picker instead of silently re-authing
+  githubAuthUrl.searchParams.set("prompt", "select_account");
 
   return NextResponse.redirect(githubAuthUrl.toString());
 });
