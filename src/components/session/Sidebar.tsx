@@ -7,7 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
-  Pin, PinOff,
+  Pin, PinOff, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -103,6 +103,7 @@ interface SidebarProps {
   onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onFolderNewSession: (folderId: string) => void;
   onFolderNewAgent: (folderId: string) => void;
+  onFolderResumeClaudeSession: (folderId: string) => void;
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
   onFolderMove: (folderId: string, newParentId: string | null) => void;
@@ -181,6 +182,7 @@ export function Sidebar({
   onFolderSettings,
   onFolderNewSession,
   onFolderNewAgent,
+  onFolderResumeClaudeSession,
   onFolderAdvancedSession,
   onFolderNewWorktree,
   onFolderMove,
@@ -1932,6 +1934,10 @@ export function Sidebar({
                               <ContextMenuItem onClick={() => onFolderNewAgent(node.id)}>
                                 <Sparkles className="w-3.5 h-3.5 mr-2" />
                                 New Agent
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => onFolderResumeClaudeSession(node.id)}>
+                                <History className="w-3.5 h-3.5 mr-2" />
+                                Resume Claude Session...
                               </ContextMenuItem>
                               <ContextMenuItem onClick={() => onFolderAdvancedSession(node.id)}>
                                 <Settings className="w-3.5 h-3.5 mr-2" />

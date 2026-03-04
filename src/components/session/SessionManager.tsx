@@ -10,6 +10,7 @@ import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { RecordingsModal } from "@/components/session/RecordingsModal";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
+import { ResumeSessionModal } from "./ResumeSessionModal";
 import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
@@ -241,6 +242,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Trash state from context
   const { count: trashCount, trashSession, getTrashForFolder, deleteItem: deleteTrashItem } = useTrashContext();
   const [isTrashOpen, setIsTrashOpen] = useState(false);
+
+  // Resume Claude Session modal state
+  const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
+  const [resumeModalFolderId, setResumeModalFolderId] = useState<string | null>(null);
+  const [resumeModalProjectPath, setResumeModalProjectPath] = useState("");
+  const [resumeModalProfileId, setResumeModalProfileId] = useState<string | undefined>(undefined);
 
   // Schedule modal state
   const [isCreateScheduleOpen, setIsCreateScheduleOpen] = useState(false);
@@ -1001,6 +1008,66 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     ]
   );
 
+  // Handler to open the Resume Claude Session modal for a folder
+  const handleFolderResumeClaudeSession = useCallback(
+    (folderId: string) => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      const profileId = sessions.find(
+        (s: { folderId: string | null; profileId: string | null }) =>
+          s.folderId === folderId && s.profileId
+      )?.profileId ?? undefined;
+
+      setResumeModalFolderId(folderId);
+      setResumeModalProjectPath(prefs.defaultWorkingDirectory || "");
+      setResumeModalProfileId(profileId);
+      setIsResumeModalOpen(true);
+    },
+    [resolvePreferencesForFolder, sessions]
+  );
+
+  const handleResumeModalClose = useCallback(() => {
+    setIsResumeModalOpen(false);
+    setResumeModalFolderId(null);
+  }, []);
+
+  // Handler to resume a specific Claude Code session
+  const handleResumeClaudeSession = useCallback(
+    async (claudeSessionId: string) => {
+      const folderId = resumeModalFolderId ?? undefined;
+      const prefs = folderId
+        ? resolvePreferencesForFolder(folderId)
+        : currentPreferences;
+
+      try {
+        const newSession = await createSession({
+          name: `Resume ${claudeSessionId.slice(0, 8)}`,
+          projectPath: prefs.defaultWorkingDirectory || undefined,
+          folderId,
+          terminalType: "agent",
+          agentProvider: "claude",
+          autoLaunchAgent: true,
+          agentFlags: ["--resume", claudeSessionId],
+        });
+        if (newSession && folderId) {
+          registerSessionFolder(newSession.id, folderId);
+          setActiveFolder(folderId);
+        }
+      } catch (error) {
+        logSessionError("resume claude session", error);
+        throw error;
+      }
+    },
+    [
+      resumeModalFolderId,
+      currentPreferences,
+      resolvePreferencesForFolder,
+      createSession,
+      registerSessionFolder,
+      setActiveFolder,
+      logSessionError,
+    ]
+  );
+
   const handleFolderClick = useCallback(
     (folderId: string) => {
       setActiveFolder(folderId);
@@ -1374,6 +1441,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
             onFolderNewAgent={handleFolderNewAgent}
+            onFolderResumeClaudeSession={handleFolderResumeClaudeSession}
             onFolderAdvancedSession={handleFolderAdvancedSession}
             onFolderNewWorktree={handleFolderNewWorktree}
             onFolderMove={handleMoveFolder}
@@ -1698,6 +1766,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
       {/* Trash Modal */}
       <TrashModal open={isTrashOpen} onClose={() => setIsTrashOpen(false)} />
+
+      {/* Resume Claude Session Modal */}
+      <ResumeSessionModal
+        open={isResumeModalOpen}
+        onClose={handleResumeModalClose}
+        projectPath={resumeModalProjectPath}
+        profileId={resumeModalProfileId}
+        onResume={handleResumeClaudeSession}
+      />
 
       {/* Create Schedule Modal */}
       <CreateScheduleModal
