@@ -85,7 +85,7 @@ class TerminalTypeRegistryImpl {
       registeredAt: new Date(),
     });
 
-    console.log(
+    console.error(
       `[PluginRegistry] Registered terminal type: ${plugin.type} (${plugin.displayName})`
     );
   }
@@ -116,7 +116,7 @@ class TerminalTypeRegistryImpl {
     this.plugins.delete(type);
     this.metadata.delete(type);
 
-    console.log(`[PluginRegistry] Unregistered terminal type: ${type}`);
+    console.error(`[PluginRegistry] Unregistered terminal type: ${type}`);
   }
 
   /**
