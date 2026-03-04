@@ -162,3 +162,35 @@ export async function deleteTask(
 
   return result.length > 0;
 }
+
+/** Map Claude Code TodoWrite status to remote-dev TaskStatus */
+export function mapTodoWriteStatus(status: string): TaskStatus {
+  switch (status) {
+    case "in_progress":
+      return "in_progress";
+    case "completed":
+      return "done";
+    case "pending":
+    default:
+      return "open";
+  }
+}
+
+/** Get all agent tasks for a specific session */
+export async function getTasksBySession(
+  sessionId: string,
+  userId: string
+): Promise<ProjectTask[]> {
+  const rows = await db
+    .select()
+    .from(projectTasks)
+    .where(
+      and(
+        eq(projectTasks.sessionId, sessionId),
+        eq(projectTasks.userId, userId),
+        eq(projectTasks.source, "agent")
+      )
+    )
+    .orderBy(asc(projectTasks.sortOrder), desc(projectTasks.createdAt));
+  return rows.map(parseTaskRow);
+}
