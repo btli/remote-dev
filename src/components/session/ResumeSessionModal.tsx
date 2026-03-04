@@ -101,7 +101,13 @@ export function ResumeSessionModal({
           <div className="text-sm text-destructive px-1 py-2">{error}</div>
         )}
 
-        {!loading && !error && sessions.length === 0 && (
+        {!loading && !error && !projectPath && (
+          <div className="text-sm text-muted-foreground text-center py-10">
+            No working directory configured for this folder. Set a default working directory in folder settings to discover sessions.
+          </div>
+        )}
+
+        {!loading && !error && projectPath && sessions.length === 0 && (
           <div className="text-sm text-muted-foreground text-center py-10">
             No resumable sessions found for this project.
           </div>

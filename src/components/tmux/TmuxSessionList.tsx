@@ -4,36 +4,12 @@ import { Terminal, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { TmuxSessionResponse } from "@/types/tmux";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 
 interface TmuxSessionListProps {
   sessions: TmuxSessionResponse[];
   onTerminate: (sessionName: string) => void;
   terminating: string | null;
-}
-
-/**
- * Formats a relative time string from a date.
- */
-function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffSeconds = Math.floor(diffMs / 1000);
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  const diffHours = Math.floor(diffMinutes / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 0) {
-    return `${diffDays}d ago`;
-  }
-  if (diffHours > 0) {
-    return `${diffHours}h ago`;
-  }
-  if (diffMinutes > 0) {
-    return `${diffMinutes}m ago`;
-  }
-  return "Just now";
 }
 
 export function TmuxSessionList({
