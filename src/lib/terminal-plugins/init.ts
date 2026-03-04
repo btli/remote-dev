@@ -20,11 +20,11 @@ let initialized = false;
  */
 export function initializeBuiltInPlugins(): void {
   if (initialized) {
-    console.log("[TerminalPlugins] Already initialized, skipping");
+    console.error("[TerminalPlugins] Already initialized, skipping");
     return;
   }
 
-  console.log("[TerminalPlugins] Initializing built-in plugins...");
+  console.error("[TerminalPlugins] Initializing built-in plugins...");
 
   // Register built-in plugins
   // Order matters for UI display - higher priority first
@@ -38,7 +38,7 @@ export function initializeBuiltInPlugins(): void {
   initialized = true;
 
   const stats = TerminalTypeRegistry.getStats();
-  console.log(
+  console.error(
     `[TerminalPlugins] Initialized ${stats.totalPlugins} plugins ` +
       `(${stats.builtInPlugins} built-in, default: ${stats.defaultType})`
   );
