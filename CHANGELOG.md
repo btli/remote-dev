@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Files Section in Sidebar**: New collapsible "Files" section above MCP Servers showing default project files (.env, .env.local, CLAUDE.md, README.md) and pinned files
+  - Automatically detects which default files exist on disk for the active folder's project directory
+  - Pinned files moved from inline folder tree to this dedicated section, reducing clutter
+  - Active file highlighting matches the current editor session
+  - Pin icon indicator distinguishes user-pinned files from auto-discovered defaults
+  - Collapsed sidebar shows file count badge
+  - New `/api/files/exists` batch endpoint for lightweight file existence checks
 - **Agent Activity Status Indicators**: Real-time agent activity shown in sidebar via colored Sparkles icons
   - Green breathing animation when agent is running (tool use in progress)
   - Yellow breathing animation when agent is waiting for user input
