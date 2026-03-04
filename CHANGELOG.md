@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Resume Claude Session**: Discover and resume previous Claude Code conversations from the folder context menu
+  - Scans `~/.claude/projects/<encoded-path>/` (or profile-isolated equivalent) for `.jsonl` session files
+  - Modal shows recent sessions sorted by last activity with branch, timestamp, and first message preview
+  - Resumes via `claude --resume <session-id>`, appended to the folder's configured startup command
+  - New `GET /api/agent/claude-sessions` endpoint for session discovery
+  - Configurable session limit (default 20, max 50)
 - **Files Section in Sidebar**: New collapsible "Files" section above MCP Servers showing default project files (.env, .env.local, CLAUDE.md, README.md) and pinned files
   - Automatically detects which default files exist on disk for the active folder's project directory
   - Pinned files moved from inline folder tree to this dedicated section, reducing clutter
