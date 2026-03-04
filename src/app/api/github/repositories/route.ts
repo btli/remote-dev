@@ -12,6 +12,7 @@ import * as GitHubService from "@/services/github-service";
 export const GET = withAuth(async (request, { userId }) => {
   const { searchParams } = new URL(request.url);
   const cached = searchParams.get("cached") === "true";
+  const providerAccountId = searchParams.get("providerAccountId");
 
   try {
     // If cached=true, return only locally cached repos from database
@@ -37,8 +38,8 @@ export const GET = withAuth(async (request, { userId }) => {
       });
     }
 
-    // Otherwise, fetch from GitHub API
-    const accessToken = await GitHubService.getAccessToken(userId);
+    // Otherwise, fetch from GitHub API using specified or default account
+    const accessToken = await GitHubService.getAccessToken(userId, providerAccountId);
     if (!accessToken) {
       return errorResponse("GitHub not connected", 400, "GITHUB_NOT_CONNECTED");
     }

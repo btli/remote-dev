@@ -19,7 +19,6 @@ import {
   HardDrive,
   Clock,
   AlertCircle,
-  ExternalLink,
   Search,
 } from "lucide-react";
 import {
@@ -59,7 +58,6 @@ export function GitHubMaintenanceModal({
 }: GitHubMaintenanceModalProps) {
   const {
     isConnected,
-    accountInfo,
     repositories,
     stats,
     loading,
@@ -321,48 +319,6 @@ export function GitHubMaintenanceModal({
             {/* Settings Tab */}
             <TabsContent value="settings" className="flex-1 mt-4">
               <div className="space-y-6">
-                {/* Account info */}
-                {accountInfo && (
-                  <div className="p-4 rounded-lg border border-border bg-card/30">
-                    <h3 className="text-sm font-medium text-foreground mb-3">
-                      Connected Account
-                    </h3>
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={accountInfo.avatarUrl}
-                        alt={accountInfo.login}
-                        className="w-12 h-12 rounded-full"
-                      />
-                      <div>
-                        <p className="font-medium text-foreground">
-                          {accountInfo.name || accountInfo.login}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          @{accountInfo.login}
-                        </p>
-                        {accountInfo.email && (
-                          <p className="text-xs text-muted-foreground">
-                            {accountInfo.email}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="ml-auto"
-                        onClick={() =>
-                          window.open(
-                            `https://github.com/${accountInfo.login}`,
-                            "_blank"
-                          )
-                        }
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
                 {/* Cache stats */}
                 <div className="p-4 rounded-lg border border-border bg-card/30">
                   <h3 className="text-sm font-medium text-foreground mb-3">
@@ -407,10 +363,10 @@ export function GitHubMaintenanceModal({
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm font-medium text-foreground">
-                          Disconnect GitHub
+                          Disconnect All Accounts
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Remove GitHub connection from your account
+                          Remove all GitHub accounts and optionally clear cached repositories
                         </p>
                       </div>
                       <Button
@@ -422,7 +378,7 @@ export function GitHubMaintenanceModal({
                         }}
                       >
                         <LogOut className="w-4 h-4 mr-2" />
-                        Disconnect
+                        Disconnect All
                       </Button>
                     </div>
                   </div>
@@ -440,10 +396,10 @@ export function GitHubMaintenanceModal({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect GitHub?</AlertDialogTitle>
+            <AlertDialogTitle>Disconnect All GitHub Accounts?</AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">
               <p>
-                This will remove your GitHub connection. You&apos;ll need to
+                This will remove all linked GitHub accounts. You&apos;ll need to
                 reconnect to access your repositories.
               </p>
               <label className="flex items-center gap-2 pt-2">

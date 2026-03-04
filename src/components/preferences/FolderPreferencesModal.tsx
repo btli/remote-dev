@@ -35,6 +35,7 @@ import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { PinnedFilesTab } from "./PinnedFilesTab";
 import { FolderAccountBinder } from "@/components/github/FolderAccountBinder";
+import { useGitHubAccounts } from "@/contexts/GitHubAccountContext";
 
 // Helper to get electron API for directory selection (only in Electron)
 function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
@@ -138,6 +139,7 @@ export function FolderPreferencesModal({
     linkFolderToProfile,
     unlinkFolderFromProfile,
   } = useProfileContext();
+  const { folderBindings, defaultAccount } = useGitHubAccounts();
 
   // Get parent folder to compute inherited preferences
   const folder = folders.get(folderId);
@@ -248,11 +250,18 @@ export function FolderPreferencesModal({
   );
 
   // Fetch GitHub repos when modal opens
+  // Uses folder-bound account to fetch from the correct GitHub account's API
   const fetchRepos = useCallback(async () => {
     setLoadingRepos(true);
     setRepoError(null);
     try {
-      const response = await fetch("/api/github/repositories?cached=true");
+      // Use folder-bound account if available, otherwise default
+      const accountId = folderBindings[folderId] ?? defaultAccount?.providerAccountId;
+      const params = new URLSearchParams();
+      if (accountId) params.set("providerAccountId", accountId);
+
+      // Fetch from API (not cached) to get repos for the specific account
+      const response = await fetch(`/api/github/repositories?${params.toString()}`);
       if (response.ok) {
         const data = await response.json();
         setRepos(data.repositories || []);
@@ -265,7 +274,7 @@ export function FolderPreferencesModal({
     } finally {
       setLoadingRepos(false);
     }
-  }, []);
+  }, [folderId, folderBindings, defaultAccount?.providerAccountId]);
 
   // Reset local settings and determine repo mode when modal opens
   useEffect(() => {
@@ -287,6 +296,14 @@ export function FolderPreferencesModal({
       }
     }
   }, [open, initialTab, folderPrefs?.githubRepoId, folderPrefs?.localRepoPath, fetchRepos, fetchResolvedEnvironment]);
+
+  // Re-fetch repos when folder's GitHub account binding changes while modal is open
+  const boundAccountId = folderBindings[folderId];
+  useEffect(() => {
+    if (open) {
+      fetchRepos();
+    }
+  }, [boundAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     if (Object.keys(localSettings).length === 0) {
@@ -441,10 +458,13 @@ export function FolderPreferencesModal({
       const [, repoName] = repo.fullName.split("/");
       const targetPath = workingDir ? `${workingDir}/${repoName}` : undefined;
 
+      // Use folder-bound GitHub account, falling back to default
+      const providerAccountId = folderBindings[folderId] ?? defaultAccount?.providerAccountId;
+
       const response = await fetch(`/api/github/repositories/${repo.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetPath }),
+        body: JSON.stringify({ targetPath, providerAccountId }),
       });
 
       if (!response.ok) {
