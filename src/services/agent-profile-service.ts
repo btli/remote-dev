@@ -83,8 +83,6 @@ function validateSshKeyPath(keyPath: string): string {
   return resolved;
 }
 
-// safeJsonParse imported from @/lib/utils
-
 /**
  * Get all profiles for a user
  */

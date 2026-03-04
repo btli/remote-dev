@@ -141,7 +141,7 @@ const taskUpdate = createTool({
     const task = await TaskService.updateTask(taskId, context.userId, updates);
 
     if (!task) {
-      return successResult({ success: false, error: "Task not found" });
+      return successResult({ success: false, error: "Task not found", code: "TASK_NOT_FOUND" });
     }
 
     return successResult({
@@ -173,7 +173,7 @@ const taskComplete = createTool({
     );
 
     if (!task) {
-      return successResult({ success: false, error: "Task not found" });
+      return successResult({ success: false, error: "Task not found", code: "TASK_NOT_FOUND" });
     }
 
     return successResult({
@@ -197,7 +197,7 @@ const taskDelete = createTool({
 
     return successResult({
       success: deleted,
-      ...(deleted ? {} : { error: "Task not found" }),
+      ...(deleted ? {} : { error: "Task not found", code: "TASK_NOT_FOUND" }),
     });
   },
 });
