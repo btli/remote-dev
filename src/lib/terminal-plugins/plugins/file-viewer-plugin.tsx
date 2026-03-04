@@ -1,14 +1,14 @@
 /**
- * FileViewerPlugin - Markdown file editor terminal type
+ * FileViewerPlugin - File editor/viewer terminal type
  *
- * This plugin provides a split-pane editor for viewing/editing markdown files
- * like CLAUDE.md, AGENTS.md, etc. No tmux session is created - it's pure React.
+ * This plugin provides a CodeMirror-based editor for viewing/editing files
+ * like CLAUDE.md, AGENTS.md, .env, etc. No tmux session is created - it's pure React.
  *
  * Features:
- * - Split view: raw text (Monaco/textarea) | markdown preview
- * - Auto-detect agent config files (CLAUDE.md, AGENTS.md, etc.)
+ * - Rendered markdown view (default for .md/.mdx) with toggle to editor
+ * - CodeMirror editor with syntax highlighting for all file types
  * - Auto-save on blur with manual save button
- * - Syntax highlighting for markdown
+ * - Syntax highlighting for code blocks in rendered markdown (rehype-highlight)
  */
 
 import { FileText } from "lucide-react";

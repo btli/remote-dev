@@ -5,7 +5,6 @@ import { Save, AlertCircle, Check, Loader2, Eye, Pencil } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/tokyo-night-dark.css";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
@@ -78,15 +77,20 @@ function getLanguageExtension(filePath: string): Extension[] {
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeHighlight];
 
+const ALLOWED_PROTOCOLS = /^(https?:|mailto:|#)/i;
+
 function isSafeHref(href: string | undefined): boolean {
-  return !!href && !href.trimStart().toLowerCase().startsWith("javascript:");
+  if (!href) return false;
+  const trimmed = href.trimStart();
+  // Allow relative links (no protocol) and explicitly safe protocols
+  return !trimmed.includes(":") || ALLOWED_PROTOCOLS.test(trimmed);
 }
 
 const MARKDOWN_COMPONENTS = {
   a: ({ href, children, ...props }: ComponentPropsWithoutRef<"a">) => {
     if (isSafeHref(href)) {
       return (
-        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+        <a {...props} href={href} target="_blank" rel="noopener noreferrer">
           {children}
         </a>
       );
@@ -336,7 +340,12 @@ export function CodeMirrorEditor({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => setViewMode((m) => m === "rendered" ? "editor" : "rendered")}
+              onClick={() => {
+                setViewMode((m) => {
+                  if (m === "editor") saveNow();
+                  return m === "rendered" ? "editor" : "rendered";
+                });
+              }}
               title={viewMode === "rendered" ? "Edit source" : "Preview rendered"}
             >
               {viewMode === "rendered" ? (
