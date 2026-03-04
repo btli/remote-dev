@@ -748,7 +748,7 @@ export async function registerMCPServer(
   const bunPath = await getBunPath();
   const mcpEntry: MCPEntry = {
     command: bunPath,
-    args: ["--cwd", RDV_PROJECT_ROOT, "run", "mcp"],
+    args: ["run", "--cwd", RDV_PROJECT_ROOT, "mcp"],
     env: { MCP_USER_ID: userId },
   };
 
