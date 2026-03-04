@@ -56,6 +56,8 @@ interface TerminalProps {
   /** Called when agent activity status changes (from Claude Code hooks).
    *  Includes sessionId so broadcast messages correctly target the right session. */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
+  /** Called when agent TodoWrite tasks are synced (from PostToolUse hooks) */
+  onAgentTodosUpdated?: (sessionId: string) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
 }
@@ -81,6 +83,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onAgentExited,
   onAgentRestarted,
   onAgentActivityStatus,
+  onAgentTodosUpdated,
   onOutput,
   onDimensionsChange,
 }, ref) {
@@ -132,6 +135,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onAgentExitedRef = useRef(onAgentExited);
   const onAgentRestartedRef = useRef(onAgentRestarted);
   const onAgentActivityStatusRef = useRef(onAgentActivityStatus);
+  const onAgentTodosUpdatedRef = useRef(onAgentTodosUpdated);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
@@ -163,6 +167,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onAgentExitedRef.current = onAgentExited;
     onAgentRestartedRef.current = onAgentRestarted;
     onAgentActivityStatusRef.current = onAgentActivityStatus;
+    onAgentTodosUpdatedRef.current = onAgentTodosUpdated;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
@@ -176,7 +181,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -564,6 +569,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               case "agent_activity_status":
                 // Agent activity status from Claude Code hooks (broadcast — may be for any session)
                 onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
+                break;
+              case "agent_todos_updated":
+                // Agent TodoWrite tasks synced — refresh task list
+                onAgentTodosUpdatedRef.current?.(msg.sessionId);
                 break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);

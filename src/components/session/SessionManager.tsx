@@ -29,6 +29,7 @@ import { useSplitContext } from "@/contexts/SplitContext";
 import { useTrashContext } from "@/contexts/TrashContext";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
 import { useSecretsContext } from "@/contexts/SecretsContext";
+import { useTaskContext } from "@/contexts/TaskContext";
 import {
   getEnvironmentWithSecretsSync,
   prefetchSecretsForFolder,
@@ -321,6 +322,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // GitHub stats for repo badges on folders
   const { getRepositoryById } = useGitHubStats();
+
+  const { refreshTasks } = useTaskContext();
 
   // Split state from context
   const {
@@ -1030,6 +1033,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     async (claudeSessionId: string) => {
       const folderId = resumeModalFolderId ?? undefined;
 
+      // Build startup command using folder's base command (or default "claude") with --resume flag
+      const prefs = folderId ? resolvePreferencesForFolder(folderId) : undefined;
+      const baseCommand = prefs?.startupCommand || "claude";
+      const sanitizedId = claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "");
+      const startupCommand = `${baseCommand} --resume ${sanitizedId}`;
+
       try {
         const newSession = await createSession({
           name: `Resume ${claudeSessionId.slice(0, 8)}`,
@@ -1037,8 +1046,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           folderId,
           terminalType: "agent",
           agentProvider: "claude",
-          autoLaunchAgent: true,
-          agentFlags: ["--resume", claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "")],
+          autoLaunchAgent: false,
+          startupCommand,
           profileId: resumeModalProfileId || undefined,
         });
         if (newSession && folderId) {
@@ -1054,6 +1063,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       resumeModalFolderId,
       resumeModalProjectPath,
       resumeModalProfileId,
+      resolvePreferencesForFolder,
       createSession,
       registerSessionFolder,
       setActiveFolder,
@@ -1668,6 +1678,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onAgentActivityStatus={(sid, status) =>
                             setAgentActivityStatus(sid, status as AgentActivityStatus)
                           }
+                          onAgentTodosUpdated={() => refreshTasks()}
                         />
                       </div>
                     );

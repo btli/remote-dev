@@ -2080,7 +2080,7 @@ export function Sidebar({
                               </ContextMenuItem>
                               <ContextMenuItem onClick={() => onFolderResumeClaudeSession(node.id)}>
                                 <History className="w-3.5 h-3.5 mr-2" />
-                                Resume Claude Session...
+                                Resume
                               </ContextMenuItem>
                               <ContextMenuItem onClick={() => onFolderAdvancedSession(node.id)}>
                                 <Settings className="w-3.5 h-3.5 mr-2" />

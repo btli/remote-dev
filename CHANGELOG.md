@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent TodoWrite Sync**: Mirror Claude Code's TodoWrite task list into the Task Sidebar in real-time
+  - PostToolUse hook on `TodoWrite` reads task data and POSTs to `/internal/agent-todos` endpoint
+  - Terminal server diffs incoming tasks against existing agent tasks, syncs to `project_task` table
+  - WebSocket broadcast notifies all clients of task changes for live sidebar updates
+  - Auto-archives completed agent tasks when session closes
+  - New `sessionId` column on `project_task` links agent tasks to originating sessions
+
 - **Rendered Markdown View**: Markdown files (.md/.mdx) now open in a rendered view by default with GitHub-style prose styling
   - Pencil/eye toggle in the toolbar switches between rendered and CodeMirror editor modes
   - Syntax highlighting for fenced code blocks using rehype-highlight

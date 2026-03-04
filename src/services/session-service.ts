@@ -24,6 +24,7 @@ import { TerminalTypeRegistry } from "@/lib/terminal-plugins/registry";
 import { initializeBuiltInPlugins } from "@/lib/terminal-plugins/init";
 import { githubAccountRepository } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
+import { archiveSessionTodos } from "./agent-todo-sync";
 
 // Initialize plugins on module load
 initializeBuiltInPlugins();
@@ -823,6 +824,13 @@ export async function closeSession(
         eq(terminalSessions.userId, userId)
       )
     );
+
+  // Auto-archive completed agent tasks for this session
+  try {
+    await archiveSessionTodos(sessionId, userId);
+  } catch (error) {
+    console.error(`[Session:${sessionId}] Failed to archive agent tasks:`, error);
+  }
 }
 
 /**
