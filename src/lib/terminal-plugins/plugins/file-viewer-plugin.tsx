@@ -133,7 +133,7 @@ export function createFileViewerPlugin(
       props: TerminalRenderProps
     ): ReactNode {
       // Return a marker that the UI layer will interpret
-      // The actual MarkdownEditor component is rendered by TerminalTypeRenderer
+      // The actual CodeMirrorEditor component is rendered by TerminalTypeRenderer
       return {
         type: "file-viewer",
         session,

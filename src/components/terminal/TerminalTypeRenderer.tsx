@@ -6,7 +6,7 @@
  * This component delegates to the appropriate UI based on the session's terminalType:
  * - shell: Standard Terminal component
  * - agent: Terminal with agent exit screen overlay
- * - file: MarkdownEditor for file viewing/editing
+ * - file: CodeMirrorEditor for file viewing/editing
  */
 
 import { useState, useRef, useCallback } from "react";

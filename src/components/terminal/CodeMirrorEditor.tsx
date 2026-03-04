@@ -1,17 +1,11 @@
 "use client";
 
-/**
- * CodeMirrorEditor - Syntax-highlighted code editor for file sessions
- *
- * Uses CodeMirror 6 via @uiw/react-codemirror for:
- * - Syntax highlighting based on file extension
- * - Dark theme matching the application's Tokyo Night aesthetic
- * - Auto-save on blur, manual save with Cmd+S
- * - Dirty state tracking with unsaved indicator
- */
-
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Save, AlertCircle, Check, Loader2 } from "lucide-react";
+import { Save, AlertCircle, Check, Loader2, Eye, Pencil } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/tokyo-night-dark.css";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
@@ -24,8 +18,11 @@ import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
 import { EditorView } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+type ViewMode = "rendered" | "editor";
 
 interface CodeMirrorEditorProps {
   filePath: string;
@@ -35,19 +32,14 @@ interface CodeMirrorEditorProps {
   autoSaveDelay?: number;
 }
 
-/**
- * Get CodeMirror language extension based on file extension
- */
 function getLanguageExtension(filePath: string): Extension[] {
   const name = filePath.split("/").pop()?.toLowerCase() ?? "";
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
 
-  // Match by full filename first
   if (name === "dockerfile" || name.startsWith("dockerfile.")) {
     return [StreamLanguage.define(dockerFile)];
   }
 
-  // Match by extension
   switch (ext) {
     case "js":
     case "jsx":
@@ -83,9 +75,26 @@ function getLanguageExtension(filePath: string): Extension[] {
   }
 }
 
-/**
- * Custom theme that integrates with the application's CSS variables
- */
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeHighlight];
+
+function isSafeHref(href: string | undefined): boolean {
+  return !!href && !href.trimStart().toLowerCase().startsWith("javascript:");
+}
+
+const MARKDOWN_COMPONENTS = {
+  a: ({ href, children, ...props }: ComponentPropsWithoutRef<"a">) => {
+    if (isSafeHref(href)) {
+      return (
+        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+          {children}
+        </a>
+      );
+    }
+    return <span {...props}>{children}</span>;
+  },
+} as const;
+
 const appTheme = EditorView.theme(
   {
     "&": {
@@ -134,10 +143,9 @@ export function CodeMirrorEditor({
   fontSize = 14,
   fontFamily = "'JetBrainsMono Nerd Font Mono', monospace",
   autoSaveDelay = 2000,
-}: CodeMirrorEditorProps) {
+}: CodeMirrorEditorProps): ReactNode {
   const [content, setContent] = useState<string | null>(null);
   const [originalContent, setOriginalContent] = useState("");
-  const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -146,7 +154,6 @@ export function CodeMirrorEditor({
   const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSavingRef = useRef(false);
 
-  // Refs for latest values so save/auto-save always use current state
   const contentRef = useRef(content);
   const originalContentRef = useRef(originalContent);
   const filePathRef = useRef(filePath);
@@ -154,10 +161,17 @@ export function CodeMirrorEditor({
   originalContentRef.current = originalContent;
   filePathRef.current = filePath;
 
-  // Language extension for this file type
   const langExtension = getLanguageExtension(filePath);
+  const isMarkdown = /\.(md|mdx)$/i.test(filePath);
+  const isDirty = content !== null && content !== originalContent;
+  const [viewMode, setViewMode] = useState<ViewMode>(
+    isMarkdown ? "rendered" : "editor"
+  );
 
-  // Load file content
+  useEffect(() => {
+    setViewMode(isMarkdown ? "rendered" : "editor");
+  }, [isMarkdown]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -194,21 +208,12 @@ export function CodeMirrorEditor({
     };
   }, [filePath]);
 
-  // Track dirty state
-  useEffect(() => {
-    if (content !== null) {
-      setIsDirty(content !== originalContent);
-    }
-  }, [content, originalContent]);
-
-  // Core save logic using refs to always get latest content
   const saveNow = useCallback(async () => {
     const currentContent = contentRef.current;
     const currentOriginal = originalContentRef.current;
     if (currentContent === null || currentContent === currentOriginal) return;
     if (isSavingRef.current) return;
 
-    // Cancel any pending auto-save
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
       autoSaveTimeoutRef.current = null;
@@ -240,20 +245,17 @@ export function CodeMirrorEditor({
     }
   }, []);
 
-  // Schedule auto-save (used on blur)
   const scheduleAutoSave = useCallback(() => {
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
     }
 
     if (autoSaveDelay > 0) {
-      autoSaveTimeoutRef.current = setTimeout(() => {
-        saveNow();
-      }, autoSaveDelay);
+      autoSaveTimeoutRef.current = setTimeout(saveNow, autoSaveDelay);
     }
   }, [autoSaveDelay, saveNow]);
 
-  // Keyboard shortcut: Cmd+S
+  // Cmd+S / Ctrl+S keyboard shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
@@ -265,13 +267,12 @@ export function CodeMirrorEditor({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [saveNow]);
 
-  // Flush pending save on unmount to prevent data loss
+  // Flush any unsaved content on unmount via sendBeacon
   useEffect(() => {
     return () => {
       if (autoSaveTimeoutRef.current) {
         clearTimeout(autoSaveTimeoutRef.current);
       }
-      // Fire-and-forget save of any dirty content on unmount
       const currentContent = contentRef.current;
       const currentOriginal = originalContentRef.current;
       if (currentContent !== null && currentContent !== currentOriginal) {
@@ -286,7 +287,6 @@ export function CodeMirrorEditor({
     };
   }, []);
 
-  // Loading state
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full bg-background">
@@ -296,7 +296,6 @@ export function CodeMirrorEditor({
     );
   }
 
-  // Error state
   if (loadError) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-background gap-2">
@@ -309,7 +308,6 @@ export function CodeMirrorEditor({
 
   return (
     <div className="flex flex-col h-full bg-background">
-      {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30">
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-foreground">{fileName}</span>
@@ -333,44 +331,70 @@ export function CodeMirrorEditor({
           )}
         </div>
 
-        <Button
-          size="sm"
-          variant={isDirty ? "default" : "outline"}
-          onClick={saveNow}
-          disabled={isSaving || !isDirty}
-        >
-          {isSaving ? (
-            <Save className="w-4 h-4 animate-pulse" />
-          ) : (
-            <Save className="w-4 h-4" />
+        <div className="flex items-center gap-2">
+          {isMarkdown && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setViewMode((m) => m === "rendered" ? "editor" : "rendered")}
+              title={viewMode === "rendered" ? "Edit source" : "Preview rendered"}
+            >
+              {viewMode === "rendered" ? (
+                <Pencil className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
+            </Button>
           )}
-          <span className="ml-2 text-xs">⌘S</span>
-        </Button>
+
+          <Button
+            size="sm"
+            variant={isDirty ? "default" : "outline"}
+            onClick={saveNow}
+            disabled={isSaving || !isDirty}
+          >
+            <Save className={cn("w-4 h-4", isSaving && "animate-pulse")} />
+            <span className="ml-2 text-xs">⌘S</span>
+          </Button>
+        </div>
       </div>
 
-      {/* Editor */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <CodeMirror
-          value={content ?? ""}
-          onChange={(value) => setContent(value)}
-          onBlur={scheduleAutoSave}
-          extensions={[...langExtension, appTheme]}
-          theme="dark"
-          style={{
-            height: "100%",
-            fontSize: `${fontSize}px`,
-            fontFamily,
-          }}
-          basicSetup={{
-            lineNumbers: true,
-            highlightActiveLine: true,
-            bracketMatching: true,
-            foldGutter: true,
-            indentOnInput: true,
-            autocompletion: false,
-          }}
-          className={cn("h-full [&_.cm-editor]:h-full")}
-        />
+        {viewMode === "rendered" ? (
+          <div className="h-full overflow-auto">
+            <div className="max-w-3xl mx-auto px-8 py-6 markdown-prose">
+              <ReactMarkdown
+                remarkPlugins={REMARK_PLUGINS}
+                rehypePlugins={REHYPE_PLUGINS}
+                components={MARKDOWN_COMPONENTS}
+              >
+                {content ?? ""}
+              </ReactMarkdown>
+            </div>
+          </div>
+        ) : (
+          <CodeMirror
+            value={content ?? ""}
+            onChange={setContent}
+            onBlur={scheduleAutoSave}
+            extensions={[...langExtension, appTheme]}
+            theme="dark"
+            style={{
+              height: "100%",
+              fontSize: `${fontSize}px`,
+              fontFamily,
+            }}
+            basicSetup={{
+              lineNumbers: true,
+              highlightActiveLine: true,
+              bracketMatching: true,
+              foldGutter: true,
+              indentOnInput: true,
+              autocompletion: false,
+            }}
+            className="h-full [&_.cm-editor]:h-full"
+          />
+        )}
       </div>
     </div>
   );
