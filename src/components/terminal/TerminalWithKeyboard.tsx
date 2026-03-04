@@ -38,6 +38,8 @@ interface TerminalWithKeyboardProps {
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
   /** Called when agent activity status changes (from Claude Code hooks) */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
+  /** Called when agent TodoWrite tasks are synced */
+  onAgentTodosUpdated?: (sessionId: string) => void;
 }
 
 export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
@@ -62,6 +64,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onSessionRestart,
   onSessionDelete,
   onAgentActivityStatus,
+  onAgentTodosUpdated,
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
@@ -152,6 +155,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
             onOutput={onOutput}
             onDimensionsChange={onDimensionsChange}
             onAgentActivityStatus={onAgentActivityStatus}
+            onAgentTodosUpdated={onAgentTodosUpdated}
           />
         </ErrorBoundary>
       </div>

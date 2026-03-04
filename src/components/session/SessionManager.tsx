@@ -29,6 +29,7 @@ import { useSplitContext } from "@/contexts/SplitContext";
 import { useTrashContext } from "@/contexts/TrashContext";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
 import { useSecretsContext } from "@/contexts/SecretsContext";
+import { useTaskContext } from "@/contexts/TaskContext";
 import {
   getEnvironmentWithSecretsSync,
   prefetchSecretsForFolder,
@@ -321,6 +322,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // GitHub stats for repo badges on folders
   const { getRepositoryById } = useGitHubStats();
+
+  // Task state from context (for agent todo sync refresh)
+  const { refreshTasks } = useTaskContext();
 
   // Split state from context
   const {
@@ -1676,6 +1680,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onAgentActivityStatus={(sid, status) =>
                             setAgentActivityStatus(sid, status as AgentActivityStatus)
                           }
+                          onAgentTodosUpdated={() => refreshTasks()}
                         />
                       </div>
                     );
