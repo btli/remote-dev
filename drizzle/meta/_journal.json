@@ -64,6 +64,13 @@
       "when": 1769006110188,
       "tag": "0008_true_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1772639472416,
+      "tag": "0009_fat_ultragirl",
+      "breakpoints": true
     }
   ]
 }

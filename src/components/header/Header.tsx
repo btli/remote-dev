@@ -13,7 +13,12 @@ import { AppearanceModeToggleCompact } from "@/components/appearance";
 import { GitHubMaintenanceModal } from "@/components/github/GitHubMaintenanceModal";
 import { GitHubProvider, useGitHubContext } from "@/contexts/GitHubContext";
 import { Button } from "@/components/ui/button";
-import { LogOut } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { LogOut, ClipboardList } from "lucide-react";
 import Image from "next/image";
 
 interface HeaderProps {
@@ -51,6 +56,23 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
             />
             <SecretsStatusButton />
             <AppearanceModeToggleCompact />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("task-sidebar-toggle")
+                    )
+                  }
+                >
+                  <ClipboardList className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Tasks (⌘.)</TooltipContent>
+            </Tooltip>
           </div>
 
           {/* User settings */}

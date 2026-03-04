@@ -74,6 +74,7 @@ AUTH_SECRET=<your-generated-secret>
 # Server ports (customize as needed)
 PORT=6001
 TERMINAL_PORT=6002
+NEXT_PUBLIC_TERMINAL_PORT=6002  # Must match TERMINAL_PORT (client-side WebSocket)
 NEXTAUTH_URL=http://localhost:6001
 
 # Optional: GitHub OAuth (see GitHub Setup below)
@@ -149,7 +150,7 @@ The script will:
 ./scripts/init.sh --email your@email.com
 
 # Custom ports
-./scripts/init.sh --port 3000 --terminal-port 3001
+./scripts/init.sh --port 6001 --terminal-port 6002
 ```
 
 ## GitHub Integration Setup
@@ -237,6 +238,30 @@ bun run dev:next
 bun run dev:terminal
 ```
 
+### Process Manager
+
+As an alternative to `bun run dev`, you can use the process manager to run servers in the background:
+
+```bash
+bun run rdv            # Interactive CLI: start/stop/restart/status
+bun run rdv:dev        # Start both servers in dev mode (background)
+bun run rdv:prod       # Start both servers in prod mode (background)
+bun run rdv:stop       # Stop all servers
+bun run rdv:restart    # Restart all servers
+bun run rdv:status     # Show server status
+```
+
+### Testing
+
+Run tests with Vitest:
+
+```bash
+bun run test           # Run tests in watch mode
+bun run test:run       # Run tests once
+bun run test:ui        # Open Vitest UI
+bun run test:coverage  # Run tests with coverage
+```
+
 ### Code Quality
 
 Before committing:
@@ -276,9 +301,12 @@ For production, ensure all variables are set:
 
 ```bash
 AUTH_SECRET=<strong-random-secret>
+PORT=6001
+TERMINAL_PORT=6002
+NEXT_PUBLIC_TERMINAL_PORT=6002
+NEXTAUTH_URL=http://localhost:6001  # Should match $PORT
 GITHUB_CLIENT_ID=<if-using-github>
 GITHUB_CLIENT_SECRET=<if-using-github>
-NEXTAUTH_URL=http://localhost:3000
 ```
 
 ## Troubleshooting
@@ -287,7 +315,7 @@ NEXTAUTH_URL=http://localhost:3000
 
 1. Check if terminal server is running:
    ```bash
-   lsof -i :3001
+   lsof -i :6002   # Or your $TERMINAL_PORT
    ```
 
 2. Start it manually:
@@ -297,7 +325,7 @@ NEXTAUTH_URL=http://localhost:3000
 
 3. Check for port conflicts:
    ```bash
-   TERMINAL_PORT=3002 bun run dev:terminal
+   TERMINAL_PORT=6003 bun run dev:terminal
    ```
 
 ### "tmux: command not found"

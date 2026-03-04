@@ -22,18 +22,35 @@ Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 
 # Development (runs Next.js + terminal server concurrently)
 bun run dev
 
-# Or run separately
-bun run dev:next      # Next.js dev server with Turbopack (port 3000)
-bun run dev:terminal  # Terminal WebSocket server (port 3001)
+# Or run separately (ports come from .env.local)
+bun run dev:next      # Next.js dev server with Turbopack (port $PORT, default 6001)
+bun run dev:terminal  # Terminal WebSocket server (port $TERMINAL_PORT, default 6002)
 
 # Production
 bun run build
 bun run start          # Next.js server
 bun run start:terminal # Terminal server
 
+# Process manager (alternative to bun run dev)
+bun run rdv            # Interactive CLI: start/stop/restart/status
+bun run rdv:dev        # Start both servers in dev mode (background)
+bun run rdv:prod       # Start both servers in prod mode (background)
+bun run rdv:stop       # Stop all servers
+bun run rdv:restart    # Restart all servers
+bun run rdv:status     # Show server status
+
 # Code quality
 bun run lint
 bun run typecheck
+
+# Testing (Vitest)
+bun run test           # Run tests in watch mode
+bun run test:run       # Run tests once
+bun run test:ui        # Open Vitest UI
+bun run test:coverage  # Run tests with coverage
+
+# MCP
+bun run mcp            # Standalone MCP server on stdio
 
 # Database
 bun run db:push      # Push schema changes to SQLite
@@ -41,6 +58,7 @@ bun run db:generate  # Generate migration files
 bun run db:migrate   # Run migrations
 bun run db:studio    # Open Drizzle Studio
 bun run db:seed      # Seed authorized users
+bun run db:migrate-agents  # One-time agent session migration
 ```
 
 ## Architecture
@@ -48,8 +66,8 @@ bun run db:seed      # Seed authorized users
 ### Two-Server Model
 
 The application runs two servers:
-1. **Next.js** (port 3000) - Web UI, authentication, API routes, static assets
-2. **Terminal Server** (port 3001) - WebSocket server with PTY/tmux (runs via `tsx` for node-pty compatibility)
+1. **Next.js** (port `$PORT`, default 6001) - Web UI, authentication, API routes, static assets
+2. **Terminal Server** (port `$TERMINAL_PORT`, default 6002) - WebSocket server with PTY/tmux (runs via `tsx` for node-pty compatibility)
 
 ### Terminal Flow with tmux Persistence
 
@@ -131,12 +149,12 @@ Optional MCP server for AI agent integration. Enables Claude Desktop, Cursor, an
 **Architecture:**
 - Runs on stdio transport alongside the terminal server
 - Uses local trust model (no additional authentication)
-- Provides 24 tools, 6 resources, and 5 workflow prompts
+- Provides 29 tools, 6 resources, and 5 workflow prompts
 
 **Components:**
 | Component | Count | Description |
 |-----------|-------|-------------|
-| Tools | 24 | Session management, git/worktree operations, folder/preferences |
+| Tools | 29 | Session management, git/worktree operations, folder/preferences, task management |
 | Resources | 6 | Read-only access to sessions and folders |
 | Prompts | 5 | Workflow templates for common tasks |
 
@@ -228,6 +246,7 @@ src/
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
 | `folder_secrets_config` | Per-folder secrets provider configuration |
+| `project_task` | Project tasks with priority, labels, subtasks, and due dates |
 
 ### Service Layer
 
@@ -253,6 +272,7 @@ Located in `src/services/`:
 | `AgentProfileService` | Agent profile CRUD, config file management |
 | `AgentProfileAppearanceService` | Per-profile appearance settings |
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
+| `TaskService` | Project task CRUD, folder-scoped queries |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -289,6 +309,47 @@ Remote Dev supports multiple AI coding agents with unified management:
 └── .env               # Secrets from provider
 ```
 
+### Electron Desktop App
+
+Desktop application wrapper providing native OS integration:
+- Tray icon with quick actions
+- Auto-updater for seamless updates
+- Cloudflare tunnel integration for remote access
+- Cross-platform support (macOS, Linux, Windows)
+- Embedded process manager for Next.js + terminal server
+
+**Key Scripts:**
+```bash
+bun run electron:dev         # Dev mode: Next.js + terminal + Electron
+bun run electron:dist        # Build distributable for current platform
+bun run electron:dist:mac    # Build macOS distributable
+bun run electron:dist:linux  # Build Linux distributable
+bun run electron:dist:win    # Build Windows distributable
+```
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `electron/main/index.ts` | Main process entry point |
+| `electron/main/process-manager.ts` | Manages Next.js and terminal server processes |
+| `electron/main/cloudflared.ts` | Cloudflare tunnel management |
+| `electron/main/tray.ts` | System tray icon and menu |
+| `electron/main/auto-updater.ts` | Auto-update logic |
+| `electron/main/config.ts` | Electron app configuration |
+
+### Testing
+
+- **Vitest** with **happy-dom** environment
+- Config: `vitest.config.ts`
+
+**Commands:**
+```bash
+bun run test           # Run tests in watch mode
+bun run test:run       # Run tests once
+bun run test:ui        # Open Vitest UI
+bun run test:coverage  # Run tests with coverage
+```
+
 ### UI Components
 
 - **shadcn/ui** components in `src/components/ui/`
@@ -320,6 +381,7 @@ Remote Dev supports multiple AI coding agents with unified management:
 | `PathInput.tsx` | Text input with browse button for directory selection |
 | `AgentCLIStatusPanel.tsx` | CLI installation status for all supported agents |
 | `AgentProfileAppearanceSettings.tsx` | Per-profile theming with mode toggle and color schemes |
+| `TaskSidebar.tsx` | Right sidebar for project-scoped task tracking |
 
 ### State Management
 
@@ -336,6 +398,7 @@ React Contexts in `src/contexts/`:
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
 | `PortContext` | Port allocations, framework detection, monitoring |
+| `TaskContext` | Project tasks state with folder-scoped CRUD |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -470,6 +533,13 @@ React Contexts in `src/contexts/`:
 - `PUT /api/profiles/:id/appearance` - Update profile appearance (mode, schemes, terminal settings)
 - `DELETE /api/profiles/:id/appearance` - Reset profile appearance to defaults
 
+### Tasks
+- `GET /api/tasks` - List tasks (optional `?folderId=` filter)
+- `POST /api/tasks` - Create task
+- `GET /api/tasks/:id` - Get task details
+- `PATCH /api/tasks/:id` - Update task
+- `DELETE /api/tasks/:id` - Delete task
+
 ## Quick Setup
 
 Use the init script for guided setup:
@@ -496,6 +566,7 @@ Required in `.env.local`:
 AUTH_SECRET=<generate with: openssl rand -base64 32>
 PORT=6001
 TERMINAL_PORT=6002
+NEXT_PUBLIC_TERMINAL_PORT=6002  # Must match TERMINAL_PORT (client-side WebSocket)
 NEXTAUTH_URL=http://localhost:6001
 ```
 
