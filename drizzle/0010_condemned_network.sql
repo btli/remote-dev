@@ -1,0 +1,1 @@
+ALTER TABLE `terminal_session` ADD `pinned` integer DEFAULT false NOT NULL;

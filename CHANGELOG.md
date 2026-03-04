@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pin Session**: Pin sessions to the top of their folder via right-click context menu
+  - Pinned sessions render above subfolders within their folder
+  - Pinned root sessions appear above all folders in sidebar
+  - Pin icon indicator shown on pinned sessions
+  - Drag-and-drop constrained within same pin partition
 - **Project Task Tracker Sidebar**: Collapsible right sidebar for project-scoped task management
   - Three sections: Manual Tasks, Agent Tasks, and GitHub Issues
   - Tasks support 4-level priority (Critical/High/Medium/Low), custom labels, subtasks, and due dates
