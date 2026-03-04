@@ -185,12 +185,14 @@ export async function createSession(
     }
   }
 
-  // Fetch profile environment overlay if profile is specified
+  // Fetch profile and its environment overlay if profile is specified
   let profileEnv: Record<string, string> | undefined;
-  if (input.profileId) {
-    const env = await AgentProfileService.getProfileEnvironment(input.profileId, userId);
+  const profile = input.profileId
+    ? await AgentProfileService.getProfile(input.profileId, userId)
+    : undefined;
+  if (profile) {
+    const env = await AgentProfileService.getProfileEnvironment(input.profileId!, userId, profile);
     if (env) {
-      // Filter out undefined values to get a clean Record<string, string>
       profileEnv = Object.fromEntries(
         Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)
       );
@@ -206,10 +208,30 @@ export async function createSession(
     input.agentProvider !== "none" &&
     input.autoLaunchAgent;
 
-  // RDV env vars for agent hook callbacks (session ID + terminal server port)
+  // RDV env vars for agent hook callbacks (session ID + terminal server address)
+  // Socket mode (prod): uses TERMINAL_SOCKET; Port mode (dev): uses TERMINAL_PORT
+  const terminalSocket = process.env.TERMINAL_SOCKET;
   const rdvEnv: Record<string, string> = isAgentSession
-    ? { RDV_SESSION_ID: sessionId, RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "3001" }
+    ? {
+        RDV_SESSION_ID: sessionId,
+        ...(terminalSocket
+          ? { RDV_TERMINAL_SOCKET: terminalSocket }
+          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "3001" }),
+      }
     : {};
+
+  // Install Claude Code hooks BEFORE tmux session creation so the agent
+  // picks them up at startup (Claude Code reads settings once on launch)
+  if (isAgentSession && input.agentProvider === "claude") {
+    const configDir = profile?.configDir ?? process.env.HOME;
+    if (configDir) {
+      try {
+        await AgentProfileService.installAgentHooks(configDir, input.agentProvider);
+      } catch (error) {
+        console.error(`[session:${sessionId}] Failed to install agent hooks:`, error);
+      }
+    }
+  }
 
   // File-type sessions don't need tmux — they're pure UI (CodeMirror editor)
   if (input.terminalType !== "file") {
@@ -260,10 +282,14 @@ export async function createSession(
     // This allows the terminal server to be notified when the agent process exits
     if (isAgentSession) {
       try {
+        const exitUrl = `/internal/agent-exit?sessionId=${sessionId}`;
+        const curlCmd = terminalSocket
+          ? `curl --unix-socket '${terminalSocket}' -sS -X POST http://localhost${exitUrl}`
+          : `curl -sS -X POST http://localhost:${rdvEnv.RDV_TERMINAL_PORT}${exitUrl}`;
         await TmuxService.setHook(
           tmuxSessionName,
           "pane-exited",
-          `run-shell "curl -sS -X POST http://localhost:${rdvEnv.RDV_TERMINAL_PORT}/internal/agent-exit?sessionId=${sessionId} || true"`
+          `run-shell "${curlCmd} || true"`
         );
       } catch (error) {
         // Log but don't fail session creation - the session is already running
@@ -271,24 +297,6 @@ export async function createSession(
           `Failed to set agent exit hook for ${tmuxSessionName}:`,
           error
         );
-      }
-
-      // Install Claude Code hooks for real-time activity status reporting
-      if (input.agentProvider === "claude") {
-        try {
-          // Profile sessions use profile config dir; non-profile sessions use HOME
-          const configDir = input.profileId
-            ? (await AgentProfileService.getProfile(input.profileId, userId))?.configDir
-            : process.env.HOME;
-          if (configDir) {
-            await AgentProfileService.installAgentHooks(configDir, input.agentProvider);
-          }
-        } catch (error) {
-          console.error(
-            `Failed to install agent hooks for ${tmuxSessionName}:`,
-            error
-          );
-        }
       }
     }
   }
@@ -704,6 +712,36 @@ export async function resumeSession(
       "TMUX_SESSION_GONE",
       sessionId
     );
+  }
+
+  // For agent sessions, ensure hooks and env vars are up to date on resume.
+  // This handles upgrades (e.g., hook format changes) and sessions created
+  // before hooks were installed.
+  if (session.terminalType === "agent" && session.agentProvider === "claude") {
+    try {
+      const configDir = session.profileId
+        ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
+        : process.env.HOME;
+      if (configDir) {
+        await AgentProfileService.installAgentHooks(configDir, "claude");
+      }
+    } catch (error) {
+      console.error(`[session:${sessionId}] Failed to install agent hooks on resume:`, error);
+    }
+
+    // Ensure RDV env vars are set in tmux session (may be missing on older sessions)
+    try {
+      const terminalSocket = process.env.TERMINAL_SOCKET;
+      const rdvEnv: Record<string, string> = {
+        RDV_SESSION_ID: sessionId,
+        ...(terminalSocket
+          ? { RDV_TERMINAL_SOCKET: terminalSocket }
+          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "3001" }),
+      };
+      await TmuxService.setSessionEnvironment(session.tmuxSessionName, rdvEnv);
+    } catch (error) {
+      console.error(`[session:${sessionId}] Failed to set RDV env on resume:`, error);
+    }
   }
 
   await db

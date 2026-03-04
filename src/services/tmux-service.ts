@@ -120,13 +120,19 @@ export async function createSession(
     args.push("-c", cwd);
   }
 
-  // Pass environment variables as the process environment for tmux.
-  // This sets the initial PTY shell environment (Layer 1 of Two-Layer Model).
-  // Session-level persistent env (Layer 2) is set via setSessionEnvironment().
-  const execOptions = env ? { env: { ...process.env, ...env } } : undefined;
+  // Pass environment variables using tmux's -e flag (tmux 3.2+).
+  // This injects vars directly into the new session's shell environment.
+  // The previous approach of setting process env on execFile does NOT work
+  // because the tmux server is already running and the shell inherits from
+  // the server's environment, not the client's.
+  if (env) {
+    for (const [key, value] of Object.entries(env)) {
+      args.push("-e", `${key}=${value}`);
+    }
+  }
 
   try {
-    await execFile("tmux", args, execOptions);
+    await execFile("tmux", args);
 
     // Enable mouse mode for scrolling in alternate screen apps (vim, less, claude code, etc.)
     // Use Shift+click to bypass and select text with xterm.js
