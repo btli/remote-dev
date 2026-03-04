@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 19**, **xterm.js**, and **NextAuth v5**. It provides:
 - Multiple persistent terminal sessions via tmux
 - GitHub OAuth integration with repository browsing
+- **Multi-GitHub account** linking with per-folder account binding
 - Git worktree support for branch isolation
 - Session recording and playback
 - Session templates for reusable configurations
@@ -59,6 +60,7 @@ bun run db:migrate   # Run migrations
 bun run db:studio    # Open Drizzle Studio
 bun run db:seed      # Seed authorized users
 bun run db:migrate-agents  # One-time agent session migration
+bun run db:migrate-github-accounts  # Backfill GitHub account metadata from existing OAuth accounts
 ```
 
 ## Architecture
@@ -246,6 +248,8 @@ src/
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
 | `folder_secrets_config` | Per-folder secrets provider configuration |
+| `github_account_metadata` | Linked GitHub account metadata (login, avatar, default flag, config dir) |
+| `folder_github_account_link` | Per-folder GitHub account bindings |
 | `project_task` | Project tasks with priority, labels, subtasks, and due dates |
 
 ### Service Layer
@@ -399,6 +403,7 @@ React Contexts in `src/contexts/`:
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
 | `PortContext` | Port allocations, framework detection, monitoring |
+| `GitHubAccountContext` | Multi-GitHub account state with folder bindings |
 | `TaskContext` | Project tasks state with folder-scoped CRUD |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
@@ -482,6 +487,9 @@ React Contexts in `src/contexts/`:
 - `POST /api/github/worktrees/check` - Check worktree status
 - `GET /api/auth/github/link` - Start OAuth flow
 - `GET /api/auth/github/callback` - OAuth callback
+- `GET /api/github/accounts` - List linked GitHub accounts with folder bindings
+- `PATCH /api/github/accounts/:accountId` - Set default, bind/unbind folder
+- `DELETE /api/github/accounts/:accountId` - Unlink a GitHub account
 
 ### API Keys
 - `GET /api/keys` - List user's API keys

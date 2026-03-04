@@ -11,7 +11,12 @@ export const GET = withAuth(async (_request, { userId }) => {
     const result = await listGitHubAccountsUseCase.execute(userId);
 
     return NextResponse.json({
-      accounts: result.accounts.map((a) => a.toPlainObject()),
+      accounts: result.accounts.map((a) => {
+        // Strip configDir (server-side path) from client response
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { configDir, ...rest } = a.toPlainObject();
+        return rest;
+      }),
       folderBindings: Object.fromEntries(result.folderBindings),
     });
   } catch (error) {

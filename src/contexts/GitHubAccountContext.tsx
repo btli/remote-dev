@@ -28,7 +28,6 @@ export interface LinkedGitHubAccount {
   avatarUrl: string;
   email: string | null;
   isDefault: boolean;
-  configDir: string;
   createdAt: string;
   updatedAt: string;
 }
