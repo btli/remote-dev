@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pinned root sessions appear above all folders in sidebar
   - Pin icon indicator shown on pinned sessions
   - Drag-and-drop constrained within same pin partition
+- **Project Task Tracker Sidebar**: Collapsible right sidebar for project-scoped task management
+  - Three sections: Manual Tasks, Agent Tasks, and GitHub Issues
+  - Tasks support 4-level priority (Critical/High/Medium/Low), custom labels, subtasks, and due dates
+  - Agent tasks created automatically via MCP tools or REST API (5 new MCP tools: task_list, task_create, task_update, task_complete, task_delete)
+  - GitHub issues displayed from linked repos with "Link to task" action
+  - Folder-scoped: tasks track with each project folder independently
+  - Collapsible to 48px icon strip with open task count badge
+  - Resizable via drag handle (240-500px)
+  - Toggle via Cmd+. keyboard shortcut or header button
+  - Consistent glassmorphism design with existing UI patterns
 - **Agent Activity Status Indicators**: Real-time agent activity shown in sidebar via colored Sparkles icons
   - Green breathing animation when agent is running (tool use in progress)
   - Yellow breathing animation when agent is waiting for user input
