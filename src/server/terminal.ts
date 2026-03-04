@@ -283,6 +283,46 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // Handle agent TodoWrite sync from Claude Code PostToolUse hooks
+  // Called by hooks: POST /internal/agent-todos?sessionId=xxx
+  // Body: Claude Code PostToolUse stdin JSON (contains tool_input.tasks)
+  if (pathname === "/internal/agent-todos" && req.method === "POST") {
+    const sessionId = query.sessionId as string;
+
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId parameter" });
+      return true;
+    }
+
+    try {
+      const body = await readRequestBody(req);
+      const payload = JSON.parse(body);
+      const { syncAgentTodos } = await import("@/services/agent-todo-sync");
+      const result = await syncAgentTodos(sessionId, payload);
+
+      // Broadcast update to all connected WebSockets
+      const message = JSON.stringify({
+        type: "agent_todos_updated",
+        sessionId,
+        ...result,
+      });
+      for (const [, s] of sessions) {
+        if (s.ws.readyState === WebSocket.OPEN) {
+          s.ws.send(message);
+        }
+      }
+
+      sendJson(res, 200, { success: true, ...result });
+    } catch (error) {
+      console.error("[Agent Todos] Sync error:", error);
+      sendJson(res, 500, {
+        error: error instanceof Error ? error.message : "Sync failed",
+      });
+    }
+
+    return true;
+  }
+
   if (!pathname?.startsWith("/internal/scheduler/")) {
     return false;
   }
