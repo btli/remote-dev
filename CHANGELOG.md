@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resumes via `claude --resume <session-id>`, appended to the folder's configured startup command
   - New `GET /api/agent/claude-sessions` endpoint for session discovery
   - Configurable session limit (default 20, max 50)
+- **Auto-register MCP server on agent creation**: Automatically configures the Remote Dev MCP server in agent config files (Claude, Gemini, Codex) during session creation and resume, giving agents immediate access to session management, git, and folder tools
 - **Files Section in Sidebar**: New collapsible "Files" section above MCP Servers showing default project files (.env, .env.local, CLAUDE.md, README.md) and pinned files
   - Automatically detects which default files exist on disk for the active folder's project directory
   - Pinned files moved from inline folder tree to this dedicated section, reducing clutter
