@@ -88,8 +88,8 @@ export function buildTodoSyncPlan(
   }
 
   // Cancel tasks whose TodoWrite ID is no longer in the incoming list
-  for (const [, task] of existingByTodoId) {
-    if (!seenTodoIds.has(task.description?.match(/^TodoWrite #(.+)$/)?.[1] ?? "") &&
+  for (const [todoId, task] of existingByTodoId) {
+    if (!seenTodoIds.has(todoId) &&
         task.status !== "cancelled" && task.status !== "done") {
       plan.toCancel.push(task.id);
     }
