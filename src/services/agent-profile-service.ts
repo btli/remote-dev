@@ -602,7 +602,8 @@ function withoutActivityHooks(arr: unknown[]): unknown[] {
  * These env vars plus RDV_SESSION_ID are set as tmux env vars per session.
  *
  * - PreToolUse → status "running" (agent is executing a tool)
- * - Stop → status "waiting" (agent finished a turn, waiting for input)
+ * - Notification (permission/elicitation) → status "waiting" (needs user input)
+ * - Stop → status "idle" (agent finished its turn)
  *
  */
 export async function installAgentHooks(
@@ -645,8 +646,13 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: curlForStatus("running"), timeout: 5 }],
   };
 
-  const stopHook = {
+  const notificationHook = {
+    matcher: "permission_prompt|elicitation_dialog",
     hooks: [{ type: "command", command: curlForStatus("waiting"), timeout: 5 }],
+  };
+
+  const stopHook = {
+    hooks: [{ type: "command", command: curlForStatus("idle"), timeout: 5 }],
   };
 
   // Merge with existing hooks — replace any old RDV hooks with current version,
@@ -654,12 +660,14 @@ export async function installAgentHooks(
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
 
   const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
+  const existingNotification = Array.isArray(existingHooks.Notification) ? existingHooks.Notification : [];
   const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
 
   // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
     PreToolUse: [...withoutActivityHooks(existingPreToolUse), preToolUseHook],
+    Notification: [...withoutActivityHooks(existingNotification), notificationHook],
     Stop: [...withoutActivityHooks(existingStop), stopHook],
   };
 

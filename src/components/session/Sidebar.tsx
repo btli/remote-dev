@@ -142,6 +142,8 @@ function getSessionIconColor(
       return "text-green-500 agent-breathing";
     case "waiting":
       return "text-yellow-500 agent-breathing";
+    case "idle":
+      return "text-muted-foreground";
     case "error":
       return "text-red-500";
     default:
