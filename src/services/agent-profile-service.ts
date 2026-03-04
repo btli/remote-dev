@@ -604,7 +604,7 @@ function withoutRdvHooks(arr: unknown[], marker: string): unknown[] {
  * These env vars plus RDV_SESSION_ID are set as tmux env vars per session.
  *
  * Activity-reporting hooks (→ /internal/agent-status):
- * - SessionStart → status "running" (agent session started)
+ * - PreToolUse → status "running" (agent is executing a tool)
  * - PreCompact → status "compacting" (context window compaction in progress)
  * - Notification (permission/elicitation) → status "waiting" (needs user input)
  * - Stop → status "idle" (agent finished its turn)
@@ -647,7 +647,7 @@ export async function installAgentHooks(
     `curl -s -X POST "http://localhost:\${RDV_TERMINAL_PORT}/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}"; ` +
     'fi || true';
 
-  const sessionStartHook = {
+  const preToolUseHook = {
     matcher: "",
     hooks: [{ type: "command", command: curlForStatus("running"), timeout: 5 }],
   };
@@ -688,31 +688,31 @@ export async function installAgentHooks(
   // preserving user-defined hooks. This handles upgrades (e.g., port-only → socket-aware).
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
 
-  const existingSessionStart = Array.isArray(existingHooks.SessionStart) ? existingHooks.SessionStart : [];
+  const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
   const existingPreCompact = Array.isArray(existingHooks.PreCompact) ? existingHooks.PreCompact : [];
   const existingNotification = Array.isArray(existingHooks.Notification) ? existingHooks.Notification : [];
   const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
   const existingPostToolUse = Array.isArray(existingHooks.PostToolUse) ? existingHooks.PostToolUse : [];
 
-  // Clean up legacy PreToolUse RDV hooks from older installations
-  const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
-  const cleanedPreToolUse = withoutRdvHooks(existingPreToolUse, ACTIVITY_HOOK_MARKER);
+  // Clean up legacy SessionStart RDV hooks from older installations
+  const existingSessionStart = Array.isArray(existingHooks.SessionStart) ? existingHooks.SessionStart : [];
+  const cleanedSessionStart = withoutRdvHooks(existingSessionStart, ACTIVITY_HOOK_MARKER);
 
   // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
-    SessionStart: [...withoutRdvHooks(existingSessionStart, ACTIVITY_HOOK_MARKER), sessionStartHook],
+    PreToolUse: [...withoutRdvHooks(existingPreToolUse, ACTIVITY_HOOK_MARKER), preToolUseHook],
     PreCompact: [...withoutRdvHooks(existingPreCompact, ACTIVITY_HOOK_MARKER), preCompactHook],
     PostToolUse: [...withoutRdvHooks(existingPostToolUse, TODO_HOOK_MARKER), postToolUseTodoHook],
     Notification: [...withoutRdvHooks(existingNotification, ACTIVITY_HOOK_MARKER), notificationHook],
     Stop: [...withoutRdvHooks(existingStop, ACTIVITY_HOOK_MARKER), stopHook],
-    // Remove legacy PreToolUse RDV hooks (replaced by SessionStart)
-    ...(cleanedPreToolUse.length > 0 ? { PreToolUse: cleanedPreToolUse } : { PreToolUse: undefined }),
+    // Remove legacy SessionStart RDV hooks (replaced by PreToolUse)
+    ...(cleanedSessionStart.length > 0 ? { SessionStart: cleanedSessionStart } : { SessionStart: undefined }),
   };
 
   // Remove empty hook arrays to keep settings clean
-  if (mergedHooks.PreToolUse === undefined || (Array.isArray(mergedHooks.PreToolUse) && mergedHooks.PreToolUse.length === 0)) {
-    delete mergedHooks.PreToolUse;
+  if (mergedHooks.SessionStart === undefined || (Array.isArray(mergedHooks.SessionStart) && mergedHooks.SessionStart.length === 0)) {
+    delete mergedHooks.SessionStart;
   }
 
   const updatedSettings = {
