@@ -106,6 +106,7 @@ function parseSessionFile(filePath: string): Promise<{
 
         // Stop reading once we have both pieces
         if (header && firstUserMessage) {
+          stream.on("error", () => {});
           rl.close();
           stream.destroy();
         }
@@ -114,8 +115,15 @@ function parseSessionFile(filePath: string): Promise<{
       }
     });
 
-    rl.on("close", () => resolve(header ? { ...header, firstUserMessage } : null));
-    rl.on("error", () => resolve(null));
+    rl.on("close", () => {
+      stream.destroy();
+      resolve(header ? { ...header, firstUserMessage } : null);
+    });
+    rl.on("error", () => {
+      rl.close();
+      stream.destroy();
+      resolve(null);
+    });
   });
 }
 

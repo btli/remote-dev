@@ -1043,6 +1043,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           agentProvider: "claude",
           autoLaunchAgent: true,
           agentFlags: ["--resume", claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "")],
+          profileId: resumeModalProfileId || undefined,
         });
         if (newSession && folderId) {
           registerSessionFolder(newSession.id, folderId);
@@ -1056,6 +1057,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [
       resumeModalFolderId,
       resumeModalProjectPath,
+      resumeModalProfileId,
       createSession,
       registerSessionFolder,
       setActiveFolder,
