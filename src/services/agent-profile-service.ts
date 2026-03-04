@@ -412,9 +412,10 @@ OpenCode supports multiple AI providers. Configure your preferred provider in se
  */
 export async function getProfileEnvironment(
   profileId: string,
-  userId: string
+  userId: string,
+  existingProfile?: AgentProfile
 ): Promise<ProfileEnvironment | null> {
-  const profile = await getProfile(profileId, userId);
+  const profile = existingProfile ?? await getProfile(profileId, userId);
   if (!profile) return null;
 
   const configDir = profile.configDir;
@@ -578,19 +579,35 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
 // Agent Hooks Installation
 // ============================================================================
 
+/** Marker substring used to identify RDV activity hooks (for deduplication) */
+const ACTIVITY_HOOK_MARKER = "/internal/agent-status";
+
+/** Check if a single hook entry is an RDV activity hook */
+function isActivityHook(entry: unknown): boolean {
+  return typeof entry === "object" && entry !== null &&
+    JSON.stringify(entry).includes(ACTIVITY_HOOK_MARKER);
+}
+
+/** Filter out any existing RDV activity hooks from an array (preserves user hooks) */
+function withoutActivityHooks(arr: unknown[]): unknown[] {
+  return arr.filter((entry) => !isActivityHook(entry));
+}
+
 /**
  * Install activity-reporting hooks into the agent's settings file.
  * Currently supports Claude Code only (hooks in .claude/settings.json).
  *
- * Hooks call back to the terminal server's /internal/agent-status endpoint
- * using RDV_SESSION_ID and RDV_TERMINAL_PORT env vars (set at session creation).
+ * Hooks call back to the terminal server's /internal/agent-status endpoint.
+ * Supports both socket mode (RDV_TERMINAL_SOCKET) and port mode (RDV_TERMINAL_PORT).
+ * These env vars plus RDV_SESSION_ID are set as tmux env vars per session.
  *
  * - PreToolUse → status "running" (agent is executing a tool)
  * - Stop → status "waiting" (agent finished a turn, waiting for input)
+ *
  */
 export async function installAgentHooks(
   configDir: string,
-  provider: string
+  provider: AgentProvider
 ): Promise<void> {
   // Only Claude Code supports hooks currently
   if (provider !== "claude") return;
@@ -599,57 +616,51 @@ export async function installAgentHooks(
 
   // Read existing settings (if any) to merge hooks
   let existingSettings: Record<string, unknown> = {};
+  let rawContent = "";
   try {
-    const content = await readFile(settingsPath, "utf-8");
-    existingSettings = JSON.parse(content);
+    rawContent = await readFile(settingsPath, "utf-8");
+    existingSettings = JSON.parse(rawContent);
   } catch {
     // File doesn't exist or is invalid JSON - start fresh
   }
 
-  // Marker to identify our activity hooks (for deduplication)
-  const HOOK_MARKER = "/internal/agent-status";
+  // Activity status hooks read RDV vars from tmux session-level environment
+  // at runtime. Uses a single `tmux show-environment` dump (parsed via eval)
+  // to resolve session ID and connection info. This is more robust than relying
+  // on inherited process env because the tmux server doesn't propagate the
+  // client's env to spawned shells.
+  const curlForStatus = (status: string) =>
+    '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
+    '[ -z "$_RDV_SN" ] && exit 0; ' +
+    'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
+    '[ -z "$RDV_SESSION_ID" ] && exit 0; ' +
+    'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
+    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST "http://localhost/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}"; ` +
+    'else ' +
+    `curl -s -X POST "http://localhost:\${RDV_TERMINAL_PORT}/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}"; ` +
+    'fi || true';
 
-  // Activity status hooks using shell variable expansion.
-  // $RDV_TERMINAL_PORT and $RDV_SESSION_ID are set as tmux env vars per session.
   const preToolUseHook = {
     matcher: "",
-    hooks: [
-      {
-        type: "command",
-        command: "curl -s -X POST \"http://localhost:${RDV_TERMINAL_PORT}/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=running\" || true",
-        timeout: 5,
-      },
-    ],
+    hooks: [{ type: "command", command: curlForStatus("running"), timeout: 5 }],
   };
 
   const stopHook = {
-    hooks: [
-      {
-        type: "command",
-        command: "curl -s -X POST \"http://localhost:${RDV_TERMINAL_PORT}/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=waiting\" || true",
-        timeout: 5,
-      },
-    ],
+    hooks: [{ type: "command", command: curlForStatus("waiting"), timeout: 5 }],
   };
 
-  // Merge with existing hooks (don't overwrite user's hooks)
+  // Merge with existing hooks — replace any old RDV hooks with current version,
+  // preserving user-defined hooks. This handles upgrades (e.g., port-only → socket-aware).
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
-
-  // Helper: check if our hook is already installed in an array
-  const hasActivityHook = (arr: unknown[]): boolean =>
-    arr.some((entry) => JSON.stringify(entry).includes(HOOK_MARKER));
 
   const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
   const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
 
+  // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
-    PreToolUse: hasActivityHook(existingPreToolUse)
-      ? existingPreToolUse
-      : [...existingPreToolUse, preToolUseHook],
-    Stop: hasActivityHook(existingStop)
-      ? existingStop
-      : [...existingStop, stopHook],
+    PreToolUse: [...withoutActivityHooks(existingPreToolUse), preToolUseHook],
+    Stop: [...withoutActivityHooks(existingStop), stopHook],
   };
 
   const updatedSettings = {
@@ -657,9 +668,13 @@ export async function installAgentHooks(
     hooks: mergedHooks,
   };
 
+  // Skip write if settings are unchanged (hooks already current)
+  const newContent = JSON.stringify(updatedSettings, null, 2) + "\n";
+  if (newContent === rawContent) return;
+
   // Ensure .claude directory exists
   await mkdir(join(configDir, ".claude"), { recursive: true });
-  await writeFile(settingsPath, JSON.stringify(updatedSettings, null, 2) + "\n");
+  await writeFile(settingsPath, newContent);
 }
 
 // ============================================================================
