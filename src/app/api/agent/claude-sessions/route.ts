@@ -12,12 +12,12 @@
  */
 
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withApiAuth, errorResponse } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
 import * as ClaudeSessionService from "@/services/claude-session-service";
 import * as AgentProfileService from "@/services/agent-profile-service";
 
-export const GET = withAuth(async (request, { userId }) => {
+export const GET = withApiAuth(async (request, { userId }) => {
   const { searchParams } = new URL(request.url);
   const rawPath = searchParams.get("projectPath");
   const profileId = searchParams.get("profileId");

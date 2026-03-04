@@ -272,6 +272,7 @@ Located in `src/services/`:
 | `AgentProfileService` | Agent profile CRUD, config file management |
 | `AgentProfileAppearanceService` | Per-profile appearance settings |
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
+| `ClaudeSessionService` | Discover resumable Claude Code sessions from `.jsonl` files |
 | `TaskService` | Project task CRUD, folder-scoped queries |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
@@ -532,6 +533,9 @@ React Contexts in `src/contexts/`:
 
 ### Agent CLI
 - `GET /api/agent-cli/status` - Get all CLI installation statuses (version, path, install instructions)
+
+### Agent Sessions
+- `GET /api/agent/claude-sessions` - List resumable Claude Code sessions for a project path
 
 ### Agent Profiles
 - `GET /api/profiles/:id/appearance` - Get profile appearance settings
