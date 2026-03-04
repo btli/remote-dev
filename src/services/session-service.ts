@@ -298,19 +298,10 @@ export async function createSession(
 
     // Persistent session-level environment variables
     // These survive shell exits and are inherited by all new shells in the session
-    // Merge: profileEnv < folderEnv < ghAccountEnv < rdvEnv (later values take precedence)
-    const sessionEnv: Record<string, string> = {
-      ...(profileEnv ?? {}),
-      ...(folderEnv ?? {}),
-      ...(ghAccountEnv ?? {}),
-      ...rdvEnv,
-    };
-
-    if (Object.keys(sessionEnv).length > 0) {
+    if (Object.keys(initialEnv).length > 0) {
       try {
-        await TmuxService.setSessionEnvironment(tmuxSessionName, sessionEnv);
+        await TmuxService.setSessionEnvironment(tmuxSessionName, initialEnv);
       } catch (error) {
-        // Log but don't fail session creation - the session is already running
         console.error(
           `Failed to set session environment for ${tmuxSessionName}:`,
           error
