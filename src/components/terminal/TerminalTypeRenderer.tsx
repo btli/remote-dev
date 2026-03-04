@@ -37,6 +37,8 @@ interface TerminalTypeRendererProps {
   onAgentStateChange?: (sessionId: string, state: "running" | "exited" | "restarting" | "closed") => void;
   /** Called when agent activity status changes (from Claude Code hooks) */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
+  /** Called when agent TodoWrite tasks are synced */
+  onAgentTodosUpdated?: (sessionId: string) => void;
 }
 
 export function TerminalTypeRenderer({
@@ -58,6 +60,7 @@ export function TerminalTypeRenderer({
   onSessionClose,
   onAgentStateChange,
   onAgentActivityStatus,
+  onAgentTodosUpdated,
 }: TerminalTypeRendererProps) {
   const terminalRef = useRef<TerminalRef>(null);
   const [agentExitInfo, setAgentExitInfo] = useState<{
@@ -142,6 +145,7 @@ export function TerminalTypeRenderer({
             onAgentExited={handleAgentExited}
             onAgentRestarted={handleAgentRestarted}
             onAgentActivityStatus={onAgentActivityStatus}
+            onAgentTodosUpdated={onAgentTodosUpdated}
             onOutput={onOutput}
             onDimensionsChange={onDimensionsChange}
           />

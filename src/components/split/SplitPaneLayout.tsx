@@ -5,6 +5,7 @@ import type { SplitGroupWithSessions } from "@/types/split";
 import type { TerminalSession } from "@/types/session";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { useSessionContext } from "@/contexts/SessionContext";
+import { useTaskContext } from "@/contexts/TaskContext";
 import { ResizeHandle } from "./ResizeHandle";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
@@ -56,6 +57,7 @@ export function SplitPaneLayout({
   tmuxHistoryLimit,
 }: SplitPaneLayoutProps) {
   const { setAgentActivityStatus } = useSessionContext();
+  const { refreshTasks } = useTaskContext();
   const isHorizontal = splitGroup.direction === "horizontal";
 
   // Get full session data for each pane
@@ -163,6 +165,7 @@ export function SplitPaneLayout({
                 onAgentActivityStatus={(sid, status) =>
                   setAgentActivityStatus(sid, status as AgentActivityStatus)
                 }
+                onAgentTodosUpdated={() => refreshTasks()}
               />
             </div>
 
