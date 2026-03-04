@@ -20,11 +20,11 @@ import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "fs/promises";
 import { join, dirname, resolve as pathResolve, isAbsolute } from "path";
 import { fileURLToPath } from "url";
-import { execFileSync } from "child_process";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
+import { execFile } from "@/lib/exec";
 import { safeJsonParse } from "@/lib/utils";
 import { getProfilesDir } from "@/lib/paths";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
@@ -694,10 +694,12 @@ export async function installAgentHooks(
 /** Cached absolute path to the bun executable */
 let _bunPath: string | undefined;
 
-function getBunPath(): string {
-  const resolved = _bunPath ?? execFileSync("which", ["bun"], { encoding: "utf-8" }).trim();
-  _bunPath = resolved;
-  return resolved;
+async function getBunPath(): Promise<string> {
+  if (!_bunPath) {
+    const result = await execFile("which", ["bun"]);
+    _bunPath = result.stdout;
+  }
+  return _bunPath;
 }
 
 /** Resolve the RDV project root from this module's location (src/services/ → ../..) */
@@ -720,7 +722,7 @@ export async function registerMCPServer(
   provider: AgentProvider,
   userId: string
 ): Promise<void> {
-  const bunPath = getBunPath();
+  const bunPath = await getBunPath();
   const mcpEntry: MCPEntry = {
     command: bunPath,
     args: ["--cwd", RDV_PROJECT_ROOT, "run", "mcp"],
@@ -802,7 +804,7 @@ async function registerMCPForCodex(
     `[mcp_servers.${MCP_SERVER_NAME}]\n` +
     `command = "${entry.command}"\n` +
     `args = [${argsToml}]\n` +
-    `env = { ${envEntries} }`;
+    `env = { ${envEntries} }\n`;
 
   // Check if section already exists and replace it, or append
   const sectionRegex = new RegExp(
@@ -813,10 +815,9 @@ async function registerMCPForCodex(
   if (sectionRegex.test(rawContent)) {
     newContent = rawContent.replace(sectionRegex, section);
   } else {
-    // Append with a blank line separator
     newContent = rawContent
-      ? `${rawContent.trimEnd()}\n\n${section}\n`
-      : `${section}\n`;
+      ? `${rawContent.trimEnd()}\n\n${section}`
+      : section;
   }
 
   if (newContent === rawContent) return;
