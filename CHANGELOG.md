@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Hooks are automatically installed and merged with existing settings at session creation
   - Status broadcast via WebSocket to all connected clients for cross-tab visibility
 
+### Changed
+
+- Pinned files now scoped to the active folder in the Files section (previously visible inline across all folders simultaneously)
+
+### Removed
+
+- Drag-to-reorder for pinned files in the sidebar (use folder settings to reorder)
+
 ### Fixed
 
 - Worktree sessions now show GitBranch icon instead of generic terminal icon in sidebar

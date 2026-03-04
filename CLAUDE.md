@@ -490,6 +490,11 @@ React Contexts in `src/contexts/`:
 ### Directories
 - `GET /api/directories` - Browse filesystem directories (secure, restricted to allowed paths)
 
+### Files
+- `POST /api/files/exists` - Batch check file existence on disk
+- `GET /api/files/read` - Read file contents for editor
+- `POST /api/files/write` - Write file contents
+
 ### Images
 - `POST /api/images` - Upload and save image
 
