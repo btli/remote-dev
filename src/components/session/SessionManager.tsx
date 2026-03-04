@@ -1030,6 +1030,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     async (claudeSessionId: string) => {
       const folderId = resumeModalFolderId ?? undefined;
 
+      // Build startup command: use folder's startup command with --resume flag
+      // This produces e.g. "clauded --resume" instead of "clauded && claude --resume"
+      const prefs = folderId ? resolvePreferencesForFolder(folderId) : undefined;
+      const baseCommand = prefs?.startupCommand || "claude";
+      const sanitizedId = claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "");
+      const startupCommand = `${baseCommand} --resume ${sanitizedId}`;
+
       try {
         const newSession = await createSession({
           name: `Resume ${claudeSessionId.slice(0, 8)}`,
@@ -1037,8 +1044,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           folderId,
           terminalType: "agent",
           agentProvider: "claude",
-          autoLaunchAgent: true,
-          agentFlags: ["--resume", claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "")],
+          autoLaunchAgent: false,
+          startupCommand,
           profileId: resumeModalProfileId || undefined,
         });
         if (newSession && folderId) {
@@ -1054,6 +1061,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       resumeModalFolderId,
       resumeModalProjectPath,
       resumeModalProfileId,
+      resolvePreferencesForFolder,
       createSession,
       registerSessionFolder,
       setActiveFolder,
