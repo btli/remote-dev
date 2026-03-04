@@ -1,9 +1,13 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Github } from "lucide-react";
+import { Github, Plus } from "lucide-react";
 
-export function GitHubConnectButton() {
+interface GitHubConnectButtonProps {
+  isConnected?: boolean;
+}
+
+export function GitHubConnectButton({ isConnected = false }: GitHubConnectButtonProps) {
   return (
     <Button
       variant="ghost"
@@ -13,8 +17,17 @@ export function GitHubConnectButton() {
         window.location.href = "/api/auth/github/link";
       }}
     >
-      <Github className="w-4 h-4 mr-2" />
-      Connect GitHub
+      {isConnected ? (
+        <>
+          <Plus className="w-4 h-4 mr-2" />
+          Add GitHub Account
+        </>
+      ) : (
+        <>
+          <Github className="w-4 h-4 mr-2" />
+          Connect GitHub
+        </>
+      )}
     </Button>
   );
 }

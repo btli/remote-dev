@@ -99,6 +99,14 @@ export function getReposDir(): string {
 }
 
 /**
+ * Get the gh CLI config directories path.
+ * Each GitHub account gets its own subdirectory with hosts.yml.
+ */
+export function getGhConfigsDir(): string {
+  return join(getDataDir(), "gh-configs");
+}
+
+/**
  * Get the session recordings directory path.
  */
 export function getRecordingsDir(): string {
@@ -124,6 +132,7 @@ export function ensureDataDirectories(): void {
     getProfilesDir(),
     getProjectsDir(),
     getReposDir(),
+    getGhConfigsDir(),
     getRecordingsDir(),
     getServerDir(),
   ];
@@ -160,6 +169,9 @@ export const AppPaths = {
   },
   get reposDir() {
     return getReposDir();
+  },
+  get ghConfigsDir() {
+    return getGhConfigsDir();
   },
   get recordingsDir() {
     return getRecordingsDir();

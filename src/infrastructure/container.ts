@@ -11,9 +11,11 @@
 import { DrizzleSessionRepository } from "./persistence/repositories/DrizzleSessionRepository";
 import { DrizzleFolderRepository } from "./persistence/repositories/DrizzleFolderRepository";
 import { DrizzleGitHubIssueRepository } from "./persistence/repositories/DrizzleGitHubIssueRepository";
+import { DrizzleGitHubAccountRepository } from "./persistence/repositories/DrizzleGitHubAccountRepository";
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
 import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
+import { GhCliConfigGatewayImpl } from "./external/github/GhCliConfigGatewayImpl";
 import { SystemEnvironmentGateway } from "./external/environment/SystemEnvironmentGateway";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
@@ -22,6 +24,8 @@ import type { WorktreeGateway } from "@/application/ports/WorktreeGateway";
 import type { EnvironmentGateway } from "@/application/ports/EnvironmentGateway";
 import type { GitHubIssueRepository } from "@/application/ports/GitHubIssueRepository";
 import type { GitHubIssueGateway } from "@/application/ports/GitHubIssueGateway";
+import type { GitHubAccountRepository } from "@/application/ports/GitHubAccountRepository";
+import type { GhCliConfigGateway } from "@/application/ports/GhCliConfigGateway";
 
 // Session Use Cases
 import { CreateSessionUseCase } from "@/application/use-cases/session/CreateSessionUseCase";
@@ -54,6 +58,16 @@ import {
   MarkIssuesSeenUseCase,
 } from "@/application/use-cases/github";
 
+// GitHub Account Use Cases
+import {
+  LinkGitHubAccountUseCase,
+  UnlinkGitHubAccountUseCase,
+  SetDefaultGitHubAccountUseCase,
+  BindFolderToGitHubAccountUseCase,
+  UnbindFolderFromGitHubAccountUseCase,
+  ListGitHubAccountsUseCase,
+} from "@/application/use-cases/github-accounts";
+
 // Agent Use Cases
 import { RestartAgentUseCase } from "@/application/use-cases/session/RestartAgentUseCase";
 
@@ -78,6 +92,8 @@ export const folderRepository: FolderRepository = new DrizzleFolderRepository();
  * Uses Drizzle ORM for SQLite persistence.
  */
 export const githubIssueRepository: GitHubIssueRepository = new DrizzleGitHubIssueRepository();
+
+export const githubAccountRepository: GitHubAccountRepository = new DrizzleGitHubAccountRepository();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gateway Instances
@@ -106,6 +122,8 @@ export const githubIssueGateway: GitHubIssueGateway = new GitHubIssueGatewayImpl
  * Provides access to system environment variables.
  */
 export const environmentGateway: EnvironmentGateway = new SystemEnvironmentGateway();
+
+export const ghCliConfigGateway: GhCliConfigGateway = new GhCliConfigGatewayImpl();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Use Case Instances
@@ -261,6 +279,38 @@ export const markIssuesSeenUseCase = new MarkIssuesSeenUseCase(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GitHub Account Use Case Instances
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const linkGitHubAccountUseCase = new LinkGitHubAccountUseCase(
+  githubAccountRepository,
+  ghCliConfigGateway
+);
+
+export const unlinkGitHubAccountUseCase = new UnlinkGitHubAccountUseCase(
+  githubAccountRepository,
+  ghCliConfigGateway
+);
+
+export const setDefaultGitHubAccountUseCase = new SetDefaultGitHubAccountUseCase(
+  githubAccountRepository
+);
+
+export const bindFolderToGitHubAccountUseCase = new BindFolderToGitHubAccountUseCase(
+  githubAccountRepository,
+  folderRepository
+);
+
+export const unbindFolderFromGitHubAccountUseCase = new UnbindFolderFromGitHubAccountUseCase(
+  githubAccountRepository,
+  folderRepository
+);
+
+export const listGitHubAccountsUseCase = new ListGitHubAccountsUseCase(
+  githubAccountRepository
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -272,9 +322,11 @@ export interface Container {
   sessionRepository: SessionRepository;
   folderRepository: FolderRepository;
   githubIssueRepository: GitHubIssueRepository;
+  githubAccountRepository: GitHubAccountRepository;
   tmuxGateway: TmuxGateway;
   worktreeGateway: WorktreeGateway;
   githubIssueGateway: GitHubIssueGateway;
+  ghCliConfigGateway: GhCliConfigGateway;
   environmentGateway: EnvironmentGateway;
 }
 
@@ -285,9 +337,11 @@ export const defaultContainer: Container = {
   sessionRepository,
   folderRepository,
   githubIssueRepository,
+  githubAccountRepository,
   tmuxGateway,
   worktreeGateway,
   githubIssueGateway,
+  ghCliConfigGateway,
   environmentGateway,
 };
 

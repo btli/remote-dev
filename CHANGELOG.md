@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Safe-area inset CSS utilities for iPhone notch and home indicator support (`pt-safe-top`, `pb-safe-bottom`, `pl-safe-left`, `pr-safe-right`)
   - Safe-area padding applied to sidebar, mobile header bar, terminal container, and mobile keyboard toolbar
   - PWA-aware top padding when running as installed app without browser chrome
+- **Multi-GitHub Account Support**: Link multiple GitHub accounts (personal, work, etc.) with per-folder binding
+  - New "Accounts" tab in GitHub Maintenance modal to manage linked accounts (add, set default, unlink)
+  - Per-folder GitHub account binding in folder preferences — sessions in a folder automatically get that account's credentials
+  - Full `gh` CLI auth: each account gets an isolated `GH_CONFIG_DIR` with `hosts.yml` provisioned at link time
+  - Environment injection pipeline: sessions receive `GH_TOKEN`, `GH_CONFIG_DIR`, and `GITHUB_USER` based on folder binding or default account
+  - Explicit default account — user must designate one account as the default; first account linked is auto-default
+  - Clean Architecture implementation: `GitHubAccount` domain entity, 6 use cases, repository port, gh CLI config gateway
+  - New DB tables: `github_account_metadata`, `folder_github_account_link`
+  - Migration script for existing users: `bun run db:migrate-github-accounts`
 - **Files Section in Sidebar**: New collapsible "Files" section above MCP Servers showing default project files (.env, .env.local, CLAUDE.md, README.md) and pinned files
   - Automatically detects which default files exist on disk for the active folder's project directory
   - Pinned files moved from inline folder tree to this dedicated section, reducing clutter

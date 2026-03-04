@@ -34,6 +34,7 @@ import { UnsavedChangesDialog } from "@/components/common/UnsavedChangesDialog";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { PinnedFilesTab } from "./PinnedFilesTab";
+import { FolderAccountBinder } from "@/components/github/FolderAccountBinder";
 
 // Helper to get electron API for directory selection (only in Electron)
 function getElectronSelectDirectory(): (() => Promise<string | null>) | null {
@@ -855,6 +856,11 @@ export function FolderPreferencesModal({
 
             {/* Repository Tab */}
             <TabsContent value="repository" className="mt-0 space-y-4">
+              {/* GitHub Account Binding */}
+              <div className="p-3 rounded-lg border border-border bg-card/30">
+                <FolderAccountBinder folderId={folderId} />
+              </div>
+
               <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">
                   Link a repository to enable worktree creation from this folder.

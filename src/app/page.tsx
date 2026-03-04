@@ -1,7 +1,7 @@
 import { signOut } from "@/auth";
 import { getAuthSession } from "@/lib/auth-utils";
 import { db } from "@/db";
-import { terminalSessions, accounts, sessionFolders } from "@/db/schema";
+import { terminalSessions, accounts, sessionFolders, githubAccountMetadata } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
@@ -18,6 +18,7 @@ import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
 import { SessionMCPProvider } from "@/contexts/SessionMCPContext";
 import { TaskProvider } from "@/contexts/TaskContext";
+import { GitHubAccountProvider } from "@/contexts/GitHubAccountContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
 import type { TerminalSession } from "@/types/session";
@@ -61,7 +62,7 @@ export default async function Home() {
     sortOrder: f.sortOrder ?? 0,
   }));
 
-  // Check if GitHub is connected
+  // Check if GitHub is connected (any OAuth account or metadata entries)
   const githubAccount = await db.query.accounts.findFirst({
     where: and(
       eq(accounts.userId, session.user.id),
@@ -69,6 +70,13 @@ export default async function Home() {
     ),
   });
   const isGitHubConnected = !!githubAccount;
+
+  // Check if user has GitHub account metadata (for multi-account context)
+  const hasGitHubAccounts = await db.query.githubAccountMetadata.findFirst({
+    where: eq(githubAccountMetadata.userId, session.user.id),
+    columns: { providerAccountId: true },
+  });
+  const initialHasGitHubAccounts = !!hasGitHubAccounts;
 
   // Map database sessions to TypeScript type
   const initialSessions: TerminalSession[] = dbSessions.map((s) => ({
@@ -106,6 +114,7 @@ export default async function Home() {
           <ProfileProvider>
             <TemplateProvider>
               <RecordingProvider>
+                <GitHubAccountProvider initialHasAccounts={initialHasGitHubAccounts}>
                 <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
                   <GitHubIssuesProvider>
                     <SessionProvider initialSessions={initialSessions}>
@@ -137,6 +146,7 @@ export default async function Home() {
                     </SessionProvider>
                   </GitHubIssuesProvider>
                 </GitHubStatsProvider>
+                </GitHubAccountProvider>
               </RecordingProvider>
             </TemplateProvider>
           </ProfileProvider>
