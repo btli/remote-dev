@@ -4,6 +4,7 @@ import { accounts } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { validateSignedState } from "@/lib/oauth-state";
 import { encrypt } from "@/lib/encryption";
+import { linkGitHubAccountUseCase } from "@/infrastructure/container";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
   const stateResult = validateSignedState(state);
   if (!stateResult.valid) {
     console.warn("OAuth state validation failed:", stateResult.error);
-    return NextResponse.redirect(new URL(`/?error=${stateResult.error}`, request.url));
+    return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(stateResult.error)}`, request.url));
   }
 
   const stateData = stateResult.payload;
@@ -108,6 +109,22 @@ export async function GET(request: NextRequest) {
       token_type,
       scope,
     });
+  }
+
+  // Link GitHub account metadata and provision gh CLI config
+  try {
+    await linkGitHubAccountUseCase.execute({
+      userId: stateData.userId,
+      providerAccountId: String(githubUser.id),
+      login: githubUser.login,
+      displayName: githubUser.name ?? null,
+      avatarUrl: githubUser.avatar_url,
+      email: githubUser.email ?? null,
+      accessToken: access_token,
+    });
+  } catch (error) {
+    console.error("Failed to link GitHub account metadata:", error);
+    // Non-fatal: the OAuth account was already saved above
   }
 
   return NextResponse.redirect(new URL("/?github=connected", request.url));

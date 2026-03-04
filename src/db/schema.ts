@@ -215,6 +215,51 @@ export const folderPreferences = sqliteTable(
   ]
 );
 
+// GitHub account metadata - augments the NextAuth accounts table with display info
+// Keyed by providerAccountId (GitHub numeric user ID as string)
+export const githubAccountMetadata = sqliteTable(
+  "github_account_metadata",
+  {
+    providerAccountId: text("provider_account_id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    login: text("login").notNull(),
+    displayName: text("display_name"),
+    avatarUrl: text("avatar_url").notNull(),
+    email: text("email"),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    configDir: text("config_dir").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("github_account_metadata_user_idx").on(table.userId),
+  ]
+);
+
+// Binds a folder to a specific GitHub account for environment injection
+export const folderGitHubAccountLinks = sqliteTable(
+  "folder_github_account_link",
+  {
+    folderId: text("folder_id")
+      .primaryKey()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    providerAccountId: text("provider_account_id")
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("folder_gh_account_link_account_idx").on(table.providerAccountId),
+  ]
+);
+
 // Port registry for environment variable port conflict detection
 export const portRegistry = sqliteTable(
   "port_registry",

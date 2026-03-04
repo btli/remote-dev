@@ -45,6 +45,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useGitHubContext } from "@/contexts/GitHubContext";
 import { CachedRepositoryCard } from "./CachedRepositoryCard";
+import { AccountSwitcher } from "./AccountSwitcher";
+import { useGitHubAccounts } from "@/contexts/GitHubAccountContext";
 
 interface GitHubMaintenanceModalProps {
   open: boolean;
@@ -68,7 +70,8 @@ export function GitHubMaintenanceModal({
     disconnect,
   } = useGitHubContext();
 
-  const [activeTab, setActiveTab] = useState<"repositories" | "settings">(
+  const { accounts: ghAccounts } = useGitHubAccounts();
+  const [activeTab, setActiveTab] = useState<"repositories" | "accounts" | "settings">(
     "repositories"
   );
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -123,8 +126,8 @@ export function GitHubMaintenanceModal({
     }).format(date);
   };
 
-  // Disconnected state
-  if (!isConnected) {
+  // Disconnected state (no accounts at all)
+  if (!isConnected && ghAccounts.length === 0) {
     return (
       <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
         <DialogContent className="sm:max-w-[450px] bg-popover/95 backdrop-blur-xl border-border">
@@ -183,12 +186,20 @@ export function GitHubMaintenanceModal({
           <Tabs
             value={activeTab}
             onValueChange={(v) =>
-              setActiveTab(v as "repositories" | "settings")
+              setActiveTab(v as "repositories" | "accounts" | "settings")
             }
             className="flex-1 flex flex-col min-h-0"
           >
-            <TabsList className="grid w-full grid-cols-2 shrink-0">
+            <TabsList className="grid w-full grid-cols-3 shrink-0">
               <TabsTrigger value="repositories">Repositories</TabsTrigger>
+              <TabsTrigger value="accounts">
+                Accounts
+                {ghAccounts.length > 0 && (
+                  <span className="ml-1.5 text-xs text-muted-foreground">
+                    ({ghAccounts.length})
+                  </span>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="settings">Settings</TabsTrigger>
             </TabsList>
 
@@ -297,6 +308,14 @@ export function GitHubMaintenanceModal({
                   Last synced: {formatDate(stats.lastSync)}
                 </div>
               )}
+            </TabsContent>
+
+            {/* Accounts Tab */}
+            <TabsContent
+              value="accounts"
+              className="flex-1 mt-4"
+            >
+              <AccountSwitcher />
             </TabsContent>
 
             {/* Settings Tab */}

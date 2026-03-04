@@ -2,7 +2,7 @@
  * GitHubService - Manages GitHub OAuth, repository listing, and cloning
  */
 import { db } from "@/db";
-import { accounts, githubRepositories } from "@/db/schema";
+import { accounts, githubRepositories, githubAccountMetadata } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { execFile } from "@/lib/exec";
 import type {
@@ -22,18 +22,54 @@ import { getReposDir } from "@/lib/paths";
 export { GitHubServiceError };
 
 const GITHUB_API_BASE = "https://api.github.com";
-// Use centralized path configuration for cloned repositories
-const getReposCacheDir = () => getReposDir();
 
 /**
  * Get the GitHub access token for a user.
  * Decrypts the token if it was stored encrypted.
+ *
+ * @param userId - User ID
+ * @param providerAccountId - Optional specific account. If omitted, returns the
+ *   default account's token (via github_account_metadata.is_default), or falls
+ *   back to the first account found for backward compatibility.
  */
-export async function getAccessToken(userId: string): Promise<string | null> {
+export async function getAccessToken(
+  userId: string,
+  providerAccountId?: string | null
+): Promise<string | null> {
+  if (providerAccountId) {
+    // Specific account requested
+    const account = await db.query.accounts.findFirst({
+      where: and(
+        eq(accounts.userId, userId),
+        eq(accounts.provider, "github"),
+        eq(accounts.providerAccountId, providerAccountId)
+      ),
+    });
+    return decryptSafe(account?.access_token ?? null);
+  }
+
+  // No specific account: try to find the default via metadata table
+  const defaultMeta = await db.query.githubAccountMetadata.findFirst({
+    where: and(
+      eq(githubAccountMetadata.userId, userId),
+      eq(githubAccountMetadata.isDefault, true)
+    ),
+  });
+  if (defaultMeta) {
+    const account = await db.query.accounts.findFirst({
+      where: and(
+        eq(accounts.userId, userId),
+        eq(accounts.provider, "github"),
+        eq(accounts.providerAccountId, defaultMeta.providerAccountId)
+      ),
+    });
+    if (account) return decryptSafe(account.access_token ?? null);
+  }
+
+  // Fallback: first GitHub account (backward compatibility)
   const account = await db.query.accounts.findFirst({
     where: and(eq(accounts.userId, userId), eq(accounts.provider, "github")),
   });
-  // Decrypt token - handles both encrypted and legacy plaintext
   return decryptSafe(account?.access_token ?? null);
 }
 
@@ -234,10 +270,9 @@ export async function cacheRepository(
 
 /**
  * Get the base directory for cloned repositories.
- * Uses centralized path configuration: ~/.remote-dev/repos/
  */
 export function getReposBaseDir(): string {
-  return getReposCacheDir();
+  return getReposDir();
 }
 
 /**
