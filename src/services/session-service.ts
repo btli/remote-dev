@@ -807,6 +807,7 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     splitOrder: dbSession.splitOrder,
     splitSize: dbSession.splitSize ?? 0.5,
     status: dbSession.status as SessionStatus,
+    pinned: dbSession.pinned ?? false,
     tabOrder: dbSession.tabOrder,
     lastActivityAt: new Date(dbSession.lastActivityAt),
     createdAt: new Date(dbSession.createdAt),
