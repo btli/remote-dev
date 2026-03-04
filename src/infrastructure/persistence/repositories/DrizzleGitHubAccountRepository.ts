@@ -115,7 +115,10 @@ export class DrizzleGitHubAccountRepository implements GitHubAccountRepository {
       ),
     });
 
-    return saved ? GitHubAccountMapper.toDomain(saved) : account;
+    if (!saved) {
+      throw new Error(`Failed to save GitHubAccount: cross-user conflict for ${account.providerAccountId}`);
+    }
+    return GitHubAccountMapper.toDomain(saved);
   }
 
   async delete(providerAccountId: string, userId: string): Promise<boolean> {
@@ -174,6 +177,12 @@ export class DrizzleGitHubAccountRepository implements GitHubAccountRepository {
     await db
       .delete(folderGitHubAccountLinks)
       .where(eq(folderGitHubAccountLinks.folderId, folderId));
+  }
+
+  async unbindFoldersByAccount(providerAccountId: string): Promise<void> {
+    await db
+      .delete(folderGitHubAccountLinks)
+      .where(eq(folderGitHubAccountLinks.providerAccountId, providerAccountId));
   }
 
   async findFolderBindings(userId: string): Promise<Map<string, string>> {

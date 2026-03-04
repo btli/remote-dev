@@ -26,6 +26,9 @@ export interface GitHubAccountRepository {
   bindFolder(folderId: string, providerAccountId: string): Promise<void>;
   unbindFolder(folderId: string): Promise<void>;
 
+  /** Remove all folder bindings for a given account. */
+  unbindFoldersByAccount(providerAccountId: string): Promise<void>;
+
   /** Returns a map of folderId -> providerAccountId. */
   findFolderBindings(userId: string): Promise<Map<string, string>>;
 
