@@ -163,18 +163,8 @@ export async function deleteTask(
   return result.length > 0;
 }
 
-/** Map Claude Code TodoWrite status to remote-dev TaskStatus */
-export function mapTodoWriteStatus(status: string): TaskStatus {
-  switch (status) {
-    case "in_progress":
-      return "in_progress";
-    case "completed":
-      return "done";
-    case "pending":
-    default:
-      return "open";
-  }
-}
+// Re-export from pure module for backward compatibility
+export { mapTodoWriteStatus } from "./agent-todo-sync-pure";
 
 /** Get all agent tasks for a specific session */
 export async function getTasksBySession(
