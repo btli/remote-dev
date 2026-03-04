@@ -2,6 +2,7 @@
 
 import { X, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMobile } from "@/hooks/useMobile";
 import type { TerminalSession } from "@/types/session";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +27,7 @@ export function TabBar({
   onTabClose,
   onNewSession,
 }: TabBarProps) {
+  const isMobile = useMobile();
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
   return (
@@ -63,20 +65,22 @@ export function TabBar({
                     {/* Session name */}
                     <span className="max-w-[120px] truncate">{session.name}</span>
 
-                    {/* Close button */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onTabClose(session.id);
-                      }}
-                      className={cn(
-                        "p-0.5 rounded-sm opacity-0 group-hover:opacity-100",
-                        "hover:bg-accent transition-all duration-150",
-                        "text-muted-foreground hover:text-foreground"
-                      )}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+                    {/* Close button - hidden on mobile to prevent accidental taps */}
+                    {!isMobile && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onTabClose(session.id);
+                        }}
+                        className={cn(
+                          "p-0.5 rounded-sm opacity-0 group-hover:opacity-100",
+                          "hover:bg-accent transition-all duration-150",
+                          "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
 
                     {/* Active indicator line */}
                     {isActive && (

@@ -21,6 +21,8 @@ import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
+import { useMobile } from "@/hooks/useMobile";
+import { usePWA } from "@/hooks/usePWA";
 import { useFolderContext } from "@/contexts/FolderContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSplitContext } from "@/contexts/SplitContext";
@@ -142,7 +144,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardFolderId, setWizardFolderId] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useMobile();
+  const isPWA = usePWA();
   // Use useSyncExternalStore for localStorage values to avoid hydration mismatches
   // and prevent cascading renders from setState in effects.
   // Functions are defined outside the component for stable identity.
@@ -169,13 +172,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     window.dispatchEvent(new CustomEvent("sidebar-width-change"));
   }, []);
 
-  // Track mobile state for responsive sidebar behavior
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
 
   const [folderSettingsModal, setFolderSettingsModal] = useState<{
     folderId: string;
@@ -1392,7 +1388,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <div
         className={cn(
           // Mobile: show as drawer when expanded, inline when collapsed
-          isMobile && isMobileSidebarOpen && "fixed inset-y-0 left-0 z-40"
+          isMobile && isMobileSidebarOpen && "fixed inset-y-0 left-0 z-40",
+          isPWA && isMobile && "pt-safe-top"
         )}
         onClick={() => {
           // On mobile, clicking the collapsed sidebar expands it
@@ -1466,7 +1463,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       </div>
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className={cn(
+        "flex-1 flex flex-col overflow-hidden",
+        isPWA && isMobile && "pt-safe-top"
+      )}>
         {/* Mobile header bar */}
         {activeSessions.length > 0 && (
           <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
@@ -1550,7 +1550,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
         ) : (
           /* Terminal Container */
-          <div className="flex-1 p-3 overflow-hidden">
+          <div className={cn("flex-1 p-3 overflow-hidden", isMobile && "pb-safe-bottom")}>
             <div className="h-full relative rounded-xl overflow-hidden">
               {/* Gradient border effect */}
               <div className="absolute inset-0 rounded-xl p-[1px] bg-gradient-to-br from-primary/30 via-transparent to-accent/30">

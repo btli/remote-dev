@@ -10,6 +10,7 @@ import {
   Pin, PinOff, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useMobile } from "@/hooks/useMobile";
 import type { TerminalSession } from "@/types/session";
 import type { PinnedFile } from "@/types/pinned-files";
 import { Button } from "@/components/ui/button";
@@ -229,7 +230,38 @@ export function Sidebar({
   const { allocations, activePorts } = usePortContext();
   const { getAgentActivityStatus } = useSessionContext();
 
-  // Touch drag state for mobile
+  // Mobile detection and swipe-to-close state
+  const isMobile = useMobile();
+  const [swipedSessionId, setSwipedSessionId] = useState<string | null>(null);
+  const swipeTouchRef = useRef<{
+    startX: number;
+    startY: number;
+    sessionId: string | null;
+    el: HTMLElement | null;
+    isHorizontal: boolean | null;
+  }>({ startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null });
+
+  // Reset swipe state and DOM ref when swiped session is removed
+  useEffect(() => {
+    if (swipedSessionId && !sessions.some(s => s.id === swipedSessionId)) {
+      swipeTouchRef.current = { startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null };
+      setSwipedSessionId(null);
+    }
+  }, [sessions, swipedSessionId]);
+
+  // Reset swipe state when sidebar collapses (e.g., mobile drawer closes)
+  useEffect(() => {
+    if (!collapsed || !swipedSessionId) return;
+    const { el } = swipeTouchRef.current;
+    if (el) {
+      el.style.transform = "";
+      el.style.transition = "";
+    }
+    swipeTouchRef.current = { startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null };
+    setSwipedSessionId(null);
+  }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Touch drag state for mobile (folder reordering)
   const touchDragRef = useRef<{
     type: "folder" | "session" | null;
     id: string | null;
@@ -1075,7 +1107,7 @@ export function Sidebar({
         onDragLeave={handleDragLeave}
         onDrop={(e) => handleSessionDrop(e, session.id, parentFolderId)}
         className={cn(
-          "relative",
+          "relative overflow-hidden",
           !isEditing && "cursor-grab active:cursor-grabbing"
         )}
       >
@@ -1086,20 +1118,127 @@ export function Sidebar({
             inFolder && "left-6"
           )} />
         )}
+
+        {/* Mobile swipe-reveal close button (positioned behind the row) */}
+        {isMobile && swipedSessionId === session.id && (() => {
+          const schedules = getSchedulesForSession(session.id);
+          const hasActiveSchedules = schedules.some(s => s.enabled);
+          if (hasActiveSchedules) return null;
+          return (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const el = swipeTouchRef.current.el;
+                if (el) {
+                  el.style.transition = "transform 200ms ease-out";
+                  el.style.transform = "";
+                }
+                setSwipedSessionId(null);
+                handleSessionCloseRequest(session);
+              }}
+              className={cn(
+                "absolute right-0 top-0 bottom-0 w-[72px] rounded-r-md z-0",
+                "flex items-center justify-center",
+                "bg-destructive text-destructive-foreground",
+                "active:bg-destructive/80 transition-colors"
+              )}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          );
+        })()}
+
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
               role="button"
               tabIndex={isEditing ? -1 : 0}
               aria-label={session.name}
-              onClick={() => !isEditing && onSessionClick(session.id)}
+              onClick={() => {
+                if (isEditing) return;
+                // On mobile, tapping a swiped row resets it instead of navigating
+                if (isMobile && swipedSessionId === session.id) {
+                  setSwipedSessionId(null);
+                  return;
+                }
+                onSessionClick(session.id);
+              }}
               onKeyDown={(e) => {
                 if (!isEditing && (e.key === "Enter" || e.key === " ")) {
                   e.preventDefault();
                   onSessionClick(session.id);
                 }
               }}
-              style={{ marginLeft: depth > 0 ? `${depth * 12}px` : undefined }}
+              onTouchStart={isMobile ? (e) => {
+                // Animate and close any other swiped row
+                if (swipedSessionId && swipedSessionId !== session.id) {
+                  const prevEl = swipeTouchRef.current.el;
+                  if (prevEl) {
+                    prevEl.style.transition = "transform 200ms ease-out";
+                    prevEl.style.transform = "";
+                  }
+                  setSwipedSessionId(null);
+                }
+                const touch = e.touches[0];
+                swipeTouchRef.current = {
+                  startX: touch.clientX,
+                  startY: touch.clientY,
+                  sessionId: session.id,
+                  el: e.currentTarget,
+                  isHorizontal: null,
+                };
+              } : undefined}
+              onTouchMove={isMobile ? (e) => {
+                const ref = swipeTouchRef.current;
+                if (ref.sessionId !== session.id || !ref.el) return;
+                const touch = e.touches[0];
+                const deltaX = touch.clientX - ref.startX;
+                const deltaY = touch.clientY - ref.startY;
+
+                // Determine swipe direction once past threshold
+                if (ref.isHorizontal === null && (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10)) {
+                  ref.isHorizontal = Math.abs(deltaX) > Math.abs(deltaY);
+                }
+                if (!ref.isHorizontal) return; // vertical scroll — don't interfere
+
+                e.preventDefault();
+                // Leftward swipe only, clamped to [-80, 0]
+                const clamped = Math.max(-80, Math.min(0, deltaX));
+                ref.el.style.transform = `translateX(${clamped}px)`;
+                ref.el.style.transition = "none";
+              } : undefined}
+              onTouchEnd={isMobile ? () => {
+                const ref = swipeTouchRef.current;
+                if (ref.sessionId !== session.id || !ref.el) return;
+                ref.el.style.transition = "transform 200ms ease-out";
+                if (ref.isHorizontal) {
+                  // Check final position via current transform
+                  const matrix = new DOMMatrixReadOnly(getComputedStyle(ref.el).transform);
+                  if (matrix.m41 < -40) {
+                    // Committed swipe — snap to reveal position
+                    ref.el.style.transform = "translateX(-72px)";
+                    setSwipedSessionId(session.id);
+                  } else {
+                    // Not enough — snap back
+                    ref.el.style.transform = "";
+                    setSwipedSessionId(prev => prev === session.id ? null : prev);
+                  }
+                }
+                ref.sessionId = null;
+              } : undefined}
+              onTouchCancel={isMobile ? () => {
+                // Reset on interrupted touch (incoming call, system gesture, etc.)
+                const ref = swipeTouchRef.current;
+                if (ref.sessionId !== session.id || !ref.el) return;
+                ref.el.style.transition = "transform 200ms ease-out";
+                ref.el.style.transform = "";
+                setSwipedSessionId(prev => prev === session.id ? null : prev);
+                ref.sessionId = null;
+              } : undefined}
+              style={{
+                marginLeft: depth > 0 ? `${depth * 12}px` : undefined,
+                ...(isMobile ? { touchAction: "pan-y" } : {}),
+              }}
               className={cn(
                 "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
                 "transition-all duration-200",
@@ -1107,7 +1246,10 @@ export function Sidebar({
                 isActive
                   ? "bg-primary/20 border border-border"
                   : "hover:bg-accent/50 border border-transparent",
-                isDragOverSession && "bg-primary/20 border-primary/30"
+                isDragOverSession && "bg-primary/20 border-primary/30",
+                // Mobile: solid background so row covers the swipe-reveal close button behind it
+                isMobile && !isActive && "bg-card z-10",
+                isMobile && isActive && "z-10"
               )}
             >
             {/* Status indicator - icon colored by agent activity status */}
@@ -1192,8 +1334,8 @@ export function Sidebar({
               <Pin className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />
             )}
 
-            {/* Close button - hidden if session has scheduled commands */}
-            {!isEditing && (() => {
+            {/* Close button: hover on desktop, hidden on mobile (swipe-reveal is outside row) */}
+            {!isEditing && !isMobile && (() => {
               const schedules = getSchedulesForSession(session.id);
               const hasActiveSchedules = schedules.some(s => s.enabled);
               if (hasActiveSchedules) return null;
@@ -1479,6 +1621,7 @@ export function Sidebar({
       className={cn(
         "h-full flex flex-col bg-card/50 backdrop-blur-md border-r border-border",
         "transition-[width] duration-200 relative shrink-0",
+        "pl-safe-left",
         isResizing && "select-none"
       )}
       style={{ width: collapsed ? COLLAPSED_SIDEBAR_WIDTH : width }}

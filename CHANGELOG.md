@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `GET /api/agent/claude-sessions` endpoint for session discovery
   - Configurable session limit (default 20, max 50)
 - **Auto-register MCP server on agent creation**: Automatically configures the Remote Dev MCP server in agent config files (Claude, Gemini, Codex) during session creation and resume, giving agents immediate access to session management, git, and folder tools
+- **Mobile PWA Optimization**: Automatic detection and optimization for mobile devices and installed PWA mode
+  - `useMobile` hook: detects mobile devices via user-agent and touch capability (replaces viewport-based detection)
+  - `usePWA` hook: detects standalone PWA display mode via `matchMedia("(display-mode: standalone)")` and `navigator.standalone`
+  - Swipe-to-close on sidebar sessions: swipe left to reveal a close button (like iOS mail), preventing accidental taps
+  - Hidden invisible close button on mobile — previously `opacity-0` but still tappable, causing accidental session closes
+  - Safe-area inset CSS utilities for iPhone notch and home indicator support (`pt-safe-top`, `pb-safe-bottom`, `pl-safe-left`, `pr-safe-right`)
+  - Safe-area padding applied to sidebar, mobile header bar, terminal container, and mobile keyboard toolbar
+  - PWA-aware top padding when running as installed app without browser chrome
 - **Files Section in Sidebar**: New collapsible "Files" section above MCP Servers showing default project files (.env, .env.local, CLAUDE.md, README.md) and pinned files
   - Automatically detects which default files exist on disk for the active folder's project directory
   - Pinned files moved from inline folder tree to this dedicated section, reducing clutter
