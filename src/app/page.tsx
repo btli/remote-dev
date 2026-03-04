@@ -113,21 +113,21 @@ export default async function Home() {
                           <PortProvider>
                             <ScheduleProvider>
                               <TaskProvider>
-                              <SessionMCPProvider>
-                                <div className="flex h-screen flex-col bg-background">
-                                  {/* Header - hidden on mobile, shown in sidebar instead */}
-                                  <Header
-                                    isGitHubConnected={isGitHubConnected}
-                                    userEmail={session.user.email || ""}
-                                    onSignOut={async () => {
-                                      "use server";
-                                      await signOut();
-                                    }}
-                                  />
-                                  {/* Main content */}
-                                  <SessionManager isGitHubConnected={isGitHubConnected} />
-                                </div>
-                              </SessionMCPProvider>
+                                <SessionMCPProvider>
+                                  <div className="flex h-screen flex-col bg-background">
+                                    {/* Header - hidden on mobile, shown in sidebar instead */}
+                                    <Header
+                                      isGitHubConnected={isGitHubConnected}
+                                      userEmail={session.user.email || ""}
+                                      onSignOut={async () => {
+                                        "use server";
+                                        await signOut();
+                                      }}
+                                    />
+                                    {/* Main content */}
+                                    <SessionManager isGitHubConnected={isGitHubConnected} />
+                                  </div>
+                                </SessionMCPProvider>
                               </TaskProvider>
                             </ScheduleProvider>
                           </PortProvider>

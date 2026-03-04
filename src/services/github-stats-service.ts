@@ -612,8 +612,6 @@ async function updatePullRequests(
   }
 }
 
-// safeJsonParse imported from @/lib/utils
-
 /**
  * Update branch protection in database
  */

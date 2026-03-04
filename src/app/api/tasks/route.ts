@@ -5,7 +5,7 @@ import type { CreateTaskInput } from "@/types/task";
 
 export const GET = withApiAuth(async (request, { userId }) => {
   const url = new URL(request.url);
-  const folderId = url.searchParams.get("folderId");
+  const folderId = url.searchParams.get("folderId") ?? undefined;
 
   const tasks = await getTasks(userId, folderId);
   return NextResponse.json(tasks);
