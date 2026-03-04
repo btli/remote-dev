@@ -18,7 +18,9 @@ import {
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "fs/promises";
-import { join, resolve as pathResolve, isAbsolute } from "path";
+import { join, dirname, resolve as pathResolve, isAbsolute } from "path";
+import { fileURLToPath } from "url";
+import { execFileSync } from "child_process";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
@@ -683,6 +685,144 @@ export async function installAgentHooks(
   // Ensure .claude directory exists
   await mkdir(join(configDir, ".claude"), { recursive: true });
   await writeFile(settingsPath, newContent);
+}
+
+// ============================================================================
+// MCP Server Registration
+// ============================================================================
+
+/** Cached absolute path to the bun executable */
+let _bunPath: string | undefined;
+
+function getBunPath(): string {
+  const resolved = _bunPath ?? execFileSync("which", ["bun"], { encoding: "utf-8" }).trim();
+  _bunPath = resolved;
+  return resolved;
+}
+
+/** Resolve the RDV project root from this module's location (src/services/ → ../..) */
+const RDV_PROJECT_ROOT = pathResolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  ".."
+);
+
+/** MCP server name used across all agent configs */
+const MCP_SERVER_NAME = "remote-dev";
+
+/**
+ * Register the Remote Dev MCP server in the agent's config file.
+ * Idempotent: reads existing config, merges only the `remote-dev` entry,
+ * and skips the write if nothing changed.
+ */
+export async function registerMCPServer(
+  configDir: string,
+  provider: AgentProvider,
+  userId: string
+): Promise<void> {
+  const bunPath = getBunPath();
+  const mcpEntry: MCPEntry = {
+    command: bunPath,
+    args: ["--cwd", RDV_PROJECT_ROOT, "run", "mcp"],
+    env: { MCP_USER_ID: userId },
+  };
+
+  const handlers: Record<string, (dir: string, entry: MCPEntry) => Promise<void>> = {
+    claude: (dir, entry) => registerMCPForJsonSettings(dir, ".claude", entry),
+    gemini: (dir, entry) => registerMCPForJsonSettings(dir, ".gemini", entry),
+    codex: registerMCPForCodex,
+  };
+
+  const providers = provider === "all"
+    ? Object.keys(handlers)
+    : handlers[provider] ? [provider] : [];
+
+  await Promise.all(providers.map((p) => handlers[p](configDir, mcpEntry)));
+}
+
+interface MCPEntry {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * Register MCP server in a JSON settings file (used by Claude and Gemini).
+ * Both use the same format: { mcpServers: { "remote-dev": { ... } } }
+ */
+async function registerMCPForJsonSettings(
+  configDir: string,
+  subDir: string,
+  entry: MCPEntry
+): Promise<void> {
+  const settingsPath = join(configDir, subDir, "settings.json");
+
+  let settings: Record<string, unknown> = {};
+  let rawContent = "";
+  try {
+    rawContent = await readFile(settingsPath, "utf-8");
+    settings = JSON.parse(rawContent);
+  } catch {
+    // File doesn't exist or invalid JSON - start fresh
+  }
+
+  const mcpServers = (settings.mcpServers ?? {}) as Record<string, unknown>;
+  mcpServers[MCP_SERVER_NAME] = entry;
+  settings.mcpServers = mcpServers;
+
+  const newContent = JSON.stringify(settings, null, 2) + "\n";
+  if (newContent === rawContent) return;
+
+  await mkdir(join(configDir, subDir), { recursive: true });
+  await writeFile(settingsPath, newContent);
+}
+
+/**
+ * Register MCP server in Codex's .codex/config.toml
+ */
+async function registerMCPForCodex(
+  configDir: string,
+  entry: MCPEntry
+): Promise<void> {
+  const configPath = join(configDir, ".codex", "config.toml");
+
+  let rawContent = "";
+  try {
+    rawContent = await readFile(configPath, "utf-8");
+  } catch {
+    // File doesn't exist - start fresh
+  }
+
+  // Build the TOML section for the MCP server
+  const argsToml = entry.args.map((a) => `"${a}"`).join(", ");
+  const envEntries = Object.entries(entry.env)
+    .map(([k, v]) => `${k} = "${v}"`)
+    .join(", ");
+  const section =
+    `[mcp_servers.${MCP_SERVER_NAME}]\n` +
+    `command = "${entry.command}"\n` +
+    `args = [${argsToml}]\n` +
+    `env = { ${envEntries} }`;
+
+  // Check if section already exists and replace it, or append
+  const sectionRegex = new RegExp(
+    `\\[mcp_servers\\.${MCP_SERVER_NAME}\\][\\s\\S]*?(?=\\n\\[|$)`
+  );
+
+  let newContent: string;
+  if (sectionRegex.test(rawContent)) {
+    newContent = rawContent.replace(sectionRegex, section);
+  } else {
+    // Append with a blank line separator
+    newContent = rawContent
+      ? `${rawContent.trimEnd()}\n\n${section}\n`
+      : `${section}\n`;
+  }
+
+  if (newContent === rawContent) return;
+
+  await mkdir(join(configDir, ".codex"), { recursive: true });
+  await writeFile(configPath, newContent);
 }
 
 // ============================================================================
