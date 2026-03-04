@@ -33,6 +33,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
   const result = await parseJsonBody<{
     name?: string;
     status?: string;
+    pinned?: boolean;
     tabOrder?: number;
     projectPath?: string;
   }>(request);
@@ -43,6 +44,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 
   if (body.name !== undefined) updates.name = body.name;
   if (body.status !== undefined) updates.status = body.status as SessionStatus;
+  if (body.pinned !== undefined) updates.pinned = body.pinned;
   if (body.tabOrder !== undefined) updates.tabOrder = body.tabOrder;
   
   // SECURITY: Validate projectPath to prevent path traversal

@@ -41,6 +41,7 @@ export interface SessionProps {
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
+  pinned: boolean;
   tabOrder: number;
   lastActivityAt: Date;
   createdAt: Date;
@@ -111,6 +112,7 @@ export class Session {
       splitGroupId: null,
       splitOrder: 0,
       splitSize: 100,
+      pinned: false,
       tabOrder: props.tabOrder ?? 0,
       lastActivityAt: now,
       createdAt: now,
@@ -208,6 +210,10 @@ export class Session {
 
   get splitSize(): number {
     return this.props.splitSize;
+  }
+
+  get pinned(): boolean {
+    return this.props.pinned;
   }
 
   get tabOrder(): number {
@@ -341,6 +347,20 @@ export class Session {
     return this.withUpdates({ splitSize: size });
   }
 
+  /**
+   * Pin this session to the top of its folder.
+   */
+  pin(): Session {
+    return this.withUpdates({ pinned: true });
+  }
+
+  /**
+   * Unpin this session.
+   */
+  unpin(): Session {
+    return this.withUpdates({ pinned: false });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Agent State Methods (for agent terminal type)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -427,6 +447,11 @@ export class Session {
     return this.props.splitGroupId !== null;
   }
 
+  /** Check if session is pinned to top of its folder */
+  isPinned(): boolean {
+    return this.props.pinned;
+  }
+
   /** Check if session belongs to specified user */
   belongsTo(userId: string): boolean {
     return this.props.userId === userId;
@@ -457,6 +482,7 @@ export class Session {
       this.splitGroupId === other.splitGroupId &&
       this.splitOrder === other.splitOrder &&
       this.splitSize === other.splitSize &&
+      this.pinned === other.pinned &&
       this.tabOrder === other.tabOrder
     );
   }

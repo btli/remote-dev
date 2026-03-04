@@ -7,6 +7,7 @@ import {
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
+  Pin, PinOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -87,6 +88,7 @@ interface SidebarProps {
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
+  onSessionTogglePin: (sessionId: string) => void;
   onSessionMove: (sessionId: string, folderId: string | null) => void;
   onSessionReorder: (sessionIds: string[]) => void;
   onNewSession: () => void;
@@ -163,6 +165,7 @@ export function Sidebar({
   onSessionClick,
   onSessionClose,
   onSessionRename,
+  onSessionTogglePin,
   onSessionMove,
   onSessionReorder,
   onNewSession,
@@ -315,6 +318,8 @@ export function Sidebar({
   const rootSessions = activeSessions.filter(
     (s) => !s.folderId
   );
+  const pinnedRootSessions = rootSessions.filter((s) => s.pinned);
+  const unpinnedRootSessions = rootSessions.filter((s) => !s.pinned);
 
   // Build folder tree from flat list, sorted by sortOrder
   // Memoized to prevent recalculation on every render
@@ -875,9 +880,10 @@ export function Sidebar({
       // Different folder - move to target folder
       onSessionMove(draggedId, targetFolderId);
     } else {
-      // Same folder - reorder
+      // Same folder - reorder within same pin partition
+      const draggedPinned = draggedSession?.pinned ?? false;
       const sessionsInFolder = activeSessions.filter(
-        (s) => (s.folderId || null) === targetFolderId
+        (s) => (s.folderId || null) === targetFolderId && s.pinned === draggedPinned
       );
       const currentOrder = sessionsInFolder.map((s) => s.id);
 
@@ -945,6 +951,7 @@ export function Sidebar({
 
     // Check if dragged session is in the same folder - use session.folderId directly
     const draggedSession = draggedSessionId ? activeSessions.find((s) => s.id === draggedSessionId) : null;
+    const targetSession = activeSessions.find((s) => s.id === targetSessionId);
     const draggedFolderId = draggedSession?.folderId || null;
     if (draggedFolderId !== targetFolderId) {
       // Different folder - treat as folder drop
@@ -954,7 +961,14 @@ export function Sidebar({
       return;
     }
 
-    // Same folder - show reorder indicator
+    // Don't allow reordering across pin partitions
+    if (draggedSession && targetSession && draggedSession.pinned !== targetSession.pinned) {
+      setDropTargetId(null);
+      setDropPosition(null);
+      return;
+    }
+
+    // Same folder and pin state - show reorder indicator
     const rect = e.currentTarget.getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
     const position = e.clientY < midY ? "before" : "after";
@@ -1169,6 +1183,11 @@ export function Sidebar({
               );
             })()}
 
+            {/* Pin indicator */}
+            {session.pinned && !isEditing && (
+              <Pin className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />
+            )}
+
             {/* Close button - hidden if session has scheduled commands */}
             {!isEditing && (() => {
               const schedules = getSchedulesForSession(session.id);
@@ -1202,6 +1221,19 @@ export function Sidebar({
           >
             <Pencil className="w-3.5 h-3.5 mr-2" />
             Rename
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => onSessionTogglePin(session.id)}>
+            {session.pinned ? (
+              <>
+                <PinOff className="w-3.5 h-3.5 mr-2" />
+                Unpin Session
+              </>
+            ) : (
+              <>
+                <Pin className="w-3.5 h-3.5 mr-2" />
+                Pin Session
+              </>
+            )}
           </ContextMenuItem>
           {folders.length > 0 && (
             <ContextMenuSub>
@@ -1607,6 +1639,12 @@ export function Sidebar({
                 </div>
               )}
 
+              {/* Pinned root sessions (above folders) */}
+              {pinnedRootSessions.length > 0 && renderSessionsWithSplits(pinnedRootSessions, {
+                folderId: null,
+                depth: 0,
+              })}
+
               {/* Recursive folder rendering */}
               {folderTree.map((folderNode) => {
                 // Helper to count sessions recursively in a folder and all descendants
@@ -1624,6 +1662,8 @@ export function Sidebar({
                   const folderSessions = activeSessions.filter(
                     (s) => s.folderId === node.id && s.terminalType !== "file"
                   );
+                  const pinnedFolderSessions = folderSessions.filter((s) => s.pinned);
+                  const unpinnedFolderSessions = folderSessions.filter((s) => !s.pinned);
                   const isEditingFolder = editingId === node.id && editingType === "folder";
                   const isDragOver = dragOverFolderId === node.id;
                   const isActive = activeFolderId === node.id;
@@ -2022,9 +2062,17 @@ export function Sidebar({
                             '--tree-line-left': `${node.depth * 12 + 8 + 7}px`,
                           } as React.CSSProperties}
                         >
+                          {/* Pinned sessions rendered above child folders */}
+                          {pinnedFolderSessions.length > 0 && renderSessionsWithSplits(pinnedFolderSessions, {
+                            folderId: node.id,
+                            depth: node.depth + 1,
+                            indentStyle: { marginLeft: `${(node.depth + 1) * 12}px` },
+                            treeLineLeft: node.depth * 12 + 8 + 7,
+                            trashCount: 0,
+                          })}
                           {/* Render child folders with tree-item wrappers */}
                           {node.children.map((child, idx) => {
-                            const isLastChild = folderSessions.length === 0 &&
+                            const isLastChild = unpinnedFolderSessions.length === 0 &&
                               getFolderTrashCount(node.id) === 0 &&
                               idx === node.children.length - 1;
                             return (
@@ -2041,8 +2089,8 @@ export function Sidebar({
                               </div>
                             );
                           })}
-                          {/* Sessions with split group handling and tree lines */}
-                          {renderSessionsWithSplits(folderSessions, {
+                          {/* Unpinned sessions with split group handling and tree lines */}
+                          {renderSessionsWithSplits(unpinnedFolderSessions, {
                             folderId: node.id,
                             depth: node.depth + 1,
                             indentStyle: { marginLeft: `${(node.depth + 1) * 12}px` },
@@ -2209,8 +2257,8 @@ export function Sidebar({
                 return renderFolderNode(folderNode);
               })}
 
-              {/* Root sessions (not in any folder) */}
-              {renderSessionsWithSplits(rootSessions, {
+              {/* Unpinned root sessions (below folders) */}
+              {renderSessionsWithSplits(unpinnedRootSessions, {
                 folderId: null,
                 depth: 0,
               })}

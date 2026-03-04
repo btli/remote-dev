@@ -596,6 +596,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [updateSession, logSessionError]
   );
 
+  const handleTogglePinSession = useCallback(
+    async (sessionId: string) => {
+      const session = sessions.find((s) => s.id === sessionId);
+      if (!session) return;
+      try {
+        await updateSession(sessionId, { pinned: !session.pinned });
+      } catch (error) {
+        logSessionError("toggle pin session", error);
+      }
+    },
+    [sessions, updateSession, logSessionError]
+  );
+
   // Open schedule modal for a session
   const handleScheduleSession = useCallback(
     (sessionId: string) => {
@@ -1349,6 +1362,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}
             onSessionRename={handleRenameSession}
+            onSessionTogglePin={handleTogglePinSession}
             onSessionMove={handleMoveSession}
             onSessionReorder={handleReorderSessions}
             onNewSession={handleOpenWizard}

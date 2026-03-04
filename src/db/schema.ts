@@ -433,6 +433,7 @@ export const terminalSessions = sqliteTable(
     splitOrder: integer("split_order").notNull().default(0),
     splitSize: real("split_size").default(0.5),
     status: text("status").$type<SessionStatus>().notNull().default("active"),
+    pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     tabOrder: integer("tab_order").notNull().default(0),
     lastActivityAt: integer("last_activity_at", { mode: "timestamp_ms" })
       .notNull()
