@@ -91,6 +91,7 @@ export default async function Home() {
     splitOrder: s.splitOrder,
     splitSize: s.splitSize ?? 0.5,
     status: s.status as "active" | "suspended" | "closed" | "trashed",
+    pinned: s.pinned ?? false,
     tabOrder: s.tabOrder,
     lastActivityAt: new Date(s.lastActivityAt),
     createdAt: new Date(s.createdAt),
