@@ -91,8 +91,10 @@ export async function syncAgentTodos(
 }
 
 /**
- * Archive completed agent tasks for a session.
- * Called when a session is closed.
+ * Archive non-terminal agent tasks for a session.
+ * Called when a session is closed. Cancels tasks that are still
+ * open or in-progress (since the agent is no longer running).
+ * Leaves "done" tasks untouched to preserve their completed status.
  */
 export async function archiveSessionTodos(
   sessionId: string,
@@ -102,7 +104,7 @@ export async function archiveSessionTodos(
   let archived = 0;
 
   for (const task of tasks) {
-    if (task.status === "done") {
+    if (task.status === "open" || task.status === "in_progress") {
       await TaskService.updateTask(task.id, userId, {
         status: "cancelled",
       });
