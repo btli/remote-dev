@@ -269,6 +269,9 @@ export async function createSession(
   if (input.terminalType !== "file") {
     // Initial environment: profile env + folder env + GitHub account env + RDV vars
     // All must be present at PTY spawn so agent processes inherit them immediately
+    // Precedence: profileEnv < folderEnv < ghAccountEnv < rdvEnv
+    // Bound GitHub account identity intentionally overrides folder-level env
+    // (e.g., user-set GH_TOKEN in folder prefs is superseded by the account binding)
     const initialEnv: Record<string, string> = {
       ...(profileEnv ?? {}),
       ...(folderEnv ?? {}),
@@ -758,7 +761,8 @@ export async function resumeSession(
       await ensureAgentConfig(configDir, agentProvider, userId, sessionId);
     }
 
-    // Ensure RDV env vars are set in tmux session (may be missing on older sessions)
+    // Refresh RDV + GitHub account env vars on resume (may be missing on older
+    // sessions, or stale if the folder's account binding or OAuth token changed)
     try {
       const terminalSocket = process.env.TERMINAL_SOCKET;
       const rdvEnv: Record<string, string> = {
@@ -767,9 +771,31 @@ export async function resumeSession(
           ? { RDV_TERMINAL_SOCKET: terminalSocket }
           : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "3001" }),
       };
-      await TmuxService.setSessionEnvironment(session.tmuxSessionName, rdvEnv);
+
+      let ghAccountEnv: Record<string, string> = {};
+      try {
+        const account = session.folderId
+          ? await githubAccountRepository.findByFolder(session.folderId, userId)
+          : null;
+        const effectiveAccount = account ?? await githubAccountRepository.findDefault(userId);
+        if (effectiveAccount) {
+          const token = await githubAccountRepository.getAccessToken(
+            effectiveAccount.providerAccountId,
+            userId
+          );
+          if (token) {
+            ghAccountEnv = GitHubAccountEnvironment.create(
+              token, effectiveAccount.configDir, effectiveAccount.login
+            ).toEnvironment().toRecord();
+          }
+        }
+      } catch (error) {
+        console.error(`[session:${sessionId}] Failed to resolve GitHub account env on resume:`, error);
+      }
+
+      await TmuxService.setSessionEnvironment(session.tmuxSessionName, { ...ghAccountEnv, ...rdvEnv });
     } catch (error) {
-      console.error(`[session:${sessionId}] Failed to set RDV env on resume:`, error);
+      console.error(`[session:${sessionId}] Failed to set env on resume:`, error);
     }
   }
 
