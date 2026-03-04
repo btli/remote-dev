@@ -5,11 +5,12 @@
  * and repository synchronization.
  */
 import { db } from "@/db";
-import { accounts, githubRepositories } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { accounts, githubRepositories, githubAccountMetadata, folderGitHubAccountLinks } from "@/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
 import { existsSync, readdirSync, statSync, rmSync } from "fs";
 import { join } from "path";
 import * as GitHubService from "./github-service";
+import { ghCliConfigGateway } from "@/infrastructure/container";
 
 const GITHUB_API_BASE = "https://api.github.com";
 
@@ -147,7 +148,35 @@ export async function disconnectGitHub(
   userId: string,
   clearCache: boolean = false
 ): Promise<void> {
-  // Delete the OAuth account
+  // Clean up multi-account metadata and gh CLI config dirs
+  const metadataRows = await db.query.githubAccountMetadata.findMany({
+    where: eq(githubAccountMetadata.userId, userId),
+    columns: { providerAccountId: true, configDir: true },
+  });
+
+  // Remove gh CLI config directories
+  for (const row of metadataRows) {
+    await ghCliConfigGateway.removeConfig(row.configDir).catch(() => {});
+  }
+
+  // Remove folder bindings for all accounts being deleted
+  if (metadataRows.length > 0) {
+    await db
+      .delete(folderGitHubAccountLinks)
+      .where(
+        inArray(
+          folderGitHubAccountLinks.providerAccountId,
+          metadataRows.map((r) => r.providerAccountId)
+        )
+      );
+  }
+
+  // Delete all account metadata
+  await db
+    .delete(githubAccountMetadata)
+    .where(eq(githubAccountMetadata.userId, userId));
+
+  // Delete the OAuth account(s)
   await db
     .delete(accounts)
     .where(and(eq(accounts.userId, userId), eq(accounts.provider, "github")));

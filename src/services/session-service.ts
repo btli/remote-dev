@@ -22,6 +22,8 @@ import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession 
 import { SessionServiceError } from "@/lib/errors";
 import { TerminalTypeRegistry } from "@/lib/terminal-plugins/registry";
 import { initializeBuiltInPlugins } from "@/lib/terminal-plugins/init";
+import { githubAccountRepository } from "@/infrastructure/container";
+import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 
 // Initialize plugins on module load
 initializeBuiltInPlugins();
@@ -262,9 +264,6 @@ export async function createSession(
     // Resolve GitHub account environment for the session's folder binding
     let ghAccountEnv: Record<string, string> | null = null;
     try {
-      const { githubAccountRepository } = await import("@/infrastructure/container");
-      const { GitHubAccountEnvironment } = await import("@/domain/value-objects/GitHubAccountEnvironment");
-
       // Find the GitHub account bound to this folder (or fall back to default)
       const account = input.folderId
         ? await githubAccountRepository.findByFolder(input.folderId, userId)
