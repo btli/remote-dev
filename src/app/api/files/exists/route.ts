@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withApiAuth, errorResponse } from "@/lib/api";
+import { withAuth, errorResponse } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
 import { stat } from "fs/promises";
 
@@ -10,7 +10,7 @@ import { stat } from "fs/promises";
  * Returns a record of path -> boolean.
  * SECURITY: Paths must be within the user's home directory or /tmp.
  */
-export const POST = withApiAuth(async (request) => {
+export const POST = withAuth(async (request) => {
   const body = await request.json();
   const paths: unknown = body.paths;
 
