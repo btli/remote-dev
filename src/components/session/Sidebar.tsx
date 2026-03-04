@@ -241,9 +241,10 @@ export function Sidebar({
     isHorizontal: boolean | null;
   }>({ startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null });
 
-  // Reset swipe state when swiped session is removed
+  // Reset swipe state and DOM ref when swiped session is removed
   useEffect(() => {
     if (swipedSessionId && !sessions.some(s => s.id === swipedSessionId)) {
+      swipeTouchRef.current = { startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null };
       setSwipedSessionId(null);
     }
   }, [sessions, swipedSessionId]);
@@ -1169,8 +1170,13 @@ export function Sidebar({
                 }
               }}
               onTouchStart={isMobile ? (e) => {
-                // Close any other swiped row
+                // Animate and close any other swiped row
                 if (swipedSessionId && swipedSessionId !== session.id) {
+                  const prevEl = swipeTouchRef.current.el;
+                  if (prevEl) {
+                    prevEl.style.transition = "transform 200ms ease-out";
+                    prevEl.style.transform = "";
+                  }
                   setSwipedSessionId(null);
                 }
                 const touch = e.touches[0];
@@ -1242,7 +1248,8 @@ export function Sidebar({
                   : "hover:bg-accent/50 border border-transparent",
                 isDragOverSession && "bg-primary/20 border-primary/30",
                 // Mobile: solid background so row covers the swipe-reveal close button behind it
-                isMobile && "bg-card z-10"
+                isMobile && !isActive && "bg-card z-10",
+                isMobile && isActive && "z-10"
               )}
             >
             {/* Status indicator - icon colored by agent activity status */}

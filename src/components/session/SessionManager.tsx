@@ -1388,7 +1388,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <div
         className={cn(
           // Mobile: show as drawer when expanded, inline when collapsed
-          isMobile && isMobileSidebarOpen && "fixed inset-y-0 left-0 z-40"
+          isMobile && isMobileSidebarOpen && "fixed inset-y-0 left-0 z-40",
+          isPWA && isMobile && "pt-safe-top"
         )}
         onClick={() => {
           // On mobile, clicking the collapsed sidebar expands it
@@ -1468,7 +1469,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       )}>
         {/* Mobile header bar */}
         {activeSessions.length > 0 && (
-          <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-border bg-card/50 pl-safe-left pr-safe-right">
+          <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
             {mobileEditingName !== null ? (
               <input
                 type="text"
