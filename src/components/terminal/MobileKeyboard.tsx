@@ -92,6 +92,7 @@ export function MobileKeyboard({ onKeyPress, className }: MobileKeyboardProps) {
     <div
       className={cn(
         "flex flex-wrap gap-1.5 p-2 bg-popover/95 backdrop-blur-sm border-t border-border",
+        "pb-safe-bottom",
         "md:hidden", // Only show on mobile
         className
       )}
