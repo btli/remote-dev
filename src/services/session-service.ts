@@ -225,16 +225,12 @@ export async function createSession(
       }
     : {};
 
-  // Install Claude Code hooks BEFORE tmux session creation so the agent
-  // picks them up at startup (Claude Code reads settings once on launch)
-  if (isAgentSession && effectiveAgentProvider === "claude") {
+  // Install agent hooks and MCP config BEFORE tmux session creation so the
+  // agent picks them up at startup (Claude Code reads settings once on launch)
+  if (isAgentSession) {
     const configDir = profile?.configDir ?? process.env.HOME;
     if (configDir) {
-      try {
-        await AgentProfileService.installAgentHooks(configDir, effectiveAgentProvider);
-      } catch (error) {
-        console.error(`[session:${sessionId}] Failed to install agent hooks:`, error);
-      }
+      await ensureAgentConfig(configDir, effectiveAgentProvider, userId, sessionId);
     }
   }
 
@@ -720,19 +716,17 @@ export async function resumeSession(
     );
   }
 
-  // For agent sessions, ensure hooks and env vars are up to date on resume.
+  // For agent sessions, ensure hooks, MCP config, and env vars are up to date on resume.
   // This handles upgrades (e.g., hook format changes) and sessions created
-  // before hooks were installed.
-  if (session.terminalType === "agent" && session.agentProvider === "claude") {
-    try {
-      const configDir = session.profileId
-        ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
-        : process.env.HOME;
-      if (configDir) {
-        await AgentProfileService.installAgentHooks(configDir, "claude");
-      }
-    } catch (error) {
-      console.error(`[session:${sessionId}] Failed to install agent hooks on resume:`, error);
+  // before hooks/MCP were installed.
+  if (session.terminalType === "agent") {
+    const agentProvider = (session.agentProvider ?? "claude") as AgentProviderType;
+    const configDir = session.profileId
+      ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
+      : process.env.HOME;
+
+    if (configDir && agentProvider !== "none") {
+      await ensureAgentConfig(configDir, agentProvider, userId, sessionId);
     }
 
     // Ensure RDV env vars are set in tmux session (may be missing on older sessions)
@@ -872,6 +866,32 @@ function buildAgentCommand(provider: AgentProviderType, flags?: string[]): strin
   const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
 
   return `${config.command}${flagsStr}`;
+}
+
+/**
+ * Install agent activity hooks and register the MCP server in the agent's config.
+ * Used by both createSession and resumeSession to keep agent config current.
+ * Failures are logged but do not block session creation/resume.
+ */
+async function ensureAgentConfig(
+  configDir: string,
+  provider: Exclude<AgentProviderType, "none">,
+  userId: string,
+  sessionId: string
+): Promise<void> {
+  if (provider === "claude") {
+    try {
+      await AgentProfileService.installAgentHooks(configDir, provider);
+    } catch (error) {
+      console.error(`[session:${sessionId}] Failed to install agent hooks:`, error);
+    }
+  }
+
+  try {
+    await AgentProfileService.registerMCPServer(configDir, provider, userId);
+  } catch (error) {
+    console.error(`[session:${sessionId}] Failed to register MCP server:`, error);
+  }
 }
 
 /**
