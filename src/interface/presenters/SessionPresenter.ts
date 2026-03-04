@@ -34,6 +34,7 @@ export class SessionPresenter {
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
       status: session.status.toString() as TerminalSession["status"],
+      pinned: session.pinned,
       tabOrder: session.tabOrder,
       lastActivityAt: session.lastActivityAt,
       createdAt: session.createdAt,

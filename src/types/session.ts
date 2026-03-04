@@ -38,6 +38,7 @@ export interface TerminalSession {
   splitOrder: number;
   splitSize: number;
   status: SessionStatus;
+  pinned: boolean;
   tabOrder: number;
   lastActivityAt: Date;
   createdAt: Date;
@@ -148,6 +149,7 @@ export const AGENT_PRESETS: AgentConfig[] = [
 export interface UpdateSessionInput {
   name?: string;
   status?: SessionStatus;
+  pinned?: boolean;
   tabOrder?: number;
   projectPath?: string;
   profileId?: string | null;

@@ -37,6 +37,7 @@ export interface SessionDbRecord {
   splitOrder: number | null;
   splitSize: number | null;
   status: string;
+  pinned: boolean | number | null;
   tabOrder: number;
   lastActivityAt: Date | string;
   createdAt: Date | string;
@@ -68,6 +69,7 @@ export interface SessionDbInsert {
   splitOrder: number;
   splitSize: number;
   status: "active" | "suspended" | "closed" | "trashed";
+  pinned: boolean;
   tabOrder: number;
   lastActivityAt: Date;
   createdAt: Date;
@@ -100,6 +102,7 @@ export class SessionMapper {
       splitGroupId: record.splitGroupId,
       splitOrder: record.splitOrder ?? 0,
       splitSize: record.splitSize ?? 100,
+      pinned: !!record.pinned,
       tabOrder: record.tabOrder,
       lastActivityAt: toDate(record.lastActivityAt),
       createdAt: toDate(record.createdAt),
@@ -142,6 +145,7 @@ export class SessionMapper {
       splitSize: session.splitSize,
       // Cast is safe because SessionStatus.toString() only returns valid status values
       status: session.status.toString() as SessionDbInsert["status"],
+      pinned: session.pinned,
       tabOrder: session.tabOrder,
       lastActivityAt: session.lastActivityAt,
       createdAt: session.createdAt,
@@ -174,6 +178,7 @@ export class SessionMapper {
     splitOrder: number;
     splitSize: number;
     status: string;
+    pinned: boolean;
     tabOrder: number;
     lastActivityAt: Date;
     createdAt: Date;
@@ -200,6 +205,7 @@ export class SessionMapper {
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
       status: session.status.toString(),
+      pinned: session.pinned,
       tabOrder: session.tabOrder,
       lastActivityAt: session.lastActivityAt,
       createdAt: session.createdAt,
