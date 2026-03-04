@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pin Session**: Pin sessions to the top of their folder via right-click context menu
+  - Pinned sessions render above subfolders within their folder
+  - Pinned root sessions appear above all folders in sidebar
+  - Pin icon indicator shown on pinned sessions
+  - Drag-and-drop constrained within same pin partition
 - **Agent Activity Status Indicators**: Real-time agent activity shown in sidebar via colored Sparkles icons
   - Green breathing animation when agent is running (tool use in progress)
   - Yellow breathing animation when agent is waiting for user input

@@ -1030,7 +1030,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         // Create a new session with the same configuration
         // Include folderId so the session is created with folder preferences
         // (resolves defaultWorkingDirectory from folder settings)
-        await createSession({
+        const newSession = await createSession({
           name: session.name,
           folderId: session.folderId ?? undefined,
           projectPath: session.projectPath ?? undefined,
@@ -1040,11 +1040,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           agentProvider: session.agentProvider ?? undefined,
           profileId: session.profileId ?? undefined,
         });
+        // Preserve pinned state from the old session
+        if (session.pinned) {
+          await updateSession(newSession.id, { pinned: true });
+        }
       } catch (error) {
         logSessionError("restart session", error);
       }
     },
-    [closeSession, createSession, logSessionError]
+    [closeSession, createSession, updateSession, logSessionError]
   );
 
   // Handle deleting a session (with optional worktree deletion)

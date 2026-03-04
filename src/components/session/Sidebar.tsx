@@ -901,10 +901,18 @@ export function Sidebar({
       const fullOrder: string[] = [];
 
       // Add sessions from each folder
+      // For the target folder, include reordered partition first, then the other partition
+      const otherPartitionIds = activeSessions
+        .filter((s) => (s.folderId || null) === targetFolderId && s.pinned !== draggedPinned)
+        .map((s) => s.id);
       folders.forEach((folder) => {
         if (folder.id === targetFolderId) {
-          // Use the reordered list for the target folder
-          fullOrder.push(...newOrder);
+          // Pinned sessions first, then unpinned (consistent with render order)
+          if (draggedPinned) {
+            fullOrder.push(...newOrder, ...otherPartitionIds);
+          } else {
+            fullOrder.push(...otherPartitionIds, ...newOrder);
+          }
         } else {
           // Keep existing order for other folders
           const otherFolderSessions = activeSessions
@@ -916,8 +924,15 @@ export function Sidebar({
 
       // Add root sessions
       if (targetFolderId === null) {
-        // Reordering root sessions - use new order
-        fullOrder.push(...newOrder);
+        // Reordering root sessions - include both partitions
+        const otherRootPartitionIds = activeSessions
+          .filter((s) => !s.folderId && s.pinned !== draggedPinned)
+          .map((s) => s.id);
+        if (draggedPinned) {
+          fullOrder.push(...newOrder, ...otherRootPartitionIds);
+        } else {
+          fullOrder.push(...otherRootPartitionIds, ...newOrder);
+        }
       } else {
         // Keep existing order for root sessions
         const rootSessionIds = activeSessions
@@ -1739,11 +1754,12 @@ export function Sidebar({
                             {node.name}{totalSessions > 0 ? ` (${totalSessions})` : ""}
                           </TooltipContent>
                         </Tooltip>
-                        {/* Child folders and sessions in collapsed view */}
+                        {/* Child folders and sessions in collapsed sidebar view */}
                         {!node.collapsed && (
                           <>
+                            {pinnedFolderSessions.map((session) => renderSession(session, node.depth + 1, node.id))}
                             {node.children.map((child) => renderFolderNode(child))}
-                            {folderSessions.map((session) => renderSession(session, node.depth + 1, node.id))}
+                            {unpinnedFolderSessions.map((session) => renderSession(session, node.depth + 1, node.id))}
                           </>
                         )}
                       </div>
@@ -2068,7 +2084,9 @@ export function Sidebar({
                             depth: node.depth + 1,
                             indentStyle: { marginLeft: `${(node.depth + 1) * 12}px` },
                             treeLineLeft: node.depth * 12 + 8 + 7,
-                            trashCount: 0,
+                            // Signal that more items follow (child folders, unpinned sessions, trash)
+                            // so the last pinned session doesn't get a terminating tree connector
+                            trashCount: node.children.length + unpinnedFolderSessions.length + getFolderTrashCount(node.id),
                           })}
                           {/* Render child folders with tree-item wrappers */}
                           {node.children.map((child, idx) => {
