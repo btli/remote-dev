@@ -1500,6 +1500,9 @@ export const projectTasks = sqliteTable(
     folderId: text("folder_id").references(() => sessionFolders.id, {
       onDelete: "cascade",
     }),
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
     title: text("title").notNull(),
     description: text("description"),
     status: text("status").$type<TaskStatus>().notNull().default("open"),
@@ -1521,5 +1524,6 @@ export const projectTasks = sqliteTable(
     index("project_task_user_idx").on(table.userId),
     index("project_task_folder_idx").on(table.folderId),
     index("project_task_user_folder_idx").on(table.userId, table.folderId),
+    index("project_task_session_idx").on(table.sessionId),
   ]
 );

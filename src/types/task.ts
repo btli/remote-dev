@@ -24,6 +24,7 @@ export interface ProjectTask {
   id: string;
   userId: string;
   folderId: string | null;
+  sessionId: string | null;
   title: string;
   description: string | null;
   status: TaskStatus;
@@ -40,6 +41,7 @@ export interface ProjectTask {
 
 export interface CreateTaskInput {
   folderId?: string | null;
+  sessionId?: string | null;
   title: string;
   description?: string | null;
   status?: TaskStatus;
@@ -49,6 +51,7 @@ export interface CreateTaskInput {
   subtasks?: TaskSubtask[];
   dueDate?: string | null; // ISO string
   githubIssueUrl?: string | null;
+  sortOrder?: number;
 }
 
 export interface UpdateTaskInput {
