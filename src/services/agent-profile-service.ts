@@ -23,6 +23,7 @@ import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
+import { safeJsonParse } from "@/lib/utils";
 import { getProfilesDir } from "@/lib/paths";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
 import type {
@@ -80,21 +81,6 @@ function validateSshKeyPath(keyPath: string): string {
   }
 
   return resolved;
-}
-
-/**
- * Safely parse JSON with fallback to empty object
- */
-function safeJsonParse<T extends Record<string, unknown> = Record<string, string>>(
-  json: string,
-  fallback: T = {} as T
-): T {
-  try {
-    return JSON.parse(json) as T;
-  } catch {
-    console.error("Failed to parse JSON:", json.substring(0, 100));
-    return fallback;
-  }
 }
 
 /**
@@ -900,7 +886,7 @@ function mapDbToSecretsConfig(
     profileId: dbRecord.profileId,
     userId: dbRecord.userId,
     provider: dbRecord.provider as ProfileSecretsProviderType,
-    providerConfig: safeJsonParse(decryptedConfig ?? "{}"),
+    providerConfig: safeJsonParse(decryptedConfig ?? "{}", {} as Record<string, string>),
     enabled: dbRecord.enabled ?? true,
     lastFetchedAt: dbRecord.lastFetchedAt ? new Date(dbRecord.lastFetchedAt) : null,
     createdAt: new Date(dbRecord.createdAt),

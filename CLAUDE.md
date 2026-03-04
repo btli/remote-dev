@@ -149,12 +149,12 @@ Optional MCP server for AI agent integration. Enables Claude Desktop, Cursor, an
 **Architecture:**
 - Runs on stdio transport alongside the terminal server
 - Uses local trust model (no additional authentication)
-- Provides 24 tools, 6 resources, and 5 workflow prompts
+- Provides 29 tools, 6 resources, and 5 workflow prompts
 
 **Components:**
 | Component | Count | Description |
 |-----------|-------|-------------|
-| Tools | 24 | Session management, git/worktree operations, folder/preferences |
+| Tools | 29 | Session management, git/worktree operations, folder/preferences, task management |
 | Resources | 6 | Read-only access to sessions and folders |
 | Prompts | 5 | Workflow templates for common tasks |
 
@@ -246,6 +246,7 @@ src/
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
 | `folder_secrets_config` | Per-folder secrets provider configuration |
+| `project_task` | Project tasks with priority, labels, subtasks, and due dates |
 
 ### Service Layer
 
@@ -271,6 +272,7 @@ Located in `src/services/`:
 | `AgentProfileService` | Agent profile CRUD, config file management |
 | `AgentProfileAppearanceService` | Per-profile appearance settings |
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
+| `TaskService` | Project task CRUD, folder-scoped queries |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -379,6 +381,7 @@ bun run test:coverage  # Run tests with coverage
 | `PathInput.tsx` | Text input with browse button for directory selection |
 | `AgentCLIStatusPanel.tsx` | CLI installation status for all supported agents |
 | `AgentProfileAppearanceSettings.tsx` | Per-profile theming with mode toggle and color schemes |
+| `TaskSidebar.tsx` | Right sidebar for project-scoped task tracking |
 
 ### State Management
 
@@ -395,6 +398,7 @@ React Contexts in `src/contexts/`:
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
 | `PortContext` | Port allocations, framework detection, monitoring |
+| `TaskContext` | Project tasks state with folder-scoped CRUD |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -533,6 +537,13 @@ React Contexts in `src/contexts/`:
 - `GET /api/profiles/:id/appearance` - Get profile appearance settings
 - `PUT /api/profiles/:id/appearance` - Update profile appearance (mode, schemes, terminal settings)
 - `DELETE /api/profiles/:id/appearance` - Reset profile appearance to defaults
+
+### Tasks
+- `GET /api/tasks` - List tasks (optional `?folderId=` filter)
+- `POST /api/tasks` - Create task
+- `GET /api/tasks/:id` - Get task details
+- `PATCH /api/tasks/:id` - Update task
+- `DELETE /api/tasks/:id` - Delete task
 
 ## Quick Setup
 
