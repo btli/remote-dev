@@ -203,14 +203,19 @@ export async function createSession(
   const folderEnv = await getEnvironmentForSession(userId, input.folderId);
 
   // Determine if this is an agent session early — needed for env var injection
+  // Check both explicit agent flags AND terminalType (profiles set terminalType
+  // but may not send agentProvider/autoLaunchAgent separately)
   const isAgentSession =
-    input.agentProvider &&
-    input.agentProvider !== "none" &&
-    input.autoLaunchAgent;
+    (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) ||
+    input.terminalType === "agent";
+  const effectiveAgentProvider = input.agentProvider && input.agentProvider !== "none"
+    ? input.agentProvider
+    : "claude"; // Default matches DB default on line ~350
 
   // RDV env vars for agent hook callbacks (session ID + terminal server address)
   // Socket mode (prod): uses TERMINAL_SOCKET; Port mode (dev): uses TERMINAL_PORT
   const terminalSocket = process.env.TERMINAL_SOCKET;
+  console.log(`[session:${sessionId}] isAgentSession=${!!isAgentSession} provider=${effectiveAgentProvider} terminalType=${input.terminalType} TERMINAL_PORT=${process.env.TERMINAL_PORT}`);
   const rdvEnv: Record<string, string> = isAgentSession
     ? {
         RDV_SESSION_ID: sessionId,
@@ -222,11 +227,11 @@ export async function createSession(
 
   // Install Claude Code hooks BEFORE tmux session creation so the agent
   // picks them up at startup (Claude Code reads settings once on launch)
-  if (isAgentSession && input.agentProvider === "claude") {
+  if (isAgentSession && effectiveAgentProvider === "claude") {
     const configDir = profile?.configDir ?? process.env.HOME;
     if (configDir) {
       try {
-        await AgentProfileService.installAgentHooks(configDir, input.agentProvider);
+        await AgentProfileService.installAgentHooks(configDir, effectiveAgentProvider);
       } catch (error) {
         console.error(`[session:${sessionId}] Failed to install agent hooks:`, error);
       }
@@ -237,6 +242,7 @@ export async function createSession(
   if (input.terminalType !== "file") {
     // Initial environment: profile env + RDV vars for agent hook callbacks
     const initialEnv: Record<string, string> = { ...(profileEnv ?? {}), ...rdvEnv };
+    console.log(`[session:${sessionId}] initialEnv keys: [${Object.keys(initialEnv).join(', ')}]`);
 
     // Create the tmux session with initial environment for PTY spawn
     try {
