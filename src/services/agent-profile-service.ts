@@ -584,15 +584,29 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
 /** Marker substring used to identify RDV activity hooks (for deduplication) */
 const ACTIVITY_HOOK_MARKER = "/internal/agent-status";
 
+/** Marker substring used to identify RDV todo sync hooks (for deduplication) */
+const TODO_HOOK_MARKER = "/internal/agent-todos";
+
 /** Check if a single hook entry is an RDV activity hook */
 function isActivityHook(entry: unknown): boolean {
   return typeof entry === "object" && entry !== null &&
     JSON.stringify(entry).includes(ACTIVITY_HOOK_MARKER);
 }
 
+/** Check if a single hook entry is an RDV todo sync hook */
+function isTodoHook(entry: unknown): boolean {
+  return typeof entry === "object" && entry !== null &&
+    JSON.stringify(entry).includes(TODO_HOOK_MARKER);
+}
+
 /** Filter out any existing RDV activity hooks from an array (preserves user hooks) */
 function withoutActivityHooks(arr: unknown[]): unknown[] {
   return arr.filter((entry) => !isActivityHook(entry));
+}
+
+/** Filter out any existing RDV todo hooks from an array (preserves user hooks) */
+function withoutTodoHooks(arr: unknown[]): unknown[] {
+  return arr.filter((entry) => !isTodoHook(entry));
 }
 
 /**
@@ -657,6 +671,24 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: curlForStatus("idle"), timeout: 5 }],
   };
 
+  // TodoWrite sync hook: reads PostToolUse JSON from stdin, POSTs to /internal/agent-todos
+  const todoSyncCommand =
+    'INPUT=$(cat); ' +
+    '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
+    '[ -z "$_RDV_SN" ] && exit 0; ' +
+    'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
+    '[ -z "$RDV_SESSION_ID" ] && exit 0; ' +
+    'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
+    'echo "$INPUT" | curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST -H "Content-Type: application/json" -d @- "http://localhost/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
+    'else ' +
+    'echo "$INPUT" | curl -s -X POST -H "Content-Type: application/json" -d @- "http://localhost:${RDV_TERMINAL_PORT}/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
+    'fi || true';
+
+  const postToolUseTodoHook = {
+    matcher: "TodoWrite",
+    hooks: [{ type: "command", command: todoSyncCommand, timeout: 10 }],
+  };
+
   // Merge with existing hooks — replace any old RDV hooks with current version,
   // preserving user-defined hooks. This handles upgrades (e.g., port-only → socket-aware).
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
@@ -664,11 +696,13 @@ export async function installAgentHooks(
   const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
   const existingNotification = Array.isArray(existingHooks.Notification) ? existingHooks.Notification : [];
   const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
+  const existingPostToolUse = Array.isArray(existingHooks.PostToolUse) ? existingHooks.PostToolUse : [];
 
   // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
     PreToolUse: [...withoutActivityHooks(existingPreToolUse), preToolUseHook],
+    PostToolUse: [...withoutTodoHooks(existingPostToolUse), postToolUseTodoHook],
     Notification: [...withoutActivityHooks(existingNotification), notificationHook],
     Stop: [...withoutActivityHooks(existingStop), stopHook],
   };
