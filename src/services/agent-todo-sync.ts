@@ -68,13 +68,11 @@ export async function syncAgentTodos(
   const existing = await TaskService.getTasksBySession(sessionId, userId);
   const agentTasks = existing.filter((t) => t.source === "agent");
 
-  // Build marker set for O(1) dedup lookups
-  const existingMarkers = new Set<string>();
+  // Build marker map for O(1) dedup lookups
   const existingByMarker = new Map<string, (typeof existing)[0]>();
   for (const task of existing) {
     const marker = extractMarker(task.description);
     if (marker) {
-      existingMarkers.add(marker);
       existingByMarker.set(marker, task);
     }
   }
