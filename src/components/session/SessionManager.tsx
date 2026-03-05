@@ -868,10 +868,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           bodyContext,
           "",
           labelsStr ? `Labels: ${labelsStr}` : "",
-        ].filter(Boolean).join("\\n");
+        ].filter(Boolean).join("\n");
 
-        // Shell-escape single quotes in the prompt for safe embedding in command
-        const escapedPrompt = issuePrompt.replace(/'/g, "'\\''");
+        // Shell-escape for ANSI-C $'...' quoting: escape backslashes first, then single quotes
+        const escapedPrompt = issuePrompt.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 
         // Resolve folder's default agent provider (fallback to claude)
         const folderPrefs = resolvePreferencesForFolder(issuesModal.folderId);

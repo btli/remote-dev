@@ -299,7 +299,10 @@ export class GitHubIssue {
 
   /**
    * Infer worktree type from issue labels.
-   * Maps common label names to branch prefixes: bug -> fix, enhancement -> feature.
+   * Maps common label names to branch prefixes:
+   * bug/bugfix/defect -> fix, enhancement/feature -> feature,
+   * documentation/docs -> docs, chore/maintenance/refactor -> chore.
+   * Defaults to "feature" when no labels match.
    */
   getWorktreeTypeFromLabels(): WorktreeType {
     const labelNames = this.props.labels.map((l) => l.name.toLowerCase());
@@ -315,7 +318,7 @@ export class GitHubIssue {
     if (labelNames.some((l) => l === "chore" || l === "maintenance" || l === "refactor")) {
       return "chore";
     }
-    return "fix";
+    return "feature";
   }
 
   /**

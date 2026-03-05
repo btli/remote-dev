@@ -125,22 +125,24 @@ export async function createSession(
       );
     }
 
-    // Generate branch name from description or auto-generate with timestamp
-    let worktreeBranch: string;
-    if (input.featureDescription) {
-      const prefix = input.worktreeType ?? "feature";
-      worktreeBranch = `${prefix}/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
-    } else {
-      const now = new Date();
-      const timestamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
-      worktreeBranch = `wt-${timestamp}`;
+    // Use explicit branch name if provided, otherwise generate from description or timestamp
+    if (!branchName) {
+      let worktreeBranch: string;
+      if (input.featureDescription) {
+        const prefix = input.worktreeType ?? "feature";
+        worktreeBranch = `${prefix}/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
+      } else {
+        const now = new Date();
+        const timestamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
+        worktreeBranch = `wt-${timestamp}`;
+      }
+      branchName = worktreeBranch;
     }
-    branchName = worktreeBranch;
 
     // Create the worktree with new branch
     const result = await createWorktreeWithErrorHandling(
       repoPath,
-      worktreeBranch,
+      branchName,
       input.baseBranch,
       sessionId
     );

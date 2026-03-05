@@ -8,6 +8,8 @@
  * - Filter by state (All/Open/Closed)
  * - Filter by labels
  * - Create new issues
+ * - View issue details with markdown rendering and comments
+ * - Start working on an issue (creates worktree + agent session)
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";

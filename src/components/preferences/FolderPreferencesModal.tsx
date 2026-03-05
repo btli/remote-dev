@@ -499,7 +499,7 @@ export function FolderPreferencesModal({
   };
 
   // Check if any settings in a tab are overridden
-  const hasGeneralOverrides = isOverridden("defaultWorkingDirectory") || isOverridden("defaultShell") || isOverridden("startupCommand");
+  const hasGeneralOverrides = isOverridden("defaultWorkingDirectory") || isOverridden("defaultShell") || isOverridden("startupCommand") || isOverridden("defaultAgentProvider");
   const hasAppearanceOverrides = isOverridden("theme") || isOverridden("fontSize") || isOverridden("fontFamily");
   const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
   const hasEnvOverrides = isOverridden("environmentVars");
