@@ -95,6 +95,7 @@ export default async function Home() {
     agentExitCode: s.agentExitCode ?? null,
     agentExitedAt: s.agentExitedAt ? new Date(s.agentExitedAt) : null,
     agentRestartCount: s.agentRestartCount ?? 0,
+    agentActivityStatus: s.agentActivityStatus ?? null,
     typeMetadata: s.typeMetadata ? JSON.parse(s.typeMetadata) : null,
     splitGroupId: s.splitGroupId,
     splitOrder: s.splitOrder,

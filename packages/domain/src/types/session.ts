@@ -32,6 +32,7 @@ export interface TerminalSessionDTO {
   agentExitCode: number | null;
   agentExitedAt: Date | null;
   agentRestartCount: number;
+  agentActivityStatus: string | null;
   typeMetadata: Record<string, unknown> | null;
   splitGroupId: string | null;
   splitOrder: number;
