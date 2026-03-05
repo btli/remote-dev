@@ -21,6 +21,7 @@ import type {
 import type { AgentActivityStatus } from "@/types/terminal-type";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
+const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting"]);
 
 /**
  * Get the saved active session ID from localStorage.
@@ -208,8 +209,10 @@ export function SessionProvider({
       if (session.agentExitState === "restarting") {
         return "running";
       }
-      // Without hook data, we can't know if the agent is actively working.
-      // Default to idle — hooks will provide real-time status for new sessions.
+      // Use persisted activity status from DB (survives page refresh)
+      if (session.agentActivityStatus && VALID_ACTIVITY_STATUSES.has(session.agentActivityStatus as AgentActivityStatus)) {
+        return session.agentActivityStatus as AgentActivityStatus;
+      }
     }
 
     return "idle";

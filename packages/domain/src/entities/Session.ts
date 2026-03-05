@@ -34,6 +34,7 @@ export interface SessionProps {
   agentExitCode: number | null;
   agentExitedAt: Date | null;
   agentRestartCount: number;
+  agentActivityStatus: string | null;
   typeMetadata: Record<string, unknown> | null;
   splitGroupId: string | null;
   splitOrder: number;
@@ -101,6 +102,7 @@ export class Session {
       agentExitCode: null,
       agentExitedAt: null,
       agentRestartCount: 0,
+      agentActivityStatus: null,
       typeMetadata: props.typeMetadata ?? null,
       splitGroupId: null,
       splitOrder: 0,
@@ -185,6 +187,10 @@ export class Session {
 
   get agentRestartCount(): number {
     return this.props.agentRestartCount;
+  }
+
+  get agentActivityStatus(): string | null {
+    return this.props.agentActivityStatus;
   }
 
   get typeMetadata(): Record<string, unknown> | null {

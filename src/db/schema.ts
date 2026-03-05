@@ -470,6 +470,8 @@ export const terminalSessions = sqliteTable(
     agentExitCode: integer("agent_exit_code"),
     agentExitedAt: integer("agent_exited_at", { mode: "timestamp_ms" }),
     agentRestartCount: integer("agent_restart_count").default(0),
+    // Real-time agent activity status (persisted for page reload)
+    agentActivityStatus: text("agent_activity_status"),
     // Plugin-specific metadata (JSON string)
     typeMetadata: text("type_metadata"),
     // Split group membership (independent from folder)

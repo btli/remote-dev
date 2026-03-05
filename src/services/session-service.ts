@@ -578,6 +578,7 @@ export async function markAgentExited(
       agentExitState: "exited",
       agentExitCode: exitCode,
       agentExitedAt: now,
+      agentActivityStatus: exitCode != null && exitCode !== 0 ? "error" : "idle",
       updatedAt: now,
     })
     .where(
@@ -610,6 +611,7 @@ export async function markAgentRestarting(
     .update(terminalSessions)
     .set({
       agentExitState: "restarting",
+      agentActivityStatus: "running",
       agentRestartCount: (session.agentRestartCount ?? 0) + 1,
       updatedAt: now,
     })
@@ -639,6 +641,7 @@ export async function markAgentRunning(
       agentExitState: "running",
       agentExitCode: null,
       agentExitedAt: null,
+      agentActivityStatus: "running",
       lastActivityAt: now,
       updatedAt: now,
     })
@@ -667,6 +670,7 @@ export async function markAgentClosed(
     .update(terminalSessions)
     .set({
       agentExitState: "closed",
+      agentActivityStatus: "idle",
       updatedAt: now,
     })
     .where(
@@ -902,6 +906,7 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     agentExitCode: dbSession.agentExitCode ?? null,
     agentExitedAt: dbSession.agentExitedAt ? new Date(dbSession.agentExitedAt) : null,
     agentRestartCount: dbSession.agentRestartCount ?? 0,
+    agentActivityStatus: dbSession.agentActivityStatus ?? null,
     typeMetadata: dbSession.typeMetadata ? JSON.parse(dbSession.typeMetadata) : null,
     splitGroupId: dbSession.splitGroupId,
     splitOrder: dbSession.splitOrder,
