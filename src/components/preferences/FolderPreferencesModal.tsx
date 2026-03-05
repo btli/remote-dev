@@ -456,7 +456,13 @@ export function FolderPreferencesModal({
       // Determine target path: use folder's defaultWorkingDirectory if set
       const workingDir = getValue("defaultWorkingDirectory") || folderPrefs?.defaultWorkingDirectory;
       const [, repoName] = repo.fullName.split("/");
-      const targetPath = workingDir ? `${workingDir}/${repoName}` : undefined;
+      // If the working dir basename matches the repo name, it IS the project dir — use directly.
+      // Otherwise treat it as a parent dir and append the repo name.
+      const targetPath = workingDir
+        ? workingDir.replace(/\/+$/, "").split("/").pop() === repoName
+          ? workingDir
+          : `${workingDir}/${repoName}`
+        : undefined;
 
       // Use folder-bound GitHub account, falling back to default
       const providerAccountId = folderBindings[folderId] ?? defaultAccount?.providerAccountId;
