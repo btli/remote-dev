@@ -26,6 +26,7 @@ export interface SessionProps {
   projectPath: string | null;
   githubRepoId: string | null;
   worktreeBranch: string | null;
+  worktreeType: string | null;
   folderId: string | null;
   profileId: string | null;
   // Terminal type: shell, agent, file, or custom
@@ -56,6 +57,7 @@ export interface CreateSessionProps {
   projectPath?: string | null;
   githubRepoId?: string | null;
   worktreeBranch?: string | null;
+  worktreeType?: string | null;
   folderId?: string | null;
   profileId?: string | null;
   // Terminal type: shell, agent, file, or custom (default: shell)
@@ -100,6 +102,7 @@ export class Session {
       projectPath: props.projectPath ?? null,
       githubRepoId: props.githubRepoId ?? null,
       worktreeBranch: props.worktreeBranch ?? null,
+      worktreeType: props.worktreeType ?? null,
       folderId: props.folderId ?? null,
       profileId: props.profileId ?? null,
       terminalType,
@@ -164,6 +167,10 @@ export class Session {
 
   get worktreeBranch(): string | null {
     return this.props.worktreeBranch;
+  }
+
+  get worktreeType(): string | null {
+    return this.props.worktreeType;
   }
 
   get folderId(): string | null {
@@ -478,6 +485,7 @@ export class Session {
       this.projectPath === other.projectPath &&
       this.githubRepoId === other.githubRepoId &&
       this.worktreeBranch === other.worktreeBranch &&
+      this.worktreeType === other.worktreeType &&
       this.folderId === other.folderId &&
       this.profileId === other.profileId &&
       this.terminalType === other.terminalType &&
