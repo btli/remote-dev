@@ -127,16 +127,14 @@ export async function createSession(
 
     // Use explicit branch name if provided, otherwise generate from description or timestamp
     if (!branchName) {
-      let worktreeBranch: string;
       if (input.featureDescription) {
         const prefix = input.worktreeType ?? "feature";
-        worktreeBranch = `${prefix}/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
+        branchName = `${prefix}/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
       } else {
         const now = new Date();
         const timestamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
-        worktreeBranch = `wt-${timestamp}`;
+        branchName = `wt-${timestamp}`;
       }
-      branchName = worktreeBranch;
     }
 
     // Create the worktree with new branch
