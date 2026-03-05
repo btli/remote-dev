@@ -9,7 +9,7 @@
 import { Session, type SessionProps } from "@/domain/entities/Session";
 import { SessionStatus } from "@/domain/value-objects/SessionStatus";
 import { TmuxSessionName } from "@/domain/value-objects/TmuxSessionName";
-import type { AgentProviderType } from "@/types/session";
+import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 
 /**
@@ -58,7 +58,7 @@ export interface SessionDbInsert {
   projectPath: string | null;
   githubRepoId: string | null;
   worktreeBranch: string | null;
-  worktreeType: string | null;
+  worktreeType: WorktreeType | null;
   folderId: string | null;
   profileId: string | null;
   terminalType: TerminalType;
@@ -67,6 +67,7 @@ export interface SessionDbInsert {
   agentExitCode: number | null;
   agentExitedAt: Date | null;
   agentRestartCount: number;
+  agentActivityStatus: string | null;
   typeMetadata: string | null;
   splitGroupId: string | null;
   splitOrder: number;
@@ -136,7 +137,7 @@ export class SessionMapper {
       projectPath: session.projectPath,
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
-      worktreeType: session.worktreeType,
+      worktreeType: (session.worktreeType as WorktreeType) ?? null,
       folderId: session.folderId,
       profileId: session.profileId,
       terminalType: session.terminalType,
