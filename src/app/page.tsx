@@ -87,6 +87,7 @@ export default async function Home() {
     projectPath: s.projectPath,
     githubRepoId: s.githubRepoId,
     worktreeBranch: s.worktreeBranch,
+    worktreeType: s.worktreeType ?? null,
     folderId: s.folderId,
     profileId: s.profileId,
     terminalType: s.terminalType ?? "shell",
