@@ -65,34 +65,8 @@ export async function createSession(
   let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
   let branchName = input.worktreeBranch;
 
-  // Handle worktree creation for feature sessions (with explicit path + description)
-  if (input.createWorktree && input.projectPath && input.featureDescription) {
-    // Generate branch name from feature description
-    const prefix = input.worktreeType ?? "feature";
-    const sanitizedBranch = `${prefix}/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
-    branchName = sanitizedBranch;
-
-    // Validate it's a git repo
-    if (!(await WorktreeService.isGitRepo(input.projectPath))) {
-      throw new SessionServiceError(
-        "Project path is not a git repository",
-        "NOT_GIT_REPO",
-        sessionId
-      );
-    }
-
-    // Create the worktree with new branch
-    const result = await createWorktreeWithErrorHandling(
-      input.projectPath,
-      sanitizedBranch,
-      input.baseBranch,
-      sessionId
-    );
-    workingPath = result.worktreePath;
-  }
-
-  // Handle quick worktree creation from folder (New Worktree menu item)
-  if (input.createWorktree && input.folderId && !input.featureDescription) {
+  // Handle worktree creation from folder context (resolves repo from folder preferences)
+  if (input.createWorktree && input.folderId) {
     // Get folder preferences to find linked repository
     const folderPrefs = await getFolderPreferences(input.folderId, userId);
 
@@ -151,16 +125,22 @@ export async function createSession(
       );
     }
 
-    // Generate auto branch name with timestamp
-    const now = new Date();
-    const timestamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
-    const autoBranch = `wt-${timestamp}`;
-    branchName = autoBranch;
+    // Generate branch name from description or auto-generate with timestamp
+    let worktreeBranch: string;
+    if (input.featureDescription) {
+      const prefix = input.worktreeType ?? "feature";
+      worktreeBranch = `${prefix}/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
+    } else {
+      const now = new Date();
+      const timestamp = now.toISOString().replace(/[-:T]/g, "").slice(0, 14);
+      worktreeBranch = `wt-${timestamp}`;
+    }
+    branchName = worktreeBranch;
 
     // Create the worktree with new branch
     const result = await createWorktreeWithErrorHandling(
       repoPath,
-      autoBranch,
+      worktreeBranch,
       input.baseBranch,
       sessionId
     );
@@ -170,6 +150,30 @@ export async function createSession(
     if (repoId) {
       input.githubRepoId = repoId;
     }
+  }
+
+  // Handle worktree creation with explicit projectPath (no folder context, e.g. direct API calls)
+  if (input.createWorktree && !input.folderId && input.projectPath && !branchName) {
+    const prefix = input.worktreeType ?? "feature";
+    const description = input.featureDescription || crypto.randomUUID().substring(0, 8);
+    const sanitizedBranch = `${prefix}/${WorktreeService.sanitizeBranchName(description)}`;
+    branchName = sanitizedBranch;
+
+    if (!(await WorktreeService.isGitRepo(input.projectPath))) {
+      throw new SessionServiceError(
+        "Project path is not a git repository",
+        "NOT_GIT_REPO",
+        sessionId
+      );
+    }
+
+    const result = await createWorktreeWithErrorHandling(
+      input.projectPath,
+      sanitizedBranch,
+      input.baseBranch,
+      sessionId
+    );
+    workingPath = result.worktreePath;
   }
 
   // Determine startup command (explicit override takes precedence)
