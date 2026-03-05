@@ -6,6 +6,7 @@ import type { WorktreeInfo, BranchInfo } from "@/types/github";
 import { existsSync, mkdirSync, copyFileSync, constants as fsConstants, accessSync } from "fs";
 import { join, basename, dirname } from "path";
 import { WorktreeServiceError } from "@/lib/errors";
+import { sanitizeBranchName } from "@/lib/git-utils";
 
 /**
  * Files that should be copied from main repo to worktree.
