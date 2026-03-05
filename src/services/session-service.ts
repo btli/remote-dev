@@ -239,7 +239,8 @@ export async function createSession(
   if (isAgentSession) {
     const configDir = profile?.configDir ?? process.env.HOME;
     if (configDir) {
-      await ensureAgentConfig(configDir, effectiveAgentProvider, userId, sessionId);
+      const configDirs = await resolveAgentConfigDirs(configDir, startupCommand, sessionId);
+      await ensureAgentConfig(configDirs, effectiveAgentProvider, userId, sessionId);
     }
   }
 
@@ -769,7 +770,8 @@ export async function resumeSession(
       : process.env.HOME;
 
     if (configDir && agentProvider !== "none") {
-      await ensureAgentConfig(configDir, agentProvider, userId, sessionId);
+      // On resume, hooks were installed at create time — just refresh the primary configDir
+      await ensureAgentConfig(new Set([configDir]), agentProvider, userId, sessionId);
     }
 
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
@@ -944,29 +946,52 @@ function buildAgentCommand(provider: AgentProviderType, flags?: string[]): strin
 }
 
 /**
+ * Resolve all config directories where agent hooks/MCP config should be installed.
+ * Includes the primary configDir plus any HOME override detected in the startup command.
+ */
+async function resolveAgentConfigDirs(
+  configDir: string,
+  startupCommand: string | undefined,
+  sessionId: string
+): Promise<Set<string>> {
+  const dirs = new Set<string>([configDir]);
+  if (!startupCommand) return dirs;
+
+  try {
+    const effectiveHome = await AgentProfileService.resolveEffectiveHome(startupCommand);
+    if (effectiveHome) {
+      console.log(`[session:${sessionId}] Detected HOME override: ${effectiveHome} (configDir: ${configDir})`);
+      dirs.add(effectiveHome);
+    }
+  } catch (error) {
+    console.warn(`[session:${sessionId}] Failed to resolve effective HOME:`, error);
+  }
+
+  return dirs;
+}
+
+/**
  * Install agent activity hooks and register the MCP server in the agent's config.
  * Used by both createSession and resumeSession to keep agent config current.
  * Failures are logged but do not block session creation/resume.
+ * Installs to all provided config directories in parallel.
  */
 async function ensureAgentConfig(
-  configDir: string,
+  configDirs: Set<string>,
   provider: Exclude<AgentProviderType, "none">,
   userId: string,
   sessionId: string
 ): Promise<void> {
-  if (provider === "claude") {
-    try {
-      await AgentProfileService.installAgentHooks(configDir, provider);
-    } catch (error) {
-      console.error(`[session:${sessionId}] Failed to install agent hooks:`, error);
-    }
-  }
+  const tasks = [...configDirs].flatMap((dir) => [
+    ...(provider === "claude"
+      ? [AgentProfileService.installAgentHooks(dir, provider)
+          .catch((e) => console.error(`[session:${sessionId}] Failed to install agent hooks at ${dir}:`, e))]
+      : []),
+    AgentProfileService.registerMCPServer(dir, provider, userId)
+      .catch((e) => console.error(`[session:${sessionId}] Failed to register MCP server at ${dir}:`, e)),
+  ]);
 
-  try {
-    await AgentProfileService.registerMCPServer(configDir, provider, userId);
-  } catch (error) {
-    console.error(`[session:${sessionId}] Failed to register MCP server:`, error);
-  }
+  await Promise.all(tasks);
 }
 
 /**

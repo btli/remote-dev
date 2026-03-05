@@ -24,7 +24,7 @@ import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
-import { execFile } from "@/lib/exec";
+import { execFile, execFileNoThrow } from "@/lib/exec";
 import { safeJsonParse } from "@/lib/utils";
 import { getProfilesDir } from "@/lib/paths";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
@@ -575,6 +575,66 @@ function mapDbToProfile(record: typeof agentProfiles.$inferSelect): AgentProfile
     createdAt: new Date(record.createdAt),
     updatedAt: new Date(record.updatedAt),
   };
+}
+
+// ============================================================================
+// Startup Command HOME Resolution
+// ============================================================================
+
+/** Only allow safe alias names: alphanumeric, hyphens, underscores */
+const SAFE_ALIAS_NAME = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Resolve the effective HOME directory from a startup command.
+ *
+ * Handles two patterns:
+ * 1. Inline `HOME=/path cmd ...` — extracts /path directly
+ * 2. Shell aliases (e.g. `jclaude`) — resolves via the user's shell
+ *    and extracts HOME= from the alias definition
+ *
+ * Returns the HOME path if a HOME override is detected, null otherwise.
+ */
+export async function resolveEffectiveHome(
+  startupCommand: string
+): Promise<string | null> {
+  const trimmed = startupCommand.trim();
+
+  // Pattern 1: Inline HOME=/path at the start of the command
+  // Matches: HOME=/Users/foo claude ... or HOME="/Users/foo" claude ...
+  const inlineMatch = trimmed.match(/^HOME=["']?([^\s"']+)["']?\s/);
+  if (inlineMatch) {
+    return inlineMatch[1];
+  }
+
+  // Pattern 2: Single-word command that could be a shell alias
+  const firstWord = trimmed.split(/\s/)[0];
+  if (!firstWord || !SAFE_ALIAS_NAME.test(firstWord)) {
+    return null;
+  }
+
+  try {
+    // Use user's login shell (fall back to zsh) with -ic to load aliases
+    const shell = process.env.SHELL || "zsh";
+    const result = await execFileNoThrow(
+      shell,
+      ["-ic", `type ${firstWord}`],
+      { timeout: 3000 }
+    );
+
+    if (result.exitCode !== 0 || !result.stdout) {
+      return null;
+    }
+
+    // Shell output: "jclaude is an alias for HOME=/Users/joyfulhouse claude ..."
+    const aliasMatch = result.stdout.match(/HOME=["']?([^\s"']+)["']?/);
+    if (aliasMatch) {
+      return aliasMatch[1];
+    }
+  } catch {
+    // Alias resolution failed — not critical
+  }
+
+  return null;
 }
 
 // ============================================================================
