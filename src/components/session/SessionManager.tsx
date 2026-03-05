@@ -1866,12 +1866,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </DialogHeader>
           <div className="flex items-center gap-2">
             <Select value={worktreeTypeInput} onValueChange={(v) => setWorktreeTypeInput(v as WorktreeType)}>
-              <SelectTrigger className="w-[120px] font-mono text-sm">
+              <SelectTrigger className="w-[100px] font-mono text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {WORKTREE_TYPES.map((wt) => (
-                  <SelectItem key={wt.id} value={wt.id} className="font-mono">
+                  <SelectItem key={wt.id} value={wt.id} className="font-mono text-xs">
                     {wt.label}/
                   </SelectItem>
                 ))}
