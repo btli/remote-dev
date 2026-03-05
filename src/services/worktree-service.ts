@@ -484,13 +484,7 @@ export async function createBranchWithWorktree(
 /**
  * Generate a worktree-safe branch name
  */
-export function sanitizeBranchName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+export { sanitizeBranchName } from "@/lib/git-utils";
 
 /**
  * Generate a unique branch name for a session
