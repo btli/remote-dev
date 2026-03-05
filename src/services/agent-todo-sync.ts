@@ -36,10 +36,10 @@ async function getSessionById(sessionId: string) {
  */
 export async function syncAgentTodos(
   sessionId: string,
-  payload: { tool_input?: { tasks?: TodoWriteItem[] } }
+  payload: { tool_input?: { todos?: TodoWriteItem[] } }
 ): Promise<{ created: number; updated: number; cancelled: number }> {
-  const tasks = payload.tool_input?.tasks;
-  if (!tasks || !Array.isArray(tasks)) {
+  const todos = payload.tool_input?.todos;
+  if (!todos || !Array.isArray(todos)) {
     return { created: 0, updated: 0, cancelled: 0 };
   }
 
@@ -55,7 +55,7 @@ export async function syncAgentTodos(
   const existing = await TaskService.getTasksBySession(sessionId, userId);
 
   // Build sync plan
-  const plan = buildTodoSyncPlan(tasks, existing);
+  const plan = buildTodoSyncPlan(todos, existing);
 
   // Execute plan
   for (const item of plan.toCreate) {

@@ -10,7 +10,7 @@ import type { ProjectTask, TaskStatus } from "@/types/task";
 /** A single todo item from Claude Code's TodoWrite tool_input */
 export interface TodoWriteItem {
   id: string;
-  task: string;
+  content: string;
   status: string;
 }
 
@@ -72,16 +72,16 @@ export function buildTodoSyncPlan(
       // New todo — create task
       plan.toCreate.push({
         todoId: todo.id,
-        title: todo.task,
+        title: todo.content,
         status: mappedStatus,
         sortOrder: i,
       });
-    } else if (existingTask.status !== mappedStatus || existingTask.title !== todo.task) {
+    } else if (existingTask.status !== mappedStatus || existingTask.title !== todo.content) {
       // Status or title changed — update
       plan.toUpdate.push({
         taskId: existingTask.id,
         status: mappedStatus,
-        title: todo.task,
+        title: todo.content,
       });
     }
     // else: no change, skip
