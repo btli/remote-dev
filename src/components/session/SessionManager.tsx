@@ -37,7 +37,7 @@ import {
 import type { FolderRepoStats } from "./Sidebar";
 import type { PinnedFile } from "@/types/pinned-files";
 import { WORKTREE_TYPES, type WorktreeType } from "@/types/session";
-import { sanitizeBranchName } from "@/services/worktree-service";
+import { sanitizeBranchName } from "@/lib/git-utils";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
