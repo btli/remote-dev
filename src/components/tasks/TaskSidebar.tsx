@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useTaskContext } from "@/contexts/TaskContext";
+import { useSessionContext } from "@/contexts/SessionContext";
 import { useRepositoryIssues } from "@/contexts/GitHubIssuesContext";
 import {
   ClipboardList,
@@ -437,6 +438,7 @@ interface TaskSidebarProps {
 export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
   const { tasks, loading, createTask, updateTask, deleteTask, activeFolderId } =
     useTaskContext();
+  const { activeSessionId } = useSessionContext();
 
   // Sidebar state
   const [collapsed, setCollapsed] = useState(getStoredCollapsed);
@@ -556,13 +558,16 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
     [tasks]
   );
   const agentTasks = useMemo(
-    () => tasks.filter((t) => t.source === "agent"),
-    [tasks]
+    () => tasks.filter((t) => t.source === "agent" && t.sessionId === activeSessionId),
+    [tasks, activeSessionId]
   );
 
   const openTaskCount = useMemo(
-    () => tasks.filter((t) => t.status === "open" || t.status === "in_progress").length,
-    [tasks]
+    () => tasks.filter((t) =>
+      (t.status === "open" || t.status === "in_progress") &&
+      (t.source === "manual" || t.sessionId === activeSessionId)
+    ).length,
+    [tasks, activeSessionId]
   );
 
   const activeManualCount = useMemo(
