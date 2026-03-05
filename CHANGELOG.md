@@ -14,11 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `worktree_type` column on `terminal_session` persists the selected type
   - Backend and use case use dynamic prefix for branch name generation
 
-- **Agent TodoWrite Sync**: Mirror Claude Code's TodoWrite task list into the Task Sidebar in real-time
-  - PostToolUse hook on `TodoWrite` reads task data and POSTs to `/internal/agent-todos` endpoint
-  - Terminal server diffs incoming tasks against existing agent tasks, syncs to `project_task` table
+- **Agent Task Sync**: Mirror Claude Code's task list into the Task Sidebar in real-time
+  - PostToolUse hook on `TaskCreate|TaskUpdate|TodoWrite` syncs tasks to `project_task` table
+  - Supports Claude Code v2.1.69+ individual TaskCreate/TaskUpdate calls and legacy TodoWrite batch format
+  - Upsert semantics: existing tasks are updated when status/title changes
+  - O(1) dedup via marker map instead of linear scans
   - WebSocket broadcast notifies all clients of task changes for live sidebar updates
-  - Auto-archives completed agent tasks when session closes
+  - Auto-archives open/in-progress agent tasks when session closes
   - New `sessionId` column on `project_task` links agent tasks to originating sessions
 
 - **Rendered Markdown View**: Markdown files (.md/.mdx) now open in a rendered view by default with GitHub-style prose styling
