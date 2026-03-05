@@ -351,7 +351,7 @@ export function NewSessionWizard({
         createWorktree: featureCreateWorktree,
         baseBranch: featureBaseBranch,
         worktreeBranch: featureCreateWorktree ? generatedBranchName : undefined,
-        worktreeType,
+        worktreeType: featureCreateWorktree ? worktreeType : undefined,
         profileId: selectedProfileId || undefined,
         // Terminal type system: use "agent" type for known agents
         terminalType: isKnownAgent ? "agent" : "shell",
@@ -700,7 +700,7 @@ export function NewSessionWizard({
                   placeholder="Add user authentication"
                   className="bg-card/50 border-border focus:border-primary"
                 />
-                {featureDescription.trim() && (
+                {featureDescription.trim() && featureCreateWorktree && (
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
                     <span>Branch:</span>
                     <Select value={worktreeType} onValueChange={(v) => setWorktreeType(v as WorktreeType)}>

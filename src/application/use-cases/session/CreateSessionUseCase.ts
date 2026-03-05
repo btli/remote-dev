@@ -102,6 +102,7 @@ export class CreateSessionUseCase {
       profileId: input.profileId,
       agentProvider: input.agentProvider,
       worktreeBranch,
+      worktreeType: input.worktreeType ?? null,
       tabOrder,
     });
 
