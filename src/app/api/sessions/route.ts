@@ -53,6 +53,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
+      worktreeType?: string;
       terminalType?: "shell" | "agent" | "file";
       filePath?: string;
       profileId?: string;
@@ -93,6 +94,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       featureDescription: body.featureDescription,
       createWorktree: body.createWorktree,
       baseBranch: body.baseBranch,
+      worktreeType: body.worktreeType as CreateSessionInput["worktreeType"],
     };
 
     const newSession = await SessionService.createSession(userId, input);

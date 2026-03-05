@@ -21,7 +21,14 @@ import { cn } from "@/lib/utils";
 import { RepositoryPicker } from "@/components/github/RepositoryPicker";
 import { BranchPicker } from "@/components/github/BranchPicker";
 import type { GitHubRepository, GitHubBranch } from "@/types/github";
-import { AGENT_PRESETS, type AgentPreset } from "@/types/session";
+import { AGENT_PRESETS, WORKTREE_TYPES, type AgentPreset, type WorktreeType } from "@/types/session";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface NewSessionWizardProps {
   open: boolean;
@@ -43,6 +50,7 @@ interface NewSessionWizardProps {
     agentProvider?: "claude" | "codex" | "gemini" | "opencode" | "none";
     autoLaunchAgent?: boolean;
     agentFlags?: string[];
+    worktreeType?: WorktreeType;
   }) => Promise<void>;
   isGitHubConnected: boolean;
 }
@@ -94,6 +102,7 @@ export function NewSessionWizard({
   const [customAgentCommand, setCustomAgentCommand] = useState("");
   const [featureProjectPath, setFeatureProjectPath] = useState("");
   const [featureCreateWorktree, setFeatureCreateWorktree] = useState(false);
+  const [worktreeType, setWorktreeType] = useState<WorktreeType>("feature");
   const [featureBaseBranch, setFeatureBaseBranch] = useState("main");
   const [isGitRepoValid, setIsGitRepoValid] = useState<boolean | null>(null);
   const [availableBranches, setAvailableBranches] = useState<string[]>([]);
@@ -106,11 +115,11 @@ export function NewSessionWizard({
         .replace(/[^a-z0-9-]/g, "-")
         .replace(/-+/g, "-")
         .replace(/^-|-$/g, "");
-      setGeneratedBranchName(`feature/${sanitized}`);
+      setGeneratedBranchName(`${worktreeType}/${sanitized}`);
     } else {
       setGeneratedBranchName("");
     }
-  }, [featureDescription]);
+  }, [featureDescription, worktreeType]);
 
   // Validate project path is a git repo when worktree is enabled
   useEffect(() => {
@@ -167,6 +176,7 @@ export function NewSessionWizard({
     setFeatureBaseBranch("main");
     setIsGitRepoValid(null);
     setAvailableBranches([]);
+    setWorktreeType("feature");
   };
 
   const handleClose = () => {
@@ -341,6 +351,7 @@ export function NewSessionWizard({
         createWorktree: featureCreateWorktree,
         baseBranch: featureBaseBranch,
         worktreeBranch: featureCreateWorktree ? generatedBranchName : undefined,
+        worktreeType,
         profileId: selectedProfileId || undefined,
         // Terminal type system: use "agent" type for known agents
         terminalType: isKnownAgent ? "agent" : "shell",
@@ -689,10 +700,29 @@ export function NewSessionWizard({
                   placeholder="Add user authentication"
                   className="bg-card/50 border-border focus:border-primary"
                 />
-                {generatedBranchName && (
-                  <p className="text-xs text-muted-foreground">
-                    Branch: <code className="text-primary">{generatedBranchName}</code>
-                  </p>
+                {featureDescription.trim() && (
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
+                    <span>Branch:</span>
+                    <Select value={worktreeType} onValueChange={(v) => setWorktreeType(v as WorktreeType)}>
+                      <SelectTrigger
+                        size="sm"
+                        className="h-6 px-2 py-0 text-xs border-border bg-card/50 hover:border-primary/50 w-fit gap-1 font-mono text-primary"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent align="start">
+                        {WORKTREE_TYPES.map((t) => (
+                          <SelectItem key={t.id} value={t.id} className="text-xs font-mono">
+                            {t.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <span className="text-muted-foreground">/</span>
+                    <code className="text-primary font-mono">
+                      {generatedBranchName.split("/").slice(1).join("/")}
+                    </code>
+                  </div>
                 )}
               </div>
 

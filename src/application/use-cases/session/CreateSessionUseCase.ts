@@ -26,6 +26,7 @@ export interface CreateSessionInput {
   createWorktree?: boolean;
   featureDescription?: string;
   baseBranch?: string;
+  worktreeType?: string;
   // Session options
   startupCommand?: string;
   environment?: Record<string, string>;
@@ -64,7 +65,8 @@ export class CreateSessionUseCase {
       }
 
       // Generate branch name from feature description
-      const branchName = `feature/${this.worktreeGateway.sanitizeBranchName(
+      const prefix = input.worktreeType ?? "feature";
+      const branchName = `${prefix}/${this.worktreeGateway.sanitizeBranchName(
         input.featureDescription
       )}`;
 

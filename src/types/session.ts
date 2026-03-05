@@ -11,6 +11,20 @@ export type SessionStatus = "active" | "suspended" | "closed" | "trashed";
  */
 export type AgentProviderType = "claude" | "codex" | "gemini" | "opencode" | "none";
 
+/**
+ * Worktree type determines the branch name prefix (e.g., feature/, fix/, chore/)
+ */
+export type WorktreeType = "feature" | "fix" | "chore" | "refactor" | "docs" | "release";
+
+export const WORKTREE_TYPES: { id: WorktreeType; label: string }[] = [
+  { id: "feature", label: "feature" },
+  { id: "fix", label: "fix" },
+  { id: "chore", label: "chore" },
+  { id: "refactor", label: "refactor" },
+  { id: "docs", label: "docs" },
+  { id: "release", label: "release" },
+];
+
 export interface TerminalSession {
   id: string;
   userId: string;
@@ -19,6 +33,7 @@ export interface TerminalSession {
   projectPath: string | null;
   githubRepoId: string | null;
   worktreeBranch: string | null;
+  worktreeType: WorktreeType | null;
   folderId: string | null;
   // Agent profile for environment isolation
   profileId: string | null;
@@ -66,6 +81,7 @@ export interface CreateSessionInput {
   featureDescription?: string;  // Original feature description
   createWorktree?: boolean;     // Whether to create worktree
   baseBranch?: string;          // Base branch for new worktree
+  worktreeType?: WorktreeType;  // Branch prefix type (feature, fix, etc.)
 }
 
 /**
