@@ -30,7 +30,7 @@ function makeExistingTask(overrides: Partial<ProjectTask> & { id: string; descri
 describe("buildTodoSyncPlan", () => {
   it("creates new tasks for unknown todo IDs", () => {
     const incoming = [
-      { id: "1", task: "Fix login bug", status: "in_progress" },
+      { id: "1", content: "Fix login bug", status: "in_progress" },
     ];
     const existing: ProjectTask[] = [];
 
@@ -45,7 +45,7 @@ describe("buildTodoSyncPlan", () => {
 
   it("updates status for existing tasks with changed status", () => {
     const incoming = [
-      { id: "1", task: "Fix login bug", status: "completed" },
+      { id: "1", content: "Fix login bug", status: "completed" },
     ];
     const existing: ProjectTask[] = [
       makeExistingTask({
@@ -66,7 +66,7 @@ describe("buildTodoSyncPlan", () => {
   });
 
   it("cancels tasks removed from todo list", () => {
-    const incoming: { id: string; task: string; status: string }[] = [];
+    const incoming: { id: string; content: string; status: string }[] = [];
     const existing: ProjectTask[] = [
       makeExistingTask({
         id: "task-uuid-1",
@@ -86,7 +86,7 @@ describe("buildTodoSyncPlan", () => {
 
   it("skips tasks that haven't changed", () => {
     const incoming = [
-      { id: "1", task: "Fix login bug", status: "in_progress" },
+      { id: "1", content: "Fix login bug", status: "in_progress" },
     ];
     const existing: ProjectTask[] = [
       makeExistingTask({
@@ -106,7 +106,7 @@ describe("buildTodoSyncPlan", () => {
 
   it("updates when title changes even if status is same", () => {
     const incoming = [
-      { id: "1", task: "Fix login bug (urgent)", status: "in_progress" },
+      { id: "1", content: "Fix login bug (urgent)", status: "in_progress" },
     ];
     const existing: ProjectTask[] = [
       makeExistingTask({
@@ -124,7 +124,7 @@ describe("buildTodoSyncPlan", () => {
   });
 
   it("does not cancel already-done tasks", () => {
-    const incoming: { id: string; task: string; status: string }[] = [];
+    const incoming: { id: string; content: string; status: string }[] = [];
     const existing: ProjectTask[] = [
       makeExistingTask({
         id: "task-uuid-1",
@@ -141,9 +141,9 @@ describe("buildTodoSyncPlan", () => {
 
   it("handles multiple tasks in a single sync", () => {
     const incoming = [
-      { id: "1", task: "Task A", status: "completed" },
-      { id: "2", task: "Task B", status: "in_progress" },
-      { id: "3", task: "Task C", status: "pending" },
+      { id: "1", content: "Task A", status: "completed" },
+      { id: "2", content: "Task B", status: "in_progress" },
+      { id: "3", content: "Task C", status: "pending" },
     ];
     const existing: ProjectTask[] = [
       makeExistingTask({
