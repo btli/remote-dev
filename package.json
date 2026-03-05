@@ -154,6 +154,7 @@
     "sharp",
     "unrs-resolver"
   ],
+  "_comment_overrides": "Deduplicate @codemirror transitive deps — legacy-modes and theme-one-dark pull older versions causing duplicate type declarations",
   "overrides": {
     "@codemirror/language": "6.12.2",
     "@codemirror/view": "6.39.16"
