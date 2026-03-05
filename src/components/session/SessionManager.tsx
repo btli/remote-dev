@@ -36,6 +36,8 @@ import {
 } from "@/hooks/useEnvironmentWithSecrets";
 import type { FolderRepoStats } from "./Sidebar";
 import type { PinnedFile } from "@/types/pinned-files";
+import { WORKTREE_TYPES, type WorktreeType } from "@/types/session";
+import { sanitizeBranchName } from "@/services/worktree-service";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +49,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
 import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
@@ -261,6 +270,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Worktree name prompt state
   const [worktreePrompt, setWorktreePrompt] = useState<{ folderId: string } | null>(null);
   const [worktreeNameInput, setWorktreeNameInput] = useState("");
+  const [worktreeTypeInput, setWorktreeTypeInput] = useState<WorktreeType>("feature");
 
   // Issues modal state
   const [issuesModal, setIssuesModal] = useState<{
@@ -909,6 +919,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleFolderNewWorktree = useCallback(
     (folderId: string) => {
       setWorktreeNameInput("");
+      setWorktreeTypeInput("feature");
       setWorktreePrompt({ folderId });
     },
     []
@@ -930,6 +941,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           createWorktree: true,
           terminalType: "agent",
           featureDescription: branchName,
+          worktreeType: worktreeTypeInput,
         });
         if (newSession) {
           registerSessionFolder(newSession.id, folderId);
@@ -939,7 +951,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         console.error("Failed to create worktree session:", error);
       }
     },
-    [worktreePrompt, worktreeNameInput, createSession, resolvePreferencesForFolder, generateSessionName, registerSessionFolder, setActiveFolder]
+    [worktreePrompt, worktreeNameInput, worktreeTypeInput, createSession, resolvePreferencesForFolder, generateSessionName, registerSessionFolder, setActiveFolder]
   );
 
   // Handler for opening the wizard from Plus button or command palette
@@ -1841,7 +1853,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       )}
 
       {/* Worktree Name Prompt */}
-      <Dialog open={!!worktreePrompt} onOpenChange={(open) => !open && setWorktreePrompt(null)}>
+      <Dialog open={!!worktreePrompt} onOpenChange={(open) => { if (!open) { setWorktreePrompt(null); setWorktreeNameInput(""); setWorktreeTypeInput("feature"); } }}>
         <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1852,16 +1864,36 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               Enter a name for the worktree branch. Leave blank for an auto-generated name.
             </DialogDescription>
           </DialogHeader>
-          <Input
-            placeholder="e.g. fix-auth-bug"
-            value={worktreeNameInput}
-            onChange={(e) => setWorktreeNameInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleWorktreePromptConfirm();
-              if (e.key === "Escape") setWorktreePrompt(null);
-            }}
-            autoFocus
-          />
+          <div className="flex items-center gap-2">
+            <Select value={worktreeTypeInput} onValueChange={(v) => setWorktreeTypeInput(v as WorktreeType)}>
+              <SelectTrigger className="w-[120px] font-mono text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {WORKTREE_TYPES.map((wt) => (
+                  <SelectItem key={wt.id} value={wt.id} className="font-mono">
+                    {wt.label}/
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              className="flex-1"
+              placeholder="e.g. fix-auth-bug"
+              value={worktreeNameInput}
+              onChange={(e) => setWorktreeNameInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleWorktreePromptConfirm();
+                if (e.key === "Escape") setWorktreePrompt(null);
+              }}
+              autoFocus
+            />
+          </div>
+          {worktreeNameInput.trim() && (
+            <p className="text-xs text-muted-foreground">
+              Branch: <span className="font-mono text-primary">{worktreeTypeInput}/{sanitizeBranchName(worktreeNameInput.trim())}</span>
+            </p>
+          )}
           <DialogFooter>
             <Button variant="ghost" size="sm" onClick={() => setWorktreePrompt(null)}>
               Cancel
