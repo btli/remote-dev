@@ -7,8 +7,6 @@
 import Image from "next/image";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import {
-  CircleDot,
-  CircleCheck,
   MessageSquare,
   Milestone,
   User,
@@ -25,6 +23,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
+import { getIssueIcon } from "./issue-icons";
 
 interface IssueCardProps {
   issue: GitHubIssueDTO;
@@ -41,8 +40,6 @@ export function IssueCard({
   onCreateWorktree,
   onCopyUrl,
 }: IssueCardProps) {
-  const isOpen = issue.state === "open";
-
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -65,11 +62,7 @@ export function IssueCard({
           {/* Header Row */}
           <div className="flex items-start gap-2">
             {/* Status Icon */}
-            {isOpen ? (
-              <CircleDot className="w-4 h-4 text-chart-2 mt-0.5 shrink-0" />
-            ) : (
-              <CircleCheck className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-            )}
+            {getIssueIcon(issue, "w-4 h-4 mt-0.5 shrink-0")}
 
             {/* Title & Number */}
             <div className="flex-1 min-w-0">
