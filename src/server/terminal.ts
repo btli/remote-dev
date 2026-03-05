@@ -278,6 +278,13 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     // Broadcast to all clients so any connected client can update the sidebar indicator
     broadcastToClients({ type: "agent_activity_status", sessionId, status });
 
+    // Persist to DB (fire-and-forget) so page refreshes restore the current activity state
+    Promise.all([import("@/db"), import("@/db/schema"), import("drizzle-orm")])
+      .then(([{ db }, { terminalSessions }, { eq }]) =>
+        db.update(terminalSessions).set({ agentActivityStatus: status }).where(eq(terminalSessions.id, sessionId))
+      )
+      .catch((err) => console.error("[Agent Status] Failed to persist activity status:", err));
+
     sendJson(res, 200, { success: true });
     return true;
   }

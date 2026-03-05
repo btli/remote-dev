@@ -31,6 +31,8 @@ export interface TerminalSession {
   agentExitCode: number | null;
   agentExitedAt: Date | null;
   agentRestartCount: number;
+  // Real-time agent activity status (persisted for page reload)
+  agentActivityStatus: string | null;
   // Plugin-specific metadata (parsed from JSON)
   typeMetadata: Record<string, unknown> | null;
   // Split group membership (independent from folder)

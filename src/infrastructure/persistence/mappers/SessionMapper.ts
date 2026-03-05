@@ -32,6 +32,7 @@ export interface SessionDbRecord {
   agentExitCode: number | null;
   agentExitedAt: Date | string | null;
   agentRestartCount: number | null;
+  agentActivityStatus: string | null;
   typeMetadata: string | null;
   splitGroupId: string | null;
   splitOrder: number | null;
@@ -98,6 +99,7 @@ export class SessionMapper {
       agentExitCode: record.agentExitCode ?? null,
       agentExitedAt: record.agentExitedAt ? toDate(record.agentExitedAt) : null,
       agentRestartCount: record.agentRestartCount ?? 0,
+      agentActivityStatus: record.agentActivityStatus ?? null,
       typeMetadata: record.typeMetadata ? JSON.parse(record.typeMetadata) : null,
       splitGroupId: record.splitGroupId,
       splitOrder: record.splitOrder ?? 0,
@@ -139,6 +141,7 @@ export class SessionMapper {
       agentExitCode: session.agentExitCode,
       agentExitedAt: session.agentExitedAt,
       agentRestartCount: session.agentRestartCount,
+      agentActivityStatus: session.agentActivityStatus,
       typeMetadata: session.typeMetadata ? JSON.stringify(session.typeMetadata) : null,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
@@ -173,6 +176,7 @@ export class SessionMapper {
     agentExitCode: number | null;
     agentExitedAt: Date | null;
     agentRestartCount: number;
+    agentActivityStatus: string | null;
     typeMetadata: Record<string, unknown> | null;
     splitGroupId: string | null;
     splitOrder: number;
@@ -200,6 +204,7 @@ export class SessionMapper {
       agentExitCode: session.agentExitCode,
       agentExitedAt: session.agentExitedAt,
       agentRestartCount: session.agentRestartCount,
+      agentActivityStatus: session.agentActivityStatus,
       typeMetadata: session.typeMetadata,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
