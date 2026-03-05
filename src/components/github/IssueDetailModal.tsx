@@ -94,16 +94,22 @@ const MARKDOWN_COMPONENTS = {
       {children}
     </blockquote>
   ),
-  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-primary hover:underline"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    // Only render links with safe protocols to prevent XSS from untrusted markdown
+    const trimmed = href?.trimStart() ?? "";
+    const isSafe = !trimmed.includes(":") || /^(https?:|mailto:|#)/i.test(trimmed);
+    if (!isSafe) return <>{children}</>;
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary hover:underline"
+      >
+        {children}
+      </a>
+    );
+  },
   hr: () => <hr className="border-border my-3" />,
   table: ({ children }: { children?: React.ReactNode }) => (
     <div className="overflow-x-auto my-2">
