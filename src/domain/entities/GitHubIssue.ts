@@ -45,6 +45,7 @@ export interface GitHubIssueProps {
   assignees: IssueUser[];
   milestone: IssueMilestone | null;
   comments: number;
+  isPullRequest: boolean;
   isNew: boolean; // Changed since last view
   createdAt: Date;
   updatedAt: Date;
@@ -64,6 +65,7 @@ export interface CreateGitHubIssueProps {
   assignees?: IssueUser[];
   milestone?: IssueMilestone | null;
   comments?: number;
+  isPullRequest?: boolean;
   isNew?: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -139,6 +141,7 @@ export class GitHubIssue {
       assignees: props.assignees ?? [],
       milestone: props.milestone ?? null,
       comments: props.comments ?? 0,
+      isPullRequest: props.isPullRequest ?? false,
       isNew: props.isNew ?? false,
       createdAt: props.createdAt,
       updatedAt: props.updatedAt,
@@ -204,6 +207,10 @@ export class GitHubIssue {
 
   get comments(): number {
     return this.props.comments;
+  }
+
+  get isPullRequest(): boolean {
+    return this.props.isPullRequest;
   }
 
   get isNew(): boolean {
