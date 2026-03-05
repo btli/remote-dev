@@ -1087,10 +1087,10 @@ export function Sidebar({
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
             <div className="flex items-center gap-1.5">
-              {session.terminalType === "agent" ? (
-                <Sparkles className="w-3 h-3" />
-              ) : session.worktreeBranch ? (
+              {session.worktreeBranch ? (
                 <GitBranch className="w-3 h-3" />
+              ) : session.terminalType === "agent" ? (
+                <Sparkles className="w-3 h-3" />
               ) : null}
               <span>{session.name}</span>
             </div>
@@ -1257,11 +1257,11 @@ export function Sidebar({
             {/* Status indicator - icon colored by agent activity status */}
             {(() => {
               const iconColor = getSessionIconColor(session, isActive, getAgentActivityStatus);
-              if (session.terminalType === "agent") {
-                return <Sparkles className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
-              }
               if (session.worktreeBranch) {
                 return <GitBranch className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+              }
+              if (session.terminalType === "agent") {
+                return <Sparkles className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
               }
               return <Terminal className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
             })()}
