@@ -66,28 +66,32 @@ export const GET = withAuth(async (request, { userId }) => {
       )
     );
 
-    // Create a map of GitHub ID to database ID for lookup
-    const githubIdToDbId = new Map(
-      cachedRepos.map((cached) => [cached.githubId, cached.id])
+    // Create a map of GitHub ID to cached DB record for lookup
+    const githubIdToCached = new Map(
+      cachedRepos.map((cached) => [cached.githubId, cached])
     );
 
-    // Transform to simpler format for frontend, using database IDs
-    const repos = repositories.map((repo) => ({
-      id: githubIdToDbId.get(repo.id) || String(repo.id), // Use database ID
-      githubId: repo.id, // Keep GitHub ID for reference
-      name: repo.name,
-      fullName: repo.full_name,
-      cloneUrl: repo.clone_url,
-      sshUrl: repo.ssh_url,
-      defaultBranch: repo.default_branch,
-      isPrivate: repo.private,
-      description: repo.description,
-      language: repo.language,
-      stargazersCount: repo.stargazers_count,
-      forksCount: 0, // GitHub API doesn't always return this in user repos endpoint
-      updatedAt: repo.updated_at,
-      owner: repo.owner.login,
-    }));
+    // Transform to simpler format for frontend, using database IDs and localPath from DB
+    const repos = repositories.map((repo) => {
+      const cached = githubIdToCached.get(repo.id);
+      return {
+        id: cached?.id || String(repo.id), // Use database ID
+        githubId: repo.id, // Keep GitHub ID for reference
+        name: repo.name,
+        fullName: repo.full_name,
+        cloneUrl: repo.clone_url,
+        sshUrl: repo.ssh_url,
+        defaultBranch: repo.default_branch,
+        isPrivate: repo.private,
+        description: repo.description,
+        language: repo.language,
+        stargazersCount: repo.stargazers_count,
+        forksCount: 0, // GitHub API doesn't always return this in user repos endpoint
+        updatedAt: repo.updated_at,
+        owner: repo.owner.login,
+        localPath: cached?.localPath || null,
+      };
+    });
 
     return NextResponse.json({
       repositories: repos,
