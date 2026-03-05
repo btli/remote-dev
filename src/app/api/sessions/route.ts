@@ -3,6 +3,7 @@ import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput, SessionStatus } from "@/types/session";
+import { WORKTREE_TYPES } from "@/types/session";
 
 /**
  * GET /api/sessions - List user's terminal sessions
@@ -53,6 +54,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
+      worktreeType?: string;
       terminalType?: "shell" | "agent" | "file";
       filePath?: string;
       profileId?: string;
@@ -62,6 +64,11 @@ export const POST = withApiAuth(async (request, { userId }) => {
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
+
+    // Validate worktreeType against allowlist
+    if (body.worktreeType && !WORKTREE_TYPES.some((t) => t.id === body.worktreeType)) {
+      return errorResponse("Invalid worktree type", 400, "INVALID_WORKTREE_TYPE");
+    }
 
     // SECURITY: Validate projectPath to prevent path traversal
     const validatedPath = validateProjectPath(body.projectPath);
@@ -93,6 +100,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       featureDescription: body.featureDescription,
       createWorktree: body.createWorktree,
       baseBranch: body.baseBranch,
+      worktreeType: body.worktreeType as CreateSessionInput["worktreeType"],
     };
 
     const newSession = await SessionService.createSession(userId, input);

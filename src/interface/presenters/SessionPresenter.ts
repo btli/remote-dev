@@ -21,6 +21,7 @@ export class SessionPresenter {
       projectPath: session.projectPath,
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
+      worktreeType: (session.worktreeType as TerminalSession["worktreeType"]) ?? null,
       folderId: session.folderId,
       profileId: session.profileId,
       terminalType: session.terminalType,

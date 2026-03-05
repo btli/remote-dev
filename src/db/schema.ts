@@ -5,7 +5,7 @@ import type { SplitDirection } from "@/types/split";
 import type { CIStatusState, PRState } from "@/types/github-stats";
 import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
-import type { AgentProviderType } from "@/types/session";
+import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
@@ -454,6 +454,7 @@ export const terminalSessions = sqliteTable(
       onDelete: "set null",
     }),
     worktreeBranch: text("worktree_branch"),
+    worktreeType: text("worktree_type").$type<WorktreeType>(),
     folderId: text("folder_id").references(() => sessionFolders.id, {
       onDelete: "set null",
     }),

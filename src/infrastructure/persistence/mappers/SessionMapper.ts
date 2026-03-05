@@ -24,6 +24,7 @@ export interface SessionDbRecord {
   projectPath: string | null;
   githubRepoId: string | null;
   worktreeBranch: string | null;
+  worktreeType: string | null;
   folderId: string | null;
   profileId: string | null;
   terminalType: string | null;
@@ -57,6 +58,7 @@ export interface SessionDbInsert {
   projectPath: string | null;
   githubRepoId: string | null;
   worktreeBranch: string | null;
+  worktreeType: string | null;
   folderId: string | null;
   profileId: string | null;
   terminalType: TerminalType;
@@ -91,6 +93,7 @@ export class SessionMapper {
       projectPath: record.projectPath,
       githubRepoId: record.githubRepoId,
       worktreeBranch: record.worktreeBranch,
+      worktreeType: record.worktreeType ?? null,
       folderId: record.folderId,
       profileId: record.profileId,
       terminalType: (record.terminalType as TerminalType) ?? "shell",
@@ -133,6 +136,7 @@ export class SessionMapper {
       projectPath: session.projectPath,
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
+      worktreeType: session.worktreeType,
       folderId: session.folderId,
       profileId: session.profileId,
       terminalType: session.terminalType,
@@ -168,6 +172,7 @@ export class SessionMapper {
     projectPath: string | null;
     githubRepoId: string | null;
     worktreeBranch: string | null;
+    worktreeType: string | null;
     folderId: string | null;
     profileId: string | null;
     terminalType: TerminalType;
@@ -196,6 +201,7 @@ export class SessionMapper {
       projectPath: session.projectPath,
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
+      worktreeType: session.worktreeType ?? null,
       folderId: session.folderId,
       profileId: session.profileId,
       terminalType: session.terminalType,

@@ -11,6 +11,7 @@ import type {
   SessionStatus,
   SessionWithMetadata,
   AgentProviderType,
+  WorktreeType,
 } from "@/types/session";
 import { AGENT_PROVIDERS } from "@/types/session";
 import type { TerminalType } from "@/types/terminal-type";
@@ -67,7 +68,8 @@ export async function createSession(
   // Handle worktree creation for feature sessions (with explicit path + description)
   if (input.createWorktree && input.projectPath && input.featureDescription) {
     // Generate branch name from feature description
-    const sanitizedBranch = `feature/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
+    const prefix = input.worktreeType ?? "feature";
+    const sanitizedBranch = `${prefix}/${WorktreeService.sanitizeBranchName(input.featureDescription)}`;
     branchName = sanitizedBranch;
 
     // Validate it's a git repo
@@ -375,6 +377,7 @@ export async function createSession(
         projectPath: workingPath ?? null,
         githubRepoId: input.githubRepoId ?? null,
         worktreeBranch: branchName ?? null,
+        worktreeType: input.worktreeType ?? null,
         folderId: input.folderId ?? null,
         profileId: input.profileId ?? null,
         terminalType,
@@ -898,6 +901,7 @@ function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferSelect):
     projectPath: dbSession.projectPath,
     githubRepoId: dbSession.githubRepoId,
     worktreeBranch: dbSession.worktreeBranch,
+    worktreeType: dbSession.worktreeType as WorktreeType | null,
     folderId: dbSession.folderId,
     profileId: dbSession.profileId,
     terminalType: dbSession.terminalType ?? "shell",

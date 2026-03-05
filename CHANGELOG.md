@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Worktree Type Selection**: Allow selecting worktree type (feature/fix/chore/refactor/docs/release) when creating a Feature Session
+  - Inline branch prefix dropdown replaces hardcoded `feature/` prefix
+  - New `worktree_type` column on `terminal_session` persists the selected type
+  - Backend and use case use dynamic prefix for branch name generation
+
 - **Agent TodoWrite Sync**: Mirror Claude Code's TodoWrite task list into the Task Sidebar in real-time
   - PostToolUse hook on `TodoWrite` reads task data and POSTs to `/internal/agent-todos` endpoint
   - Terminal server diffs incoming tasks against existing agent tasks, syncs to `project_task` table
