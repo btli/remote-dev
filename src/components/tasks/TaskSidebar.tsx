@@ -3,8 +3,8 @@
 /**
  * TaskSidebar - Right sidebar for project task tracking
  *
- * Displays manual tasks, agent tasks, and GitHub issues
- * scoped to the active folder/project.
+ * Displays manual tasks (folder-scoped), agent tasks (session-scoped),
+ * and GitHub issues for the active project.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -552,20 +552,20 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
     setCollapsed(next);
   }, [collapsed]);
 
-  // Split tasks by source
+  // Split tasks by source (agent tasks filtered to active session)
   const manualTasks = useMemo(
     () => tasks.filter((t) => t.source === "manual"),
     [tasks]
   );
   const agentTasks = useMemo(
-    () => tasks.filter((t) => t.source === "agent" && t.sessionId === activeSessionId),
+    () => tasks.filter((t) => t.source === "agent" && activeSessionId != null && t.sessionId === activeSessionId),
     [tasks, activeSessionId]
   );
 
   const openTaskCount = useMemo(
     () => tasks.filter((t) =>
       (t.status === "open" || t.status === "in_progress") &&
-      (t.source === "manual" || t.sessionId === activeSessionId)
+      (t.source === "manual" || (activeSessionId != null && t.sessionId === activeSessionId))
     ).length,
     [tasks, activeSessionId]
   );
