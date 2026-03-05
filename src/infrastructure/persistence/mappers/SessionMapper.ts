@@ -13,8 +13,9 @@ import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 
 /**
- * Raw database record type from Drizzle query.
- * This matches the terminalSessions schema.
+ * Raw database record type from Drizzle query results.
+ * Fields use loose types (string | null) because SQLite returns raw strings
+ * that must be cast to domain types in the mapper.
  */
 export interface SessionDbRecord {
   id: string;
@@ -48,7 +49,8 @@ export interface SessionDbRecord {
 
 /**
  * Format for database insert/update operations.
- * Uses the exact types expected by Drizzle schema.
+ * Uses typed unions (WorktreeType, TerminalType, etc.) matching the Drizzle schema,
+ * unlike SessionDbRecord which returns raw strings from SQLite.
  */
 export interface SessionDbInsert {
   id: string;
@@ -137,6 +139,7 @@ export class SessionMapper {
       projectPath: session.projectPath,
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
+      // Cast is safe because Session.worktreeType only holds values set via WorktreeType-typed inputs
       worktreeType: (session.worktreeType as WorktreeType) ?? null,
       folderId: session.folderId,
       profileId: session.profileId,
