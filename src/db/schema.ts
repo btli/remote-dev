@@ -197,6 +197,8 @@ export const folderPreferences = sqliteTable(
       onDelete: "set null",
     }),
     localRepoPath: text("local_repo_path"), // Alternative: manual path to local git repo
+    // Default agent provider for issue worktrees (claude, codex, gemini, opencode)
+    defaultAgentProvider: text("default_agent_provider").$type<AgentProviderType>(),
     // Environment variables as JSON: { "PORT": "3000", "API_URL": "..." }
     // Use "__DISABLED__" value to explicitly disable an inherited variable
     environmentVars: text("environment_vars"),

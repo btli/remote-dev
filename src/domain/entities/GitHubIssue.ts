@@ -13,6 +13,7 @@
  */
 
 import { InvalidValueError } from "../errors/DomainError";
+import type { WorktreeType } from "@/types/session";
 
 export type IssueState = "open" | "closed";
 
@@ -297,8 +298,29 @@ export class GitHubIssue {
   }
 
   /**
+   * Infer worktree type from issue labels.
+   * Maps common label names to branch prefixes: bug -> fix, enhancement -> feature.
+   */
+  getWorktreeTypeFromLabels(): WorktreeType {
+    const labelNames = this.props.labels.map((l) => l.name.toLowerCase());
+    if (labelNames.some((l) => l === "bug" || l === "bugfix" || l.includes("defect"))) {
+      return "fix";
+    }
+    if (labelNames.some((l) => l === "enhancement" || l.includes("feature"))) {
+      return "feature";
+    }
+    if (labelNames.some((l) => l === "documentation" || l === "docs")) {
+      return "docs";
+    }
+    if (labelNames.some((l) => l === "chore" || l === "maintenance" || l === "refactor")) {
+      return "chore";
+    }
+    return "fix";
+  }
+
+  /**
    * Generate a suggested branch name for this issue.
-   * Format: issue-{number}-{sanitized-title}
+   * Format: {worktreeType}/issue-{number}-{sanitized-title}
    */
   getSuggestedBranchName(): string {
     const sanitizedTitle = this.props.title
@@ -306,7 +328,8 @@ export class GitHubIssue {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
       .substring(0, 50);
-    return `issue-${this.props.number}-${sanitizedTitle}`;
+    const prefix = this.getWorktreeTypeFromLabels();
+    return `${prefix}/issue-${this.props.number}-${sanitizedTitle}`;
   }
 
   /**

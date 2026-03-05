@@ -138,6 +138,7 @@ export function resolvePreferences(
     startupCommand: "default",
     githubRepoId: "default",
     localRepoPath: "default",
+    defaultAgentProvider: "default",
   };
 
   // Start with defaults (extended to include repo fields)
@@ -145,6 +146,7 @@ export function resolvePreferences(
     ...DEFAULT_PREFERENCES,
     githubRepoId: null,
     localRepoPath: null,
+    defaultAgentProvider: null,
   };
 
   // Layer 1: Apply user settings
@@ -212,6 +214,10 @@ export function resolvePreferences(
     if (folderPrefs.localRepoPath !== null) {
       resolved.localRepoPath = folderPrefs.localRepoPath;
       source.localRepoPath = folderRef;
+    }
+    if (folderPrefs.defaultAgentProvider !== null) {
+      resolved.defaultAgentProvider = folderPrefs.defaultAgentProvider;
+      source.defaultAgentProvider = folderRef;
     }
   }
 

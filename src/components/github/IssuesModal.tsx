@@ -28,6 +28,7 @@ import {
   type GitHubIssueDTO,
 } from "@/contexts/GitHubIssuesContext";
 import { IssueCard } from "./IssueCard";
+import { IssueDetailPanel } from "./IssueDetailPanel";
 import { CreateIssueForm } from "./CreateIssueForm";
 import {
   Dialog,
@@ -113,6 +114,7 @@ function IssuesModalContent({
   const [stateFilter, setStateFilter] = useState<StateFilter>("open");
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [selectedIssue, setSelectedIssue] = useState<GitHubIssueDTO | null>(null);
 
   // Fetch issues on mount
   useEffect(() => {
@@ -199,6 +201,10 @@ function IssuesModalContent({
     [onCreateWorktree, repositoryId]
   );
 
+  const handleSelectIssue = useCallback((issue: GitHubIssueDTO) => {
+    setSelectedIssue(issue);
+  }, []);
+
   const handleRefresh = useCallback(() => {
     refresh(true);
   }, [refresh]);
@@ -225,6 +231,25 @@ function IssuesModalContent({
   // Count issues by state for tab badges
   const openCount = issues.filter((i) => i.state === "open").length;
   const closedCount = issues.filter((i) => i.state === "closed").length;
+
+  // Show issue detail panel when an issue is selected
+  if (selectedIssue) {
+    return (
+      <>
+        <DialogHeader className="sr-only">
+          <DialogTitle>Issue #{selectedIssue.number}</DialogTitle>
+          <DialogDescription>{selectedIssue.title}</DialogDescription>
+        </DialogHeader>
+        <IssueDetailPanel
+          issue={selectedIssue}
+          repositoryId={repositoryId}
+          onBack={() => setSelectedIssue(null)}
+          onStartWorking={handleCreateWorktree}
+          onOpenInGitHub={handleOpenInGitHub}
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -463,6 +488,7 @@ function IssuesModalContent({
                             <IssueCard
                               key={issue.id}
                               issue={issue}
+                              onSelect={handleSelectIssue}
                               onOpenInGitHub={handleOpenInGitHub}
                               onCreateWorktree={
                                 onCreateWorktree
@@ -486,6 +512,7 @@ function IssuesModalContent({
                             <IssueCard
                               key={issue.id}
                               issue={issue}
+                              onSelect={handleSelectIssue}
                               onOpenInGitHub={handleOpenInGitHub}
                               onCopyUrl={handleCopyUrl}
                             />
@@ -501,6 +528,7 @@ function IssuesModalContent({
                       <IssueCard
                         key={issue.id}
                         issue={issue}
+                        onSelect={handleSelectIssue}
                         onOpenInGitHub={handleOpenInGitHub}
                         onCreateWorktree={
                           onCreateWorktree && issue.state === "open"

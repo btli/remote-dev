@@ -194,6 +194,36 @@ export async function listIssuesFromAPI(
 }
 
 /**
+ * Comment on a GitHub issue
+ */
+export interface GitHubIssueComment {
+  id: number;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  user: {
+    login: string;
+    avatar_url: string;
+  } | null;
+}
+
+/**
+ * List comments for an issue
+ */
+export async function listIssueCommentsFromAPI(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  perPage: number = 100
+): Promise<GitHubIssueComment[]> {
+  return githubFetch<GitHubIssueComment[]>(
+    accessToken,
+    `/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=${perPage}&sort=created&direction=asc`
+  );
+}
+
+/**
  * Get a single issue by number
  */
 export async function getIssueFromAPI(

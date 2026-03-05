@@ -448,6 +448,7 @@ function mapDbFolderPreferences(
     fontFamily: dbRow.fontFamily,
     githubRepoId: dbRow.githubRepoId,
     localRepoPath: dbRow.localRepoPath,
+    defaultAgentProvider: dbRow.defaultAgentProvider ?? null,
     environmentVars: parseEnvironmentVars(dbRow.environmentVars),
     pinnedFiles: parsePinnedFiles(dbRow.pinnedFiles),
     createdAt: new Date(dbRow.createdAt),

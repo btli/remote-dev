@@ -10,6 +10,7 @@
 
 import type { EnvironmentVariables } from "./environment";
 import type { PinnedFile } from "./pinned-files";
+import type { AgentProviderType } from "./session";
 
 /**
  * Core preference keys that can be customized at any level
@@ -30,6 +31,7 @@ export interface Preferences {
 export interface ExtendedPreferences extends Preferences {
   githubRepoId: string | null;
   localRepoPath: string | null;
+  defaultAgentProvider: AgentProviderType | null;
 }
 
 /**
@@ -84,6 +86,8 @@ export interface FolderPreferences {
   // Repository association for worktree support
   githubRepoId: string | null;
   localRepoPath: string | null;
+  // Default agent provider for issue worktrees
+  defaultAgentProvider: AgentProviderType | null;
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars: EnvironmentVariables | null;
@@ -164,6 +168,8 @@ export interface UpdateFolderPreferencesInput {
   // Repository association for worktree support
   githubRepoId?: string | null;
   localRepoPath?: string | null;
+  // Default agent provider for issue worktrees
+  defaultAgentProvider?: AgentProviderType | null;
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars?: EnvironmentVariables | null;
