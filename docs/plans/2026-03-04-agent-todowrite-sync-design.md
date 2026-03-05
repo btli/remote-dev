@@ -40,9 +40,9 @@ Request body is the raw PostToolUse stdin JSON from Claude Code:
 {
   "tool_name": "TodoWrite",
   "tool_input": {
-    "tasks": [
-      {"id": "1", "task": "Read auth module", "status": "in_progress"},
-      {"id": "2", "task": "Fix login bug", "status": "completed"}
+    "todos": [
+      {"id": "1", "content": "Read auth module", "status": "in_progress"},
+      {"id": "2", "content": "Fix login bug", "status": "completed"}
     ]
   }
 }
