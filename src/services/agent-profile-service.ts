@@ -609,8 +609,8 @@ function withoutRdvHooks(arr: unknown[], marker: string): unknown[] {
  * - Notification (permission/elicitation) → status "waiting" (needs user input)
  * - Stop → status "idle" (agent finished its turn)
  *
- * TodoWrite sync hook (→ /internal/agent-todos):
- * - PostToolUse (matcher: "TodoWrite") → syncs task list to project_task table
+ * Task sync hooks (→ /internal/agent-todos):
+ * - PostToolUse (matcher: "TaskCreate|TaskUpdate|TodoWrite") → syncs tasks to project_task table
  */
 export async function installAgentHooks(
   configDir: string,
@@ -666,7 +666,8 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: curlForStatus("idle"), timeout: 5 }],
   };
 
-  // TodoWrite sync hook: reads PostToolUse JSON from stdin, POSTs to /internal/agent-todos
+  // Task sync hook: reads PostToolUse JSON from stdin, POSTs to /internal/agent-todos
+  // Matches TaskCreate, TaskUpdate (v2.1.69+), and legacy TodoWrite
   const todoSyncCommand =
     'INPUT=$(cat); ' +
     '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
@@ -680,7 +681,7 @@ export async function installAgentHooks(
     'fi || true';
 
   const postToolUseTodoHook = {
-    matcher: "TodoWrite",
+    matcher: "TaskCreate|TaskUpdate|TodoWrite",
     hooks: [{ type: "command", command: todoSyncCommand, timeout: 10 }],
   };
 

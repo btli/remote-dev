@@ -289,9 +289,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
-  // Handle agent TodoWrite sync from Claude Code PostToolUse hooks
+  // Handle agent task sync from Claude Code PostToolUse hooks
   // Called by hooks: POST /internal/agent-todos?sessionId=xxx
-  // Body: Claude Code PostToolUse stdin JSON (contains tool_input.todos)
+  // Body: Claude Code PostToolUse stdin JSON (TaskCreate/TaskUpdate/TodoWrite)
   if (pathname === "/internal/agent-todos" && req.method === "POST") {
     const sessionId = query.sessionId as string;
 
