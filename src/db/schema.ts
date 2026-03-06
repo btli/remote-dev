@@ -771,6 +771,7 @@ export const githubIssues = sqliteTable(
     assignees: text("assignees").notNull().default("[]"), // JSON array: [{ login, avatarUrl }]
     milestone: text("milestone"), // JSON: { title, number }
     comments: integer("comments").notNull().default(0),
+    isPullRequest: integer("is_pull_request", { mode: "boolean" }).notNull().default(false),
     isNew: integer("is_new", { mode: "boolean" }).notNull().default(false), // New since last user view
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),

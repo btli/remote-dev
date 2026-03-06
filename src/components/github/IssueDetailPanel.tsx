@@ -3,10 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import Image from "next/image";
+import remarkGfm from "remark-gfm";
 import {
   ArrowLeft,
-  CircleDot,
-  CircleCheck,
   ExternalLink,
   GitBranch,
   Loader2,
@@ -20,6 +19,23 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
+import { getIssueIcon } from "./issue-icons";
+
+const REMARK_PLUGINS = [remarkGfm];
+
+// Safe-href link component to prevent XSS from untrusted markdown
+const SAFE_LINK_COMPONENTS = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    const trimmed = href?.trimStart() ?? "";
+    const isSafe = !trimmed.includes(":") || /^(https?:|mailto:|#)/i.test(trimmed);
+    if (!isSafe) return <>{children}</>;
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    );
+  },
+} satisfies Record<string, React.ComponentType<Record<string, unknown>>>;
 
 interface IssueComment {
   id: number;
@@ -107,11 +123,7 @@ export function IssueDetailPanel({
         </button>
 
         <div className="flex items-start gap-2">
-          {isOpen ? (
-            <CircleDot className="w-5 h-5 text-chart-2 mt-0.5 shrink-0" />
-          ) : (
-            <CircleCheck className="w-5 h-5 text-muted-foreground mt-0.5 shrink-0" />
-          )}
+          {getIssueIcon(issue, "w-5 h-5 mt-0.5 shrink-0")}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-sm font-medium text-primary">
@@ -211,7 +223,7 @@ export function IssueDetailPanel({
           {/* Issue Body */}
           {issue.body ? (
             <div className={markdownClasses}>
-              <ReactMarkdown>{issue.body}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={SAFE_LINK_COMPONENTS}>{issue.body}</ReactMarkdown>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground italic">
@@ -261,7 +273,7 @@ export function IssueDetailPanel({
                         <span>{formatRelativeTime(comment.created_at)}</span>
                       </div>
                       <div className={markdownClasses}>
-                        <ReactMarkdown>{comment.body}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={SAFE_LINK_COMPONENTS}>{comment.body}</ReactMarkdown>
                       </div>
                     </div>
                   ))}

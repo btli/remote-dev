@@ -34,6 +34,7 @@ export interface GitHubIssueDbRecord {
   assignees: string; // JSON string
   milestone: string | null; // JSON string
   comments: number;
+  isPullRequest: boolean;
   isNew: boolean;
   createdAt: Date | number;
   updatedAt: Date | number;
@@ -56,6 +57,7 @@ export interface GitHubIssueDbInsert {
   assignees: string;
   milestone: string | null;
   comments: number;
+  isPullRequest: boolean;
   isNew: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -80,6 +82,7 @@ export class GitHubIssueMapper {
       assignees: parseJson<IssueUser[]>(record.assignees) ?? [],
       milestone: parseJson<IssueMilestone>(record.milestone),
       comments: record.comments,
+      isPullRequest: record.isPullRequest,
       isNew: record.isNew,
       createdAt: toDate(record.createdAt),
       updatedAt: toDate(record.updatedAt),
@@ -113,6 +116,7 @@ export class GitHubIssueMapper {
       assignees: JSON.stringify(issue.assignees),
       milestone: issue.milestone ? JSON.stringify(issue.milestone) : null,
       comments: issue.comments,
+      isPullRequest: issue.isPullRequest,
       isNew: issue.isNew,
       createdAt: issue.createdAt,
       updatedAt: issue.updatedAt,
@@ -136,6 +140,7 @@ export class GitHubIssueMapper {
     assignees: IssueUser[];
     milestone: IssueMilestone | null;
     comments: number;
+    isPullRequest: boolean;
     isNew: boolean;
     createdAt: string;
     updatedAt: string;
@@ -157,6 +162,7 @@ export class GitHubIssueMapper {
       assignees: issue.assignees,
       milestone: issue.milestone,
       comments: issue.comments,
+      isPullRequest: issue.isPullRequest,
       isNew: issue.isNew,
       createdAt: issue.createdAt.toISOString(),
       updatedAt: issue.updatedAt.toISOString(),

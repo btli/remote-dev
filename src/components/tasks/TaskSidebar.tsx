@@ -11,7 +11,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useTaskContext } from "@/contexts/TaskContext";
 import { useSessionContext } from "@/contexts/SessionContext";
-import { useRepositoryIssues } from "@/contexts/GitHubIssuesContext";
+import {
+  useRepositoryIssues,
+  type GitHubIssueDTO,
+} from "@/contexts/GitHubIssuesContext";
 import {
   ClipboardList,
   Plus,
@@ -29,6 +32,8 @@ import {
   Calendar,
   Link2,
 } from "lucide-react";
+import { IssueDetailModal } from "@/components/github/IssueDetailModal";
+import { getIssueIcon } from "@/components/github/issue-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -388,31 +393,26 @@ function SectionHeader({
   );
 }
 
-// --- GitHub issue link item ---
+// --- GitHub issue/PR link item ---
 
 interface GitHubIssueLinkProps {
-  issue: { number: number; title: string; htmlUrl: string; state: string };
+  issue: GitHubIssueDTO;
   onLink: () => void;
+  onSelect: () => void;
 }
 
-function GitHubIssueLink({ issue, onLink }: GitHubIssueLinkProps) {
+function GitHubIssueLink({ issue, onLink, onSelect }: GitHubIssueLinkProps) {
   return (
     <div className="flex items-start gap-1.5 px-2 py-1 rounded-md hover:bg-accent/50 transition-colors group">
-      {issue.state === "open" ? (
-        <CircleDot className="w-3.5 h-3.5 text-chart-2 mt-0.5 shrink-0" />
-      ) : (
-        <CircleCheck className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
-      )}
+      {getIssueIcon(issue, "w-3.5 h-3.5 mt-0.5 shrink-0")}
       <div className="flex-1 min-w-0">
-        <a
-          href={issue.htmlUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-foreground hover:underline line-clamp-1"
+        <button
+          onClick={onSelect}
+          className="w-full text-left text-xs text-foreground hover:underline line-clamp-1"
         >
           <span className="text-primary mr-1">#{issue.number}</span>
           {issue.title}
-        </a>
+        </button>
       </div>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -450,19 +450,11 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
   const [issuesExpanded, setIssuesExpanded] = useState(false);
 
   // GitHub issues from existing context
-  const { issues: rawIssues, isLoading: issuesLoading, refresh: refreshIssues } =
+  const { issues: githubIssues, isLoading: issuesLoading, refresh: refreshIssues } =
     useRepositoryIssues(githubRepoId);
 
-  const githubIssues = useMemo(
-    () =>
-      rawIssues.map((issue) => ({
-        number: issue.number,
-        title: issue.title,
-        htmlUrl: issue.htmlUrl,
-        state: issue.state,
-      })),
-    [rawIssues]
-  );
+  // Issue detail modal state
+  const [selectedIssue, setSelectedIssue] = useState<GitHubIssueDTO | null>(null);
 
   // Fetch GitHub issues when section is expanded
   useEffect(() => {
@@ -589,7 +581,7 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
   );
 
   const handleLinkIssue = useCallback(
-    (issue: { number: number; title: string; htmlUrl: string }) => {
+    (issue: GitHubIssueDTO) => {
       createTask({
         title: issue.title,
         folderId: activeFolderId,
@@ -740,7 +732,7 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
             <div>
               <SectionHeader
                 icon={CircleDot}
-                title="GitHub Issues"
+                title="GitHub"
                 count={githubIssues.length}
                 expanded={issuesExpanded}
                 onToggle={() => setIssuesExpanded(!issuesExpanded)}
@@ -766,6 +758,7 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
                         key={issue.number}
                         issue={issue}
                         onLink={() => handleLinkIssue(issue)}
+                        onSelect={() => setSelectedIssue(issue)}
                       />
                     ))
                   )}
@@ -782,6 +775,13 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
       )}
+
+      {/* Issue/PR detail modal */}
+      <IssueDetailModal
+        open={selectedIssue !== null}
+        onClose={() => setSelectedIssue(null)}
+        issue={selectedIssue}
+      />
     </div>
   );
 }

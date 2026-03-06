@@ -34,6 +34,7 @@ export interface GitHubIssueDTO {
   assignees: Array<{ login: string; avatarUrl: string }>;
   milestone: { title: string; number: number } | null;
   comments: number;
+  isPullRequest: boolean;
   isNew: boolean;
   createdAt: string;
   updatedAt: string;

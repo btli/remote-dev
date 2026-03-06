@@ -260,7 +260,7 @@ function IssuesModalContent({
           <div className="flex items-center gap-2">
             <CircleDot className="w-5 h-5 text-chart-2" />
             <DialogTitle className="text-lg">
-              {repositoryName} Issues
+              {repositoryName} Issues &amp; PRs
             </DialogTitle>
             {hasNewIssues && (
               <span className="text-xs px-1.5 py-0.5 bg-primary/20 text-primary rounded">
