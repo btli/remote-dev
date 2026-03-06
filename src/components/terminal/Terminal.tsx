@@ -12,7 +12,6 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
-import { VoiceMicButton } from "./VoiceMicButton";
 
 export interface TerminalRef {
   focus: () => void;
@@ -1342,12 +1341,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         </div>
       )}
 
-      {/* Voice mic button for agent sessions */}
-      {terminalType === "agent" && (
-        <div className="absolute top-2 left-2 z-30" style={isRecording ? { left: "5.5rem" } : undefined}>
-          <VoiceMicButton getWebSocket={() => wsRef.current} />
-        </div>
-      )}
 
       {/* Search overlay - Activity preserves search state when hidden */}
       <Activity mode={isSearchOpen ? "visible" : "hidden"}>
