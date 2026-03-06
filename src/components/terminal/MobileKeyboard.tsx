@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { Camera } from "lucide-react";
+import { Camera, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface MobileKeyboardProps {
   onKeyPress: (key: string, modifiers?: { ctrl?: boolean; alt?: boolean }) => void;
-  onImageUpload?: (file: File) => void;
+  onImageUpload?: (file: File) => Promise<void>;
   className?: string;
 }
 
@@ -40,16 +40,28 @@ const EXTRA_KEYS: KeyConfig[] = [
 export function MobileKeyboard({ onKeyPress, onImageUpload, className }: MobileKeyboardProps) {
   const [ctrlActive, setCtrlActive] = useState(false);
   const [altActive, setAltActive] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file && onImageUpload) {
-        onImageUpload(file);
-      }
+      if (!file || !onImageUpload) return;
       // Reset so the same file can be selected again
       e.target.value = "";
+
+      setIsUploading(true);
+      setUploadError(null);
+      try {
+        await onImageUpload(file);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Upload failed";
+        setUploadError(message);
+        setTimeout(() => setUploadError(null), 3000);
+      } finally {
+        setIsUploading(false);
+      }
     },
     [onImageUpload]
   );
@@ -130,16 +142,23 @@ export function MobileKeyboard({ onKeyPress, onImageUpload, className }: MobileK
           <div className="w-px bg-border mx-1 self-stretch" />
           <button
             onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
             className={cn(
               "px-2.5 py-1.5 rounded-md text-xs font-medium",
               "bg-card/80 text-muted-foreground",
               "active:bg-primary active:text-primary-foreground",
               "touch-manipulation select-none",
-              "transition-colors duration-100"
+              "transition-colors duration-100",
+              isUploading && "opacity-50",
+              uploadError && "text-destructive"
             )}
-            aria-label="Upload screenshot"
+            aria-label={uploadError || "Upload screenshot"}
           >
-            <Camera className="w-3.5 h-3.5" />
+            {isUploading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Camera className="w-3.5 h-3.5" />
+            )}
           </button>
           <input
             ref={fileInputRef}

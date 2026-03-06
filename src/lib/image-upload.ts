@@ -5,12 +5,15 @@
  * TerminalWithKeyboard.tsx (mobile camera button).
  */
 
-export const IMAGE_EXTENSIONS: Record<string, string> = {
+const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
   "image/gif": ".gif",
   "image/webp": ".webp",
 };
+
+/** Maximum file size (5MB) — matches server-side limit in /api/images */
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 /**
  * Upload an image file to the server and return the saved file path.
@@ -19,6 +22,10 @@ export const IMAGE_EXTENSIONS: Record<string, string> = {
  * (e.g. Claude Code) can read directly.
  */
 export async function uploadImage(file: File): Promise<string> {
+  if (file.size > MAX_FILE_SIZE) {
+    throw new Error(`Image too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 5MB.`);
+  }
+
   const formData = new FormData();
   const extension = IMAGE_EXTENSIONS[file.type] ?? "";
   const safeName = `image-${Date.now()}${extension}`;
@@ -49,6 +56,7 @@ export async function sendImageToTerminal(
   ws: WebSocket | null
 ): Promise<void> {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.error("WebSocket not connected");
     return;
   }
 

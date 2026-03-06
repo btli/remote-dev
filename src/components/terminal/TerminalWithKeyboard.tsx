@@ -135,11 +135,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
 
   const handleImageUpload = useCallback(
     async (file: File) => {
-      try {
-        await sendImageToTerminal(file, wsRef.current);
-      } catch (error) {
-        console.error("Failed to upload image:", error);
-      }
+      await sendImageToTerminal(file, wsRef.current);
     },
     []
   );
