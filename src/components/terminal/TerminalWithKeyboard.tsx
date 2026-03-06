@@ -5,6 +5,8 @@ import { Terminal, type TerminalRef } from "./Terminal";
 import { MobileKeyboard } from "./MobileKeyboard";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+import { useMobile } from "@/hooks/useMobile";
+import { sendImageToTerminal } from "@/lib/image-upload";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { TerminalSession } from "@/types/session";
 
@@ -70,6 +72,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   const terminalRef = useRef<TerminalRef>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [exitCode, setExitCode] = useState(0);
+  const isMobile = useMobile();
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -130,6 +133,17 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     []
   );
 
+  const handleImageUpload = useCallback(
+    async (file: File) => {
+      try {
+        await sendImageToTerminal(file, wsRef.current);
+      } catch (error) {
+        console.error("Failed to upload image:", error);
+      }
+    },
+    []
+  );
+
   return (
     <div className="flex flex-col h-full relative">
       <div className="flex-1 min-h-0">
@@ -159,7 +173,12 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
           />
         </ErrorBoundary>
       </div>
-      <MobileKeyboard onKeyPress={handleMobileKeyPress} />
+      {isMobile && (
+        <MobileKeyboard
+          onKeyPress={handleMobileKeyPress}
+          onImageUpload={handleImageUpload}
+        />
+      )}
 
       {sessionEnded && session && (
         <SessionEndedOverlay

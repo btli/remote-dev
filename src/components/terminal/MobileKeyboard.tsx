@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
+import { Camera } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface MobileKeyboardProps {
   onKeyPress: (key: string, modifiers?: { ctrl?: boolean; alt?: boolean }) => void;
+  onImageUpload?: (file: File) => void;
   className?: string;
 }
 
@@ -35,9 +37,22 @@ const EXTRA_KEYS: KeyConfig[] = [
   { label: ":", key: ":" },
 ];
 
-export function MobileKeyboard({ onKeyPress, className }: MobileKeyboardProps) {
+export function MobileKeyboard({ onKeyPress, onImageUpload, className }: MobileKeyboardProps) {
   const [ctrlActive, setCtrlActive] = useState(false);
   const [altActive, setAltActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file && onImageUpload) {
+        onImageUpload(file);
+      }
+      // Reset so the same file can be selected again
+      e.target.value = "";
+    },
+    [onImageUpload]
+  );
 
   const handleKeyPress = useCallback(
     (config: KeyConfig) => {
@@ -93,7 +108,6 @@ export function MobileKeyboard({ onKeyPress, className }: MobileKeyboardProps) {
       className={cn(
         "flex flex-wrap gap-1.5 p-2 bg-popover/95 backdrop-blur-sm border-t border-border",
         "pb-safe-bottom",
-        "md:hidden", // Only show on mobile
         className
       )}
     >
@@ -109,6 +123,33 @@ export function MobileKeyboard({ onKeyPress, className }: MobileKeyboardProps) {
       <div className="flex gap-1.5 flex-wrap">
         {EXTRA_KEYS.map(renderKey)}
       </div>
+
+      {/* Image upload button */}
+      {onImageUpload && (
+        <>
+          <div className="w-px bg-border mx-1 self-stretch" />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className={cn(
+              "px-2.5 py-1.5 rounded-md text-xs font-medium",
+              "bg-card/80 text-muted-foreground",
+              "active:bg-primary active:text-primary-foreground",
+              "touch-manipulation select-none",
+              "transition-colors duration-100"
+            )}
+            aria-label="Upload screenshot"
+          >
+            <Camera className="w-3.5 h-3.5" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+        </>
+      )}
     </div>
   );
 }
