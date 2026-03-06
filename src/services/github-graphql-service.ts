@@ -537,10 +537,26 @@ export async function fetchBatchedStats(
     const query = buildBatchQuery(batch.length);
 
     try {
-      const response = await client<Record<string, GraphQLRepositoryStats | null>>(
-        query,
-        variables
-      );
+      let response: Record<string, GraphQLRepositoryStats | null>;
+
+      try {
+        response = await client<Record<string, GraphQLRepositoryStats | null>>(
+          query,
+          variables
+        );
+      } catch (error: unknown) {
+        // GraphQL partial failures: some repos resolve, others don't.
+        // The error object contains partial data for repos that succeeded.
+        const gqlError = error as { data?: Record<string, GraphQLRepositoryStats | null> };
+        if (gqlError.data) {
+          console.warn(
+            `Partial GraphQL failure in batch starting at ${i} (some repos not found), processing available data`
+          );
+          response = gqlError.data;
+        } else {
+          throw error;
+        }
+      }
 
       // Process each repo in the batch
       for (let j = 0; j < batch.length; j++) {
