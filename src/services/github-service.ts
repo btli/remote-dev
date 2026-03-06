@@ -164,6 +164,10 @@ export interface GitHubIssue {
     number: number;
   } | null;
   comments: number;
+  pull_request?: {
+    url: string;
+    html_url: string;
+  };
 }
 
 /**

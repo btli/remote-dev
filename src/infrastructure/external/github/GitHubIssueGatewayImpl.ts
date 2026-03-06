@@ -119,6 +119,7 @@ export class GitHubIssueGatewayImpl implements GitHubIssueGateway {
           }
         : null,
       comments: apiIssue.comments,
+      isPullRequest: !!apiIssue.pull_request,
       isNew: false, // Will be set by the use case based on comparison
       createdAt: new Date(apiIssue.created_at),
       updatedAt: new Date(apiIssue.updated_at),
