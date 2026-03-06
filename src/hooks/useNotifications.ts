@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { useNotificationPermission, sendBrowserNotification } from "./useNotificationPermission";
 
 interface NotificationOptions {
   /** Time in ms of inactivity before notifying (default: 5000ms) */
@@ -14,49 +15,23 @@ export function useNotifications({
   enabled = true,
   sessionName = "Terminal",
 }: NotificationOptions = {}) {
-  const [permissionState, setPermissionState] = useState<NotificationPermission>(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      return Notification.permission;
-    }
-    return "default";
-  });
+  const { permissionState, requestPermission } = useNotificationPermission();
   const lastActivityRef = useRef<number>(0);
   const wasActiveRef = useRef<boolean>(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notifiedRef = useRef<boolean>(false);
 
-  // Request notification permission
-  const requestPermission = useCallback(async () => {
-    if ("Notification" in window) {
-      const permission = await Notification.requestPermission();
-      setPermissionState(permission);
-      return permission;
-    }
-    return "denied" as NotificationPermission;
-  }, []);
-
   // Send a notification
   const notify = useCallback(
     (title: string, body?: string) => {
       if (!enabled || permissionState !== "granted") return;
-
-      // Don't notify if the window is focused
       if (document.hasFocus()) return;
 
-      const notification = new Notification(title, {
-        body,
-        icon: "/favicon.ico",
-        tag: `terminal-${sessionName}`, // Prevents duplicate notifications
+      sendBrowserNotification({
+        title,
+        body: body ?? "",
+        tag: `terminal-${sessionName}`,
       });
-
-      // Auto-close after 5 seconds
-      setTimeout(() => notification.close(), 5000);
-
-      // Focus window when notification is clicked
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
     },
     [enabled, permissionState, sessionName]
   );
