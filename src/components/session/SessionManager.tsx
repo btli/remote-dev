@@ -1507,8 +1507,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isPWA && isMobile && "pt-safe-top"
       )}>
         {/* Mobile header bar */}
-        {activeSessions.length > 0 && (
-          <div className="flex md:hidden items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
+        {isMobile && activeSessions.length > 0 && (
+          <div className="flex items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
             {mobileEditingName !== null ? (
               <input
                 type="text"

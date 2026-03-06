@@ -10,14 +10,8 @@ import type { ConnectionStatus } from "@/types/terminal";
 import { Search, X, ChevronUp, ChevronDown, Circle } from "lucide-react";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
+import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
-
-const IMAGE_EXTENSIONS: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-};
 
 export interface TerminalRef {
   focus: () => void;
@@ -1071,45 +1065,15 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     }
   }, [isSearchOpen]);
 
-  // Upload image to server and return file path
-  const uploadImage = useCallback(async (file: File): Promise<string> => {
-    const formData = new FormData();
-    const extension = IMAGE_EXTENSIONS[file.type] ?? "";
-    const safeName = `image-${Date.now()}${extension}`;
-    formData.append("image", file, safeName);
-
-    const response = await fetch("/api/images", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || "Failed to upload image");
-    }
-
-    const result = await response.json();
-    return result.path;
-  }, []);
-
-  // Send image file path to terminal
-  // Claude Code reads images from file paths, so we upload and paste the path
-  const sendImageToTerminal = useCallback(
+  const handleSendImage = useCallback(
     async (file: File) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        console.error("WebSocket not connected");
-        return;
-      }
-
       try {
-        const filePath = await uploadImage(file);
-        // Send the file path as terminal input
-        wsRef.current.send(JSON.stringify({ type: "input", data: filePath }));
+        await sendImageToTerminal(file, wsRef.current);
       } catch (error) {
         console.error("Failed to upload image:", error);
       }
     },
-    [uploadImage]
+    []
   );
 
   // Drag and drop handlers
@@ -1140,7 +1104,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       if (imageFiles.length > 0) {
         for (const file of imageFiles) {
-          await sendImageToTerminal(file);
+          await handleSendImage(file);
         }
         return;
       }
@@ -1153,11 +1117,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       for (const item of imageItems) {
         const file = item.getAsFile();
         if (file) {
-          await sendImageToTerminal(file);
+          await handleSendImage(file);
         }
       }
     },
-    [sendImageToTerminal]
+    [handleSendImage]
   );
 
   // Handle paste events for images and text
@@ -1185,7 +1149,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         for (const item of imageItems) {
           const file = item.getAsFile();
           if (file) {
-            await sendImageToTerminal(file);
+            await handleSendImage(file);
           }
         }
         return;
@@ -1214,7 +1178,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     return () => {
       container.removeEventListener("paste", handlePaste, { capture: true });
     };
-  }, [sendImageToTerminal]);
+  }, [handleSendImage]);
 
   // Mobile touch scrolling support
   // xterm.js has limited touch support, so we handle touch events manually
