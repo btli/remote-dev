@@ -83,6 +83,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onDimensionsChange,
 }, ref) {
   const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermContainerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTermType | null>(null);
   const fitAddonRef = useRef<FitAddonType | null>(null);
   const imageAddonRef = useRef<ImageAddonType | null>(null);
@@ -295,7 +296,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       terminal.loadAddon(imageAddon);
       terminal.loadAddon(searchAddon);
 
-      terminal.open(terminalRef.current);
+      terminal.open(xtermContainerRef.current ?? terminalRef.current);
 
       // Load WebGL renderer for better performance (falls back to DOM renderer)
       try {
@@ -1330,6 +1331,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {/* xterm.js mounts here — separate from overlay elements */}
+      <div ref={xtermContainerRef} className="absolute inset-0" />
+
       {/* Recording indicator */}
       {isRecording && (
         <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5 bg-red-500/90 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-lg animate-pulse">
@@ -1340,7 +1344,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
       {/* Voice mic button for agent sessions */}
       {terminalType === "agent" && (
-        <div className="absolute top-2 left-2 z-20" style={isRecording ? { left: "5.5rem" } : undefined}>
+        <div className="absolute top-2 left-2 z-30" style={isRecording ? { left: "5.5rem" } : undefined}>
           <VoiceMicButton getWebSocket={() => wsRef.current} />
         </div>
       )}

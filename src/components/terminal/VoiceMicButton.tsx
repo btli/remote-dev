@@ -47,12 +47,12 @@ export function VoiceMicButton({ getWebSocket, className }: VoiceMicButtonProps)
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
       className={cn(
-        "p-1 rounded transition-colors",
+        "p-1.5 rounded-full transition-colors shadow-md backdrop-blur-sm",
         isRecording
-          ? "text-red-400 bg-red-500/20 animate-pulse"
+          ? "text-red-400 bg-red-500/30 animate-pulse ring-1 ring-red-500/50"
           : isError
-            ? "text-red-400 opacity-60 cursor-not-allowed"
-            : "text-muted-foreground hover:text-foreground hover:bg-accent",
+            ? "text-red-400 bg-background/80 opacity-60 cursor-not-allowed"
+            : "text-muted-foreground bg-background/80 hover:text-foreground hover:bg-accent/90 ring-1 ring-border/50",
         className
       )}
       title={
