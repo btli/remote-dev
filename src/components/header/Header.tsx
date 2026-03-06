@@ -12,6 +12,7 @@ import { HeaderUserMenu } from "./HeaderUserMenu";
 import { AppearanceModeToggleCompact } from "@/components/appearance";
 import { GitHubMaintenanceModal } from "@/components/github/GitHubMaintenanceModal";
 import { GitHubProvider, useGitHubContext } from "@/contexts/GitHubContext";
+import { useMobile } from "@/hooks/useMobile";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -29,10 +30,15 @@ interface HeaderProps {
 
 function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps) {
   const { isModalOpen, openModal, closeModal } = useGitHubContext();
+  const isMobile = useMobile();
+
+  if (isMobile) {
+    return <GitHubMaintenanceModal open={isModalOpen} onClose={closeModal} />;
+  }
 
   return (
     <>
-      <header className="hidden md:flex items-center justify-between px-4 py-2 border-b border-border bg-card/30 backdrop-blur-sm">
+      <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card/30 backdrop-blur-sm">
         {/* Logo */}
         <div className="flex items-center gap-3">
           <Image
