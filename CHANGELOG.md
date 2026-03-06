@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent Status Notifications**: Browser notifications when AI agent sessions change state (idle, waiting for input, error, compacting context)
+  - Click notification to focus window and switch to the relevant session
+  - Notifications only fire when the browser window is not focused
+  - Configurable via "Agent notifications" toggle in User Settings > Project tab
+  - Browser notification permission requested on first enable
+  - Extracted shared `useNotificationPermission` hook with `useSyncExternalStore` for consistent permission state across components
+
 - **Mobile Screenshot Upload**: Camera button in the mobile quick-key toolbar allows uploading screenshots/images from camera roll or camera, equivalent to desktop drag-and-drop
 
 - **Issue-to-Worktree Flow**: Click a GitHub issue to view details and start working with one click

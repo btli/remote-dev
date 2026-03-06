@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Sparkles } from "lucide-react";
+import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Sparkles, Bell } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,7 @@ import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appe
 import { TmuxSessionManager } from "@/components/tmux";
 import { AgentCLIStatusPanel } from "@/components/agents";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
+import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { cn } from "@/lib/utils";
 
 interface UserSettingsModalProps {
@@ -78,6 +79,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
     setActiveFolder,
   } = usePreferencesContext();
   const { folders } = useFolderContext();
+  const { permissionState, requestPermission } = useNotificationPermission();
 
   const [localSettings, setLocalSettings] = useState<UpdateUserSettingsInput>({});
   const [saving, setSaving] = useState(false);
@@ -365,6 +367,34 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                 onCheckedChange={(checked) =>
                   setValue("autoFollowActiveSession", checked)
                 }
+              />
+            </div>
+
+            {/* Agent notifications toggle */}
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Bell className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-foreground">Agent notifications</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Browser notifications when agents finish, need input, or encounter errors
+                </p>
+                {permissionState === "denied" && (
+                  <p className="text-xs text-destructive">
+                    Notifications are blocked by your browser. Update your browser settings to allow them.
+                  </p>
+                )}
+              </div>
+              <Switch
+                checked={getValue("notificationsEnabled") ?? true}
+                onCheckedChange={async (checked) => {
+                  if (checked && permissionState === "default") {
+                    const result = await requestPermission();
+                    if (result === "denied") return;
+                  }
+                  setValue("notificationsEnabled", checked);
+                }}
               />
             </div>
 
