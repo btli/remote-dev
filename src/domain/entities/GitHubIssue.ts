@@ -355,6 +355,7 @@ export class GitHubIssue {
       this.body === other.body &&
       this.htmlUrl === other.htmlUrl &&
       this.comments === other.comments &&
+      this.isPullRequest === other.isPullRequest &&
       this.updatedAt.getTime() === other.updatedAt.getTime()
     );
   }
