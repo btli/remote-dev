@@ -104,6 +104,9 @@ export const userSettings = sqliteTable("user_settings", {
   autoFollowActiveSession: integer("auto_follow_active_session", { mode: "boolean" })
     .notNull()
     .default(true),
+  notificationsEnabled: integer("notifications_enabled", { mode: "boolean" })
+    .notNull()
+    .default(true),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

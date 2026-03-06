@@ -78,6 +78,7 @@ export async function getUserSettings(userId: string): Promise<UserSettings> {
         fontSize: DEFAULT_PREFERENCES.fontSize,
         fontFamily: DEFAULT_PREFERENCES.fontFamily,
         autoFollowActiveSession: true,
+        notificationsEnabled: true,
       })
       .returning();
 
@@ -428,6 +429,7 @@ function mapDbUserSettings(
     activeFolderId: db.activeFolderId,
     pinnedFolderId: db.pinnedFolderId,
     autoFollowActiveSession: db.autoFollowActiveSession ?? true,
+    notificationsEnabled: db.notificationsEnabled ?? true,
     createdAt: new Date(db.createdAt),
     updatedAt: new Date(db.updatedAt),
   };

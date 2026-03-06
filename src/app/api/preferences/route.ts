@@ -71,6 +71,7 @@ export const PATCH = withAuth(async (request, { userId }) => {
     "activeFolderId",
     "pinnedFolderId",
     "autoFollowActiveSession",
+    "notificationsEnabled",
   ];
 
   const filteredUpdates: Record<string, unknown> = {};

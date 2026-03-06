@@ -66,6 +66,7 @@ export interface UserSettings {
   activeFolderId: string | null;
   pinnedFolderId: string | null;
   autoFollowActiveSession: boolean;
+  notificationsEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -153,6 +154,7 @@ export interface UpdateUserSettingsInput {
   activeFolderId?: string | null;
   pinnedFolderId?: string | null;
   autoFollowActiveSession?: boolean;
+  notificationsEnabled?: boolean;
 }
 
 /**

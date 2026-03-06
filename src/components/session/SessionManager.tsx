@@ -62,6 +62,7 @@ import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
 
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
 import type { AgentActivityStatus } from "@/types/terminal-type";
+import { useAgentNotifications } from "@/hooks/useAgentNotifications";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -149,6 +150,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     reorderSessions,
     refreshSessions,
     setAgentActivityStatus,
+    agentActivityStatuses,
   } = useSessionContext();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -334,6 +336,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const { getRepositoryById } = useGitHubStats();
 
   const { refreshTasks } = useTaskContext();
+
+  // Agent status notifications (hook manages its own permission state)
+  const notificationsEnabled = userSettings?.notificationsEnabled ?? true;
+  useAgentNotifications({
+    enabled: notificationsEnabled,
+    agentActivityStatuses,
+    sessions,
+    setActiveSession,
+  });
 
   // Split state from context
   const {
@@ -1696,7 +1707,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           fontFamily={prefs.fontFamily}
                           scrollback={userSettings?.xtermScrollback ?? 10000}
                           tmuxHistoryLimit={userSettings?.tmuxHistoryLimit ?? 50000}
-                          notificationsEnabled={true}
+                          notificationsEnabled={notificationsEnabled}
                           isRecording={isRecording}
                           isActive={session.id === activeSessionId}
                           environmentVars={getEnvironmentWithSecrets(folderId)}
