@@ -240,7 +240,7 @@ export async function createSession(
     const configDir = profile?.configDir ?? process.env.HOME;
     if (configDir) {
       const configDirs = await resolveAgentConfigDirs(configDir, startupCommand, sessionId);
-      await ensureAgentConfig(configDirs, effectiveAgentProvider, userId, sessionId);
+      await ensureAgentConfig(configDirs, effectiveAgentProvider, userId, sessionId, workingPath);
     }
   }
 
@@ -771,7 +771,7 @@ export async function resumeSession(
 
     if (configDir && agentProvider !== "none") {
       // On resume, hooks were installed at create time — just refresh the primary configDir
-      await ensureAgentConfig(new Set([configDir]), agentProvider, userId, sessionId);
+      await ensureAgentConfig(new Set([configDir]), agentProvider, userId, sessionId, session.projectPath);
     }
 
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
@@ -975,12 +975,17 @@ async function resolveAgentConfigDirs(
  * Used by both createSession and resumeSession to keep agent config current.
  * Failures are logged but do not block session creation/resume.
  * Installs to all provided config directories in parallel.
+ *
+ * If projectDir is provided, also writes .mcp.json there so Claude Code
+ * discovers the remote-dev MCP server from the project root (the primary
+ * discovery path for project-scoped MCP servers).
  */
 async function ensureAgentConfig(
   configDirs: Set<string>,
   provider: Exclude<AgentProviderType, "none">,
   userId: string,
-  sessionId: string
+  sessionId: string,
+  projectDir?: string | null
 ): Promise<void> {
   const tasks = [...configDirs].flatMap((dir) => [
     ...(provider === "claude"
@@ -990,6 +995,14 @@ async function ensureAgentConfig(
     AgentProfileService.registerMCPServer(dir, provider, userId)
       .catch((e) => console.error(`[session:${sessionId}] Failed to register MCP server at ${dir}:`, e)),
   ]);
+
+  // Also register in .mcp.json at the project root (Claude Code's primary MCP discovery path)
+  if (projectDir && provider === "claude") {
+    tasks.push(
+      AgentProfileService.registerMCPInProjectDir(projectDir, userId)
+        .catch((e) => console.error(`[session:${sessionId}] Failed to register MCP in project .mcp.json at ${projectDir}:`, e))
+    );
+  }
 
   await Promise.all(tasks);
 }
