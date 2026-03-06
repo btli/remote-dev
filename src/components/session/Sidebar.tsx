@@ -1249,9 +1249,9 @@ export function Sidebar({
                   ? "bg-primary/20 border border-border"
                   : "hover:bg-accent/50 border border-transparent",
                 isDragOverSession && "bg-primary/20 border-primary/30",
-                // Mobile: solid background so row covers the swipe-reveal close button behind it
-                isMobile && !isActive && "bg-card z-10",
-                isMobile && isActive && "z-10"
+                // Mobile: z-10 for swipe layering; solid bg-card only on the swiped row to cover the close button
+                isMobile && "z-10",
+                isMobile && swipedSessionId === session.id && "bg-card"
               )}
             >
             {/* Status indicator - icon colored by agent activity status */}
