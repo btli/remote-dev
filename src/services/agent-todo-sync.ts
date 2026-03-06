@@ -143,6 +143,7 @@ export async function syncAgentTodos(
  * These are quality-gate tasks the agent must run before stopping.
  */
 const POST_TASKS = ["Code Simplifier", "Code Review"] as const;
+const POST_TASK_MARKER_PREFIX = "post-task:";
 
 /**
  * Check agent tasks on stop and enforce completion.
@@ -152,6 +153,8 @@ const POST_TASKS = ["Code Simplifier", "Code Review"] as const;
  * 2. Checks if all agent tasks (including the appended ones) are completed
  * 3. Returns null if all done (agent can stop), or a message listing
  *    incomplete tasks (agent should continue)
+ *
+ * Only checks agent-sourced tasks (manual tasks are excluded).
  */
 export async function checkTasksOnStop(
   sessionId: string
@@ -160,30 +163,46 @@ export async function checkTasksOnStop(
   if (!session) return null; // session not found, allow stop
 
   const { userId, folderId } = session;
-  const tasks = await TaskService.getTasksBySession(sessionId, userId);
+  let tasks = await TaskService.getTasksBySession(sessionId, userId);
 
-  // Append post-tasks if they don't already exist
-  const newTasks = [];
+  // Append post-tasks if they don't already exist (uses marker-based dedup
+  // to prevent duplicates from concurrent stop hook invocations)
+  let created = false;
   for (let i = 0; i < POST_TASKS.length; i++) {
     const postTaskTitle = POST_TASKS[i];
-    const exists = tasks.some((t) => t.title === postTaskTitle);
+    const marker = `${POST_TASK_MARKER_PREFIX}${postTaskTitle}`;
+    const exists = tasks.some((t) => t.description?.startsWith(marker));
     if (!exists) {
-      const newTask = await TaskService.createTask(userId, {
+      await TaskService.createTask(userId, {
         folderId,
         sessionId,
         title: postTaskTitle,
+        description: marker,
         status: "open",
         priority: "low",
         source: "agent",
         sortOrder: tasks.length + i,
       });
-      newTasks.push(newTask);
+      created = true;
     }
   }
 
+  // Re-fetch after creation to get authoritative list (handles race conditions
+  // where concurrent calls may have also created post-tasks)
+  if (created) {
+    tasks = await TaskService.getTasksBySession(sessionId, userId);
+  }
+
+  // Deduplicate by title (keeps earliest by sort order, handles race-created dupes)
+  const seen = new Set<string>();
+  const dedupedTasks = tasks.filter((t) => {
+    if (seen.has(t.title)) return false;
+    seen.add(t.title);
+    return true;
+  });
+
   // Check for incomplete tasks (anything not done or cancelled)
-  const allTasks = [...tasks, ...newTasks];
-  const incomplete = allTasks.filter(
+  const incomplete = dedupedTasks.filter(
     (t) => t.status !== "done" && t.status !== "cancelled"
   );
 

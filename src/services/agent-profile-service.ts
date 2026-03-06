@@ -705,9 +705,9 @@ export async function installAgentHooks(
   /** Build a curl command that hits an internal endpoint via socket or port */
   const curlCmd = (path: string, opts = "") =>
     'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
-    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST ${opts} "http://localhost${path}"; ` +
+    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST "http://localhost${path}" ${opts}; ` +
     'else ' +
-    `curl -s -X POST ${opts} "http://localhost:\${RDV_TERMINAL_PORT}${path}"; ` +
+    `curl -s -X POST "http://localhost:\${RDV_TERMINAL_PORT}${path}" ${opts}; ` +
     'fi';
 
   const curlForStatus = (status: string) =>
