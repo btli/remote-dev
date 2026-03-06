@@ -13,7 +13,7 @@ import { terminalSessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import * as TaskService from "./task-service";
 import { parsePostToolUsePayload, type PostToolUsePayload } from "./agent-todo-sync-pure";
-import type { TaskStatus } from "@/types/task";
+import type { TaskStatus, TaskPriority } from "@/types/task";
 
 const MARKER_PREFIX = "agent-task:";
 
@@ -86,15 +86,18 @@ export async function syncAgentTodos(
       const existingTask = existingByMarker.get(marker);
 
       if (existingTask) {
-        // Upsert: update if status or title changed
+        // Upsert: update if status, title, or priority changed
         const needsUpdate =
           existingTask.status !== op.status ||
-          existingTask.title !== op.subject;
+          existingTask.title !== op.subject ||
+          (op.priority && existingTask.priority !== op.priority);
         if (needsUpdate) {
-          await TaskService.updateTask(existingTask.id, userId, {
+          const updates: { status?: TaskStatus; title?: string; priority?: TaskPriority } = {
             status: op.status,
             title: op.subject,
-          });
+          };
+          if (op.priority) updates.priority = op.priority;
+          await TaskService.updateTask(existingTask.id, userId, updates);
           updated++;
         }
         continue;
@@ -108,6 +111,7 @@ export async function syncAgentTodos(
           ? `${marker}\n${op.description}`
           : marker,
         status: op.status,
+        priority: op.priority,
         source: "agent",
         sortOrder: existing.length + created,
       });
@@ -119,10 +123,11 @@ export async function syncAgentTodos(
 
       if (!isNaN(taskIndex) && taskIndex >= 0 && taskIndex < agentTasks.length) {
         const target = agentTasks[taskIndex];
-        if (op.status || op.subject) {
-          const updates: { status?: TaskStatus; title?: string } = {};
+        if (op.status || op.subject || op.priority) {
+          const updates: { status?: TaskStatus; title?: string; priority?: TaskPriority } = {};
           if (op.status) updates.status = op.status;
           if (op.subject) updates.title = op.subject;
+          if (op.priority) updates.priority = op.priority;
           await TaskService.updateTask(target.id, userId, updates);
           updated++;
         }
@@ -131,6 +136,69 @@ export async function syncAgentTodos(
   }
 
   return { created, updated };
+}
+
+/**
+ * Post-task titles that get appended after all user ToDo tasks.
+ * These are quality-gate tasks the agent must run before stopping.
+ */
+const POST_TASKS = ["Code Simplifier", "Code Review"] as const;
+
+/**
+ * Check agent tasks on stop and enforce completion.
+ *
+ * Called by the Stop hook endpoint. This function:
+ * 1. Appends "Code Simplifier" and "Code Review" tasks if they don't exist yet
+ * 2. Checks if all agent tasks (including the appended ones) are completed
+ * 3. Returns null if all done (agent can stop), or a message listing
+ *    incomplete tasks (agent should continue)
+ */
+export async function checkTasksOnStop(
+  sessionId: string
+): Promise<string | null> {
+  const session = await getSessionById(sessionId);
+  if (!session) return null; // session not found, allow stop
+
+  const { userId, folderId } = session;
+  const tasks = await TaskService.getTasksBySession(sessionId, userId);
+
+  // Append post-tasks if they don't already exist
+  const newTasks = [];
+  for (let i = 0; i < POST_TASKS.length; i++) {
+    const postTaskTitle = POST_TASKS[i];
+    const exists = tasks.some((t) => t.title === postTaskTitle);
+    if (!exists) {
+      const newTask = await TaskService.createTask(userId, {
+        folderId,
+        sessionId,
+        title: postTaskTitle,
+        status: "open",
+        priority: "low",
+        source: "agent",
+        sortOrder: tasks.length + i,
+      });
+      newTasks.push(newTask);
+    }
+  }
+
+  // Check for incomplete tasks (anything not done or cancelled)
+  const allTasks = [...tasks, ...newTasks];
+  const incomplete = allTasks.filter(
+    (t) => t.status !== "done" && t.status !== "cancelled"
+  );
+
+  if (incomplete.length === 0) return null; // all done, agent can stop
+
+  // Build a message for the agent listing what's left
+  const lines = incomplete.map(
+    (t) => `- [${t.status}] ${t.title}${t.priority !== "medium" ? ` (${t.priority})` : ""}`
+  );
+  return [
+    `You have ${incomplete.length} incomplete task(s). Please complete them before stopping:`,
+    ...lines,
+    "",
+    'Mark each task as completed using TaskUpdate when done. For "Code Simplifier", run /simplify. For "Code Review", run /code-review.',
+  ].join("\n");
 }
 
 /**

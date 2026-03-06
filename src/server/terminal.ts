@@ -358,6 +358,32 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // Handle agent stop task check from Claude Code Stop hook
+  // Called by hooks: POST /internal/agent-stop-check?sessionId=xxx
+  // Returns incomplete tasks as text (agent should continue) or empty (agent can stop)
+  if (pathname === "/internal/agent-stop-check" && req.method === "POST") {
+    const sessionId = query.sessionId as string;
+
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId parameter" });
+      return true;
+    }
+
+    try {
+      const { checkTasksOnStop } = await import("@/services/agent-todo-sync");
+      const message = await checkTasksOnStop(sessionId);
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(message ?? "");
+    } catch (error) {
+      console.error("[Agent Stop Check] Error:", error);
+      // On error, allow the agent to stop (don't block on failures)
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("");
+    }
+
+    return true;
+  }
+
   // Handle agent task sync from Claude Code PostToolUse hooks
   // Called by hooks: POST /internal/agent-todos?sessionId=xxx
   // Body: Claude Code PostToolUse stdin JSON (TaskCreate/TaskUpdate/TodoWrite)

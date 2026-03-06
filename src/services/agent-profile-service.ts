@@ -696,16 +696,22 @@ export async function installAgentHooks(
   // to resolve session ID and connection info. This is more robust than relying
   // on inherited process env because the tmux server doesn't propagate the
   // client's env to spawned shells.
-  const curlForStatus = (status: string) =>
+  const envPreamble =
     '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
     '[ -z "$_RDV_SN" ] && exit 0; ' +
     'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
-    '[ -z "$RDV_SESSION_ID" ] && exit 0; ' +
+    '[ -z "$RDV_SESSION_ID" ] && exit 0; ';
+
+  /** Build a curl command that hits an internal endpoint via socket or port */
+  const curlCmd = (path: string, opts = "") =>
     'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
-    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST "http://localhost/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}"; ` +
+    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST ${opts} "http://localhost${path}"; ` +
     'else ' +
-    `curl -s -X POST "http://localhost:\${RDV_TERMINAL_PORT}/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}"; ` +
-    'fi || true';
+    `curl -s -X POST ${opts} "http://localhost:\${RDV_TERMINAL_PORT}${path}"; ` +
+    'fi';
+
+  const curlForStatus = (status: string) =>
+    envPreamble + curlCmd(`/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}`) + ' || true';
 
   const preToolUseHook = {
     matcher: "",
@@ -722,18 +728,21 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: curlForStatus("waiting"), timeout: 5 }],
   };
 
+  // Stop hook: report idle status (fire-and-forget, backgrounded) AND check
+  // if all tasks are completed. Non-empty output tells Claude Code to continue.
+  const stopCheckCommand = envPreamble +
+    curlCmd('/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=idle', '>/dev/null 2>&1') + ' & ' +
+    'TASK_MSG=$(' + curlCmd('/internal/agent-stop-check?sessionId=${RDV_SESSION_ID}') + '); ' +
+    '[ -n "$TASK_MSG" ] && printf "%s" "$TASK_MSG"';
+
   const stopHook = {
-    hooks: [{ type: "command", command: curlForStatus("idle"), timeout: 5 }],
+    hooks: [{ type: "command", command: stopCheckCommand, timeout: 15 }],
   };
 
   // Task sync hook: reads PostToolUse JSON from stdin, POSTs to /internal/agent-todos
   // Matches TaskCreate, TaskUpdate (v2.1.69+), and legacy TodoWrite
   const todoSyncCommand =
-    'INPUT=$(cat); ' +
-    '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
-    '[ -z "$_RDV_SN" ] && exit 0; ' +
-    'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
-    '[ -z "$RDV_SESSION_ID" ] && exit 0; ' +
+    'INPUT=$(cat); ' + envPreamble +
     'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
     'printf \'%s\' "$INPUT" | curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST -H "Content-Type: application/json" -d @- "http://localhost/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
     'else ' +
