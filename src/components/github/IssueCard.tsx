@@ -28,6 +28,7 @@ import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 
 interface IssueCardProps {
   issue: GitHubIssueDTO;
+  onSelect: (issue: GitHubIssueDTO) => void;
   onOpenInGitHub: (url: string) => void;
   onCreateWorktree?: (issue: GitHubIssueDTO) => void;
   onCopyUrl: (url: string) => void;
@@ -35,6 +36,7 @@ interface IssueCardProps {
 
 export function IssueCard({
   issue,
+  onSelect,
   onOpenInGitHub,
   onCreateWorktree,
   onCopyUrl,
@@ -47,11 +49,11 @@ export function IssueCard({
         <div
           role="button"
           tabIndex={0}
-          onClick={() => onOpenInGitHub(issue.htmlUrl)}
+          onClick={() => onSelect(issue)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              onOpenInGitHub(issue.htmlUrl);
+              onSelect(issue);
             }
           }}
           className={cn(

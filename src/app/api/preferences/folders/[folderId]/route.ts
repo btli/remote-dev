@@ -41,6 +41,7 @@ export const PUT = withAuth(async (request, { userId, params }) => {
     "localRepoPath",
     "environmentVars",
     "pinnedFiles",
+    "defaultAgentProvider",
   ];
 
   const filteredUpdates: Record<string, unknown> = {};

@@ -15,6 +15,7 @@ import {
   type IssueMilestone,
   type IssueState,
 } from "@/domain/entities/GitHubIssue";
+import type { WorktreeType } from "@/types/session";
 
 /**
  * Raw database record type from Drizzle query.
@@ -141,6 +142,7 @@ export class GitHubIssueMapper {
     cachedAt: string;
     bodyPreview: string | null;
     suggestedBranchName: string;
+    suggestedWorktreeType: WorktreeType;
   } {
     return {
       id: issue.id,
@@ -161,6 +163,7 @@ export class GitHubIssueMapper {
       cachedAt: issue.cachedAt.toISOString(),
       bodyPreview: issue.getBodyPreview(),
       suggestedBranchName: issue.getSuggestedBranchName(),
+      suggestedWorktreeType: issue.getWorktreeTypeFromLabels(),
     };
   }
 

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Issue-to-Worktree Flow**: Click a GitHub issue to view details and start working with one click
+  - Issue detail panel with markdown body rendering, metadata, labels, and suggested branch name
+  - "Start Working" button creates a git worktree and launches an agent session with issue context as prompt
+  - Auto-detects branch type (fix/feature/docs/chore) from issue labels
+  - Branch naming follows `{type}/issue-{number}-{description}` pattern
+
+- **Issue Comments**: Fetch and display issue comments in the detail panel via GitHub API
+
+- **Folder Default Agent Preference**: Set a default AI agent provider per folder in Folder Preferences
+  - New `default_agent_provider` column on `folder_preferences` table
+  - Inherits through folder hierarchy like other preferences
+  - Used automatically when creating agent sessions from issues
+
+- **Issue Detail UX**: Loading state on Start Working button; Escape key navigates back to issue list
+
 ### Fixed
 
 - **Worktree Icon Priority**: Fix missing worktree icon for agent+worktree sessions in expanded sidebar and tooltip by checking `worktreeBranch` before `terminalType`

@@ -482,6 +482,7 @@ React Contexts in `src/contexts/`:
 - `GET /api/github/repositories/:id/branches` - List branches
 - `GET /api/github/repositories/:id/folders` - Get folder structure
 - `GET /api/github/repositories/:id/issues` - List repository issues
+- `GET /api/github/repositories/:id/issues/:number/comments` - Get issue comments
 - `POST /api/github/worktrees` - Create worktree
 - `DELETE /api/github/worktrees` - Remove worktree
 - `POST /api/github/worktrees/check` - Check worktree status
