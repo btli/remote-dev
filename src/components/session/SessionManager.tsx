@@ -1182,11 +1182,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [closeSession, trashSession, refreshSessions, logSessionError]
   );
 
-  // Close mobile sidebar when selecting a session
+  // Select a session — on mobile the sidebar stays open so users can browse freely
   const handleSessionClick = useCallback(
     (sessionId: string) => {
       setActiveSession(sessionId);
-      setIsMobileSidebarOpen(false);
       // Update active folder based on the session's folder
       // Use session.folderId directly for immediate availability (not sessionFolders which loads async)
       const session = sessions.find(s => s.id === sessionId);
@@ -1428,21 +1427,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      {/* Mobile overlay when sidebar is expanded */}
-      {isMobile && isMobileSidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-30"
-          onClick={() => setIsMobileSidebarOpen(false)}
-        />
-      )}
-
-      {/* Sidebar - always visible, collapsed on mobile when drawer is closed */}
+      {/* Sidebar - inline layout: pushes content over when expanded on mobile */}
       <div
-        className={cn(
-          // Mobile: show as drawer when expanded, inline when collapsed
-          isMobile && isMobileSidebarOpen && "fixed inset-y-0 left-0 z-40",
-          isPWA && isMobile && "pt-safe-top"
-        )}
+        className={isPWA && isMobile ? "pt-safe-top" : undefined}
         onClick={() => {
           // On mobile, clicking the collapsed sidebar expands it
           if (isMobile && !isMobileSidebarOpen) {
