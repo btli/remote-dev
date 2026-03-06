@@ -60,5 +60,8 @@ next-env.d.ts
 *.exe
 *.msi
 
+# MCP config (machine-specific paths)
+.mcp.json
+
 # worktree trash
 .trash/
