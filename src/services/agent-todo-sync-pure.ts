@@ -5,7 +5,7 @@
  * from Claude Code v2.1.69+.
  */
 
-import type { TaskStatus } from "@/types/task";
+import type { TaskStatus, TaskPriority } from "@/types/task";
 
 /** PostToolUse hook stdin payload from Claude Code */
 export interface PostToolUsePayload {
@@ -16,8 +16,17 @@ export interface PostToolUsePayload {
 
 /** Parsed agent task operation */
 export type AgentTaskOp =
-  | { type: "create"; agentTaskId: string; subject: string; description?: string; status: TaskStatus }
-  | { type: "update"; agentTaskId: string; status?: TaskStatus; subject?: string };
+  | { type: "create"; agentTaskId: string; subject: string; description?: string; status: TaskStatus; priority?: TaskPriority }
+  | { type: "update"; agentTaskId: string; status?: TaskStatus; subject?: string; priority?: TaskPriority };
+
+const VALID_PRIORITIES = new Set<string>(["critical", "high", "medium", "low"]);
+
+/** Map Claude Code task priority to remote-dev TaskPriority */
+export function mapAgentTaskPriority(priority: string | undefined): TaskPriority | undefined {
+  if (!priority) return undefined;
+  const normalized = priority.toLowerCase();
+  return VALID_PRIORITIES.has(normalized) ? (normalized as TaskPriority) : undefined;
+}
 
 /** Map Claude Code task status to remote-dev TaskStatus */
 export function mapAgentTaskStatus(status: string): TaskStatus {
@@ -55,6 +64,7 @@ export function parsePostToolUsePayload(payload: PostToolUsePayload): AgentTaskO
       subject,
       description: tool_input.description as string | undefined,
       status: "open",
+      priority: mapAgentTaskPriority(tool_input.priority as string | undefined),
     }];
   }
 
@@ -67,6 +77,9 @@ export function parsePostToolUsePayload(payload: PostToolUsePayload): AgentTaskO
     }
     if (tool_input.subject) {
       op.subject = tool_input.subject as string;
+    }
+    if (tool_input.priority) {
+      op.priority = mapAgentTaskPriority(tool_input.priority as string);
     }
     return [op];
   }
