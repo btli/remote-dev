@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Each agent session displays only its own tasks; manual tasks remain folder-scoped
   - Task count badge correctly excludes agent tasks from other sessions
 
+### Added
+
+- **Voice Mode**: Hold mic button to stream browser audio to Claude Code's built-in voice pipeline via FIFO-based sox shim, enabling voice input for remote agent sessions
 - **Worktree Type Selection**: Allow selecting worktree type (feature/fix/chore/refactor/docs/release) when creating a Feature Session
   - Inline branch prefix dropdown replaces hardcoded `feature/` prefix
   - New `worktree_type` column on `terminal_session` persists the selected type

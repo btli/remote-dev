@@ -12,6 +12,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
+import { VoiceMicButton } from "./VoiceMicButton";
 
 export interface TerminalRef {
   focus: () => void;
@@ -567,6 +568,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               case "agent_todos_updated":
                 // Agent TodoWrite tasks synced — refresh task list
                 onAgentTodosUpdatedRef.current?.(msg.sessionId);
+                break;
+              case "voice_ready":
+                console.log(`[Voice] Ready for session ${msg.sessionId}`);
+                break;
+              case "voice_error":
+                console.error(`[Voice] Error: ${msg.message}`);
                 break;
               case "error":
                 terminal.writeln(`\r\n\x1b[31mError: ${msg.message}\x1b[0m`);
@@ -1328,6 +1335,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5 bg-red-500/90 backdrop-blur-sm rounded-full px-2.5 py-1 shadow-lg animate-pulse">
           <Circle className="w-2 h-2 fill-white text-white" />
           <span className="text-xs font-medium text-white">REC</span>
+        </div>
+      )}
+
+      {/* Voice mic button for agent sessions */}
+      {terminalType === "agent" && (
+        <div className="absolute top-2 left-2 z-20" style={isRecording ? { left: "5.5rem" } : undefined}>
+          <VoiceMicButton getWebSocket={() => wsRef.current} />
         </div>
       )}
 

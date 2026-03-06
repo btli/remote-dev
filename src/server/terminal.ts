@@ -4,6 +4,8 @@ import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 
 import { execFile, execFileSync } from "child_process";
+import * as fs from "fs";
+import { tmpdir } from "os";
 import { resolve as pathResolve } from "path";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
@@ -75,6 +77,11 @@ interface TerminalSession {
   terminalType: "shell" | "agent" | "file" | string;
   // User ID for session service calls
   userId: string;
+  // Voice mode state
+  voiceFifoPath: string | null;
+  voiceFifoFd: number | null;
+  voiceAudioBuffer: Buffer[];
+  voiceFifoReady: boolean;
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -124,11 +131,73 @@ function cleanupSession(sessionId: string): void {
     clearTimeout(session.resizeTimeout);
   }
 
+  // Clean up voice FIFO
+  cleanupVoiceFifo(session);
+
   try {
     destroyPty(session.pty);
   } catch {
     // PTY may already be dead
   }
+}
+
+// Re-import would create circular deps with types/terminal.ts in server context,
+// so keep a local constant matching the shared VOICE_AUDIO_PREFIX from @/types/terminal
+const VOICE_AUDIO_PREFIX = 0x01;
+/** Max buffered voice chunks before FIFO reader connects (~25 seconds at 256ms/chunk) */
+const MAX_VOICE_BUFFER_CHUNKS = 100;
+
+/**
+ * Create a named FIFO pipe for streaming voice audio to the sox shim.
+ * Opens the FIFO for writing asynchronously (blocks until a reader opens it),
+ * buffering any audio chunks received before the reader connects.
+ */
+function createVoiceFifo(session: TerminalSession): string {
+  const fifoPath = `${tmpdir()}/rdv-voice-${session.sessionId}.fifo`;
+  try { fs.unlinkSync(fifoPath); } catch { /* may not exist */ }
+  execFileSync("mkfifo", ["-m", "0600", fifoPath]);
+  session.voiceFifoPath = fifoPath;
+  session.voiceAudioBuffer = [];
+  session.voiceFifoReady = false;
+
+  // Open FIFO for writing asynchronously — blocks until reader opens
+  fs.open(fifoPath, fs.constants.O_WRONLY, (err, fd) => {
+    if (err) {
+      console.error(`[Voice] Failed to open FIFO for writing: ${err.message}`);
+      return;
+    }
+    session.voiceFifoFd = fd;
+    // Flush buffered audio before marking ready
+    for (const chunk of session.voiceAudioBuffer) {
+      try {
+        fs.writeSync(fd, chunk);
+      } catch (flushErr) {
+        console.warn(`[Voice] Failed to flush buffered chunk: ${flushErr}`);
+        break;
+      }
+    }
+    session.voiceAudioBuffer = [];
+    session.voiceFifoReady = true;
+    console.log(`[Voice] FIFO writer connected for session ${session.sessionId}`);
+  });
+
+  return fifoPath;
+}
+
+/**
+ * Clean up voice FIFO resources: close file descriptor, remove pipe, reset state.
+ */
+function cleanupVoiceFifo(session: TerminalSession): void {
+  if (session.voiceFifoFd !== null) {
+    try { fs.closeSync(session.voiceFifoFd); } catch { /* may be closed */ }
+    session.voiceFifoFd = null;
+  }
+  if (session.voiceFifoPath) {
+    try { fs.unlinkSync(session.voiceFifoPath); } catch { /* may be deleted */ }
+    session.voiceFifoPath = null;
+  }
+  session.voiceFifoReady = false;
+  session.voiceAudioBuffer = [];
 }
 
 /**
@@ -420,7 +489,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
   }
 
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", async (ws, req) => {
     const query = Object.fromEntries(new URL(req.url || "", "http://localhost").searchParams);
 
     // SECURITY: Validate authentication token
@@ -492,6 +561,19 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         // Create new tmux session
         console.log(`Creating new tmux session: ${tmuxSessionName} (history-limit: ${tmuxHistoryLimit})`);
         createTmuxSession(tmuxSessionName, cols, rows, cwd, tmuxHistoryLimit);
+
+        // Set up voice mode environment for agent sessions
+        if (terminalType === "agent") {
+          try {
+            const { ensureSoxShim } = await import("@/services/voice-shim-service.js");
+            const shimDir = ensureSoxShim();
+            execFileSync("tmux", ["set-environment", "-t", tmuxSessionName, "PATH", `${shimDir}:${process.env.PATH || ""}`]);
+          } catch (error) {
+            console.warn(`[Voice] Failed to install sox shim for ${sessionId}:`, error);
+            // Non-fatal — voice just won't work for this session
+          }
+        }
+
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
 
         ws.send(JSON.stringify({
@@ -523,6 +605,10 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       resizeTimeout: null,
       terminalType,
       userId,
+      voiceFifoPath: null,
+      voiceFifoFd: null,
+      voiceAudioBuffer: [],
+      voiceFifoReady: false,
     };
 
     sessions.set(sessionId, session);
@@ -567,8 +653,26 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       cleanupSession(sessionId);
     });
 
-    ws.on("message", (message) => {
+    ws.on("message", (message, isBinary) => {
       try {
+        // Handle binary voice audio frames
+        if (isBinary) {
+          const buf = Buffer.isBuffer(message) ? message : Buffer.from(message as ArrayBuffer);
+          if (buf.length > 1 && buf[0] === VOICE_AUDIO_PREFIX) {
+            const pcmData = buf.subarray(1);
+            if (session.voiceFifoReady && session.voiceFifoFd !== null) {
+              fs.write(session.voiceFifoFd, pcmData, (writeErr) => {
+                if (writeErr) {
+                  console.warn(`[Voice] FIFO write error: ${writeErr.message}`);
+                }
+              });
+            } else if (session.voiceAudioBuffer.length < MAX_VOICE_BUFFER_CHUNKS) {
+              session.voiceAudioBuffer.push(pcmData);
+            }
+            return;
+          }
+        }
+
         const msg = JSON.parse(message.toString());
 
         switch (msg.type) {
@@ -688,8 +792,39 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             }
             break;
           }
+
+          case "voice_start": {
+            if (session.terminalType !== "agent") {
+              ws.send(JSON.stringify({ type: "voice_error", message: "Voice mode is only available for agent sessions" }));
+              break;
+            }
+            try {
+              const fifoPath = createVoiceFifo(session);
+              console.log(`[Voice] Created FIFO for session ${sessionId}: ${fifoPath}`);
+              // Send spacebar to PTY (triggers Claude Code voice recording)
+              ptyProcess.write(" ");
+              ws.send(JSON.stringify({ type: "voice_ready", sessionId }));
+            } catch (error) {
+              console.error(`[Voice] Failed to create FIFO for ${sessionId}:`, error);
+              ws.send(JSON.stringify({ type: "voice_error", message: `Voice setup failed: ${(error as Error).message}` }));
+            }
+            break;
+          }
+
+          case "voice_stop": {
+            console.log(`[Voice] Stopping voice for session ${sessionId}`);
+            if (session.voiceFifoFd !== null) {
+              try {
+                const silencePadding = Buffer.alloc(3200); // 100ms silence at 16kHz/16bit
+                fs.writeSync(session.voiceFifoFd, silencePadding);
+              } catch { /* ignore */ }
+            }
+            cleanupVoiceFifo(session);
+            break;
+          }
         }
       } catch {
+        // JSON parse error on non-binary message — forward raw text to PTY
         if (sessions.has(sessionId)) {
           ptyProcess.write(message.toString());
         }
@@ -717,6 +852,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 function cleanup() {
   console.log("Shutting down terminal server (tmux sessions preserved)...");
   for (const [id, session] of sessions) {
+    cleanupVoiceFifo(session);
     try { destroyPty(session.pty); } catch { /* PTY may already be dead */ }
     session.ws.close();
     console.log(`Closed PTY wrapper for session ${id}`);
