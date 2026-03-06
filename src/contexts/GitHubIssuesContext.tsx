@@ -40,6 +40,7 @@ export interface GitHubIssueDTO {
   cachedAt: string;
   bodyPreview: string | null;
   suggestedBranchName: string;
+  suggestedWorktreeType: "feature" | "fix" | "chore" | "refactor" | "docs" | "release";
 }
 
 interface RepositoryIssuesState {

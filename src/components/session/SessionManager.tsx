@@ -851,18 +851,48 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [activeSessions, setActiveSession, createSession, closeSession]
   );
 
-  // Handle creating a worktree from an issue
+  // Handle creating a worktree from an issue with agent session
   const handleCreateWorktreeFromIssue = useCallback(
     async (issue: GitHubIssueDTO, repositoryId: string) => {
       if (!issuesModal) return;
 
       try {
+        // Build issue context prompt for the agent (truncate body to prevent shell overflow)
+        const bodyContext = issue.body
+          ? issue.body.substring(0, 2000)
+          : "No description provided.";
+        const labelsStr = issue.labels.map((l) => l.name).join(", ");
+        const issuePrompt = [
+          `Research and resolve GitHub issue #${issue.number}: ${issue.title}`,
+          "",
+          bodyContext,
+          "",
+          labelsStr ? `Labels: ${labelsStr}` : "",
+        ].filter(Boolean).join("\n");
+
+        // Shell-escape for ANSI-C $'...' quoting: backslashes, single quotes, and control chars
+        const escapedPrompt = issuePrompt
+          .replace(/\\/g, "\\\\")
+          .replace(/'/g, "\\'")
+          .replace(/\n/g, "\\n")
+          .replace(/\r/g, "\\r")
+          .replace(/\t/g, "\\t");
+
+        // Resolve folder's default agent provider (fallback to claude)
+        const folderPrefs = resolvePreferencesForFolder(issuesModal.folderId);
+        const agentProvider = folderPrefs.defaultAgentProvider || "claude";
+
         const newSession = await createSession({
           name: `#${issue.number} ${issue.title}`.slice(0, 50),
           folderId: issuesModal.folderId,
           githubRepoId: repositoryId,
           worktreeBranch: issue.suggestedBranchName,
+          worktreeType: issue.suggestedWorktreeType,
           createWorktree: true,
+          terminalType: "agent",
+          agentProvider,
+          autoLaunchAgent: true,
+          agentFlags: ["-p", `$'${escapedPrompt}'`],
         });
         if (newSession) {
           setActiveSession(newSession.id);
@@ -872,7 +902,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         console.error("Failed to create worktree from issue:", error);
       }
     },
-    [issuesModal, createSession, setActiveSession]
+    [issuesModal, createSession, setActiveSession, resolvePreferencesForFolder]
   );
 
   const handleFolderNewSession = useCallback(

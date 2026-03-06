@@ -24,7 +24,8 @@ import {
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { clearSecretsCache } from "@/hooks/useEnvironmentWithSecrets";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
-import type { UpdateFolderPreferencesInput, Preferences } from "@/types/preferences";
+import type { UpdateFolderPreferencesInput, Preferences, ExtendedPreferences } from "@/types/preferences";
+import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
 import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types/environment";
 import { getSourceLabel } from "@/lib/preferences";
 import { cn } from "@/lib/utils";
@@ -498,7 +499,7 @@ export function FolderPreferencesModal({
   };
 
   // Check if any settings in a tab are overridden
-  const hasGeneralOverrides = isOverridden("defaultWorkingDirectory") || isOverridden("defaultShell") || isOverridden("startupCommand");
+  const hasGeneralOverrides = isOverridden("defaultWorkingDirectory") || isOverridden("defaultShell") || isOverridden("startupCommand") || isOverridden("defaultAgentProvider");
   const hasAppearanceOverrides = isOverridden("theme") || isOverridden("fontSize") || isOverridden("fontFamily");
   const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
   const hasEnvOverrides = isOverridden("environmentVars");
@@ -702,6 +703,53 @@ export function FolderPreferencesModal({
                   Command to run when a new session starts in this folder.
                 </p>
               </div>
+
+              {/* Default Agent */}
+              {(() => {
+                const inheritedAgentName =
+                  AGENT_PROVIDERS.find((p) => p.id === inheritedPreferences.defaultAgentProvider)?.name
+                  ?? "Claude Code";
+                return (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-muted-foreground">Default Agent</Label>
+                      {isOverridden("defaultAgentProvider") && (
+                        <span className="text-xs text-primary">Overridden</span>
+                      )}
+                    </div>
+                    <Select
+                      value={(getValue("defaultAgentProvider") as string) || INHERIT_VALUE}
+                      onValueChange={(value) => setValue("defaultAgentProvider", value === INHERIT_VALUE ? null : value as AgentProviderType)}
+                    >
+                      <SelectTrigger
+                        className={cn(
+                          "bg-card border-border text-foreground",
+                          isOverridden("defaultAgentProvider") && "border-primary/50"
+                        )}
+                      >
+                        <SelectValue placeholder={`Inherit: ${inheritedAgentName}`} />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card border-border">
+                        <SelectItem value={INHERIT_VALUE} className="text-muted-foreground focus:bg-primary/20">
+                          Inherit ({inheritedAgentName})
+                        </SelectItem>
+                        {AGENT_PROVIDERS.filter((p) => p.id !== "none").map((provider) => (
+                          <SelectItem
+                            key={provider.id}
+                            value={provider.id}
+                            className="text-foreground focus:bg-primary/20"
+                          >
+                            {provider.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      AI agent to launch when starting work on issues.
+                    </p>
+                  </div>
+                );
+              })()}
             </TabsContent>
 
             {/* Appearance Tab */}
