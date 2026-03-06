@@ -803,17 +803,6 @@ export async function installAgentHooks(
 // MCP Server Registration
 // ============================================================================
 
-/** Cached absolute path to the bun executable */
-let _bunPath: string | undefined;
-
-async function getBunPath(): Promise<string> {
-  if (!_bunPath) {
-    const result = await execFile("which", ["bun"]);
-    _bunPath = result.stdout;
-  }
-  return _bunPath;
-}
-
 /** Resolve the RDV project root from this module's location (src/services/ → ../..) */
 const RDV_PROJECT_ROOT = pathResolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -828,16 +817,19 @@ const MCP_SERVER_NAME = "remote-dev";
  * Register the Remote Dev MCP server in the agent's config file.
  * Idempotent: reads existing config, merges only the `remote-dev` entry,
  * and skips the write if nothing changed.
+ *
+ * Uses `sh -c "cd <project> && exec node_modules/.bin/tsx ..."` instead of
+ * `bun run mcp` because bun run does not relay stdin to subprocesses,
+ * which breaks the MCP stdio protocol handshake.
  */
 export async function registerMCPServer(
   configDir: string,
   provider: AgentProvider,
   userId: string
 ): Promise<void> {
-  const bunPath = await getBunPath();
   const mcpEntry: MCPEntry = {
-    command: bunPath,
-    args: ["run", "--cwd", RDV_PROJECT_ROOT, "mcp"],
+    command: "sh",
+    args: ["-c", `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`],
     env: { MCP_USER_ID: userId },
   };
 
@@ -852,6 +844,41 @@ export async function registerMCPServer(
     : handlers[provider] ? [provider] : [];
 
   await Promise.all(providers.map((p) => handlers[p](configDir, mcpEntry)));
+}
+
+/**
+ * Register the Remote Dev MCP server in a project's .mcp.json file.
+ * This is the primary discovery path for Claude Code project-scoped MCP servers.
+ * Idempotent: merges the remote-dev entry, preserving other servers.
+ */
+export async function registerMCPInProjectDir(
+  projectDir: string,
+  userId: string
+): Promise<void> {
+  const mcpJsonPath = join(projectDir, ".mcp.json");
+  const entry: MCPEntry = {
+    command: "sh",
+    args: ["-c", `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`],
+    env: { MCP_USER_ID: userId },
+  };
+
+  let config: Record<string, unknown> = {};
+  let rawContent = "";
+  try {
+    rawContent = await readFile(mcpJsonPath, "utf-8");
+    config = JSON.parse(rawContent);
+  } catch {
+    // File doesn't exist or invalid JSON - start fresh
+  }
+
+  const mcpServers = (config.mcpServers ?? {}) as Record<string, unknown>;
+  mcpServers[MCP_SERVER_NAME] = entry;
+  config.mcpServers = mcpServers;
+
+  const newContent = JSON.stringify(config, null, 2) + "\n";
+  if (newContent === rawContent) return;
+
+  await writeFile(mcpJsonPath, newContent);
 }
 
 interface MCPEntry {
