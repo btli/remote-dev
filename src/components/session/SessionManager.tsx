@@ -870,8 +870,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           labelsStr ? `Labels: ${labelsStr}` : "",
         ].filter(Boolean).join("\n");
 
-        // Shell-escape for ANSI-C $'...' quoting: escape backslashes first, then single quotes
-        const escapedPrompt = issuePrompt.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        // Shell-escape for ANSI-C $'...' quoting: backslashes, single quotes, and control chars
+        const escapedPrompt = issuePrompt
+          .replace(/\\/g, "\\\\")
+          .replace(/'/g, "\\'")
+          .replace(/\n/g, "\\n")
+          .replace(/\r/g, "\\r")
+          .replace(/\t/g, "\\t");
 
         // Resolve folder's default agent provider (fallback to claude)
         const folderPrefs = resolvePreferencesForFolder(issuesModal.folderId);

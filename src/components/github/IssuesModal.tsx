@@ -197,7 +197,7 @@ function IssuesModalContent({
   const handleCreateWorktree = useCallback(
     (issue: GitHubIssueDTO) => {
       if (onCreateWorktree) {
-        onCreateWorktree(issue, repositoryId);
+        return onCreateWorktree(issue, repositoryId);
       }
     },
     [onCreateWorktree, repositoryId]
