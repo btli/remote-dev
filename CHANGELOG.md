@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Issue/PR Icon Differentiation**: Issues and pull requests now display distinct icons (CircleDot/CircleCheck for issues, GitPullRequest/GitMerge for PRs) across all views
 - **`isPullRequest` Field**: Added `is_pull_request` column to `githubIssues` table to distinguish PRs from issues fetched via the GitHub API
 
+### Changed
+
+- **Mobile Sidebar UX**: Sidebar now uses inline push layout instead of floating overlay
+  - Sidebar stays open when selecting a session, allowing free browsing
+  - Sidebar pushes terminal content over instead of overlaying with backdrop
+  - Session row styling matches desktop (transparent backgrounds for unselected items)
+
 ### Fixed
 
 - **Worktree Icon Priority**: Fix missing worktree icon for agent+worktree sessions in expanded sidebar and tooltip by checking `worktreeBranch` before `terminalType`
