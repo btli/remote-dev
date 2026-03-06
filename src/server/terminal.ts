@@ -82,6 +82,7 @@ interface TerminalSession {
   voiceFifoFd: number | null;
   voiceAudioBuffer: Buffer[];
   voiceFifoReady: boolean;
+  voiceSpaceInterval: ReturnType<typeof setInterval> | null;
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -131,7 +132,11 @@ function cleanupSession(sessionId: string): void {
     clearTimeout(session.resizeTimeout);
   }
 
-  // Clean up voice FIFO
+  // Clean up voice space interval and FIFO
+  if (session.voiceSpaceInterval) {
+    clearInterval(session.voiceSpaceInterval);
+    session.voiceSpaceInterval = null;
+  }
   cleanupVoiceFifo(session);
 
   try {
@@ -635,6 +640,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       voiceFifoFd: null,
       voiceAudioBuffer: [],
       voiceFifoReady: false,
+      voiceSpaceInterval: null,
     };
 
     sessions.set(sessionId, session);
@@ -827,8 +833,18 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             try {
               const fifoPath = createVoiceFifo(session);
               console.log(`[Voice] Created FIFO for session ${sessionId}: ${fifoPath}`);
-              // Send spacebar to PTY (triggers Claude Code voice recording)
+              // Simulate holding SPACE to trigger Claude Code voice recording.
+              // Send initial space immediately, then repeat at 50ms to mimic key-hold.
+              // Server-side avoids round-trip latency from browser → WS → server.
               ptyProcess.write(" ");
+              session.voiceSpaceInterval = setInterval(() => {
+                if (sessions.has(sessionId)) {
+                  ptyProcess.write(" ");
+                } else {
+                  clearInterval(session.voiceSpaceInterval!);
+                  session.voiceSpaceInterval = null;
+                }
+              }, 50);
               ws.send(JSON.stringify({ type: "voice_ready", sessionId }));
             } catch (error) {
               console.error(`[Voice] Failed to create FIFO for ${sessionId}:`, error);
@@ -839,6 +855,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
           case "voice_stop": {
             console.log(`[Voice] Stopping voice for session ${sessionId}`);
+            // Stop simulating SPACE hold
+            if (session.voiceSpaceInterval) {
+              clearInterval(session.voiceSpaceInterval);
+              session.voiceSpaceInterval = null;
+            }
             if (session.voiceFifoFd !== null) {
               try {
                 const silencePadding = Buffer.alloc(3200); // 100ms silence at 16kHz/16bit

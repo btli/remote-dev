@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { Mic, MicOff } from "lucide-react";
 import { useVoiceCapture } from "@/hooks/useVoiceCapture";
 import { cn } from "@/lib/utils";
@@ -10,42 +10,37 @@ interface VoiceMicButtonProps {
   className?: string;
 }
 
+/**
+ * Mic button for voice input to Claude Code agent sessions.
+ *
+ * Tap to start/stop recording. Browser audio is captured and relayed to the
+ * terminal server via WebSocket binary frames. The server handles triggering
+ * Claude Code's voice listening mode (SPACE hold simulation) and piping audio
+ * through a FIFO to the sox shim.
+ */
 export function VoiceMicButton({ getWebSocket, className }: VoiceMicButtonProps) {
-  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { state, error, start, stop } = useVoiceCapture({ getWebSocket });
 
-  const { state, error, start, stop } = useVoiceCapture({
-    getWebSocket,
-  });
-
-  const handlePointerDown = useCallback(
-    (e: React.PointerEvent) => {
+  const handleClick = useCallback(
+    (e: React.MouseEvent | React.TouchEvent) => {
       e.preventDefault();
-      // Debounce: require 200ms hold
-      holdTimeoutRef.current = setTimeout(() => {
+      e.stopPropagation();
+      if (state === "recording") {
+        stop();
+      } else if (state === "idle" || state === "error") {
         start();
-      }, 200);
+      }
     },
-    [start]
+    [state, start, stop]
   );
-
-  const handlePointerUp = useCallback(() => {
-    if (holdTimeoutRef.current) {
-      clearTimeout(holdTimeoutRef.current);
-      holdTimeoutRef.current = null;
-    }
-    if (state === "recording") {
-      stop();
-    }
-  }, [state, stop]);
 
   const isRecording = state === "recording";
   const isError = state === "error";
 
   return (
     <button
-      onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerUp}
+      onClick={handleClick}
+      onTouchEnd={handleClick}
       className={cn(
         "p-1.5 rounded-full transition-colors shadow-md backdrop-blur-sm",
         isRecording
@@ -59,8 +54,8 @@ export function VoiceMicButton({ getWebSocket, className }: VoiceMicButtonProps)
         isError
           ? `Voice error: ${error}`
           : isRecording
-            ? "Release to stop recording"
-            : "Hold to speak (requires /voice enabled in Claude Code)"
+            ? "Tap to stop recording"
+            : "Tap to speak (requires /voice enabled in Claude Code)"
       }
     >
       {isError ? (

@@ -2,6 +2,7 @@
 
 import { useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import { Terminal, type TerminalRef } from "./Terminal";
+import { VoiceMicButton } from "./VoiceMicButton";
 import { MobileKeyboard } from "./MobileKeyboard";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
@@ -142,7 +143,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
 
   return (
     <div className="flex flex-col h-full relative">
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 relative">
         <ErrorBoundary title="Terminal Error">
           <Terminal
             ref={terminalRef}
@@ -168,6 +169,11 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
             onAgentTodosUpdated={onAgentTodosUpdated}
           />
         </ErrorBoundary>
+        {session?.terminalType === "agent" && (
+          <div className="absolute top-2 left-2 z-50" style={isRecording ? { left: "5.5rem" } : undefined}>
+            <VoiceMicButton getWebSocket={() => wsRef.current} />
+          </div>
+        )}
       </div>
       {isMobile && (
         <MobileKeyboard
