@@ -56,8 +56,7 @@ export async function sendImageToTerminal(
   ws: WebSocket | null
 ): Promise<void> {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    console.error("WebSocket not connected");
-    return;
+    throw new Error("WebSocket not connected");
   }
 
   const filePath = await uploadImage(file);
