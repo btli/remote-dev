@@ -25,7 +25,7 @@ const STATUS_MESSAGES: Partial<
 };
 
 interface UseAgentNotificationsOptions {
-  enabled: boolean;
+  enabled: boolean | undefined;
   agentActivityStatuses: Record<string, AgentActivityStatus>;
   sessions: TerminalSession[];
   setActiveSession: (id: string | null) => void;
@@ -37,8 +37,17 @@ export function useAgentNotifications({
   sessions,
   setActiveSession,
 }: UseAgentNotificationsOptions): void {
-  const { permissionState } = useNotificationPermission();
+  const { permissionState, requestPermission } = useNotificationPermission();
   const previousStatusesRef = useRef<Record<string, AgentActivityStatus>>({});
+  const hasRequestedPermissionRef = useRef(false);
+
+  // Request notification permission if notifications are enabled but browser hasn't been asked yet
+  useEffect(() => {
+    if (enabled === true && permissionState === "default" && !hasRequestedPermissionRef.current) {
+      hasRequestedPermissionRef.current = true;
+      requestPermission();
+    }
+  }, [enabled, permissionState, requestPermission]);
 
   const agentSessionMap = useMemo(() => {
     const map = new Map<string, { name: string }>();
