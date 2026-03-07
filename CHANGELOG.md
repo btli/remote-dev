@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mobile Header**: Compact header bar on mobile/PWA with GitHub status, secrets, appearance toggle, tasks, user menu, and sign-out
+- **Sidebar Worktree Shortcut**: "New Worktree" option in the sidebar + dropdown menu (enabled when active folder has a linked repository)
+
+### Fixed
+
+- **Mobile Long-Press Glitch**: Disabled folder touch-drag handlers on mobile to prevent orphaned clone elements when context menu intercepts touch events
+- **Drag Clone Cleanup**: Added unmount cleanup for drag clones to prevent visual artifacts persisting after navigation
+
+### Added
+
 - **Agent Status Notifications**: Browser notifications when AI agent sessions change state (idle, waiting for input, error, compacting context)
   - Click notification to focus window and switch to the relevant session
   - Notifications only fire when the browser window is not focused
