@@ -59,6 +59,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
               variant="ghost"
               size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-foreground"
+              aria-label="Tasks"
               onClick={() =>
                 window.dispatchEvent(
                   new CustomEvent("task-sidebar-toggle")
@@ -68,6 +69,17 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
               <ClipboardList className="w-3.5 h-3.5" />
             </Button>
             <HeaderUserMenu email={userEmail} />
+            <form action={onSignOut}>
+              <Button
+                variant="ghost"
+                size="icon"
+                type="submit"
+                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                aria-label="Sign out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </Button>
+            </form>
           </div>
         </header>
 

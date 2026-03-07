@@ -266,7 +266,7 @@ export function Sidebar({
     setSwipedSessionId(null);
   }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Touch drag state for mobile (folder reordering)
+  // Touch drag state for touch-capable devices (folder reordering; disabled on mobile phones where context menu is used instead)
   const touchDragRef = useRef<{
     type: "folder" | "session" | null;
     id: string | null;
@@ -560,7 +560,7 @@ export function Sidebar({
     setDropFolderPosition(null);
   };
 
-  // Touch handlers for mobile drag-and-drop with long-press delay
+  // Touch handlers for drag-and-drop with long-press delay (disabled on mobile phones to avoid conflict with context menu)
   const initiateTouchDrag = useCallback((element: HTMLElement, clientX: number, clientY: number) => {
     // Create a visual clone for dragging feedback
     const clone = element.cloneNode(true) as HTMLElement;
@@ -1866,9 +1866,9 @@ export function Sidebar({
                               onDragOver={(e) => handleDragOver(e, node.id)}
                               onDragLeave={handleDragLeave}
                               onDrop={(e) => handleDrop(e, node.id)}
-                              onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
-                              onTouchMove={handleFolderTouchMove}
-                              onTouchEnd={handleFolderTouchEnd}
+                              onTouchStart={isMobile ? undefined : (e) => handleFolderTouchStart(e, node.id)}
+                              onTouchMove={isMobile ? undefined : handleFolderTouchMove}
+                              onTouchEnd={isMobile ? undefined : handleFolderTouchEnd}
                               onClick={() => {
                                 onFolderClick(node.id);
                                 onFolderToggle(node.id);
