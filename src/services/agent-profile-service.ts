@@ -1246,11 +1246,11 @@ async function checkAndRepairMCPConfig(
 
     const result = validateMCPEntry(servers[MCP_SERVER_NAME]);
     if (result.valid) {
-      console.log(`[MCP] Config OK: ${filePath}`);
+      console.warn(`[MCP] Config OK: ${filePath}`);
       return;
     }
 
-    console.log(`[MCP] Repaired stale config: ${filePath} (${result.reason})`);
+    console.warn(`[MCP] Repaired stale config: ${filePath} (${result.reason})`);
     await repair();
   } catch {
     // File doesn't exist or isn't valid JSON - skip silently
