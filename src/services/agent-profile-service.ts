@@ -827,11 +827,7 @@ export async function registerMCPServer(
   provider: AgentProvider,
   userId: string
 ): Promise<void> {
-  const mcpEntry: MCPEntry = {
-    command: "sh",
-    args: ["-c", `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`],
-    env: { MCP_USER_ID: userId },
-  };
+  const mcpEntry = createMCPEntry(userId);
 
   const handlers: Record<string, (dir: string, entry: MCPEntry) => Promise<void>> = {
     claude: (dir, entry) => registerMCPForJsonSettings(dir, ".claude", entry),
@@ -855,30 +851,7 @@ export async function registerMCPInProjectDir(
   projectDir: string,
   userId: string
 ): Promise<void> {
-  const mcpJsonPath = join(projectDir, ".mcp.json");
-  const entry: MCPEntry = {
-    command: "sh",
-    args: ["-c", `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`],
-    env: { MCP_USER_ID: userId },
-  };
-
-  let config: Record<string, unknown> = {};
-  let rawContent = "";
-  try {
-    rawContent = await readFile(mcpJsonPath, "utf-8");
-    config = JSON.parse(rawContent);
-  } catch {
-    // File doesn't exist or invalid JSON - start fresh
-  }
-
-  const mcpServers = (config.mcpServers ?? {}) as Record<string, unknown>;
-  mcpServers[MCP_SERVER_NAME] = entry;
-  config.mcpServers = mcpServers;
-
-  const newContent = JSON.stringify(config, null, 2) + "\n";
-  if (newContent === rawContent) return;
-
-  await writeFile(mcpJsonPath, newContent);
+  await writeMCPEntryToJson(join(projectDir, ".mcp.json"), createMCPEntry(userId));
 }
 
 interface MCPEntry {
@@ -897,25 +870,8 @@ async function registerMCPForJsonSettings(
   entry: MCPEntry
 ): Promise<void> {
   const settingsPath = join(configDir, subDir, "settings.json");
-
-  let settings: Record<string, unknown> = {};
-  let rawContent = "";
-  try {
-    rawContent = await readFile(settingsPath, "utf-8");
-    settings = JSON.parse(rawContent);
-  } catch {
-    // File doesn't exist or invalid JSON - start fresh
-  }
-
-  const mcpServers = (settings.mcpServers ?? {}) as Record<string, unknown>;
-  mcpServers[MCP_SERVER_NAME] = entry;
-  settings.mcpServers = mcpServers;
-
-  const newContent = JSON.stringify(settings, null, 2) + "\n";
-  if (newContent === rawContent) return;
-
   await mkdir(join(configDir, subDir), { recursive: true });
-  await writeFile(settingsPath, newContent);
+  await writeMCPEntryToJson(settingsPath, entry);
 }
 
 /**
@@ -1195,6 +1151,172 @@ function mapDbToSecretsConfig(
     createdAt: new Date(dbRecord.createdAt),
     updatedAt: new Date(dbRecord.updatedAt),
   };
+}
+
+// ============================================================================
+// MCP Registration Self-Check (Startup)
+// ============================================================================
+
+/** Expected shell command fragment inside .mcp.json args */
+const EXPECTED_MCP_ARGS_PATTERN = `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`;
+
+/** Build a standard MCP entry for the remote-dev server. */
+function createMCPEntry(userId: string): MCPEntry {
+  return {
+    command: "sh",
+    args: ["-c", `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`],
+    env: { MCP_USER_ID: userId },
+  };
+}
+
+/**
+ * Write an MCP entry into a JSON config file at the given path.
+ * Creates or merges the `mcpServers` object, preserving other entries.
+ * Skips the write if the content would be unchanged.
+ */
+async function writeMCPEntryToJson(
+  filePath: string,
+  entry: MCPEntry
+): Promise<void> {
+  let config: Record<string, unknown> = {};
+  let rawContent = "";
+  try {
+    rawContent = await readFile(filePath, "utf-8");
+    config = JSON.parse(rawContent);
+  } catch {
+    // File doesn't exist or invalid JSON - start fresh
+  }
+
+  const mcpServers = (config.mcpServers ?? {}) as Record<string, unknown>;
+  mcpServers[MCP_SERVER_NAME] = entry;
+  config.mcpServers = mcpServers;
+
+  const newContent = JSON.stringify(config, null, 2) + "\n";
+  if (newContent === rawContent) return;
+
+  await writeFile(filePath, newContent);
+}
+
+/**
+ * Validate an MCP entry for the `remote-dev` server.
+ * Returns `{ valid: true }` if the entry matches the expected format,
+ * or `{ valid: false, reason }` describing what's wrong.
+ */
+function validateMCPEntry(
+  entry: unknown
+): { valid: true } | { valid: false; reason: string } {
+  if (typeof entry !== "object" || entry === null) {
+    return { valid: false, reason: "entry is not an object" };
+  }
+
+  const e = entry as Record<string, unknown>;
+
+  if (e.command !== "sh") {
+    return { valid: false, reason: `command is "${e.command}" (expected "sh")` };
+  }
+
+  if (!Array.isArray(e.args) || e.args.length < 2) {
+    return { valid: false, reason: "args missing or too short" };
+  }
+
+  const shArg = e.args[1] as string;
+  if (typeof shArg !== "string" || !shArg.includes(EXPECTED_MCP_ARGS_PATTERN)) {
+    return { valid: false, reason: `was: ${shArg}` };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Check a JSON config file for a stale `remote-dev` MCP entry and repair it.
+ * Skips silently if the file doesn't exist or has no `remote-dev` entry.
+ *
+ * Works for both `.mcp.json` and `settings.json` files since they share
+ * the same `{ mcpServers: { "remote-dev": { ... } } }` structure.
+ */
+async function checkAndRepairMCPConfig(
+  filePath: string,
+  repair: () => Promise<void>
+): Promise<void> {
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    const servers = config.mcpServers as Record<string, unknown> | undefined;
+    if (!servers || !servers[MCP_SERVER_NAME]) return;
+
+    const result = validateMCPEntry(servers[MCP_SERVER_NAME]);
+    if (result.valid) {
+      console.warn(`[MCP] Config OK: ${filePath}`);
+      return;
+    }
+
+    console.warn(`[MCP] Repaired stale config: ${filePath} (${result.reason})`);
+    await repair();
+  } catch {
+    // File doesn't exist or isn't valid JSON - skip silently
+  }
+}
+
+/**
+ * Scan known config locations for MCP config files containing a `remote-dev`
+ * entry, validate them, and auto-repair stale configs.
+ *
+ * Runs on terminal server startup. Non-blocking: errors are logged but never
+ * prevent the server from starting.
+ *
+ * Locations checked:
+ * 1. Project root `.mcp.json`
+ * 2. Parent directories up to home: `.mcp.json` and `.claude/.mcp.json`
+ * 3. Home-level Claude settings `~/.claude/settings.json`
+ */
+export async function ensureMCPRegistration(): Promise<void> {
+  const userId = process.env.MCP_USER_ID || "mcp-local-user";
+  const home = homedir();
+  const entry = createMCPEntry(userId);
+
+  // Check tsx binary exists
+  const tsxPath = join(RDV_PROJECT_ROOT, "node_modules", ".bin", "tsx");
+  try {
+    await access(tsxPath);
+  } catch {
+    console.warn(`[MCP] Warning: tsx binary not found at ${tsxPath}`);
+  }
+
+  // Collect all config file paths to check, paired with their repair functions
+  const configs: Array<{ path: string; repair: () => Promise<void> }> = [];
+
+  // 1. Project root .mcp.json
+  configs.push({
+    path: join(RDV_PROJECT_ROOT, ".mcp.json"),
+    repair: () => registerMCPInProjectDir(RDV_PROJECT_ROOT, userId),
+  });
+
+  // 2. Walk parent directories up to home
+  let dir = dirname(RDV_PROJECT_ROOT);
+  while (dir.length >= home.length && dir !== dirname(dir)) {
+    const currentDir = dir;
+    configs.push({
+      path: join(currentDir, ".mcp.json"),
+      repair: () => registerMCPInProjectDir(currentDir, userId),
+    });
+    configs.push({
+      path: join(currentDir, ".claude", ".mcp.json"),
+      repair: () => writeMCPEntryToJson(join(currentDir, ".claude", ".mcp.json"), entry),
+    });
+    dir = dirname(dir);
+  }
+
+  // 3. Home-level Claude settings
+  const claudeSettingsPath = join(home, ".claude", "settings.json");
+  configs.push({
+    path: claudeSettingsPath,
+    repair: () => writeMCPEntryToJson(claudeSettingsPath, entry),
+  });
+
+  // Check and repair each config sequentially (file I/O order matters for parent dirs)
+  for (const { path, repair } of configs) {
+    await checkAndRepairMCPConfig(path, repair);
+  }
 }
 
 // Re-export error class from centralized location for backwards compatibility

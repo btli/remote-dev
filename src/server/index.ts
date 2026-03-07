@@ -2,6 +2,7 @@ import { config } from "dotenv";
 import { createTerminalServer } from "./terminal.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { initializeMCPServer, shutdownMCPServer } from "../mcp/index.js";
+import { ensureMCPRegistration } from "../services/agent-profile-service.js";
 
 config({ path: ".env.local" });
 
@@ -11,6 +12,14 @@ const MCP_ENABLED = process.env.MCP_ENABLED === "true";
 
 async function startServer(): Promise<void> {
   createTerminalServer(TERMINAL_SOCKET ? { socket: TERMINAL_SOCKET } : { port: TERMINAL_PORT });
+
+  // Validate and repair stale MCP configs (runs regardless of MCP_ENABLED,
+  // since agent sessions need config files to launch the standalone MCP server)
+  try {
+    await ensureMCPRegistration();
+  } catch (error) {
+    console.error("[Server] MCP registration self-check failed:", error);
+  }
 
   try {
     await schedulerOrchestrator.start();
