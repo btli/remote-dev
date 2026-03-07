@@ -1,0 +1,14 @@
+{
+  "name": "remote-dev",
+  "owner": {
+    "name": "Bryan Li"
+  },
+  "plugins": [
+    {
+      "name": "remote-dev",
+      "source": ".",
+      "description": "CLI tools for Remote Dev - manage terminal sessions, worktrees, and AI agents",
+      "version": "1.0.0"
+    }
+  ]
+}

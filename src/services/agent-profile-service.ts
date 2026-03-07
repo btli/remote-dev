@@ -18,8 +18,7 @@ import {
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "fs/promises";
-import { join, dirname, resolve as pathResolve, isAbsolute } from "path";
-import { fileURLToPath } from "url";
+import { join, resolve as pathResolve, isAbsolute } from "path";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
@@ -642,8 +641,9 @@ export async function resolveEffectiveHome(
 // ============================================================================
 
 /** Marker substrings used to identify RDV hooks (for deduplication) */
-const ACTIVITY_HOOK_MARKER = "/internal/agent-status";
-const TODO_HOOK_MARKER = "/internal/agent-todos";
+const RDV_HOOK_MARKER = "rdv ";
+const LEGACY_ACTIVITY_HOOK_MARKER = "/internal/agent-status";
+const LEGACY_TODO_HOOK_MARKER = "/internal/agent-todos";
 
 /** Check if a hook entry contains the given marker substring */
 function isRdvHook(entry: unknown, marker: string): boolean {
@@ -651,25 +651,56 @@ function isRdvHook(entry: unknown, marker: string): boolean {
     JSON.stringify(entry).includes(marker);
 }
 
-/** Filter out RDV hooks matching the given marker (preserves user hooks) */
-function withoutRdvHooks(arr: unknown[], marker: string): unknown[] {
-  return arr.filter((entry) => !isRdvHook(entry, marker));
+/** Filter out RDV hooks matching any of the given markers (preserves user hooks) */
+function withoutRdvHooks(arr: unknown[], markers: string[]): unknown[] {
+  return arr.filter((entry) => !markers.some((m) => isRdvHook(entry, m)));
+}
+
+/**
+ * Build a hook command that uses rdv CLI (preferred) with curl fallback.
+ * The rdv CLI reads RDV_* env vars natively, so no tmux env preamble is needed.
+ * Falls back to curl if rdv is not installed.
+ */
+function rdvOrCurlCommand(rdvCmd: string, curlFallback: string): string {
+  return `if command -v rdv >/dev/null 2>&1; then ${rdvCmd}; else ${curlFallback}; fi`;
+}
+
+/** Env preamble for curl fallback (reads RDV vars from tmux) */
+const CURL_ENV_PREAMBLE =
+  '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
+  '[ -z "$_RDV_SN" ] && exit 0; ' +
+  'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
+  '[ -z "$RDV_SESSION_ID" ] && exit 0; ';
+
+/** Build a curl command that hits an internal endpoint via socket or port.
+ *  `prefix` is prepended before the if/else block (e.g. for piping stdin). */
+function curlCmd(path: string, opts = "", prefix = ""): string {
+  return prefix +
+    'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
+    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST "http://localhost${path}" ${opts}; ` +
+    'else ' +
+    `curl -s -X POST "http://localhost:\${RDV_TERMINAL_PORT}${path}" ${opts}; ` +
+    'fi';
+}
+
+function curlForStatus(status: string): string {
+  return CURL_ENV_PREAMBLE + curlCmd(`/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}`) + ' || true';
 }
 
 /**
  * Install hooks into the agent's settings file.
  * Currently supports Claude Code only (hooks in .claude/settings.json).
  *
- * Supports both socket mode (RDV_TERMINAL_SOCKET) and port mode (RDV_TERMINAL_PORT).
- * These env vars plus RDV_SESSION_ID are set as tmux env vars per session.
+ * Uses rdv CLI when available, falls back to curl for environments
+ * where the Rust binary isn't installed.
  *
- * Activity-reporting hooks (→ /internal/agent-status):
+ * Activity-reporting hooks:
  * - PreToolUse → status "running" (agent is executing a tool)
  * - PreCompact → status "compacting" (context window compaction in progress)
  * - Notification (permission/elicitation) → status "waiting" (needs user input)
- * - Stop → status "idle" (agent finished its turn)
+ * - Stop → status "idle" + task completion check
  *
- * Task sync hooks (→ /internal/agent-todos):
+ * Task sync hooks:
  * - PostToolUse (matcher: "TaskCreate|TaskUpdate|TodoWrite") → syncs tasks to project_task table
  */
 export async function installAgentHooks(
@@ -691,72 +722,52 @@ export async function installAgentHooks(
     // File doesn't exist or is invalid JSON - start fresh
   }
 
-  // Activity status hooks read RDV vars from tmux session-level environment
-  // at runtime. Uses a single `tmux show-environment` dump (parsed via eval)
-  // to resolve session ID and connection info. This is more robust than relying
-  // on inherited process env because the tmux server doesn't propagate the
-  // client's env to spawned shells.
-  const envPreamble =
-    '_RDV_SN=$(tmux display-message -p "#{session_name}" 2>/dev/null); ' +
-    '[ -z "$_RDV_SN" ] && exit 0; ' +
-    'eval "$(tmux show-environment -t "$_RDV_SN" 2>/dev/null | grep "^RDV_")" 2>/dev/null; ' +
-    '[ -z "$RDV_SESSION_ID" ] && exit 0; ';
-
-  /** Build a curl command that hits an internal endpoint via socket or port */
-  const curlCmd = (path: string, opts = "") =>
-    'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
-    `curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST "http://localhost${path}" ${opts}; ` +
-    'else ' +
-    `curl -s -X POST "http://localhost:\${RDV_TERMINAL_PORT}${path}" ${opts}; ` +
-    'fi';
-
-  const curlForStatus = (status: string) =>
-    envPreamble + curlCmd(`/internal/agent-status?sessionId=\${RDV_SESSION_ID}&status=${status}`) + ' || true';
-
+  // Activity status hooks - rdv CLI preferred, curl fallback
   const preToolUseHook = {
     matcher: "",
-    hooks: [{ type: "command", command: curlForStatus("running"), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report running", curlForStatus("running")), timeout: 5 }],
   };
 
   const preCompactHook = {
     matcher: "",
-    hooks: [{ type: "command", command: curlForStatus("compacting"), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report compacting", curlForStatus("compacting")), timeout: 5 }],
   };
 
   const notificationHook = {
     matcher: "permission_prompt|elicitation_dialog",
-    hooks: [{ type: "command", command: curlForStatus("waiting"), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report waiting", curlForStatus("waiting")), timeout: 5 }],
   };
 
-  // Stop hook: report idle status (fire-and-forget, backgrounded) AND check
-  // if all tasks are completed. Non-empty output tells Claude Code to continue.
-  const stopCheckCommand = envPreamble +
+  // Stop hook: report idle + check for incomplete tasks.
+  // rdv task check handles both (reports idle and checks tasks in one call).
+  const stopCurlFallback =
+    CURL_ENV_PREAMBLE +
     curlCmd('/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=idle', '>/dev/null 2>&1') + ' & ' +
     'TASK_MSG=$(' + curlCmd('/internal/agent-stop-check?sessionId=${RDV_SESSION_ID}') + '); ' +
     '[ -n "$TASK_MSG" ] && printf "%s" "$TASK_MSG"';
 
   const stopHook = {
-    hooks: [{ type: "command", command: stopCheckCommand, timeout: 15 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv task check", stopCurlFallback), timeout: 15 }],
   };
 
-  // Task sync hook: reads PostToolUse JSON from stdin, POSTs to /internal/agent-todos
-  // Matches TaskCreate, TaskUpdate (v2.1.69+), and legacy TodoWrite
-  const todoSyncCommand =
-    'INPUT=$(cat); ' + envPreamble +
-    'if [ -n "$RDV_TERMINAL_SOCKET" ]; then ' +
-    'printf \'%s\' "$INPUT" | curl --unix-socket "$RDV_TERMINAL_SOCKET" -s -X POST -H "Content-Type: application/json" -d @- "http://localhost/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
-    'else ' +
-    'printf \'%s\' "$INPUT" | curl -s -X POST -H "Content-Type: application/json" -d @- "http://localhost:${RDV_TERMINAL_PORT}/internal/agent-todos?sessionId=${RDV_SESSION_ID}"; ' +
-    'fi || true';
+  // Task sync hook: reads PostToolUse JSON from stdin
+  const todoCurlFallback =
+    'INPUT=$(cat); ' + CURL_ENV_PREAMBLE +
+    curlCmd(
+      '/internal/agent-todos?sessionId=${RDV_SESSION_ID}',
+      '-H "Content-Type: application/json" -d @-',
+      'printf \'%s\' "$INPUT" | '
+    ) + ' || true';
 
   const postToolUseTodoHook = {
     matcher: "TaskCreate|TaskUpdate|TodoWrite",
-    hooks: [{ type: "command", command: todoSyncCommand, timeout: 10 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv task sync", todoCurlFallback), timeout: 10 }],
   };
 
-  // Merge with existing hooks — replace any old RDV hooks with current version,
-  // preserving user-defined hooks. This handles upgrades (e.g., port-only → socket-aware).
+  // Merge with existing hooks — replace any old RDV hooks (both rdv CLI and legacy curl)
+  // with current version, preserving user-defined hooks.
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
+  const hookMarkers = [RDV_HOOK_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
 
   const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
   const existingPreCompact = Array.isArray(existingHooks.PreCompact) ? existingHooks.PreCompact : [];
@@ -766,16 +777,16 @@ export async function installAgentHooks(
 
   // Clean up legacy SessionStart RDV hooks from older installations
   const existingSessionStart = Array.isArray(existingHooks.SessionStart) ? existingHooks.SessionStart : [];
-  const cleanedSessionStart = withoutRdvHooks(existingSessionStart, ACTIVITY_HOOK_MARKER);
+  const cleanedSessionStart = withoutRdvHooks(existingSessionStart, hookMarkers);
 
   // Strip old RDV hooks (if any) and append current version
   const mergedHooks = {
     ...existingHooks,
-    PreToolUse: [...withoutRdvHooks(existingPreToolUse, ACTIVITY_HOOK_MARKER), preToolUseHook],
-    PreCompact: [...withoutRdvHooks(existingPreCompact, ACTIVITY_HOOK_MARKER), preCompactHook],
-    PostToolUse: [...withoutRdvHooks(existingPostToolUse, TODO_HOOK_MARKER), postToolUseTodoHook],
-    Notification: [...withoutRdvHooks(existingNotification, ACTIVITY_HOOK_MARKER), notificationHook],
-    Stop: [...withoutRdvHooks(existingStop, ACTIVITY_HOOK_MARKER), stopHook],
+    PreToolUse: [...withoutRdvHooks(existingPreToolUse, hookMarkers), preToolUseHook],
+    PreCompact: [...withoutRdvHooks(existingPreCompact, hookMarkers), preCompactHook],
+    PostToolUse: [...withoutRdvHooks(existingPostToolUse, hookMarkers), postToolUseTodoHook],
+    Notification: [...withoutRdvHooks(existingNotification, hookMarkers), notificationHook],
+    Stop: [...withoutRdvHooks(existingStop, hookMarkers), stopHook],
     // Remove legacy SessionStart RDV hooks (replaced by PreToolUse)
     ...(cleanedSessionStart.length > 0 ? { SessionStart: cleanedSessionStart } : { SessionStart: undefined }),
   };
@@ -797,128 +808,6 @@ export async function installAgentHooks(
   // Ensure .claude directory exists
   await mkdir(join(configDir, ".claude"), { recursive: true });
   await writeFile(settingsPath, newContent);
-}
-
-// ============================================================================
-// MCP Server Registration
-// ============================================================================
-
-/** Resolve the RDV project root from this module's location (src/services/ → ../..) */
-const RDV_PROJECT_ROOT = pathResolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  ".."
-);
-
-/** MCP server name used across all agent configs */
-const MCP_SERVER_NAME = "remote-dev";
-
-/**
- * Register the Remote Dev MCP server in the agent's config file.
- * Idempotent: reads existing config, merges only the `remote-dev` entry,
- * and skips the write if nothing changed.
- *
- * Uses `sh -c "cd <project> && exec node_modules/.bin/tsx ..."` instead of
- * `bun run mcp` because bun run does not relay stdin to subprocesses,
- * which breaks the MCP stdio protocol handshake.
- */
-export async function registerMCPServer(
-  configDir: string,
-  provider: AgentProvider,
-  userId: string
-): Promise<void> {
-  const mcpEntry = createMCPEntry(userId);
-
-  const handlers: Record<string, (dir: string, entry: MCPEntry) => Promise<void>> = {
-    claude: (dir, entry) => registerMCPForJsonSettings(dir, ".claude", entry),
-    gemini: (dir, entry) => registerMCPForJsonSettings(dir, ".gemini", entry),
-    codex: registerMCPForCodex,
-  };
-
-  const providers = provider === "all"
-    ? Object.keys(handlers)
-    : handlers[provider] ? [provider] : [];
-
-  await Promise.all(providers.map((p) => handlers[p](configDir, mcpEntry)));
-}
-
-/**
- * Register the Remote Dev MCP server in a project's .mcp.json file.
- * This is the primary discovery path for Claude Code project-scoped MCP servers.
- * Idempotent: merges the remote-dev entry, preserving other servers.
- */
-export async function registerMCPInProjectDir(
-  projectDir: string,
-  userId: string
-): Promise<void> {
-  await writeMCPEntryToJson(join(projectDir, ".mcp.json"), createMCPEntry(userId));
-}
-
-interface MCPEntry {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-}
-
-/**
- * Register MCP server in a JSON settings file (used by Claude and Gemini).
- * Both use the same format: { mcpServers: { "remote-dev": { ... } } }
- */
-async function registerMCPForJsonSettings(
-  configDir: string,
-  subDir: string,
-  entry: MCPEntry
-): Promise<void> {
-  const settingsPath = join(configDir, subDir, "settings.json");
-  await mkdir(join(configDir, subDir), { recursive: true });
-  await writeMCPEntryToJson(settingsPath, entry);
-}
-
-/**
- * Register MCP server in Codex's .codex/config.toml
- */
-async function registerMCPForCodex(
-  configDir: string,
-  entry: MCPEntry
-): Promise<void> {
-  const configPath = join(configDir, ".codex", "config.toml");
-
-  let rawContent = "";
-  try {
-    rawContent = await readFile(configPath, "utf-8");
-  } catch {
-    // File doesn't exist - start fresh
-  }
-
-  // Build the TOML section for the MCP server
-  const argsToml = entry.args.map((a) => `"${a}"`).join(", ");
-  const envEntries = Object.entries(entry.env)
-    .map(([k, v]) => `${k} = "${v}"`)
-    .join(", ");
-  const section =
-    `[mcp_servers.${MCP_SERVER_NAME}]\n` +
-    `command = "${entry.command}"\n` +
-    `args = [${argsToml}]\n` +
-    `env = { ${envEntries} }\n`;
-
-  // Check if section already exists and replace it, or append
-  const sectionRegex = new RegExp(
-    `\\[mcp_servers\\.${MCP_SERVER_NAME}\\][\\s\\S]*?(?=\\n\\[|$)`
-  );
-
-  let newContent: string;
-  if (sectionRegex.test(rawContent)) {
-    newContent = rawContent.replace(sectionRegex, section);
-  } else {
-    newContent = rawContent
-      ? `${rawContent.trimEnd()}\n\n${section}`
-      : section;
-  }
-
-  if (newContent === rawContent) return;
-
-  await mkdir(join(configDir, ".codex"), { recursive: true });
-  await writeFile(configPath, newContent);
 }
 
 // ============================================================================
@@ -1151,172 +1040,6 @@ function mapDbToSecretsConfig(
     createdAt: new Date(dbRecord.createdAt),
     updatedAt: new Date(dbRecord.updatedAt),
   };
-}
-
-// ============================================================================
-// MCP Registration Self-Check (Startup)
-// ============================================================================
-
-/** Expected shell command fragment inside .mcp.json args */
-const EXPECTED_MCP_ARGS_PATTERN = `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`;
-
-/** Build a standard MCP entry for the remote-dev server. */
-function createMCPEntry(userId: string): MCPEntry {
-  return {
-    command: "sh",
-    args: ["-c", `cd ${RDV_PROJECT_ROOT} && exec node_modules/.bin/tsx src/mcp/standalone.ts`],
-    env: { MCP_USER_ID: userId },
-  };
-}
-
-/**
- * Write an MCP entry into a JSON config file at the given path.
- * Creates or merges the `mcpServers` object, preserving other entries.
- * Skips the write if the content would be unchanged.
- */
-async function writeMCPEntryToJson(
-  filePath: string,
-  entry: MCPEntry
-): Promise<void> {
-  let config: Record<string, unknown> = {};
-  let rawContent = "";
-  try {
-    rawContent = await readFile(filePath, "utf-8");
-    config = JSON.parse(rawContent);
-  } catch {
-    // File doesn't exist or invalid JSON - start fresh
-  }
-
-  const mcpServers = (config.mcpServers ?? {}) as Record<string, unknown>;
-  mcpServers[MCP_SERVER_NAME] = entry;
-  config.mcpServers = mcpServers;
-
-  const newContent = JSON.stringify(config, null, 2) + "\n";
-  if (newContent === rawContent) return;
-
-  await writeFile(filePath, newContent);
-}
-
-/**
- * Validate an MCP entry for the `remote-dev` server.
- * Returns `{ valid: true }` if the entry matches the expected format,
- * or `{ valid: false, reason }` describing what's wrong.
- */
-function validateMCPEntry(
-  entry: unknown
-): { valid: true } | { valid: false; reason: string } {
-  if (typeof entry !== "object" || entry === null) {
-    return { valid: false, reason: "entry is not an object" };
-  }
-
-  const e = entry as Record<string, unknown>;
-
-  if (e.command !== "sh") {
-    return { valid: false, reason: `command is "${e.command}" (expected "sh")` };
-  }
-
-  if (!Array.isArray(e.args) || e.args.length < 2) {
-    return { valid: false, reason: "args missing or too short" };
-  }
-
-  const shArg = e.args[1] as string;
-  if (typeof shArg !== "string" || !shArg.includes(EXPECTED_MCP_ARGS_PATTERN)) {
-    return { valid: false, reason: `was: ${shArg}` };
-  }
-
-  return { valid: true };
-}
-
-/**
- * Check a JSON config file for a stale `remote-dev` MCP entry and repair it.
- * Skips silently if the file doesn't exist or has no `remote-dev` entry.
- *
- * Works for both `.mcp.json` and `settings.json` files since they share
- * the same `{ mcpServers: { "remote-dev": { ... } } }` structure.
- */
-async function checkAndRepairMCPConfig(
-  filePath: string,
-  repair: () => Promise<void>
-): Promise<void> {
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const config = JSON.parse(raw) as Record<string, unknown>;
-    const servers = config.mcpServers as Record<string, unknown> | undefined;
-    if (!servers || !servers[MCP_SERVER_NAME]) return;
-
-    const result = validateMCPEntry(servers[MCP_SERVER_NAME]);
-    if (result.valid) {
-      console.warn(`[MCP] Config OK: ${filePath}`);
-      return;
-    }
-
-    console.warn(`[MCP] Repaired stale config: ${filePath} (${result.reason})`);
-    await repair();
-  } catch {
-    // File doesn't exist or isn't valid JSON - skip silently
-  }
-}
-
-/**
- * Scan known config locations for MCP config files containing a `remote-dev`
- * entry, validate them, and auto-repair stale configs.
- *
- * Runs on terminal server startup. Non-blocking: errors are logged but never
- * prevent the server from starting.
- *
- * Locations checked:
- * 1. Project root `.mcp.json`
- * 2. Parent directories up to home: `.mcp.json` and `.claude/.mcp.json`
- * 3. Home-level Claude settings `~/.claude/settings.json`
- */
-export async function ensureMCPRegistration(): Promise<void> {
-  const userId = process.env.MCP_USER_ID || "mcp-local-user";
-  const home = homedir();
-  const entry = createMCPEntry(userId);
-
-  // Check tsx binary exists
-  const tsxPath = join(RDV_PROJECT_ROOT, "node_modules", ".bin", "tsx");
-  try {
-    await access(tsxPath);
-  } catch {
-    console.warn(`[MCP] Warning: tsx binary not found at ${tsxPath}`);
-  }
-
-  // Collect all config file paths to check, paired with their repair functions
-  const configs: Array<{ path: string; repair: () => Promise<void> }> = [];
-
-  // 1. Project root .mcp.json
-  configs.push({
-    path: join(RDV_PROJECT_ROOT, ".mcp.json"),
-    repair: () => registerMCPInProjectDir(RDV_PROJECT_ROOT, userId),
-  });
-
-  // 2. Walk parent directories up to home
-  let dir = dirname(RDV_PROJECT_ROOT);
-  while (dir.length >= home.length && dir !== dirname(dir)) {
-    const currentDir = dir;
-    configs.push({
-      path: join(currentDir, ".mcp.json"),
-      repair: () => registerMCPInProjectDir(currentDir, userId),
-    });
-    configs.push({
-      path: join(currentDir, ".claude", ".mcp.json"),
-      repair: () => writeMCPEntryToJson(join(currentDir, ".claude", ".mcp.json"), entry),
-    });
-    dir = dirname(dir);
-  }
-
-  // 3. Home-level Claude settings
-  const claudeSettingsPath = join(home, ".claude", "settings.json");
-  configs.push({
-    path: claudeSettingsPath,
-    repair: () => writeMCPEntryToJson(claudeSettingsPath, entry),
-  });
-
-  // Check and repair each config sequentially (file I/O order matters for parent dirs)
-  for (const { path, repair } of configs) {
-    await checkAndRepairMCPConfig(path, repair);
-  }
 }
 
 // Re-export error class from centralized location for backwards compatibility

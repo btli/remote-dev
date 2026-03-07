@@ -21,7 +21,6 @@
     "rdv:stop": "bun run scripts/rdv.ts stop",
     "rdv:restart": "bun run scripts/rdv.ts restart",
     "rdv:status": "bun run scripts/rdv.ts status",
-    "mcp": "dotenv -e .env.local -- tsx src/mcp/standalone.ts",
     "test": "vitest",
     "test:run": "vitest run",
     "test:ui": "vitest --ui",

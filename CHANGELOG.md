@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **rdv CLI (Rust)**: New CLI at `crates/rdv/` for agent interaction with the terminal server
+  - Commands: session, worktree, agent, task, folder, status, context
+  - Auto-discovery via `RDV_SESSION_ID`, `RDV_TERMINAL_SOCKET`, `RDV_TERMINAL_PORT` env vars
+  - JSON output by default, `--human` flag for table output
+  - Auto-installed on server startup if cargo is available
+
+- **Claude Code Plugin**: Plugin structure for marketplace distribution
+  - `skills/rdv/SKILL.md` — teaches agents to use rdv CLI
+  - `commands/rdv-status.md` — /rdv-status slash command
+  - `agents/rdv-orchestrator.md` — multi-agent orchestrator subagent
+  - `hooks/hooks.json` — hook config for agent status/task sync
+
+- **Stop hook checks all tasks**: Stop hook now checks both agent-created and user-assigned tasks for a session, with source labels in output
+
+### Changed
+
+- **Agent hooks use rdv CLI**: Hooks now prefer `rdv` CLI commands over curl, with automatic curl fallback when rdv is not installed
+
+### Removed
+
+- **MCP server backend**: Removed `src/mcp/` directory (18 files), MCP registration code from agent-profile-service, and `bun run mcp` script. Agents now use rdv CLI instead of MCP protocol. UI components that display MCP servers are retained.
+
 - **Agent Status Notifications**: Browser notifications when AI agent sessions change state (idle, waiting for input, error, compacting context)
   - Click notification to focus window and switch to the relevant session
   - Notifications only fire when the browser window is not focused

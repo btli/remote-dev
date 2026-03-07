@@ -65,3 +65,7 @@ next-env.d.ts
 
 # worktree trash
 .trash/
+
+# Dolt database files (added by bd init)
+.dolt/
+crates/rdv/target/
