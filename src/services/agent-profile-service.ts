@@ -640,8 +640,10 @@ export async function resolveEffectiveHome(
 // Agent Hooks Installation
 // ============================================================================
 
-/** Marker substrings used to identify RDV hooks (for deduplication) */
-const RDV_HOOK_MARKER = "rdv ";
+/** Marker substrings used to identify RDV hooks (for deduplication).
+ *  Uses the specific shell idiom from rdvOrCurlCommand() to avoid matching
+ *  user-written hooks that happen to invoke rdv directly. */
+const RDV_HOOK_MARKER = "if command -v rdv";
 const LEGACY_ACTIVITY_HOOK_MARKER = "/internal/agent-status";
 const LEGACY_TODO_HOOK_MARKER = "/internal/agent-todos";
 
@@ -796,6 +798,16 @@ export async function installAgentHooks(
     delete mergedHooks.SessionStart;
   }
 
+  // Clean up stale MCP server entries from previous installations.
+  // The MCP server backend was removed; leftover entries cause silent connection failures.
+  const mcpServers = existingSettings.mcpServers as Record<string, unknown> | undefined;
+  if (mcpServers && "remote-dev" in mcpServers) {
+    delete mcpServers["remote-dev"];
+    if (Object.keys(mcpServers).length === 0) {
+      delete existingSettings.mcpServers;
+    }
+  }
+
   const updatedSettings = {
     ...existingSettings,
     hooks: mergedHooks,
@@ -808,6 +820,29 @@ export async function installAgentHooks(
   // Ensure .claude directory exists
   await mkdir(join(configDir, ".claude"), { recursive: true });
   await writeFile(settingsPath, newContent);
+
+  // Also clean stale remote-dev MCP entry from .mcp.json (project-scoped MCP config)
+  await cleanStaleMcpJson(join(configDir, ".mcp.json"));
+  await cleanStaleMcpJson(join(configDir, ".claude", ".mcp.json"));
+}
+
+/** Remove stale "remote-dev" entry from an .mcp.json file if present. */
+async function cleanStaleMcpJson(mcpJsonPath: string): Promise<void> {
+  try {
+    const raw = await readFile(mcpJsonPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    const servers = parsed?.mcpServers as Record<string, unknown> | undefined;
+    if (!servers || !("remote-dev" in servers)) return;
+    delete servers["remote-dev"];
+    if (Object.keys(servers).length === 0) {
+      // File only had our entry — remove it entirely by writing empty object
+      await writeFile(mcpJsonPath, "{}\n");
+    } else {
+      await writeFile(mcpJsonPath, JSON.stringify(parsed, null, 2) + "\n");
+    }
+  } catch {
+    // File doesn't exist or isn't valid JSON — nothing to clean
+  }
 }
 
 // ============================================================================

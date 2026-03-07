@@ -147,7 +147,7 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
         TaskCommand::Check => {
             let sid = session_id()?;
             let result: serde_json::Value = client
-                .get_with_query("/internal/agent-stop-check", &[("sessionId", &sid)])
+                .post_empty(&format!("/internal/agent-stop-check?sessionId={sid}"))
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
