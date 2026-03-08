@@ -154,7 +154,7 @@ const POST_TASK_MARKER_PREFIX = "post-task:";
  * 3. Returns null if all done (agent can stop), or a message listing
  *    incomplete tasks (agent should continue)
  *
- * Only checks agent-sourced tasks (manual tasks are excluded).
+ * Checks both agent-sourced and user-assigned tasks for the session.
  */
 export async function checkTasksOnStop(
   sessionId: string
@@ -163,7 +163,7 @@ export async function checkTasksOnStop(
   if (!session) return null; // session not found, allow stop
 
   const { userId, folderId } = session;
-  let tasks = await TaskService.getTasksBySession(sessionId, userId);
+  let tasks = await TaskService.getAllTasksBySession(sessionId, userId);
 
   // Append post-tasks if they don't already exist (uses marker-based dedup
   // to prevent duplicates from concurrent stop hook invocations)
@@ -190,7 +190,7 @@ export async function checkTasksOnStop(
   // Re-fetch after creation to get authoritative list (handles race conditions
   // where concurrent calls may have also created post-tasks)
   if (created) {
-    tasks = await TaskService.getTasksBySession(sessionId, userId);
+    tasks = await TaskService.getAllTasksBySession(sessionId, userId);
   }
 
   // Deduplicate by title (keeps earliest by sort order, handles race-created dupes)
@@ -208,10 +208,12 @@ export async function checkTasksOnStop(
 
   if (incomplete.length === 0) return null; // all done, agent can stop
 
-  // Build a message for the agent listing what's left
-  const lines = incomplete.map(
-    (t) => `- [${t.status}] ${t.title}${t.priority !== "medium" ? ` (${t.priority})` : ""}`
-  );
+  // Build a message for the agent listing what's left, distinguishing sources
+  const lines = incomplete.map((t) => {
+    const source = t.description?.startsWith(POST_TASK_MARKER_PREFIX) ? " (post-task)" :
+      t.source !== "agent" ? " (user-assigned)" : "";
+    return `- [${t.status}] ${t.title}${t.priority !== "medium" ? ` (${t.priority})` : ""}${source}`;
+  });
   return [
     `You have ${incomplete.length} incomplete task(s). Please complete them before stopping:`,
     ...lines,
