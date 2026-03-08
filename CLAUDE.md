@@ -51,7 +51,6 @@ bun run test:ui        # Open Vitest UI
 bun run test:coverage  # Run tests with coverage
 
 # MCP
-bun run mcp            # Standalone MCP server on stdio
 
 # Database
 bun run db:push      # Push schema changes to SQLite
@@ -144,38 +143,49 @@ Each plugin implements `TerminalTypePlugin` interface:
 - Auth utilities in `src/lib/auth-utils.ts` handle CF Access JWT validation
 - API auth wrapper in `src/lib/api.ts` provides `withApiAuth` for dual session/API key auth
 
-### MCP Server (Model Context Protocol)
+### rdv CLI
 
-Optional MCP server for AI agent integration. Enables Claude Desktop, Cursor, and other MCP clients to interact with Remote Dev.
+Rust CLI for agent interaction with the terminal server. Agents use `rdv` commands via Bash instead of an MCP protocol layer.
 
-**Architecture:**
-- Runs on stdio transport alongside the terminal server
-- Uses local trust model (no additional authentication)
-- Provides 29 tools, 6 resources, and 5 workflow prompts
+**Location:** `crates/rdv/`
 
-**Components:**
-| Component | Count | Description |
-|-----------|-------|-------------|
-| Tools | 29 | Session management, git/worktree operations, folder/preferences, task management |
-| Resources | 6 | Read-only access to sessions and folders |
-| Prompts | 5 | Workflow templates for common tasks |
+**Key Commands:**
+| Command | Description |
+|---------|-------------|
+| `rdv session list` | List active sessions |
+| `rdv session create` | Create new session |
+| `rdv session exec <id> <cmd>` | Run command in session |
+| `rdv agent start <folder-id>` | Start agent session using folder's preferred provider |
+| `rdv agent list` | List agent sessions |
+| `rdv worktree create` | Create git worktree |
+| `rdv task list` | List tasks for current session |
+| `rdv task create <title>` | Create task |
+| `rdv task check` | Check for incomplete tasks (used by stop hook) |
+| `rdv task sync` | Sync PostToolUse JSON from stdin |
+| `rdv status` | System dashboard |
+| `rdv context` | Show current session context |
 
-**Key Files:**
-| File | Purpose |
+**Server Discovery (env vars):**
+- `RDV_SESSION_ID` — Current session UUID
+- `RDV_TERMINAL_SOCKET` — Unix socket path (prod)
+- `RDV_TERMINAL_PORT` — Port number (dev, default 6002)
+
+**Output:** JSON by default, `--human` flag for tables.
+
+**Build:** `cargo build` in `crates/rdv/` or auto-installed on server startup.
+
+### Claude Code Plugin
+
+Plugin structure for marketplace distribution:
+
+| Path | Purpose |
 |------|---------|
-| `src/mcp/index.ts` | MCP server initialization and request handlers |
-| `src/mcp/registry.ts` | Tool/resource/prompt registration with Zod→JSON Schema |
-| `src/mcp/tools/*.ts` | Tool implementations (session, git, folder) |
-| `src/mcp/resources/*.ts` | Resource providers (session, folder data) |
-| `src/mcp/prompts/*.ts` | Workflow prompt templates |
-| `src/mcp/utils/auth.ts` | User context for MCP requests |
-| `src/mcp/utils/error-handler.ts` | Error formatting with recovery hints |
-
-**Environment Variables:**
-```bash
-MCP_ENABLED=true      # Enable MCP server on terminal server startup
-MCP_USER_ID=<uuid>    # Override user ID for MCP requests (optional)
-```
+| `.claude-plugin/plugin.json` | Plugin metadata |
+| `.claude-plugin/marketplace.json` | Marketplace config |
+| `skills/rdv/SKILL.md` | rdv CLI skill for agents |
+| `commands/rdv-status.md` | /rdv-status slash command |
+| `agents/rdv-orchestrator.md` | Multi-agent orchestrator |
+| `hooks/hooks.json` | Hook config for agent status/task sync |
 
 ### Clean Architecture (Domain Layer)
 
@@ -425,8 +435,7 @@ React Contexts in `src/contexts/`:
 | `src/contexts/SplitContext.tsx` | Split pane state management |
 | `src/services/split-service.ts` | Split pane operations |
 | `src/components/split/SplitPaneLayout.tsx` | Split layout component |
-| `src/mcp/index.ts` | MCP server initialization |
-| `src/mcp/registry.ts` | MCP tool/resource registration |
+| `crates/rdv/` | Rust CLI for agent interaction |
 | `src/lib/terminal-plugins/registry.ts` | Terminal type plugin registry |
 | `src/lib/terminal-plugins/plugins/*.tsx` | Built-in terminal type plugins |
 | `src/types/terminal-type.ts` | Terminal type system interfaces |
@@ -597,12 +606,6 @@ GITHUB_CLIENT_SECRET=<your-client-secret>
 For database seeding:
 ```bash
 AUTHORIZED_USERS=user@example.com,another@example.com
-```
-
-For MCP server (optional):
-```bash
-MCP_ENABLED=true      # Enable MCP server on terminal server startup
-MCP_USER_ID=<uuid>    # Override default user ID for MCP requests
 ```
 
 ## Documentation

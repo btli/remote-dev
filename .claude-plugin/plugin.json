@@ -1,0 +1,11 @@
+{
+  "name": "remote-dev",
+  "description": "CLI tools for Remote Dev - manage terminal sessions, worktrees, and AI agents",
+  "version": "1.0.0",
+  "author": {
+    "name": "Bryan Li",
+    "url": "https://github.com/btli/remote-dev"
+  },
+  "repository": "https://github.com/btli/remote-dev",
+  "keywords": ["terminal", "tmux", "agents", "worktree", "orchestration"]
+}

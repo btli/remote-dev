@@ -163,8 +163,8 @@ export async function deleteTask(
   return result.length > 0;
 }
 
-/** Get all agent tasks for a specific session */
-export async function getTasksBySession(
+/** Get ALL tasks for a session regardless of source (agent + manual) */
+export async function getAllTasksBySession(
   sessionId: string,
   userId: string
 ): Promise<ProjectTask[]> {
@@ -174,10 +174,18 @@ export async function getTasksBySession(
     .where(
       and(
         eq(projectTasks.sessionId, sessionId),
-        eq(projectTasks.userId, userId),
-        eq(projectTasks.source, "agent")
+        eq(projectTasks.userId, userId)
       )
     )
     .orderBy(asc(projectTasks.sortOrder), desc(projectTasks.createdAt));
   return rows.map(parseTaskRow);
+}
+
+/** Get agent-sourced tasks for a specific session */
+export async function getTasksBySession(
+  sessionId: string,
+  userId: string
+): Promise<ProjectTask[]> {
+  const all = await getAllTasksBySession(sessionId, userId);
+  return all.filter((t) => t.source === "agent");
 }
