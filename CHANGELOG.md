@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stop hook checks all tasks**: Stop hook now checks both agent-created and user-assigned tasks for a session, with source labels in output
 
+- **Mobile Header**: Compact header bar on mobile/PWA with GitHub status, secrets, appearance toggle, tasks, user menu, and sign-out
+- **Sidebar Worktree Shortcut**: "New Worktree" option in the sidebar + dropdown menu (enabled when active folder has a linked repository)
+
 ### Changed
 
 - **Agent hooks use rdv CLI**: Hooks now prefer `rdv` CLI commands over curl, with automatic curl fallback when rdv is not installed
@@ -30,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - **MCP server backend**: Removed `src/mcp/` directory (18 files), MCP registration code from agent-profile-service, and `bun run mcp` script. Agents now use rdv CLI instead of MCP protocol. UI components that display MCP servers are retained.
+
+### Fixed
+
+- **Mobile Long-Press Glitch**: Disabled folder touch-drag handlers on mobile to prevent orphaned clone elements when context menu intercepts touch events
+- **Drag Clone Cleanup**: Added unmount cleanup for drag clones to prevent visual artifacts persisting after navigation
 
 - **Agent Status Notifications**: Browser notifications when AI agent sessions change state (idle, waiting for input, error, compacting context)
   - Click notification to focus window and switch to the relevant session

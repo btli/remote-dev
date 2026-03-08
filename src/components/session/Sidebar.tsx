@@ -61,6 +61,9 @@ interface FolderNode extends SessionFolder {
   depth: number;
 }
 
+// Initial state for touch drag ref (reused in resets to prevent drift)
+const INITIAL_TOUCH_DRAG = { type: null, id: null, startX: 0, startY: 0, element: null, clone: null, isDragging: false } as const;
+
 // Sidebar width constraints
 const MIN_SIDEBAR_WIDTH = 180;
 const MAX_SIDEBAR_WIDTH = 400;
@@ -263,7 +266,7 @@ export function Sidebar({
     setSwipedSessionId(null);
   }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Touch drag state for mobile (folder reordering)
+  // Touch drag state for touch-capable devices (folder reordering; disabled on mobile phones where context menu is used instead)
   const touchDragRef = useRef<{
     type: "folder" | "session" | null;
     id: string | null;
@@ -272,7 +275,7 @@ export function Sidebar({
     element: HTMLElement | null;
     clone: HTMLElement | null;
     isDragging: boolean; // True once long-press delay completes
-  }>({ type: null, id: null, startX: 0, startY: 0, element: null, clone: null, isDragging: false });
+  }>({ ...INITIAL_TOUCH_DRAG });
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const LONG_PRESS_DELAY = 400; // ms before drag initiates
   const LONG_PRESS_MOVE_THRESHOLD = 10; // px movement to cancel long-press
@@ -310,13 +313,22 @@ export function Sidebar({
     };
   }, [isResizing, onWidthChange]);
 
-  // Cleanup longPressTimer on unmount to prevent memory leaks
+  // Cleanup longPressTimer and drag clones on unmount to prevent memory leaks / visual glitches
   useEffect(() => {
     return () => {
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
       }
+      // Remove any orphaned drag clone
+      const drag = touchDragRef.current;
+      if (drag.clone) {
+        drag.clone.remove();
+      }
+      if (drag.element) {
+        drag.element.style.opacity = "";
+      }
+      touchDragRef.current = { ...INITIAL_TOUCH_DRAG };
     };
   }, []);
 
@@ -548,7 +560,7 @@ export function Sidebar({
     setDropFolderPosition(null);
   };
 
-  // Touch handlers for mobile drag-and-drop with long-press delay
+  // Touch handlers for drag-and-drop with long-press delay (disabled on mobile phones to avoid conflict with context menu)
   const initiateTouchDrag = useCallback((element: HTMLElement, clientX: number, clientY: number) => {
     // Create a visual clone for dragging feedback
     const clone = element.cloneNode(true) as HTMLElement;
@@ -613,7 +625,7 @@ export function Sidebar({
           longPressTimerRef.current = null;
         }
         // Reset touch state
-        touchDragRef.current = { type: null, id: null, startX: 0, startY: 0, element: null, clone: null, isDragging: false };
+        touchDragRef.current = { ...INITIAL_TOUCH_DRAG };
       }
       return;
     }
@@ -698,7 +710,7 @@ export function Sidebar({
     }
 
     // Reset state
-    touchDragRef.current = { type: null, id: null, startX: 0, startY: 0, element: null, clone: null, isDragging: false };
+    touchDragRef.current = { ...INITIAL_TOUCH_DRAG };
     setDraggingFolderId(null);
     setDragOverFolderId(null);
     setDropTargetFolderId(null);
@@ -1685,7 +1697,7 @@ export function Sidebar({
                       <Plus className="w-3.5 h-3.5" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuContent align="end" className="w-44">
                     <DropdownMenuItem onClick={onQuickNewSession}>
                       <Terminal className="w-3.5 h-3.5 mr-2" />
                       New Terminal
@@ -1693,6 +1705,17 @@ export function Sidebar({
                     <DropdownMenuItem onClick={onNewAgent}>
                       <Sparkles className="w-3.5 h-3.5 mr-2" />
                       New Agent
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        if (activeFolderId && folderHasRepo(activeFolderId)) {
+                          onFolderNewWorktree(activeFolderId);
+                        }
+                      }}
+                      disabled={!activeFolderId || !folderHasRepo(activeFolderId)}
+                    >
+                      <GitBranch className="w-3.5 h-3.5 mr-2" />
+                      New Worktree
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={onNewSession}>
@@ -1843,9 +1866,9 @@ export function Sidebar({
                               onDragOver={(e) => handleDragOver(e, node.id)}
                               onDragLeave={handleDragLeave}
                               onDrop={(e) => handleDrop(e, node.id)}
-                              onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
-                              onTouchMove={handleFolderTouchMove}
-                              onTouchEnd={handleFolderTouchEnd}
+                              onTouchStart={isMobile ? undefined : (e) => handleFolderTouchStart(e, node.id)}
+                              onTouchMove={isMobile ? undefined : handleFolderTouchMove}
+                              onTouchEnd={isMobile ? undefined : handleFolderTouchEnd}
                               onClick={() => {
                                 onFolderClick(node.id);
                                 onFolderToggle(node.id);
@@ -1911,9 +1934,9 @@ export function Sidebar({
                         onDragOver={(e) => handleFolderDragOver(e, node.id, node.parentId)}
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleFolderDrop(e, node.id)}
-                        onTouchStart={(e) => handleFolderTouchStart(e, node.id)}
-                        onTouchMove={handleFolderTouchMove}
-                        onTouchEnd={handleFolderTouchEnd}
+                        onTouchStart={isMobile ? undefined : (e) => handleFolderTouchStart(e, node.id)}
+                        onTouchMove={isMobile ? undefined : handleFolderTouchMove}
+                        onTouchEnd={isMobile ? undefined : handleFolderTouchEnd}
                         className={cn(
                           "relative",
                           !isEditingFolder && "cursor-grab active:cursor-grabbing",
@@ -2069,8 +2092,9 @@ export function Sidebar({
                                 Empty Trash
                               </ContextMenuItem>
                             </>
-                          ) : (
-                            /* Regular folder context menu */
+                          ) : (() => {
+                            const hasRepo = folderHasRepo(node.id);
+                            return (
                             <>
                               <ContextMenuItem onClick={() => onFolderNewSession(node.id)}>
                                 <Terminal className="w-3.5 h-3.5 mr-2" />
@@ -2090,9 +2114,9 @@ export function Sidebar({
                               </ContextMenuItem>
                               <ContextMenuItem
                                 onClick={() => onFolderNewWorktree(node.id)}
-                                disabled={!folderHasRepo(node.id)}
-                                className={!folderHasRepo(node.id) ? "opacity-50" : ""}
-                                title={!folderHasRepo(node.id) ? "Link a repository in folder preferences first" : undefined}
+                                disabled={!hasRepo}
+                                className={!hasRepo ? "opacity-50" : ""}
+                                title={!hasRepo ? "Link a repository in folder preferences first" : undefined}
                               >
                                 <GitBranch className="w-3.5 h-3.5 mr-2" />
                                 New Worktree
@@ -2127,11 +2151,11 @@ export function Sidebar({
                               >
                                 <GitBranch className="w-3.5 h-3.5 mr-2" />
                                 Repository
-                                {folderHasRepo(node.id) && (
+                                {hasRepo && (
                                   <span className="ml-auto text-[10px] text-primary">Linked</span>
                                 )}
                               </ContextMenuItem>
-                              {onViewIssues && folderHasRepo(node.id) && (
+                              {onViewIssues && hasRepo && (
                                 <ContextMenuItem
                                   onClick={() => onViewIssues(node.id)}
                                 >
@@ -2139,7 +2163,7 @@ export function Sidebar({
                                   View Issues
                                 </ContextMenuItem>
                               )}
-                              {onViewPRs && folderHasRepo(node.id) && (
+                              {onViewPRs && hasRepo && (
                                 <ContextMenuItem
                                   onClick={() => onViewPRs(node.id)}
                                 >
@@ -2172,7 +2196,7 @@ export function Sidebar({
                                 Delete
                               </ContextMenuItem>
                             </>
-                          )}
+                          );})()}
                         </ContextMenuContent>
                         </ContextMenu>
                         {/* Drop indicator - after folder */}

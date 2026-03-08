@@ -340,7 +340,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Agent status notifications (hook manages its own permission state)
   const notificationsEnabled = userSettings?.notificationsEnabled ?? true;
   useAgentNotifications({
-    enabled: notificationsEnabled,
+    enabled: userSettings?.notificationsEnabled,
     agentActivityStatuses,
     sessions,
     setActiveSession,
