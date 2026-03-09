@@ -52,6 +52,8 @@ interface TerminalProps {
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   /** Called when agent TodoWrite tasks are synced (from PostToolUse hooks) */
   onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when a notification is broadcast from the terminal server */
+  onNotification?: (notification: Record<string, unknown>) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
 }
@@ -78,6 +80,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onAgentRestarted,
   onAgentActivityStatus,
   onAgentTodosUpdated,
+  onNotification,
   onOutput,
   onDimensionsChange,
 }, ref) {
@@ -131,6 +134,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onAgentRestartedRef = useRef(onAgentRestarted);
   const onAgentActivityStatusRef = useRef(onAgentActivityStatus);
   const onAgentTodosUpdatedRef = useRef(onAgentTodosUpdated);
+  const onNotificationRef = useRef(onNotification);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
@@ -163,6 +167,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onAgentRestartedRef.current = onAgentRestarted;
     onAgentActivityStatusRef.current = onAgentActivityStatus;
     onAgentTodosUpdatedRef.current = onAgentTodosUpdated;
+    onNotificationRef.current = onNotification;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
@@ -176,7 +181,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -568,6 +573,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               case "agent_todos_updated":
                 // Agent TodoWrite tasks synced — refresh task list
                 onAgentTodosUpdatedRef.current?.(msg.sessionId);
+                break;
+              case "notification":
+                // In-app notification broadcast from terminal server
+                if (msg.notification) {
+                  onNotificationRef.current?.(msg.notification as Record<string, unknown>);
+                }
                 break;
               case "voice_ready":
                 console.log(`[Voice] Ready for session ${msg.sessionId}`);

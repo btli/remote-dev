@@ -63,6 +63,8 @@ import { SplitPaneLayout } from "@/components/split/SplitPaneLayout";
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { useAgentNotifications } from "@/hooks/useAgentNotifications";
+import { NotificationPanel } from "@/components/notifications/NotificationPanel";
+import { useNotificationContext, hydrateNotification } from "@/contexts/NotificationContext";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -336,6 +338,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const { getRepositoryById } = useGitHubStats();
 
   const { refreshTasks } = useTaskContext();
+  const { addNotification } = useNotificationContext();
+
+  // Notification panel state
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
 
   // Agent status notifications (hook manages its own permission state)
   const notificationsEnabled = userSettings?.notificationsEnabled ?? true;
@@ -345,6 +351,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     sessions,
     setActiveSession,
   });
+
+  // Handle agent activity status updates from WebSocket
+  const handleAgentActivityStatus = useCallback(
+    (sid: string, status: string) => {
+      setAgentActivityStatus(sid, status as AgentActivityStatus);
+    },
+    [setAgentActivityStatus]
+  );
 
   // Split state from context
   const {
@@ -1349,6 +1363,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     return () => window.removeEventListener("open-folder-preferences", handleOpenFolderPrefs as EventListener);
   }, []);
 
+  // Listen for notification-panel-toggle event from Header bell button
+  useEffect(() => {
+    const handleToggle = () => setNotificationPanelOpen((prev) => !prev);
+    window.addEventListener("notification-panel-toggle", handleToggle);
+    return () => window.removeEventListener("notification-panel-toggle", handleToggle);
+  }, []);
+
   /** Close a session in a split pane */
   const handlePaneSessionExit = useCallback(async (sessionId: string) => {
     try {
@@ -1715,10 +1736,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onDimensionsChange={isRecording ? updateDimensions : undefined}
                           onSessionRestart={() => handleSessionRestart(session)}
                           onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
-                          onAgentActivityStatus={(sid, status) =>
-                            setAgentActivityStatus(sid, status as AgentActivityStatus)
-                          }
+                          onAgentActivityStatus={handleAgentActivityStatus}
                           onAgentTodosUpdated={() => refreshTasks()}
+                          onNotification={(notification) => {
+                            addNotification(hydrateNotification(notification));
+                          }}
                         />
                       </div>
                     );
@@ -1932,6 +1954,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Notification Panel */}
+      <NotificationPanel
+        open={notificationPanelOpen}
+        onOpenChange={setNotificationPanelOpen}
+        onJumpToSession={(sessionId) => {
+          setActiveSession(sessionId);
+          setNotificationPanelOpen(false);
+        }}
+      />
     </div>
   );
 }

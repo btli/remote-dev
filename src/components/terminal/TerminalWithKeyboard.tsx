@@ -43,6 +43,8 @@ interface TerminalWithKeyboardProps {
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   /** Called when agent TodoWrite tasks are synced */
   onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when a notification is broadcast from the terminal server */
+  onNotification?: (notification: Record<string, unknown>) => void;
 }
 
 export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
@@ -68,6 +70,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onSessionDelete,
   onAgentActivityStatus,
   onAgentTodosUpdated,
+  onNotification,
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
@@ -167,6 +170,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
             onDimensionsChange={onDimensionsChange}
             onAgentActivityStatus={onAgentActivityStatus}
             onAgentTodosUpdated={onAgentTodosUpdated}
+            onNotification={onNotification}
           />
         </ErrorBoundary>
         {session?.terminalType === "agent" && (

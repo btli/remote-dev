@@ -22,9 +22,8 @@ import type {
   TerminalSession,
   CreateSessionInput,
   AgentProviderType,
-  AgentProviderConfig,
 } from "@/types/session";
-import { AGENT_PROVIDERS } from "@/types/session";
+import { getProviderConfig, buildAgentCommand } from "../agent-utils";
 
 /**
  * Agent plugin configuration
@@ -36,33 +35,6 @@ export interface AgentPluginConfig {
   defaultEnv?: Record<string, string>;
   /** Allow dangerous flags (--dangerously-skip-permissions, etc.) */
   allowDangerousFlags?: boolean;
-}
-
-/**
- * Build the agent command string
- */
-function buildAgentCommand(
-  provider: AgentProviderConfig,
-  flags: string[] = [],
-  allowDangerous = false
-): string {
-  const safeFlags = allowDangerous
-    ? flags
-    : flags.filter((f) => !provider.dangerousFlags?.includes(f));
-
-  const allFlags = [...provider.defaultFlags, ...safeFlags];
-  const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
-
-  return `${provider.command}${flagsStr}`;
-}
-
-/**
- * Get agent provider config by ID
- */
-function getProviderConfig(
-  providerId: AgentProviderType
-): AgentProviderConfig | undefined {
-  return AGENT_PROVIDERS.find((p) => p.id === providerId);
 }
 
 /**

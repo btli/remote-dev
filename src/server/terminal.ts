@@ -97,6 +97,15 @@ function broadcastToClients(data: Record<string, unknown>): void {
   }
 }
 
+/** Broadcast a JSON message to clients connected to a specific session */
+function broadcastToSession(sessionId: string, data: Record<string, unknown>): void {
+  const message = JSON.stringify(data);
+  const session = sessions.get(sessionId);
+  if (session?.ws.readyState === WebSocket.OPEN) {
+    session.ws.send(message);
+  }
+}
+
 /**
  * Destroy a PTY and release its file descriptors.
  * Uses the runtime's destroy() method which closes the socket/FDs,
@@ -359,6 +368,42 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       )
       .catch((err) => console.error("[Agent Status] Failed to persist activity status:", err));
 
+    // Create in-app notification for waiting/error statuses (fire-and-forget, with 5s debounce via service)
+    if (status === "waiting" || status === "error") {
+      Promise.all([import("@/db"), import("@/db/schema"), import("drizzle-orm"), import("@/services/notification-service")])
+        .then(async ([{ db }, { terminalSessions }, { eq }, NotificationService]) => {
+          // Look up session for name and userId
+          const session = await db.query.terminalSessions.findFirst({
+            where: eq(terminalSessions.id, sessionId),
+            columns: { name: true, userId: true },
+          });
+          if (!session) return;
+          const title = status === "waiting"
+            ? "Agent waiting for input"
+            : "Agent encountered an error";
+          const body = `Session "${session.name}" needs attention`;
+          const notification = await NotificationService.createNotification({
+            userId: session.userId,
+            sessionId,
+            sessionName: session.name,
+            type: status === "waiting" ? "agent_waiting" : "agent_error",
+            title,
+            body,
+          });
+          if (!notification) return; // debounced
+          // Broadcast notification to clients for real-time update
+          broadcastToClients({
+            type: "notification",
+            notification: {
+              ...notification,
+              createdAt: notification.createdAt instanceof Date ? notification.createdAt.toISOString() : notification.createdAt,
+              readAt: null,
+            },
+          });
+        })
+        .catch((err) => console.error("[Agent Status] Failed to create notification:", err));
+    }
+
     sendJson(res, 200, { success: true });
     return true;
   }
@@ -424,6 +469,24 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       });
     }
 
+    return true;
+  }
+
+  // Handle browser frame broadcast for browser pane sessions
+  // POST /internal/browser-frame { sessionId, data } - broadcasts base64 screenshot to session client
+  if (pathname === "/internal/browser-frame" && req.method === "POST") {
+    try {
+      const body = await readRequestBody(req);
+      const { sessionId, data } = JSON.parse(body) as { sessionId: string; data: string };
+      broadcastToSession(sessionId, {
+        type: "browser_frame",
+        sessionId,
+        data,
+      });
+      sendJson(res, 200, { success: true });
+    } catch {
+      sendJson(res, 400, { error: "Invalid request" });
+    }
     return true;
   }
 

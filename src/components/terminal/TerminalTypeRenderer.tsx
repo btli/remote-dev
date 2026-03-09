@@ -6,7 +6,9 @@
  * This component delegates to the appropriate UI based on the session's terminalType:
  * - shell: Standard Terminal component
  * - agent: Terminal with agent exit screen overlay
+ * - orchestrator: Agent terminal wrapped in OrchestratorView
  * - file: CodeMirrorEditor for file viewing/editing
+ * - browser: BrowserPane with screenshot streaming
  */
 
 import { useState, useRef, useCallback } from "react";
@@ -15,6 +17,8 @@ import { Terminal, type TerminalRef } from "./Terminal";
 import { AgentExitScreen } from "./AgentExitScreen";
 import { VoiceMicButton } from "./VoiceMicButton";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
+import { OrchestratorView } from "./OrchestratorView";
+import { BrowserPane } from "./BrowserPane";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { FileViewerMetadata } from "@/types/terminal-type";
 
@@ -40,6 +44,8 @@ interface TerminalTypeRendererProps {
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   /** Called when agent TodoWrite tasks are synced */
   onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when a notification is broadcast from the terminal server */
+  onNotification?: (notification: Record<string, unknown>) => void;
 }
 
 export function TerminalTypeRenderer({
@@ -62,6 +68,7 @@ export function TerminalTypeRenderer({
   onAgentStateChange,
   onAgentActivityStatus,
   onAgentTodosUpdated,
+  onNotification,
 }: TerminalTypeRendererProps) {
   const terminalRef = useRef<TerminalRef>(null);
   const [agentExitInfo, setAgentExitInfo] = useState<{
@@ -103,6 +110,58 @@ export function TerminalTypeRenderer({
     onSessionClose?.(session.id);
   }, [session.id, onAgentStateChange, onSessionClose]);
 
+  // Shared agent terminal content (used by both agent and orchestrator cases)
+  const renderAgentTerminal = (terminalType: "agent" | "orchestrator") => (
+    <div className="relative w-full h-full">
+      <Terminal
+        ref={terminalRef}
+        sessionId={session.id}
+        tmuxSessionName={session.tmuxSessionName}
+        sessionName={session.name}
+        projectPath={session.projectPath}
+        wsUrl={wsUrl}
+        fontSize={fontSize}
+        fontFamily={fontFamily}
+        scrollback={scrollback}
+        tmuxHistoryLimit={tmuxHistoryLimit}
+        notificationsEnabled={notificationsEnabled}
+        isRecording={isRecording}
+        isActive={isActive}
+        environmentVars={environmentVars}
+        terminalType={terminalType}
+        onStatusChange={onStatusChange}
+        onWebSocketReady={onWebSocketReady}
+        onSessionExit={onSessionExit}
+        onAgentExited={handleAgentExited}
+        onAgentRestarted={handleAgentRestarted}
+        onAgentActivityStatus={onAgentActivityStatus}
+        onAgentTodosUpdated={onAgentTodosUpdated}
+        onNotification={onNotification}
+        onOutput={onOutput}
+        onDimensionsChange={onDimensionsChange}
+      />
+
+      {/* Voice mic button - rendered outside Terminal to avoid xterm canvas stacking */}
+      <div className="absolute top-2 left-2 z-50" style={isRecording ? { left: "5.5rem" } : undefined}>
+        <VoiceMicButton getWebSocket={() => terminalRef.current?.getWebSocket() ?? null} />
+      </div>
+
+      {/* Agent Exit Screen Overlay */}
+      {agentExitInfo && (
+        <AgentExitScreen
+          sessionId={session.id}
+          sessionName={session.name}
+          exitCode={agentExitInfo.exitCode}
+          exitedAt={agentExitInfo.exitedAt}
+          restartCount={session.agentRestartCount ?? 0}
+          onRestart={handleAgentRestart}
+          onClose={handleSessionClose}
+          isRestarting={isRestarting}
+        />
+      )}
+    </div>
+  );
+
   // Render based on terminal type
   switch (session.terminalType) {
     case "file": {
@@ -122,55 +181,22 @@ export function TerminalTypeRenderer({
     }
 
     case "agent":
+      return renderAgentTerminal("agent");
+
+    case "orchestrator":
       return (
-        <div className="relative w-full h-full">
-          <Terminal
-            ref={terminalRef}
-            sessionId={session.id}
-            tmuxSessionName={session.tmuxSessionName}
-            sessionName={session.name}
-            projectPath={session.projectPath}
-            wsUrl={wsUrl}
-            fontSize={fontSize}
-            fontFamily={fontFamily}
-            scrollback={scrollback}
-            tmuxHistoryLimit={tmuxHistoryLimit}
-            notificationsEnabled={notificationsEnabled}
-            isRecording={isRecording}
-            isActive={isActive}
-            environmentVars={environmentVars}
-            terminalType="agent"
-            onStatusChange={onStatusChange}
-            onWebSocketReady={onWebSocketReady}
-            onSessionExit={onSessionExit}
-            onAgentExited={handleAgentExited}
-            onAgentRestarted={handleAgentRestarted}
-            onAgentActivityStatus={onAgentActivityStatus}
-            onAgentTodosUpdated={onAgentTodosUpdated}
-            onOutput={onOutput}
-            onDimensionsChange={onDimensionsChange}
-          />
-
-          {/* Voice mic button - rendered outside Terminal to avoid xterm canvas stacking */}
-          <div className="absolute top-2 left-2 z-50" style={isRecording ? { left: "5.5rem" } : undefined}>
-            <VoiceMicButton getWebSocket={() => terminalRef.current?.getWebSocket() ?? null} />
-          </div>
-
-          {/* Agent Exit Screen Overlay */}
-          {agentExitInfo && (
-            <AgentExitScreen
-              sessionId={session.id}
-              sessionName={session.name}
-              exitCode={agentExitInfo.exitCode}
-              exitedAt={agentExitInfo.exitedAt}
-              restartCount={session.agentRestartCount ?? 0}
-              onRestart={handleAgentRestart}
-              onClose={handleSessionClose}
-              isRestarting={isRestarting}
-            />
-          )}
-        </div>
+        <OrchestratorView
+          session={session}
+          onNavigateToSession={(id) => {
+            onSessionClose?.(id);
+          }}
+        >
+          {renderAgentTerminal("orchestrator")}
+        </OrchestratorView>
       );
+
+    case "browser":
+      return <BrowserPane session={session} />;
 
     case "shell":
     default:

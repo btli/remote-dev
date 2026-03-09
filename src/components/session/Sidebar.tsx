@@ -46,6 +46,7 @@ import { usePortContext } from "@/contexts/PortContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
+import { SessionMetadataBar } from "./SessionMetadataBar";
 import { useSessionContext } from "@/contexts/SessionContext";
 
 export interface SessionFolder {
@@ -1068,7 +1069,9 @@ export function Sidebar({
                 isActive
                   ? "bg-primary/20 border border-border"
                   : "hover:bg-accent/50 border border-transparent",
-                isDragOverSession && "bg-primary/20 border-primary/30"
+                isDragOverSession && "bg-primary/20 border-primary/30",
+                !isActive && (session.terminalType === "agent" || session.terminalType === "orchestrator") &&
+                  ["waiting", "error"].includes(getAgentActivityStatus(session.id) ?? "") && "ring-2 ring-yellow-400/70 animate-pulse"
               )}
             >
               {/* Drop indicator - before */}
@@ -1263,7 +1266,9 @@ export function Sidebar({
                 isDragOverSession && "bg-primary/20 border-primary/30",
                 // Mobile: z-10 for swipe layering; solid bg-card only on the swiped row to cover the close button
                 isMobile && "z-10",
-                isMobile && swipedSessionId === session.id && "bg-card"
+                isMobile && swipedSessionId === session.id && "bg-card",
+                !isActive && (session.terminalType === "agent" || session.terminalType === "orchestrator") &&
+                  ["waiting", "error"].includes(getAgentActivityStatus(session.id) ?? "") && "ring-2 ring-yellow-400/70 animate-pulse"
               )}
             >
             {/* Status indicator - icon colored by agent activity status */}
@@ -1306,13 +1311,8 @@ export function Sidebar({
                   >
                     {session.name}
                   </span>
-                  {/* Git branch indicator */}
-                  {session.worktreeBranch && (
-                    <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground truncate">
-                      <GitBranch className="w-2.5 h-2.5" />
-                      {session.worktreeBranch.replace(/^wt-/, "")}
-                    </span>
-                  )}
+                  {/* Git status metadata (branch, ahead/behind, PR, ports) */}
+                  <SessionMetadataBar session={session} isCollapsed={collapsed} />
                 </>
               )}
             </div>
