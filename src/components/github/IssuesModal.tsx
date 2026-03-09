@@ -12,7 +12,7 @@
  * - Start working on an issue (creates worktree + agent session)
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   CircleDot,
   CircleCheck,
@@ -129,13 +129,18 @@ function IssuesModalContent({
     return null;
   });
 
-  // Sync selectedIssue when issues load after mount (handles late-loading data)
+  // Sync selectedIssue when issues load after mount (handles late-loading data).
+  // The ref prevents re-selecting after the user navigates back to the list.
+  const initialIssueSynced = useRef(!!selectedIssue);
   useEffect(() => {
-    if (initialIssueNumber && !selectedIssue && issues.length > 0) {
+    if (initialIssueNumber && !initialIssueSynced.current && issues.length > 0) {
       const found = issues.find((i) => i.number === initialIssueNumber);
-      if (found) setSelectedIssue(found);
+      if (found) {
+        setSelectedIssue(found);
+        initialIssueSynced.current = true;
+      }
     }
-  }, [initialIssueNumber, issues, selectedIssue]);
+  }, [initialIssueNumber, issues]);
 
   // Fetch issues on mount
   useEffect(() => {

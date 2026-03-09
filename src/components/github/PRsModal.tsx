@@ -11,7 +11,7 @@
  * - Click-through detail view with markdown body and comments
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import {
@@ -132,13 +132,18 @@ function PRsModalContent({
     return null;
   });
 
-  // Sync selectedPR when pullRequests load after mount (handles late-loading data)
+  // Sync selectedPR when pullRequests load after mount (handles late-loading data).
+  // The ref prevents re-selecting after the user navigates back to the list.
+  const initialPRSynced = useRef(!!selectedPR);
   useEffect(() => {
-    if (initialPRNumber && !selectedPR && pullRequests.length > 0) {
+    if (initialPRNumber && !initialPRSynced.current && pullRequests.length > 0) {
       const found = pullRequests.find((pr) => pr.number === initialPRNumber);
-      if (found) setSelectedPR(found);
+      if (found) {
+        setSelectedPR(found);
+        initialPRSynced.current = true;
+      }
     }
-  }, [initialPRNumber, pullRequests, selectedPR]);
+  }, [initialPRNumber, pullRequests]);
 
   // Filter state - resets naturally when component unmounts (modal closes)
   const [searchQuery, setSearchQuery] = useState("");
