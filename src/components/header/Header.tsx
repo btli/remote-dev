@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/tooltip";
 import { LogOut, ClipboardList } from "lucide-react";
 import Image from "next/image";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 interface HeaderProps {
   isGitHubConnected: boolean;
@@ -55,6 +56,13 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
             />
             <SecretsStatusButton />
             <AppearanceModeToggleCompact />
+            <NotificationBell
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("notification-panel-toggle")
+                )
+              }
+            />
             <Button
               variant="ghost"
               size="icon"
@@ -114,6 +122,18 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
             />
             <SecretsStatusButton />
             <AppearanceModeToggleCompact />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <NotificationBell
+                  onClick={() =>
+                    window.dispatchEvent(
+                      new CustomEvent("notification-panel-toggle")
+                    )
+                  }
+                />
+              </TooltipTrigger>
+              <TooltipContent>Notifications</TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

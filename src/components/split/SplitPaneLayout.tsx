@@ -6,6 +6,7 @@ import type { TerminalSession } from "@/types/session";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useTaskContext } from "@/contexts/TaskContext";
+import { useNotificationContext, hydrateNotification } from "@/contexts/NotificationContext";
 import { ResizeHandle } from "./ResizeHandle";
 import { cn } from "@/lib/utils";
 import dynamic from "next/dynamic";
@@ -58,6 +59,7 @@ export function SplitPaneLayout({
 }: SplitPaneLayoutProps) {
   const { setAgentActivityStatus } = useSessionContext();
   const { refreshTasks } = useTaskContext();
+  const { addNotification } = useNotificationContext();
   const isHorizontal = splitGroup.direction === "horizontal";
 
   // Get full session data for each pane
@@ -166,6 +168,9 @@ export function SplitPaneLayout({
                   setAgentActivityStatus(sid, status as AgentActivityStatus)
                 }
                 onAgentTodosUpdated={() => refreshTasks()}
+                onNotification={(notification) => {
+                  addNotification(hydrateNotification(notification));
+                }}
               />
             </div>
 

@@ -35,6 +35,8 @@ export class SessionPresenter {
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
+      parentSessionId: session.parentSessionId,
+      orchestratorRole: session.orchestratorRole,
       status: session.status.toString() as TerminalSession["status"],
       pinned: session.pinned,
       tabOrder: session.tabOrder,
