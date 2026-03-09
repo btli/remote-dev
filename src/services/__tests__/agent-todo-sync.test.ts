@@ -236,17 +236,23 @@ describe("buildStopMessage", () => {
     expect(msg).toContain("2 incomplete task(s)");
   });
 
+  it("includes task status tag", () => {
+    const tasks = [makeTask({ title: "Implement feature", status: "in_progress" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("[in_progress]");
+  });
+
   it("lists agent-owned task without source tag", () => {
     const tasks = [makeTask({ title: "Implement feature", source: "agent" })];
     const msg = buildStopMessage(tasks);
-    expect(msg).toContain("- Implement feature");
+    expect(msg).toContain("- [open] Implement feature");
     expect(msg).not.toContain("(user-assigned)");
   });
 
   it("lists user-assigned task with source tag", () => {
     const tasks = [makeTask({ title: "Fix login", source: "manual" })];
     const msg = buildStopMessage(tasks);
-    expect(msg).toContain("- Fix login (user-assigned)");
+    expect(msg).toContain("- [open] Fix login (user-assigned)");
   });
 
   it("lists post-task with slash command", () => {
@@ -257,7 +263,7 @@ describe("buildStopMessage", () => {
       }),
     ];
     const msg = buildStopMessage(tasks);
-    expect(msg).toContain("- Code Simplifier — run /simplify");
+    expect(msg).toContain("- [open] Code Simplifier — run /simplify");
   });
 
   it("includes priority for non-medium tasks", () => {
@@ -278,7 +284,7 @@ describe("buildStopMessage", () => {
     expect(msg).toContain("TaskCreate");
   });
 
-  it("includes slash command footer when post-tasks are present", () => {
+  it("footer lists only commands for incomplete post-tasks", () => {
     const tasks = [
       makeTask({
         title: "Code Review",
@@ -287,7 +293,22 @@ describe("buildStopMessage", () => {
     ];
     const msg = buildStopMessage(tasks);
     expect(msg).toContain("/code-review");
-    expect(msg).toContain("/simplify");
+    expect(msg).not.toContain("/simplify");
+  });
+
+  it("footer lists all commands when all post-tasks are incomplete", () => {
+    const tasks = [
+      makeTask({
+        title: "Code Simplifier",
+        description: `${POST_TASK_MARKER_PREFIX}Code Simplifier`,
+      }),
+      makeTask({
+        title: "Code Review",
+        description: `${POST_TASK_MARKER_PREFIX}Code Review`,
+      }),
+    ];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("/simplify, /code-review");
   });
 
   it("omits slash command footer when no post-tasks are present", () => {
@@ -300,7 +321,7 @@ describe("buildStopMessage", () => {
   it("handles mixed task types", () => {
     const tasks = [
       makeTask({ title: "Fix bug", source: "manual", priority: "high" }),
-      makeTask({ title: "Write tests", source: "agent" }),
+      makeTask({ title: "Write tests", source: "agent", status: "in_progress" }),
       makeTask({
         title: "Code Simplifier",
         description: `${POST_TASK_MARKER_PREFIX}Code Simplifier`,
@@ -309,8 +330,8 @@ describe("buildStopMessage", () => {
     ];
     const msg = buildStopMessage(tasks);
     expect(msg).toContain("3 incomplete task(s)");
-    expect(msg).toContain("- Fix bug [high] (user-assigned)");
-    expect(msg).toContain("- Write tests");
-    expect(msg).toContain("- Code Simplifier [low] — run /simplify");
+    expect(msg).toContain("- [open] Fix bug [high] (user-assigned)");
+    expect(msg).toContain("- [in_progress] Write tests");
+    expect(msg).toContain("- [open] Code Simplifier [low] — run /simplify");
   });
 });
