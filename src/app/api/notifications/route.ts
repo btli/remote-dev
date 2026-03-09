@@ -6,7 +6,8 @@ import * as NotificationService from "@/services/notification-service";
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get("limit") ?? "50", 10);
+    const rawLimit = parseInt(searchParams.get("limit") ?? "50", 10);
+    const limit = Number.isNaN(rawLimit) ? 50 : Math.min(Math.max(1, rawLimit), 200);
     const unreadOnly = searchParams.get("unreadOnly") === "true";
     const [notifications, unreadCount] = await Promise.all([
       NotificationService.listNotifications(userId, { limit, unreadOnly }),

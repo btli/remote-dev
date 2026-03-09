@@ -129,7 +129,9 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   );
 
   // Keep markRead ref in sync for toast action callbacks
-  markReadRef.current = markRead;
+  useEffect(() => {
+    markReadRef.current = markRead;
+  }, [markRead]);
 
   const markAllRead = useCallback(async () => {
     // Optimistic update

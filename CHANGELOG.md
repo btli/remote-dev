@@ -39,8 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP server backend**: Removed `src/mcp/` directory (18 files), MCP registration code from agent-profile-service, and `bun run mcp` script. Agents now use rdv CLI instead of MCP protocol. UI components that display MCP servers are retained.
 
+### Security
+
+- **Browser API session ownership**: All 8 browser API routes (`back`, `click`, `evaluate`, `forward`, `navigate`, `screenshot`, `snapshot`, `type`) now verify session ownership before allowing operations
+- **Browser frame localhost restriction**: `/internal/browser-frame` endpoint restricted to localhost callers only
+- **Invalid URL rejection**: `createBrowserSession` now throws on invalid URLs instead of silently creating `about:blank` sessions
+- **URL param encoding**: rdv CLI now uses proper query parameter encoding via `post_empty_with_query` instead of string interpolation
+
 ### Fixed
 
+- **Notification limit validation**: `limit` query param on notifications API now validates for NaN and clamps to [1, 200]
+- **React concurrent-mode safety**: `markReadRef.current` assignment moved to `useEffect` to avoid ref mutation during render
+- **Shared markdown components**: `IssueDetailPanel` now uses shared `MARKDOWN_COMPONENTS` module, fixing visual inconsistency with PR detail views
+- **TaskSidebar dead code**: Removed unused `hydrated` state variable
+- **rdv CLI output**: Fixed `print!` to `println!` for consistent terminal output termination
 - **Mobile Long-Press Glitch**: Disabled folder touch-drag handlers on mobile to prevent orphaned clone elements when context menu intercepts touch events
 - **Drag Clone Cleanup**: Added unmount cleanup for drag clones to prevent visual artifacts persisting after navigation
 

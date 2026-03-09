@@ -51,8 +51,8 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
                 Some(s) => s,
                 None => return Ok(()), // No session context — skip silently.
             };
-            let path = format!("/internal/agent-status?sessionId={sid}&status={status}");
-            let result = client.post_empty(&path).await?;
+            let query = [("sessionId", sid.as_str()), ("status", status.as_str())];
+            let result = client.post_empty_with_query("/internal/agent-status", &query).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         None => {
