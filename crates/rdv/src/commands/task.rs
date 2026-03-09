@@ -145,14 +145,27 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         TaskCommand::Check => {
-            let sid = session_id()?;
+            let sid = match session_id() {
+                Ok(s) => s,
+                Err(_) => {
+                    // No session context (e.g. running outside an agent session) — nothing to check.
+                    return Ok(());
+                }
+            };
             let result: serde_json::Value = client
                 .post_empty(&format!("/internal/agent-stop-check?sessionId={sid}"))
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         TaskCommand::Sync => {
-            let sid = session_id()?;
+            let sid = match session_id() {
+                Ok(s) => s,
+                Err(_) => {
+                    // No session context — drain stdin and exit silently.
+                    let _ = std::io::stdin().read_to_end(&mut Vec::new());
+                    return Ok(());
+                }
+            };
             let mut buf = Vec::new();
             std::io::stdin().read_to_end(&mut buf)?;
             let result = client
