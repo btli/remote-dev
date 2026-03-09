@@ -377,13 +377,23 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     try {
       const { checkTasksOnStop } = await import("@/services/agent-todo-sync");
       const message = await checkTasksOnStop(sessionId);
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end(message ?? "");
+      const wantsText = req.headers.accept?.includes("text/plain");
+      if (wantsText) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end(message ?? "");
+      } else {
+        sendJson(res, 200, { message: message ?? null });
+      }
     } catch (error) {
       console.error("[Agent Stop Check] Error:", error);
       // On error, allow the agent to stop (don't block on failures)
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("");
+      const wantsText = req.headers.accept?.includes("text/plain");
+      if (wantsText) {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("");
+      } else {
+        sendJson(res, 200, { message: null });
+      }
     }
 
     return true;

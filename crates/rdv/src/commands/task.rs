@@ -155,7 +155,12 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             let result: serde_json::Value = client
                 .post_empty(&format!("/internal/agent-stop-check?sessionId={sid}"))
                 .await?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            // Print the task message if present (tells the agent about incomplete tasks)
+            if let Some(msg) = result.get("message").and_then(|v| v.as_str()) {
+                if !msg.is_empty() {
+                    print!("{msg}");
+                }
+            }
         }
         TaskCommand::Sync => {
             let sid = match session_id() {
