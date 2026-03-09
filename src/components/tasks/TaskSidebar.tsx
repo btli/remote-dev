@@ -440,9 +440,16 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
     useTaskContext();
   const { activeSessionId } = useSessionContext();
 
-  // Sidebar state
-  const [collapsed, setCollapsed] = useState(getStoredCollapsed);
-  const [width, setWidth] = useState(getStoredWidth);
+  // Sidebar state — initialize with server-safe defaults, hydrate from localStorage in useEffect
+  const [collapsed, setCollapsed] = useState(true);
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setCollapsed(getStoredCollapsed());
+    setWidth(getStoredWidth());
+    setHydrated(true);
+  }, []);
 
   // Section expand state
   const [manualExpanded, setManualExpanded] = useState(true);
