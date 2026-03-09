@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { AppearanceProvider } from "@/contexts/AppearanceContext";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -58,6 +59,21 @@ export default function RootLayout({
         <SessionProvider>
           <AppearanceProvider>{children}</AppearanceProvider>
         </SessionProvider>
+        <Toaster
+          position="bottom-center"
+          theme="dark"
+          toastOptions={{
+            classNames: {
+              toast:
+                "bg-popover/95 backdrop-blur-xl border border-border shadow-2xl text-popover-foreground",
+              title: "font-medium text-sm",
+              description: "text-xs text-muted-foreground",
+              actionButton:
+                "bg-primary text-primary-foreground text-xs px-2 py-1 rounded-md",
+              closeButton: "text-muted-foreground hover:text-foreground",
+            },
+          }}
+        />
         <ServiceWorkerRegistration />
       </body>
     </html>

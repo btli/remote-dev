@@ -349,7 +349,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const { getRepositoryById } = useGitHubStats();
 
   const { refreshTasks } = useTaskContext();
-  const { addNotification } = useNotificationContext();
+  const { addNotification, registerJumpHandler } = useNotificationContext();
 
   // Notification panel state
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -1400,6 +1400,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     window.addEventListener("notification-panel-toggle", handleToggle);
     return () => window.removeEventListener("notification-panel-toggle", handleToggle);
   }, []);
+
+  // Register session jump handler for toast "View session" actions
+  useEffect(() => {
+    registerJumpHandler(setActiveSession);
+    return () => registerJumpHandler(null);
+  }, [registerJumpHandler, setActiveSession]);
 
   /** Close a session in a split pane */
   const handlePaneSessionExit = useCallback(async (sessionId: string) => {

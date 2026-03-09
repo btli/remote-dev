@@ -7,17 +7,19 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import type { NotificationEvent } from "@/types/notification";
+import { fireNotificationToast } from "@/lib/notification-toast";
 
 /** Hydrate date strings from API response into Date objects */
 export function hydrateNotification(raw: Record<string, unknown>): NotificationEvent {
   return {
-    ...(raw as unknown as NotificationEvent),
+    ...raw,
     createdAt: new Date(raw.createdAt as string),
     readAt: raw.readAt ? new Date(raw.readAt as string) : null,
-  };
+  } as NotificationEvent;
 }
 
 interface NotificationContextValue {
@@ -28,6 +30,9 @@ interface NotificationContextValue {
   markAllRead: () => Promise<void>;
   refresh: () => Promise<void>;
   addNotification: (notification: NotificationEvent) => void;
+  deleteNotification: (id: string) => Promise<void>;
+  deleteAllNotifications: () => Promise<void>;
+  registerJumpHandler: (fn: ((sessionId: string) => void) | null) => void;
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
@@ -82,8 +87,18 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
     refresh();
   }, [refresh]);
 
+  // Ref for session jump handler — registered by SessionManager, no re-render on change
+  const jumpHandlerRef = useRef<((sessionId: string) => void) | null>(null);
+
+  const registerJumpHandler = useCallback((fn: ((sessionId: string) => void) | null) => {
+    jumpHandlerRef.current = fn;
+  }, []);
+
+  const markReadRef = useRef<((ids: string[]) => void) | null>(null);
+
   const addNotification = useCallback((notification: NotificationEvent) => {
     setNotifications((prev) => [notification, ...prev].slice(0, MAX_NOTIFICATIONS));
+    fireNotificationToast(notification, jumpHandlerRef.current, markReadRef.current);
   }, []);
 
   const markRead = useCallback(
@@ -113,6 +128,9 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
     [refresh]
   );
 
+  // Keep markRead ref in sync for toast action callbacks
+  markReadRef.current = markRead;
+
   const markAllRead = useCallback(async () => {
     // Optimistic update
     setNotifications((prev) =>
@@ -134,6 +152,39 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
     }
   }, [refresh]);
 
+  const deleteNotification = useCallback(
+    async (id: string) => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      try {
+        const response = await fetch("/api/notifications", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [id] }),
+        });
+        if (!response.ok) throw new Error("Failed to delete notification");
+      } catch (err) {
+        console.error("Error deleting notification:", err);
+        await refresh();
+      }
+    },
+    [refresh]
+  );
+
+  const deleteAllNotifications = useCallback(async () => {
+    setNotifications([]);
+    try {
+      const response = await fetch("/api/notifications", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+      if (!response.ok) throw new Error("Failed to delete all notifications");
+    } catch (err) {
+      console.error("Error deleting all notifications:", err);
+      await refresh();
+    }
+  }, [refresh]);
+
   const value = useMemo(
     () => ({
       notifications,
@@ -143,8 +194,11 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
       markAllRead,
       refresh,
       addNotification,
+      deleteNotification,
+      deleteAllNotifications,
+      registerJumpHandler,
     }),
-    [notifications, unreadCount, loading, markRead, markAllRead, refresh, addNotification]
+    [notifications, unreadCount, loading, markRead, markAllRead, refresh, addNotification, deleteNotification, deleteAllNotifications, registerJumpHandler]
   );
 
   return (
