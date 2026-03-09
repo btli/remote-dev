@@ -13,6 +13,7 @@ import { terminalSessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import * as TaskService from "./task-service";
 import { parsePostToolUsePayload, type PostToolUsePayload } from "./agent-todo-sync-pure";
+import { buildStopMessage, POST_TASK_MARKER_PREFIX, POST_TASK_CONFIG } from "./agent-stop-message";
 import type { TaskStatus, TaskPriority } from "@/types/task";
 
 const MARKER_PREFIX = "agent-task:";
@@ -138,12 +139,8 @@ export async function syncAgentTodos(
   return { created, updated };
 }
 
-/**
- * Post-task titles that get appended after all user ToDo tasks.
- * These are quality-gate tasks the agent must run before stopping.
- */
-const POST_TASKS = ["Code Simplifier", "Code Review"] as const;
-const POST_TASK_MARKER_PREFIX = "post-task:";
+/** Post-task titles derived from the shared config (single source of truth) */
+const POST_TASKS = POST_TASK_CONFIG.map((t) => t.title);
 
 /**
  * Check agent tasks on stop and enforce completion.
@@ -208,18 +205,7 @@ export async function checkTasksOnStop(
 
   if (incomplete.length === 0) return null; // all done, agent can stop
 
-  // Build a message for the agent listing what's left, distinguishing sources
-  const lines = incomplete.map((t) => {
-    const source = t.description?.startsWith(POST_TASK_MARKER_PREFIX) ? " (post-task)" :
-      t.source !== "agent" ? " (user-assigned)" : "";
-    return `- [${t.status}] ${t.title}${t.priority !== "medium" ? ` (${t.priority})` : ""}${source}`;
-  });
-  return [
-    `You have ${incomplete.length} incomplete task(s). Please complete them before stopping:`,
-    ...lines,
-    "",
-    'Mark each task as completed using TaskUpdate when done. For "Code Simplifier", run /simplify. For "Code Review", run /code-review.',
-  ].join("\n");
+  return buildStopMessage(incomplete);
 }
 
 /**
