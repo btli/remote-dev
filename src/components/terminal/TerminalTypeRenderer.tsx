@@ -39,6 +39,8 @@ interface TerminalTypeRendererProps {
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
   onSessionClose?: (sessionId: string) => void;
+  /** Called when the user wants to navigate/switch to another session (e.g. child in orchestrator) */
+  onNavigateToSession?: (sessionId: string) => void;
   onAgentStateChange?: (sessionId: string, state: "running" | "exited" | "restarting" | "closed") => void;
   /** Called when agent activity status changes (from Claude Code hooks) */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
@@ -65,6 +67,7 @@ export function TerminalTypeRenderer({
   onOutput,
   onDimensionsChange,
   onSessionClose,
+  onNavigateToSession,
   onAgentStateChange,
   onAgentActivityStatus,
   onAgentTodosUpdated,
@@ -188,7 +191,7 @@ export function TerminalTypeRenderer({
         <OrchestratorView
           session={session}
           onNavigateToSession={(id) => {
-            onSessionClose?.(id);
+            onNavigateToSession?.(id);
           }}
         >
           {renderAgentTerminal("orchestrator")}

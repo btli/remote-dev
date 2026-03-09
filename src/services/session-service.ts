@@ -272,8 +272,8 @@ export async function createSession(
     console.error(`[session:${sessionId}] Failed to resolve GitHub account env:`, error);
   }
 
-  // File-type sessions don't need tmux — they're pure UI (CodeMirror editor)
-  if (input.terminalType !== "file") {
+  // File and browser sessions don't need tmux — they're pure UI
+  if (input.terminalType !== "file" && input.terminalType !== "browser") {
     // Initial environment: profile env + folder env + GitHub account env + RDV vars
     // All must be present at PTY spawn so agent processes inherit them immediately
     // Precedence: profileEnv < folderEnv < ghAccountEnv < rdvEnv
@@ -744,8 +744,8 @@ export async function resumeSession(
     );
   }
 
-  // File-type sessions have no tmux session — nothing to resume
-  if (session.terminalType === "file") {
+  // File and browser sessions have no tmux session — nothing to resume
+  if (session.terminalType === "file" || session.terminalType === "browser") {
     await db
       .update(terminalSessions)
       .set({ status: "active", updatedAt: new Date() })
@@ -846,8 +846,8 @@ export async function closeSession(
     );
   }
 
-  // Kill the tmux session (file-type sessions have no tmux session)
-  if (session.terminalType !== "file") {
+  // Kill the tmux session (file/browser sessions have no tmux session)
+  if (session.terminalType !== "file" && session.terminalType !== "browser") {
     await TmuxService.killSession(session.tmuxSessionName);
   }
 

@@ -75,6 +75,15 @@ const TerminalWithKeyboard = dynamic(
   { ssr: false }
 );
 
+// Dynamically import TerminalTypeRenderer for browser/orchestrator session types
+const TerminalTypeRenderer = dynamic(
+  () =>
+    import("@/components/terminal/TerminalTypeRenderer").then(
+      (mod) => mod.TerminalTypeRenderer
+    ),
+  { ssr: false }
+);
+
 // Dynamically import CodeMirrorEditor for file-type sessions
 const CodeMirrorEditor = dynamic(
   () =>
@@ -1702,6 +1711,37 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             fileName={String(metadata?.fileName ?? session.name)}
                             fontSize={prefs.fontSize}
                             fontFamily={prefs.fontFamily}
+                          />
+                        </div>
+                      );
+                    }
+
+                    // Browser and orchestrator types use TerminalTypeRenderer
+                    // which handles BrowserPane and OrchestratorView respectively
+                    if (session.terminalType === "browser" || session.terminalType === "orchestrator") {
+                      return (
+                        <div className="absolute inset-0 z-10">
+                          <TerminalTypeRenderer
+                            key={session.id}
+                            session={session}
+                            wsUrl={wsUrl}
+                            fontSize={prefs.fontSize}
+                            fontFamily={prefs.fontFamily}
+                            scrollback={userSettings?.xtermScrollback ?? 10000}
+                            tmuxHistoryLimit={userSettings?.tmuxHistoryLimit ?? 50000}
+                            notificationsEnabled={notificationsEnabled}
+                            isRecording={isRecording}
+                            isActive={session.id === activeSessionId}
+                            environmentVars={getEnvironmentWithSecrets(folderId)}
+                            onOutput={isRecording ? recordOutput : undefined}
+                            onDimensionsChange={isRecording ? updateDimensions : undefined}
+                            onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
+                            onNavigateToSession={(id) => setActiveSession(id)}
+                            onAgentActivityStatus={handleAgentActivityStatus}
+                            onAgentTodosUpdated={() => refreshTasks()}
+                            onNotification={(notification) => {
+                              addNotification(hydrateNotification(notification));
+                            }}
                           />
                         </div>
                       );
