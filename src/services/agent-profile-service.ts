@@ -745,7 +745,7 @@ export async function installAgentHooks(
   const stopCurlFallback =
     CURL_ENV_PREAMBLE +
     curlCmd('/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=idle', '>/dev/null 2>&1') + ' & ' +
-    'TASK_MSG=$(' + curlCmd('/internal/agent-stop-check?sessionId=${RDV_SESSION_ID}') + '); ' +
+    'TASK_MSG=$(' + curlCmd('/internal/agent-stop-check?sessionId=${RDV_SESSION_ID}', '-H "Accept: text/plain"') + '); ' +
     '[ -n "$TASK_MSG" ] && printf "%s" "$TASK_MSG"';
 
   const stopHook = {
