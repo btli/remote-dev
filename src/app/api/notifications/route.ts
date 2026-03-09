@@ -30,10 +30,33 @@ export const PATCH = withApiAuth(async (request, { userId }) => {
       await NotificationService.markAllRead(userId);
     } else if (ids?.length) {
       await NotificationService.markRead(userId, ids);
+    } else {
+      return errorResponse("Must provide ids or all=true", 400);
     }
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error marking notifications read:", error);
     return errorResponse("Failed to update notifications", 500);
+  }
+});
+
+// DELETE /api/notifications - hard delete one or all
+export const DELETE = withApiAuth(async (request, { userId }) => {
+  try {
+    const result = await parseJsonBody<{ ids?: string[]; all?: boolean }>(request);
+    if ("error" in result) return result.error;
+    const { ids, all } = result.data;
+
+    if (all) {
+      await NotificationService.deleteAllNotifications(userId);
+    } else if (ids?.length) {
+      await NotificationService.deleteNotifications(userId, ids);
+    } else {
+      return errorResponse("Must provide ids or all=true", 400);
+    }
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting notifications:", error);
+    return errorResponse("Failed to delete notifications", 500);
   }
 });

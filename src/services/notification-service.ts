@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { notificationEvents } from "@/db/schema";
-import { eq, and, desc, isNull, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, isNull, inArray, count } from "drizzle-orm";
 import type { NotificationEvent, CreateNotificationInput } from "@/types/notification";
 
 // Debounce: prevent duplicate notifications per (userId, sessionId, type) within 5s window
@@ -76,14 +76,27 @@ export async function markAllRead(userId: string): Promise<void> {
     ));
 }
 
+export async function deleteNotifications(userId: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await db
+    .delete(notificationEvents)
+    .where(and(eq(notificationEvents.userId, userId), inArray(notificationEvents.id, ids)));
+}
+
+export async function deleteAllNotifications(userId: string): Promise<void> {
+  await db
+    .delete(notificationEvents)
+    .where(eq(notificationEvents.userId, userId));
+}
+
 export async function getUnreadCount(userId: string): Promise<number> {
-  const result = await db.select({ count: sql<number>`count(*)` })
+  const [row] = await db.select({ count: count() })
     .from(notificationEvents)
     .where(and(
       eq(notificationEvents.userId, userId),
       isNull(notificationEvents.readAt)
     ));
-  return result[0]?.count ?? 0;
+  return row?.count ?? 0;
 }
 
 function mapRow(row: typeof notificationEvents.$inferSelect): NotificationEvent {
@@ -95,7 +108,7 @@ function mapRow(row: typeof notificationEvents.$inferSelect): NotificationEvent 
     type: row.type as NotificationEvent["type"],
     title: row.title,
     body: row.body,
-    readAt: row.readAt ? new Date(row.readAt) : null,
-    createdAt: new Date(row.createdAt),
+    readAt: row.readAt,
+    createdAt: row.createdAt,
   };
 }
