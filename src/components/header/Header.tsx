@@ -19,7 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { LogOut, ClipboardList } from "lucide-react";
+import { LogOut } from "lucide-react";
 import Image from "next/image";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 
@@ -63,19 +63,6 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
                 )
               }
             />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-foreground"
-              aria-label="Tasks"
-              onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("task-sidebar-toggle")
-                )
-              }
-            >
-              <ClipboardList className="w-3.5 h-3.5" />
-            </Button>
             <HeaderUserMenu email={userEmail} />
             <form action={onSignOut}>
               <Button
@@ -133,23 +120,6 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
                 />
               </TooltipTrigger>
               <TooltipContent>Notifications</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={() =>
-                    window.dispatchEvent(
-                      new CustomEvent("task-sidebar-toggle")
-                    )
-                  }
-                >
-                  <ClipboardList className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Tasks (⌘.)</TooltipContent>
             </Tooltip>
           </div>
 
