@@ -292,6 +292,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     repositoryId: string;
     repositoryName: string;
     repositoryUrl?: string;
+    initialIssueNumber?: number;
   } | null>(null);
 
   // PRs modal state
@@ -301,6 +302,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     repositoryId: string;
     repositoryName: string;
     repositoryUrl?: string;
+    initialPRNumber?: number;
   } | null>(null);
 
   // Get trash count for a specific folder
@@ -810,44 +812,64 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [resolvePreferencesForFolder, getRepositoryById]
   );
 
+  // Resolve linked repository info for a folder
+  const getRepoInfoForFolder = useCallback(
+    (folderId: string) => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      if (!prefs?.githubRepoId) return null;
+
+      const repo = getRepositoryById(prefs.githubRepoId);
+      if (!repo) return null;
+
+      return { folderId, repositoryId: repo.id, repositoryName: repo.fullName, repositoryUrl: repo.url };
+    },
+    [resolvePreferencesForFolder, getRepositoryById]
+  );
+
   // Handle viewing issues for a folder's linked repository
   const handleViewIssues = useCallback(
     (folderId: string) => {
-      const prefs = resolvePreferencesForFolder(folderId);
-      if (!prefs?.githubRepoId) return;
+      const info = getRepoInfoForFolder(folderId);
+      if (!info) return;
 
-      const repo = getRepositoryById(prefs.githubRepoId);
-      if (!repo) return;
-
-      setIssuesModal({
-        open: true,
-        folderId,
-        repositoryId: repo.id,
-        repositoryName: repo.fullName,
-        repositoryUrl: repo.url,
-      });
+      setIssuesModal({ open: true, ...info });
     },
-    [resolvePreferencesForFolder, getRepositoryById]
+    [getRepoInfoForFolder]
+  );
+
+  // Handle viewing a specific issue from the right sidebar
+  const handleViewIssueByNumber = useCallback(
+    (issueNumber: number) => {
+      if (!activeProject.folderId) return;
+      const info = getRepoInfoForFolder(activeProject.folderId);
+      if (!info) return;
+
+      setIssuesModal({ open: true, ...info, initialIssueNumber: issueNumber });
+    },
+    [activeProject.folderId, getRepoInfoForFolder]
   );
 
   // Handle viewing PRs for a folder's linked repository
   const handleViewPRs = useCallback(
     (folderId: string) => {
-      const prefs = resolvePreferencesForFolder(folderId);
-      if (!prefs?.githubRepoId) return;
+      const info = getRepoInfoForFolder(folderId);
+      if (!info) return;
 
-      const repo = getRepositoryById(prefs.githubRepoId);
-      if (!repo) return;
-
-      setPrsModal({
-        open: true,
-        folderId,
-        repositoryId: repo.id,
-        repositoryName: repo.fullName,
-        repositoryUrl: repo.url,
-      });
+      setPrsModal({ open: true, ...info });
     },
-    [resolvePreferencesForFolder, getRepositoryById]
+    [getRepoInfoForFolder]
+  );
+
+  // Handle viewing a specific PR from the right sidebar
+  const handleViewPRByNumber = useCallback(
+    (prNumber: number) => {
+      if (!activeProject.folderId) return;
+      const info = getRepoInfoForFolder(activeProject.folderId);
+      if (!info) return;
+
+      setPrsModal({ open: true, ...info, initialPRNumber: prNumber });
+    },
+    [activeProject.folderId, getRepoInfoForFolder]
   );
 
   // Get pinned files for a folder
@@ -1795,6 +1817,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       {/* Right sidebar - Task Tracker */}
       <TaskSidebar
         githubRepoId={taskSidebarRepoId}
+        onViewIssue={handleViewIssueByNumber}
+        onViewPR={handleViewPRByNumber}
       />
 
       {/* New Session Wizard */}
@@ -1927,6 +1951,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           repositoryId={issuesModal.repositoryId}
           repositoryName={issuesModal.repositoryName}
           repositoryUrl={issuesModal.repositoryUrl}
+          initialIssueNumber={issuesModal.initialIssueNumber}
           onCreateWorktree={handleCreateWorktreeFromIssue}
         />
       )}
@@ -1939,6 +1964,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           repositoryId={prsModal.repositoryId}
           repositoryName={prsModal.repositoryName}
           repositoryUrl={prsModal.repositoryUrl}
+          initialPRNumber={prsModal.initialPRNumber}
         />
       )}
 
