@@ -31,15 +31,15 @@ export const DELETE = withApiAuth(async (request, { userId }) => {
   const sessionId = url.searchParams.get("sessionId") ?? undefined;
   const completedOnly = url.searchParams.get("completedOnly") === "true";
 
-  if (!folderId || !source) {
-    return errorResponse("folderId and source are required", 400);
+  if (!folderId) {
+    return errorResponse("folderId is required", 400);
   }
 
-  if (source !== "manual" && source !== "agent") {
+  if (source && source !== "manual" && source !== "agent") {
     return errorResponse("source must be 'manual' or 'agent'", 400);
   }
 
-  const deleted = await clearTasks(userId, folderId, source, {
+  const deleted = await clearTasks(userId, folderId, source ?? undefined, {
     sessionId,
     completedOnly,
   });

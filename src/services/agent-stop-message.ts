@@ -29,7 +29,11 @@ export type TaskCategory =
 
 /** Classify a task for stop-hook message formatting */
 export function classifyTask(task: ProjectTask): TaskCategory {
-  if (task.description?.startsWith(POST_TASK_MARKER_PREFIX)) {
+  // Check agentTaskKey first (new format), then fall back to description (legacy)
+  const isPostTask =
+    task.agentTaskKey?.startsWith(POST_TASK_MARKER_PREFIX) ||
+    task.description?.startsWith(POST_TASK_MARKER_PREFIX);
+  if (isPostTask) {
     const command = POST_TASK_COMMANDS[task.title] ?? null;
     return { kind: "post-task", command };
   }
@@ -65,6 +69,16 @@ export function buildStopMessage(incomplete: ProjectTask[]): string {
     } else {
       const sourceNote = category.kind === "user-assigned" ? " (user-assigned)" : "";
       lines.push(`- ${statusTag} ${task.title}${priorityNote}${sourceNote}`);
+    }
+
+    // Include user-provided instructions for context re-injection
+    if (task.instructions) {
+      lines.push(`  Instructions: ${task.instructions}`);
+    }
+
+    // Include description for additional context
+    if (task.description && !task.description.startsWith(POST_TASK_MARKER_PREFIX) && !task.description.startsWith("agent-task:")) {
+      lines.push(`  Context: ${task.description}`);
     }
   }
 

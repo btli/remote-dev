@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { projectTasks } from "@/db/schema";
+import { projectTasks, taskDependencies, terminalSessions } from "@/db/schema";
 import { eq, and, desc, asc, isNull, inArray } from "drizzle-orm";
 import type {
   ProjectTask,
@@ -14,6 +14,8 @@ import { safeJsonParse } from "@/lib/utils";
 
 /**
  * Parse a raw DB row into a ProjectTask with JSON fields decoded.
+ * blockedBy is set to empty array — callers that need it should use
+ * getTasksWithDependencies or populate it separately.
  */
 function parseTaskRow(row: typeof projectTasks.$inferSelect): ProjectTask {
   return {
@@ -28,16 +30,65 @@ function parseTaskRow(row: typeof projectTasks.$inferSelect): ProjectTask {
     source: row.source,
     labels: safeJsonParse<TaskLabel[]>(row.labels, []),
     subtasks: safeJsonParse<TaskSubtask[]>(row.subtasks, []),
+    metadata: safeJsonParse<Record<string, unknown>>(row.metadata, {}),
+    instructions: row.instructions ?? null,
+    agentTaskKey: row.agentTaskKey ?? null,
+    owner: row.owner ?? null,
     dueDate: row.dueDate,
     githubIssueUrl: row.githubIssueUrl,
     sortOrder: row.sortOrder,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    blockedBy: [],
   };
 }
 
 /**
+ * Look up session context (userId, folderId) by session ID.
+ * Used by internal endpoints that only have sessionId from hooks.
+ */
+export async function getSessionContext(sessionId: string) {
+  const rows = await db
+    .select({
+      id: terminalSessions.id,
+      userId: terminalSessions.userId,
+      folderId: terminalSessions.folderId,
+    })
+    .from(terminalSessions)
+    .where(eq(terminalSessions.id, sessionId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Batch-load dependency maps for a set of task IDs.
+ * Returns a Map from blockedId → array of blockerId strings.
+ */
+async function loadDependencyMap(
+  taskIds: string[]
+): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (taskIds.length === 0) return map;
+
+  const deps = await db
+    .select()
+    .from(taskDependencies)
+    .where(inArray(taskDependencies.blockedId, taskIds));
+
+  for (const dep of deps) {
+    const existing = map.get(dep.blockedId);
+    if (existing) {
+      existing.push(dep.blockerId);
+    } else {
+      map.set(dep.blockedId, [dep.blockerId]);
+    }
+  }
+  return map;
+}
+
+/**
  * Get all tasks for a user, optionally filtered by folder and/or status.
+ * Includes blockedBy dependency data.
  */
 export async function getTasks(
   userId: string,
@@ -64,11 +115,16 @@ export async function getTasks(
     .where(and(...conditions))
     .orderBy(asc(projectTasks.sortOrder), desc(projectTasks.createdAt));
 
-  return results.map(parseTaskRow);
+  const tasks = results.map(parseTaskRow);
+  const depMap = await loadDependencyMap(tasks.map((t) => t.id));
+  for (const task of tasks) {
+    task.blockedBy = depMap.get(task.id) ?? [];
+  }
+  return tasks;
 }
 
 /**
- * Get a single task by ID.
+ * Get a single task by ID, including dependencies.
  */
 export async function getTask(
   taskId: string,
@@ -81,7 +137,29 @@ export async function getTask(
       and(eq(projectTasks.id, taskId), eq(projectTasks.userId, userId))
     );
 
-  return results[0] ? parseTaskRow(results[0]) : null;
+  if (!results[0]) return null;
+  const task = parseTaskRow(results[0]);
+  const depMap = await loadDependencyMap([task.id]);
+  task.blockedBy = depMap.get(task.id) ?? [];
+  return task;
+}
+
+/**
+ * Get a task's userId by task ID (no auth check).
+ * Used by internal endpoints that need to resolve ownership.
+ */
+export async function getTaskOwner(
+  taskId: string
+): Promise<{ userId: string; sessionId: string | null } | null> {
+  const rows = await db
+    .select({
+      userId: projectTasks.userId,
+      sessionId: projectTasks.sessionId,
+    })
+    .from(projectTasks)
+    .where(eq(projectTasks.id, taskId))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 /**
@@ -104,13 +182,24 @@ export async function createTask(
       source: input.source ?? "manual",
       labels: JSON.stringify(input.labels ?? []),
       subtasks: JSON.stringify(input.subtasks ?? []),
+      metadata: JSON.stringify(input.metadata ?? {}),
+      instructions: input.instructions ?? null,
+      agentTaskKey: input.agentTaskKey ?? null,
+      owner: input.owner ?? null,
       dueDate: input.dueDate ? new Date(input.dueDate) : null,
       githubIssueUrl: input.githubIssueUrl ?? null,
       sortOrder: input.sortOrder ?? 0,
     })
     .returning();
 
-  return parseTaskRow(row);
+  const task = parseTaskRow(row);
+
+  if (input.blockedBy && input.blockedBy.length > 0) {
+    await setDependencies(task.id, input.blockedBy);
+    task.blockedBy = input.blockedBy;
+  }
+
+  return task;
 }
 
 /**
@@ -130,6 +219,13 @@ export async function updateTask(
   if (input.labels !== undefined) updates.labels = JSON.stringify(input.labels);
   if (input.subtasks !== undefined)
     updates.subtasks = JSON.stringify(input.subtasks);
+  if (input.metadata !== undefined)
+    updates.metadata = JSON.stringify(input.metadata);
+  if (input.instructions !== undefined)
+    updates.instructions = input.instructions;
+  if (input.agentTaskKey !== undefined)
+    updates.agentTaskKey = input.agentTaskKey;
+  if (input.owner !== undefined) updates.owner = input.owner;
   if (input.dueDate !== undefined)
     updates.dueDate = input.dueDate ? new Date(input.dueDate) : null;
   if (input.githubIssueUrl !== undefined)
@@ -144,7 +240,17 @@ export async function updateTask(
     )
     .returning();
 
-  return results[0] ? parseTaskRow(results[0]) : null;
+  if (!results[0]) return null;
+  const task = parseTaskRow(results[0]);
+
+  if (input.blockedBy !== undefined) {
+    await setDependencies(taskId, input.blockedBy);
+    task.blockedBy = input.blockedBy;
+  }
+  // Skip loading deps when blockedBy wasn't touched — callers
+  // that need it (e.g., API responses) can use getTask() instead.
+
+  return task;
 }
 
 /**
@@ -195,14 +301,17 @@ export async function getTasksBySession(
 export async function clearTasks(
   userId: string,
   folderId: string,
-  source: TaskSource,
+  source?: TaskSource,
   options?: { sessionId?: string; completedOnly?: boolean }
 ): Promise<number> {
   const conditions = [
     eq(projectTasks.userId, userId),
     eq(projectTasks.folderId, folderId),
-    eq(projectTasks.source, source),
   ];
+
+  if (source) {
+    conditions.push(eq(projectTasks.source, source));
+  }
 
   if (options?.sessionId) {
     conditions.push(eq(projectTasks.sessionId, options.sessionId));
@@ -221,3 +330,54 @@ export async function clearTasks(
 
   return result.length;
 }
+
+/**
+ * Bulk-cancel open/in-progress agent tasks for a session.
+ * Used when a session is closed — single UPDATE instead of N round-trips.
+ */
+export async function cancelOpenAgentTasks(
+  sessionId: string,
+  userId: string
+): Promise<number> {
+  const result = await db
+    .update(projectTasks)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(
+      and(
+        eq(projectTasks.sessionId, sessionId),
+        eq(projectTasks.userId, userId),
+        eq(projectTasks.source, "agent"),
+        inArray(projectTasks.status, ["open", "in_progress"])
+      )
+    )
+    .returning({ id: projectTasks.id });
+  return result.length;
+}
+
+// --- Dependency management ---
+
+/**
+ * Replace all blockers for a task with the given IDs.
+ * Rejects self-references silently.
+ */
+export async function setDependencies(
+  taskId: string,
+  blockerIds: string[]
+): Promise<void> {
+  // Remove existing blockers for this task
+  await db
+    .delete(taskDependencies)
+    .where(eq(taskDependencies.blockedId, taskId));
+
+  // Filter out self-references and duplicates
+  const unique = [...new Set(blockerIds.filter((id) => id !== taskId))];
+  if (unique.length === 0) return;
+
+  await db.insert(taskDependencies).values(
+    unique.map((blockerId) => ({
+      blockerId,
+      blockedId: taskId,
+    }))
+  );
+}
+
