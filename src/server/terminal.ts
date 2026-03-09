@@ -475,6 +475,13 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   // Handle browser frame broadcast for browser pane sessions
   // POST /internal/browser-frame { sessionId, data } - broadcasts base64 screenshot to session client
   if (pathname === "/internal/browser-frame" && req.method === "POST") {
+    // Restrict to localhost callers only (same-machine process communication)
+    const remoteAddr = req.socket.remoteAddress;
+    const isLocalhost = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
+    if (!isLocalhost) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
     try {
       const body = await readRequestBody(req);
       const { sessionId, data } = JSON.parse(body) as { sessionId: string; data: string };

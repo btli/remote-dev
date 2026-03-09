@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
+import * as SessionService from "@/services/session-service";
 
 /**
  * POST /api/sessions/:id/browser/evaluate - Evaluate JavaScript in browser context
  *
  * Body: { expression: string }
  */
-export const POST = withApiAuth(async (request, { params }) => {
+export const POST = withApiAuth(async (request, { userId, params }) => {
   try {
     if (!params?.id) return errorResponse("Session ID required", 400);
+
+    const session = await SessionService.getSession(params.id, userId);
+    if (!session) return errorResponse("Session not found", 404);
+
     const result = await parseJsonBody<{ expression: string }>(request);
     if ("error" in result) return result.error;
 

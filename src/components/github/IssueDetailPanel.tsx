@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import Image from "next/image";
-import remarkGfm from "remark-gfm";
 import {
   ArrowLeft,
   ExternalLink,
@@ -20,22 +19,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { getIssueIcon } from "./issue-icons";
-
-const REMARK_PLUGINS = [remarkGfm];
-
-// Safe-href link component to prevent XSS from untrusted markdown
-const SAFE_LINK_COMPONENTS = {
-  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
-    const trimmed = href?.trimStart() ?? "";
-    const isSafe = !trimmed.includes(":") || /^(https?:|mailto:|#)/i.test(trimmed);
-    if (!isSafe) return <>{children}</>;
-    return (
-      <a href={href} target="_blank" rel="noopener noreferrer">
-        {children}
-      </a>
-    );
-  },
-} satisfies Record<string, React.ComponentType<Record<string, unknown>>>;
+import { REMARK_PLUGINS, MARKDOWN_COMPONENTS } from "./markdown-components";
 
 interface IssueComment {
   id: number;
@@ -107,8 +91,6 @@ export function IssueDetailPanel({
       setIsStarting(false);
     }
   }, [onStartWorking, issue]);
-
-  const markdownClasses = "text-sm text-foreground/90 leading-relaxed [&_h1]:text-base [&_h1]:font-semibold [&_h1]:mt-4 [&_h1]:mb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h3]:text-sm [&_h3]:font-medium [&_h3]:mt-2 [&_h3]:mb-1 [&_code]:font-mono [&_code]:text-xs [&_code]:bg-muted [&_code]:px-1 [&_code]:rounded [&_pre]:bg-muted [&_pre]:p-3 [&_pre]:rounded [&_pre]:text-xs [&_pre]:overflow-x-auto [&_pre]:my-2 [&_ul]:list-disc [&_ul]:ml-4 [&_ul]:my-1 [&_ol]:list-decimal [&_ol]:ml-4 [&_ol]:my-1 [&_li]:my-0.5 [&_p]:my-1.5 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_img]:rounded [&_hr]:my-3 [&_hr]:border-border";
 
   return (
     <div className="flex flex-col h-full">
@@ -222,8 +204,8 @@ export function IssueDetailPanel({
         <div className="pr-4 ml-7 space-y-6">
           {/* Issue Body */}
           {issue.body ? (
-            <div className={markdownClasses}>
-              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={SAFE_LINK_COMPONENTS}>{issue.body}</ReactMarkdown>
+            <div>
+              <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>{issue.body}</ReactMarkdown>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground italic">
@@ -272,8 +254,8 @@ export function IssueDetailPanel({
                         )}
                         <span>{formatRelativeTime(comment.created_at)}</span>
                       </div>
-                      <div className={markdownClasses}>
-                        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={SAFE_LINK_COMPONENTS}>{comment.body}</ReactMarkdown>
+                      <div>
+                        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>{comment.body}</ReactMarkdown>
                       </div>
                     </div>
                   ))}

@@ -152,18 +152,21 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
                     return Ok(());
                 }
             };
-            // Report idle status (fire-and-forget) and check tasks concurrently
-            let idle_path = format!("/internal/agent-status?sessionId={sid}&status=idle");
-            let check_path = format!("/internal/agent-stop-check?sessionId={sid}");
-            let (_, result) = tokio::join!(
-                client.post_empty(&idle_path),
-                client.post_empty(&check_path)
+            // Report idle status (best-effort, warn on failure) and check tasks concurrently
+            let idle_query = [("sessionId", sid.as_str()), ("status", "idle")];
+            let check_query = [("sessionId", sid.as_str())];
+            let (idle_result, result) = tokio::join!(
+                client.post_empty_with_query("/internal/agent-status", &idle_query),
+                client.post_empty_with_query("/internal/agent-stop-check", &check_query)
             );
+            if let Err(e) = idle_result {
+                eprintln!("warning: failed to report idle status: {e}");
+            }
             let result = result?;
             // Print the task message if present (tells the agent about incomplete tasks)
             if let Some(msg) = result.get("message").and_then(|v| v.as_str()) {
                 if !msg.is_empty() {
-                    print!("{msg}");
+                    println!("{msg}");
                 }
             }
         }
