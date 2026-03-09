@@ -2,6 +2,11 @@
 
 import { Sun, Moon, Monitor } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useAppearance } from "@/contexts/AppearanceContext";
 import type { AppearanceMode } from "@/types/appearance";
 import { cn } from "@/lib/utils";
@@ -88,16 +93,26 @@ export function AppearanceModeToggleCompact({ className }: { className?: string 
 
   const Icon = MODE_ICONS[currentMode];
 
+  const MODE_LABELS: Record<AppearanceMode, string> = {
+    light: "Light mode",
+    system: "System mode",
+    dark: "Dark mode",
+  };
+
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      disabled={loading}
-      onClick={handleClick}
-      className={cn("h-8 w-8", className)}
-      title={`Mode: ${currentMode} (${effectiveMode})`}
-    >
-      <Icon className="h-4 w-4" />
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={loading}
+          onClick={handleClick}
+          className={cn("h-8 w-8", className)}
+        >
+          <Icon className="h-4 w-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{MODE_LABELS[currentMode]}</TooltipContent>
+    </Tooltip>
   );
 }

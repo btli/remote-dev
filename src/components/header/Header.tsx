@@ -100,44 +100,40 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
         </div>
 
         {/* User info and actions */}
-        <div className="flex items-center gap-4">
-          {/* Connection status icons */}
-          <div className="flex items-center gap-3 pr-2 border-r border-border">
-            <GitHubStatusIcon
-              isConnected={isGitHubConnected}
-              onClick={openModal}
-            />
-            <SecretsStatusButton />
-            <AppearanceModeToggleCompact />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <NotificationBell
-                  onClick={() =>
-                    window.dispatchEvent(
-                      new CustomEvent("notification-panel-toggle")
-                    )
-                  }
-                />
-              </TooltipTrigger>
-              <TooltipContent>Notifications</TooltipContent>
-            </Tooltip>
-          </div>
+        <div className="flex items-center gap-1">
+          <GitHubStatusIcon
+            isConnected={isGitHubConnected}
+            onClick={openModal}
+          />
+          <SecretsStatusButton />
+          <AppearanceModeToggleCompact />
+          <NotificationBell
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("notification-panel-toggle")
+              )
+            }
+          />
 
-          {/* User settings */}
+          <div className="w-px h-5 bg-border mx-1" />
+
           <HeaderUserMenu email={userEmail} />
 
-          {/* Sign out */}
-          <form action={onSignOut}>
-            <Button
-              variant="ghost"
-              size="sm"
-              type="submit"
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign out
-            </Button>
-          </form>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <form action={onSignOut}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  type="submit"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                >
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </form>
+            </TooltipTrigger>
+            <TooltipContent>Sign out</TooltipContent>
+          </Tooltip>
         </div>
       </header>
 
