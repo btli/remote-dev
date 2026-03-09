@@ -152,7 +152,7 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
                     return Ok(());
                 }
             };
-            // Report idle status (fire-and-forget) and check tasks concurrently
+            // Report idle status (best-effort, warn on failure) and check tasks concurrently
             let idle_query = [("sessionId", sid.as_str()), ("status", "idle")];
             let check_query = [("sessionId", sid.as_str())];
             let (idle_result, result) = tokio::join!(
