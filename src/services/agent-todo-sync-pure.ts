@@ -16,8 +16,28 @@ export interface PostToolUsePayload {
 
 /** Parsed agent task operation */
 export type AgentTaskOp =
-  | { type: "create"; agentTaskId: string; subject: string; description?: string; status: TaskStatus; priority?: TaskPriority }
-  | { type: "update"; agentTaskId: string; status?: TaskStatus; subject?: string; priority?: TaskPriority };
+  | {
+      type: "create";
+      agentTaskId: string;
+      subject: string;
+      description?: string;
+      status: TaskStatus;
+      priority?: TaskPriority;
+      metadata?: Record<string, unknown>;
+      owner?: string;
+      blockedBy?: string[];
+    }
+  | {
+      type: "update";
+      agentTaskId: string;
+      status?: TaskStatus;
+      subject?: string;
+      description?: string;
+      priority?: TaskPriority;
+      metadata?: Record<string, unknown>;
+      owner?: string;
+      blockedBy?: string[];
+    };
 
 const VALID_PRIORITIES = new Set<string>(["critical", "high", "medium", "low"]);
 
@@ -25,6 +45,7 @@ const VALID_PRIORITIES = new Set<string>(["critical", "high", "medium", "low"]);
 export function mapAgentTaskPriority(priority: string | undefined): TaskPriority | undefined {
   if (!priority) return undefined;
   const normalized = priority.toLowerCase();
+  if (normalized === "urgent") return "critical"; // rdv CLI alias
   return VALID_PRIORITIES.has(normalized) ? (normalized as TaskPriority) : undefined;
 }
 
@@ -42,11 +63,11 @@ export function mapAgentTaskStatus(status: string): TaskStatus {
 }
 
 /**
- * Parse a PostToolUse hook payload into an AgentTaskOp.
+ * Parse a PostToolUse hook payload into AgentTaskOp(s).
  *
  * Supports:
- * - TaskCreate: { subject, description?, activeForm? }
- * - TaskUpdate: { taskId, status?, addBlockedBy? }
+ * - TaskCreate: { subject, description?, activeForm?, metadata?, owner? }
+ * - TaskUpdate: { taskId, status?, subject?, description?, metadata?, owner?, addBlockedBy? }
  * - Legacy TodoWrite: { todos: [{ id, content, status }] } (batch, returns multiple ops)
  */
 export function parsePostToolUsePayload(payload: PostToolUsePayload): AgentTaskOp[] {
@@ -55,9 +76,6 @@ export function parsePostToolUsePayload(payload: PostToolUsePayload): AgentTaskO
   if (tool_name === "TaskCreate") {
     const subject = tool_input.subject as string;
     if (!subject) return [];
-    // Use a counter-based ID that we'll resolve on the server side
-    // The agent uses sequential IDs like "1", "2", etc. but we don't have access here
-    // Instead, we'll use a hash of the subject as a stable identifier
     return [{
       type: "create",
       agentTaskId: stableId(subject),
@@ -65,6 +83,9 @@ export function parsePostToolUsePayload(payload: PostToolUsePayload): AgentTaskO
       description: tool_input.description as string | undefined,
       status: "open",
       priority: mapAgentTaskPriority(tool_input.priority as string | undefined),
+      metadata: tool_input.metadata as Record<string, unknown> | undefined,
+      owner: tool_input.owner as string | undefined,
+      blockedBy: parseStringArray(tool_input.addBlockedBy),
     }];
   }
 
@@ -78,8 +99,21 @@ export function parsePostToolUsePayload(payload: PostToolUsePayload): AgentTaskO
     if (tool_input.subject) {
       op.subject = tool_input.subject as string;
     }
+    if (tool_input.description) {
+      op.description = tool_input.description as string;
+    }
     if (tool_input.priority) {
       op.priority = mapAgentTaskPriority(tool_input.priority as string);
+    }
+    if (tool_input.metadata) {
+      op.metadata = tool_input.metadata as Record<string, unknown>;
+    }
+    if (tool_input.owner) {
+      op.owner = tool_input.owner as string;
+    }
+    const blockedBy = parseStringArray(tool_input.addBlockedBy);
+    if (blockedBy) {
+      op.blockedBy = blockedBy;
     }
     return [op];
   }
@@ -97,6 +131,12 @@ export function parsePostToolUsePayload(payload: PostToolUsePayload): AgentTaskO
   }
 
   return [];
+}
+
+/** Parse an optional array of strings from tool input */
+function parseStringArray(value: unknown): string[] | undefined {
+  if (!value || !Array.isArray(value)) return undefined;
+  return value.filter((v): v is string => typeof v === "string");
 }
 
 /** Create a stable short ID from a string (for dedup) */

@@ -8,38 +8,28 @@
  * and legacy TodoWrite format.
  */
 
-import { db } from "@/db";
-import { terminalSessions } from "@/db/schema";
-import { eq } from "drizzle-orm";
 import * as TaskService from "./task-service";
 import { parsePostToolUsePayload, type PostToolUsePayload } from "./agent-todo-sync-pure";
 import { buildStopMessage, POST_TASK_MARKER_PREFIX, POST_TASK_CONFIG } from "./agent-stop-message";
-import type { TaskStatus, TaskPriority } from "@/types/task";
+import type { UpdateTaskInput, ProjectTask } from "@/types/task";
 
-const MARKER_PREFIX = "agent-task:";
+/** Legacy marker prefix for backward-compatible dedup (pre-agentTaskKey migration) */
+const LEGACY_MARKER_PREFIX = "agent-task:";
 
 /**
- * Look up a session by ID (without requiring userId).
- * Used by the internal endpoint which only has sessionId from the hook.
+ * Extract agentTaskKey from a task, with fallback to legacy description marker.
+ * This handles tasks created before the agentTaskKey column existed.
  */
-async function getSessionById(sessionId: string) {
-  const rows = await db
-    .select({
-      id: terminalSessions.id,
-      userId: terminalSessions.userId,
-      folderId: terminalSessions.folderId,
-    })
-    .from(terminalSessions)
-    .where(eq(terminalSessions.id, sessionId))
-    .limit(1);
-  return rows[0] ?? null;
-}
-
-/** Extract the agent-task marker from a task description, if present */
-function extractMarker(description: string | null | undefined): string | undefined {
-  if (!description) return undefined;
-  const line = description.split("\n")[0];
-  return line.startsWith(MARKER_PREFIX) ? line : undefined;
+function getAgentTaskKey(task: ProjectTask): string | undefined {
+  if (task.agentTaskKey) return task.agentTaskKey;
+  // Fallback: check for legacy marker in description
+  if (task.description) {
+    const firstLine = task.description.split("\n")[0];
+    if (firstLine.startsWith(LEGACY_MARKER_PREFIX)) {
+      return firstLine.replace(LEGACY_MARKER_PREFIX, "");
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -58,23 +48,23 @@ export async function syncAgentTodos(
   }
 
   // Look up session to get userId and folderId
-  const session = await getSessionById(sessionId);
+  const session = await TaskService.getSessionContext(sessionId);
   if (!session) {
     throw new Error(`Session not found: ${sessionId}`);
   }
 
   const { userId, folderId } = session;
 
-  // Get existing agent tasks for this session (for dedup/matching)
-  const existing = await TaskService.getTasksBySession(sessionId, userId);
-  const agentTasks = existing.filter((t) => t.source === "agent");
+  // Get all tasks for this session (for sortOrder) and agent tasks (for dedup)
+  const allSessionTasks = await TaskService.getAllTasksBySession(sessionId, userId);
+  const agentTasks = allSessionTasks.filter((t) => t.source === "agent");
 
-  // Build marker map for O(1) dedup lookups
-  const existingByMarker = new Map<string, (typeof existing)[0]>();
-  for (const task of existing) {
-    const marker = extractMarker(task.description);
-    if (marker) {
-      existingByMarker.set(marker, task);
+  // Build agentTaskKey lookup map for O(1) dedup
+  const existingByKey = new Map<string, ProjectTask>();
+  for (const task of agentTasks) {
+    const key = getAgentTaskKey(task);
+    if (key) {
+      existingByKey.set(key, task);
     }
   }
 
@@ -83,60 +73,123 @@ export async function syncAgentTodos(
 
   for (const op of ops) {
     if (op.type === "create") {
-      const marker = `${MARKER_PREFIX}${op.agentTaskId}`;
-      const existingTask = existingByMarker.get(marker);
+      const existingTask = existingByKey.get(op.agentTaskId);
 
       if (existingTask) {
-        // Upsert: update if status, title, or priority changed
-        const needsUpdate =
-          existingTask.status !== op.status ||
-          existingTask.title !== op.subject ||
-          (op.priority && existingTask.priority !== op.priority);
-        if (needsUpdate) {
-          const updates: { status?: TaskStatus; title?: string; priority?: TaskPriority } = {
-            status: op.status,
-            title: op.subject,
-          };
-          if (op.priority) updates.priority = op.priority;
+        // Upsert: update if status, title, priority, or other fields changed
+        const updates: UpdateTaskInput = {};
+        if (existingTask.status !== op.status) updates.status = op.status;
+        if (existingTask.title !== op.subject) updates.title = op.subject;
+        if (op.priority && existingTask.priority !== op.priority) updates.priority = op.priority;
+        if (op.description !== undefined && existingTask.description !== op.description) {
+          updates.description = op.description;
+        }
+        if (op.metadata && typeof op.metadata === "object") updates.metadata = op.metadata;
+        if (op.owner && existingTask.owner !== op.owner) updates.owner = op.owner;
+
+        // Migrate legacy tasks: set agentTaskKey if missing
+        if (!existingTask.agentTaskKey) {
+          updates.agentTaskKey = op.agentTaskId;
+        }
+
+        if (Object.keys(updates).length > 0) {
           await TaskService.updateTask(existingTask.id, userId, updates);
           updated++;
         }
         continue;
       }
 
-      await TaskService.createTask(userId, {
+      const newTask = await TaskService.createTask(userId, {
         folderId,
         sessionId,
         title: op.subject,
-        description: op.description
-          ? `${marker}\n${op.description}`
-          : marker,
+        description: op.description ?? null,
         status: op.status,
         priority: op.priority,
         source: "agent",
-        sortOrder: existing.length + created,
+        agentTaskKey: op.agentTaskId,
+        metadata: op.metadata,
+        owner: op.owner,
+        sortOrder: allSessionTasks.length + created,
       });
+
+      // Handle blockedBy — resolve agent task IDs to DB task IDs
+      if (op.blockedBy && op.blockedBy.length > 0) {
+        const blockerDbIds = resolveAgentTaskIds(op.blockedBy, existingByKey, agentTasks);
+        if (blockerDbIds.length > 0) {
+          await TaskService.setDependencies(newTask.id, blockerDbIds);
+        }
+      }
+
       created++;
     } else if (op.type === "update") {
-      // For TaskUpdate, agentTaskId is the sequential ID ("1", "2", etc.)
-      // We match by position in the session's agent task list (sorted by creation order)
-      const taskIndex = parseInt(op.agentTaskId, 10) - 1; // "1" → index 0
+      // Match by agentTaskId — key-based first, position-based fallback
+      let target: ProjectTask | undefined;
 
-      if (!isNaN(taskIndex) && taskIndex >= 0 && taskIndex < agentTasks.length) {
-        const target = agentTasks[taskIndex];
-        if (op.status || op.subject || op.priority) {
-          const updates: { status?: TaskStatus; title?: string; priority?: TaskPriority } = {};
-          if (op.status) updates.status = op.status;
-          if (op.subject) updates.title = op.subject;
-          if (op.priority) updates.priority = op.priority;
+      // Try key-based lookup first (stable IDs)
+      target = existingByKey.get(op.agentTaskId);
+
+      // Fall back to position-based matching (legacy TodoWrite "1", "2", etc.)
+      if (!target) {
+        const taskIndex = parseInt(op.agentTaskId, 10) - 1;
+        if (!isNaN(taskIndex) && taskIndex >= 0 && taskIndex < agentTasks.length) {
+          target = agentTasks[taskIndex];
+        }
+      }
+
+      if (target) {
+        const updates: UpdateTaskInput = {};
+        if (op.status) updates.status = op.status;
+        if (op.subject) updates.title = op.subject;
+        if (op.priority) updates.priority = op.priority;
+        if (op.description !== undefined) updates.description = op.description;
+        if (op.metadata && typeof op.metadata === "object") updates.metadata = op.metadata;
+        if (op.owner) updates.owner = op.owner;
+
+        if (Object.keys(updates).length > 0) {
           await TaskService.updateTask(target.id, userId, updates);
           updated++;
+        }
+
+        // Handle dependency updates
+        if (op.blockedBy && op.blockedBy.length > 0) {
+          const blockerDbIds = resolveAgentTaskIds(op.blockedBy, existingByKey, agentTasks);
+          if (blockerDbIds.length > 0) {
+            await TaskService.setDependencies(target.id, blockerDbIds);
+          }
         }
       }
     }
   }
 
   return { created, updated };
+}
+
+/**
+ * Resolve agent-side task IDs (stable keys or sequential "1", "2")
+ * to actual database task IDs.
+ * Key-based lookup takes priority; position-based is legacy fallback only.
+ */
+function resolveAgentTaskIds(
+  agentIds: string[],
+  keyMap: Map<string, ProjectTask>,
+  agentTasks: ProjectTask[]
+): string[] {
+  const dbIds: string[] = [];
+  for (const agentId of agentIds) {
+    // Try key-based lookup first via O(1) map
+    const byKey = keyMap.get(agentId);
+    if (byKey) {
+      dbIds.push(byKey.id);
+      continue;
+    }
+    // Fall back to position-based matching (legacy TodoWrite "1", "2", etc.)
+    const index = parseInt(agentId, 10) - 1;
+    if (!isNaN(index) && index >= 0 && index < agentTasks.length) {
+      dbIds.push(agentTasks[index].id);
+    }
+  }
+  return dbIds;
 }
 
 /** Post-task titles derived from the shared config (single source of truth) */
@@ -156,28 +209,33 @@ const POST_TASKS = POST_TASK_CONFIG.map((t) => t.title);
 export async function checkTasksOnStop(
   sessionId: string
 ): Promise<string | null> {
-  const session = await getSessionById(sessionId);
+  const session = await TaskService.getSessionContext(sessionId);
   if (!session) return null; // session not found, allow stop
 
   const { userId, folderId } = session;
   let tasks = await TaskService.getAllTasksBySession(sessionId, userId);
 
-  // Append post-tasks if they don't already exist (uses marker-based dedup
-  // to prevent duplicates from concurrent stop hook invocations)
+  // Append post-tasks if they don't already exist
+  // Uses agentTaskKey-based dedup to prevent duplicates from concurrent stop hook invocations
   let created = false;
   for (let i = 0; i < POST_TASKS.length; i++) {
     const postTaskTitle = POST_TASKS[i];
-    const marker = `${POST_TASK_MARKER_PREFIX}${postTaskTitle}`;
-    const exists = tasks.some((t) => t.description?.startsWith(marker));
+    const postTaskKey = `${POST_TASK_MARKER_PREFIX}${postTaskTitle}`;
+    const exists = tasks.some(
+      (t) => t.agentTaskKey === postTaskKey ||
+        // Fallback: check legacy description marker
+        t.description?.startsWith(postTaskKey)
+    );
     if (!exists) {
       await TaskService.createTask(userId, {
         folderId,
         sessionId,
         title: postTaskTitle,
-        description: marker,
+        description: null,
         status: "open",
         priority: "low",
         source: "agent",
+        agentTaskKey: postTaskKey,
         sortOrder: tasks.length + i,
       });
       created = true;
@@ -190,11 +248,12 @@ export async function checkTasksOnStop(
     tasks = await TaskService.getAllTasksBySession(sessionId, userId);
   }
 
-  // Deduplicate by title (keeps earliest by sort order, handles race-created dupes)
-  const seen = new Set<string>();
+  // Deduplicate post-tasks by agentTaskKey (handles race-created dupes)
+  const seenKeys = new Set<string>();
   const dedupedTasks = tasks.filter((t) => {
-    if (seen.has(t.title)) return false;
-    seen.add(t.title);
+    if (!t.agentTaskKey?.startsWith(POST_TASK_MARKER_PREFIX)) return true;
+    if (seenKeys.has(t.agentTaskKey)) return false;
+    seenKeys.add(t.agentTaskKey);
     return true;
   });
 
@@ -218,17 +277,5 @@ export async function archiveSessionTodos(
   sessionId: string,
   userId: string
 ): Promise<number> {
-  const tasks = await TaskService.getTasksBySession(sessionId, userId);
-  let archived = 0;
-
-  for (const task of tasks) {
-    if (task.status === "open" || task.status === "in_progress") {
-      await TaskService.updateTask(task.id, userId, {
-        status: "cancelled",
-      });
-      archived++;
-    }
-  }
-
-  return archived;
+  return TaskService.cancelOpenAgentTasks(sessionId, userId);
 }

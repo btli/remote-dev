@@ -22,11 +22,16 @@ function makeTask(overrides: Partial<ProjectTask> & { title: string }): ProjectT
     source: "agent",
     labels: [],
     subtasks: [],
+    metadata: {},
+    instructions: null,
+    agentTaskKey: null,
+    owner: null,
     dueDate: null,
     githubIssueUrl: null,
     sortOrder: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
+    blockedBy: [],
     ...overrides,
   };
 }
@@ -168,6 +173,86 @@ describe("parsePostToolUsePayload", () => {
     }
   });
 
+  it("parses TaskCreate with metadata and owner", () => {
+    const ops = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: {
+        subject: "Fix auth",
+        description: "Fix token refresh",
+        metadata: { source_file: "auth.ts", line: 42 },
+        owner: "agent-1",
+      },
+    });
+
+    expect(ops).toHaveLength(1);
+    if (ops[0].type === "create") {
+      expect(ops[0].metadata).toEqual({ source_file: "auth.ts", line: 42 });
+      expect(ops[0].owner).toBe("agent-1");
+    }
+  });
+
+  it("parses TaskCreate with addBlockedBy", () => {
+    const ops = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: {
+        subject: "Write tests",
+        addBlockedBy: ["1"],
+      },
+    });
+
+    expect(ops).toHaveLength(1);
+    if (ops[0].type === "create") {
+      expect(ops[0].blockedBy).toEqual(["1"]);
+    }
+  });
+
+  it("parses TaskUpdate with metadata and blockedBy", () => {
+    const ops = parsePostToolUsePayload({
+      tool_name: "TaskUpdate",
+      tool_input: {
+        taskId: "2",
+        metadata: { progress: 50 },
+        addBlockedBy: ["1", "3"],
+      },
+    });
+
+    expect(ops).toHaveLength(1);
+    if (ops[0].type === "update") {
+      expect(ops[0].metadata).toEqual({ progress: 50 });
+      expect(ops[0].blockedBy).toEqual(["1", "3"]);
+    }
+  });
+
+  it("parses TaskUpdate with description change", () => {
+    const ops = parsePostToolUsePayload({
+      tool_name: "TaskUpdate",
+      tool_input: {
+        taskId: "1",
+        description: "Updated description",
+      },
+    });
+
+    expect(ops).toHaveLength(1);
+    if (ops[0].type === "update") {
+      expect(ops[0].description).toBe("Updated description");
+    }
+  });
+
+  it("maps urgent priority to critical", () => {
+    const ops = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: {
+        subject: "Hotfix",
+        priority: "urgent",
+      },
+    });
+
+    expect(ops).toHaveLength(1);
+    if (ops[0].type === "create") {
+      expect(ops[0].priority).toBe("critical");
+    }
+  });
+
   it("includes full PostToolUse envelope fields gracefully", () => {
     const ops = parsePostToolUsePayload({
       session_id: "some-session",
@@ -189,6 +274,24 @@ describe("parsePostToolUsePayload", () => {
 });
 
 describe("classifyTask", () => {
+  it("classifies a post-task via agentTaskKey", () => {
+    const task = makeTask({
+      title: "Code Simplifier",
+      agentTaskKey: `${POST_TASK_MARKER_PREFIX}Code Simplifier`,
+    });
+    const result = classifyTask(task);
+    expect(result).toEqual({ kind: "post-task", command: "/simplify" });
+  });
+
+  it("classifies a post-task via legacy description marker", () => {
+    const task = makeTask({
+      title: "Code Simplifier",
+      description: `${POST_TASK_MARKER_PREFIX}Code Simplifier`,
+    });
+    const result = classifyTask(task);
+    expect(result).toEqual({ kind: "post-task", command: "/simplify" });
+  });
+
   it("classifies a post-task with known command", () => {
     const task = makeTask({
       title: "Code Simplifier",
@@ -316,6 +419,39 @@ describe("buildStopMessage", () => {
     const msg = buildStopMessage(tasks);
     expect(msg).not.toContain("/simplify");
     expect(msg).not.toContain("/code-review");
+  });
+
+  it("includes instructions in stop message when present", () => {
+    const tasks = [
+      makeTask({
+        title: "Fix auth",
+        instructions: "Focus on token refresh in src/auth.ts",
+      }),
+    ];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("Instructions: Focus on token refresh in src/auth.ts");
+  });
+
+  it("includes description as context in stop message", () => {
+    const tasks = [
+      makeTask({
+        title: "Fix auth",
+        description: "The token refresh is failing intermittently",
+      }),
+    ];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("Context: The token refresh is failing intermittently");
+  });
+
+  it("skips legacy marker descriptions in stop message", () => {
+    const tasks = [
+      makeTask({
+        title: "Fix auth",
+        description: "agent-task:cc-abc123\nReal description",
+      }),
+    ];
+    const msg = buildStopMessage(tasks);
+    expect(msg).not.toContain("Context: agent-task:");
   });
 
   it("handles mixed task types", () => {

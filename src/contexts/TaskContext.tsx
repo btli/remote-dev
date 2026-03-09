@@ -14,6 +14,8 @@ import type {
   CreateTaskInput,
   UpdateTaskInput,
   TaskSource,
+  TaskLabel,
+  TaskSubtask,
 } from "@/types/task";
 import { usePreferencesContext } from "./PreferencesContext";
 
@@ -23,7 +25,14 @@ function hydrateTask(raw: Record<string, unknown>): ProjectTask {
     ...(raw as unknown as ProjectTask),
     createdAt: new Date(raw.createdAt as string),
     updatedAt: new Date(raw.updatedAt as string),
+    labels: (raw.labels as TaskLabel[]) ?? [],
+    subtasks: (raw.subtasks as TaskSubtask[]) ?? [],
     dueDate: raw.dueDate ? new Date(raw.dueDate as string) : null,
+    metadata: (raw.metadata as Record<string, unknown>) ?? {},
+    instructions: (raw.instructions as string | null) ?? null,
+    agentTaskKey: (raw.agentTaskKey as string | null) ?? null,
+    owner: (raw.owner as string | null) ?? null,
+    blockedBy: (raw.blockedBy as string[]) ?? [],
   };
 }
 
@@ -40,7 +49,7 @@ interface TaskContextValue {
   ) => Promise<ProjectTask | null>;
   deleteTask: (id: string) => Promise<boolean>;
   clearTasks: (
-    source: TaskSource,
+    source?: TaskSource,
     options?: { sessionId?: string; completedOnly?: boolean }
   ) => Promise<number>;
 }
@@ -163,15 +172,15 @@ export function TaskProvider({ children }: TaskProviderProps) {
 
   const clearTasks = useCallback(
     async (
-      source: TaskSource,
+      source?: TaskSource,
       options?: { sessionId?: string; completedOnly?: boolean }
     ): Promise<number> => {
       if (!activeFolderId) return 0;
       try {
         const params = new URLSearchParams({
           folderId: activeFolderId,
-          source,
         });
+        if (source) params.set("source", source);
         if (options?.sessionId) params.set("sessionId", options.sessionId);
         if (options?.completedOnly) params.set("completedOnly", "true");
 
@@ -186,7 +195,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
         setTasks((prev) =>
           prev.filter((t) => {
             if (t.folderId !== activeFolderId) return true;
-            if (t.source !== source) return true;
+            if (source && t.source !== source) return true;
             if (options?.sessionId && t.sessionId !== options.sessionId) return true;
             if (options?.completedOnly && t.status !== "done" && t.status !== "cancelled") return true;
             return false;

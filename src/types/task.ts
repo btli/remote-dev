@@ -20,6 +20,11 @@ export interface TaskSubtask {
   completed: boolean;
 }
 
+export interface TaskDependency {
+  blockerId: string;
+  blockedId: string;
+}
+
 export interface ProjectTask {
   id: string;
   userId: string;
@@ -32,11 +37,16 @@ export interface ProjectTask {
   source: TaskSource;
   labels: TaskLabel[];
   subtasks: TaskSubtask[];
+  metadata: Record<string, unknown>;
+  instructions: string | null;
+  agentTaskKey: string | null;
+  owner: string | null;
   dueDate: Date | null;
   githubIssueUrl: string | null;
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
+  blockedBy: string[]; // populated from task_dependency join
 }
 
 export interface CreateTaskInput {
@@ -49,9 +59,14 @@ export interface CreateTaskInput {
   source?: TaskSource;
   labels?: TaskLabel[];
   subtasks?: TaskSubtask[];
+  metadata?: Record<string, unknown>;
+  instructions?: string | null;
+  agentTaskKey?: string | null;
+  owner?: string | null;
   dueDate?: string | null; // ISO string
   githubIssueUrl?: string | null;
   sortOrder?: number;
+  blockedBy?: string[]; // task IDs that block this task
 }
 
 export interface UpdateTaskInput {
@@ -61,9 +76,14 @@ export interface UpdateTaskInput {
   priority?: TaskPriority;
   labels?: TaskLabel[];
   subtasks?: TaskSubtask[];
+  metadata?: Record<string, unknown>;
+  instructions?: string | null;
+  agentTaskKey?: string | null;
+  owner?: string | null;
   dueDate?: string | null; // ISO string
   githubIssueUrl?: string | null;
   sortOrder?: number;
+  blockedBy?: string[]; // replace all blockers for this task
 }
 
 /** Default labels for new projects */
@@ -85,4 +105,3 @@ export const PRIORITY_CONFIG: Record<
   medium: { label: "Medium", color: "eab308", sortWeight: 2 },
   low: { label: "Low", color: "6b7280", sortWeight: 3 },
 };
-
