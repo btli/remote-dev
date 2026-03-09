@@ -2,6 +2,12 @@
 
 import { useState } from "react";
 import { Settings } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { UserSettingsModal } from "@/components/preferences/UserSettingsModal";
 
 interface HeaderUserMenuProps {
@@ -13,13 +19,19 @@ export function HeaderUserMenu({ email }: HeaderUserMenuProps) {
 
   return (
     <>
-      <button
-        onClick={() => setIsSettingsOpen(true)}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <Settings className="w-4 h-4" />
-        <span>{email}</span>
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setIsSettingsOpen(true)}
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{email}</TooltipContent>
+      </Tooltip>
 
       <UserSettingsModal
         open={isSettingsOpen}

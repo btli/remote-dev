@@ -10,6 +10,12 @@
 import { useState } from "react";
 import { KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
@@ -25,35 +31,35 @@ export function SecretsStatusButton() {
     : null;
 
   const hasSecretsConfigured = activeConfig && activeConfig.enabled;
-  const hasAnyConfigs = folderConfigs.size > 0;
 
   // Determine display state
   const isConnected = hasSecretsConfigured;
 
+  const tooltipLabel = isConnected
+    ? `Secrets: ${activeConfig?.provider}`
+    : "Secrets";
+
   return (
     <>
-      <button
-        onClick={() => setModalOpen(true)}
-        className={cn(
-          "flex items-center gap-2 text-sm transition-colors",
-          "hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-          loading && "opacity-50"
-        )}
-        title={
-          isConnected
-            ? `Secrets: ${activeConfig?.provider}`
-            : hasAnyConfigs
-              ? "Configure secrets for this folder"
-              : "Set up secrets management"
-        }
-      >
-        <KeyRound
-          className={cn(
-            "w-4 h-4 transition-colors",
-            isConnected ? "text-green-400" : "text-muted-foreground"
-          )}
-        />
-      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            disabled={loading}
+            onClick={() => setModalOpen(true)}
+          >
+            <KeyRound
+              className={cn(
+                "h-4 w-4 transition-colors",
+                isConnected ? "text-green-400" : "text-muted-foreground"
+              )}
+            />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{tooltipLabel}</TooltipContent>
+      </Tooltip>
 
       <SecretsConfigModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </>
