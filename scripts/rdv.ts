@@ -20,6 +20,7 @@ import { spawn, spawnSync } from "bun";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { ensureLocalApiKey } from "../src/lib/local-api-key";
 
 const PROJECT_ROOT = join(import.meta.dir, "..");
 const DATA_DIR = process.env.RDV_DATA_DIR || join(homedir(), ".remote-dev");
@@ -380,6 +381,13 @@ async function waitForExit(
   nextProc: SpawnedProcess | null
 ): Promise<void> {
   saveMode(mode);
+
+  // Ensure local API key exists for rdv CLI access
+  try {
+    await ensureLocalApiKey();
+  } catch (err) {
+    console.warn("Warning: could not provision local API key:", err);
+  }
 
   console.log(`\nRemote Dev started in ${mode.toUpperCase()} mode`);
   console.log("Press Ctrl+C to stop all servers\n");

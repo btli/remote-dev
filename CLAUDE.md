@@ -100,6 +100,8 @@ Sessions have a `terminalType` field that determines their behavior. The plugin 
 | `shell` | Standard terminal with bash/zsh | General command-line work |
 | `agent` | AI agent as shell process | Claude Code, Codex, Gemini sessions |
 | `file` | File viewer/editor (no terminal) | Editing CLAUDE.md configs |
+| `orchestrator` | Multi-agent coordinator | Orchestrating parallel agent sessions |
+| `browser` | Headless browser automation | Web scraping, testing, screenshots |
 
 **Plugin Architecture:**
 ```
@@ -162,6 +164,18 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv task create <title>` | Create task |
 | `rdv task check` | Check for incomplete tasks (used by stop hook) |
 | `rdv task sync` | Sync PostToolUse JSON from stdin |
+| `rdv notification list` | List notifications |
+| `rdv notification read` | Mark notifications as read |
+| `rdv notification delete` | Delete notifications |
+| `rdv browser navigate` | Navigate browser session to URL |
+| `rdv browser screenshot` | Take browser screenshot |
+| `rdv browser snapshot` | Get accessibility snapshot |
+| `rdv browser click` | Click at coordinates |
+| `rdv browser type` | Type text in browser |
+| `rdv browser evaluate` | Evaluate JavaScript |
+| `rdv session children` | List child sessions |
+| `rdv session spawn` | Spawn child session |
+| `rdv session git-status` | Get git status for session |
 | `rdv status` | System dashboard |
 | `rdv context` | Show current session context |
 
@@ -169,6 +183,9 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 - `RDV_SESSION_ID` — Current session UUID
 - `RDV_TERMINAL_SOCKET` — Unix socket path (prod)
 - `RDV_TERMINAL_PORT` — Port number (dev, default 6002)
+- `RDV_API_SOCKET` — Unix socket path for Next.js API server
+- `RDV_API_PORT` — Port number for Next.js API server (default 6001)
+- `RDV_API_KEY` — Bearer token for API authentication
 
 **Output:** JSON by default, `--human` flag for tables.
 
@@ -289,6 +306,8 @@ Located in `src/services/`:
 | `ClaudeSessionService` | Discover resumable Claude Code sessions from `.jsonl` files |
 | `TaskService` | Project task CRUD, folder-scoped queries |
 | `NotificationService` | Notification CRUD, debounced creation, read/delete management |
+| `BrowserService` | Headless browser automation (navigate, click, type, screenshot) |
+| `OrchestratorService` | Multi-agent session coordination and lifecycle |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -457,6 +476,17 @@ React Contexts in `src/contexts/`:
 - `GET /api/sessions/:id/token` - Get session WebSocket token
 - `POST /api/sessions/:id/exec` - Execute command (fire-and-forget)
 - `POST /api/sessions/reorder` - Reorder tabs
+- `GET /api/sessions/:id/children` - List child sessions
+- `POST /api/sessions/:id/children` - Spawn child session
+- `GET /api/sessions/:id/git-status` - Get git status
+- `POST /api/sessions/:id/browser/navigate` - Navigate browser
+- `GET /api/sessions/:id/browser/screenshot` - Take screenshot
+- `GET /api/sessions/:id/browser/snapshot` - Get accessibility snapshot
+- `POST /api/sessions/:id/browser/click` - Click at coordinates
+- `POST /api/sessions/:id/browser/type` - Type text
+- `POST /api/sessions/:id/browser/evaluate` - Evaluate JavaScript
+- `POST /api/sessions/:id/browser/back` - Navigate back
+- `POST /api/sessions/:id/browser/forward` - Navigate forward
 
 ### Folders
 - `GET /api/folders` - List user's folders

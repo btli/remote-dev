@@ -1,6 +1,8 @@
 pub mod agent;
+pub mod browser;
 pub mod context;
 pub mod folder;
+pub mod notification;
 pub mod session;
 pub mod status;
 pub mod task;

@@ -3,7 +3,7 @@ mod commands;
 mod config;
 
 use clap::Parser;
-use commands::{agent, context, folder, session, status, task, worktree};
+use commands::{agent, browser, context, folder, notification, session, status, task, worktree};
 
 #[derive(Parser)]
 #[command(name = "rdv", version, about = "CLI for Remote Dev terminal server")]
@@ -32,6 +32,10 @@ enum Command {
     Status(status::StatusArgs),
     /// Show current session context
     Context,
+    /// Manage notifications
+    Notification(notification::NotificationArgs),
+    /// Browser automation commands
+    Browser(browser::BrowserArgs),
 }
 
 #[tokio::main]
@@ -48,6 +52,8 @@ async fn main() {
         Command::Folder(args) => folder::run(args, &client, cli.human).await,
         Command::Status(args) => status::run(args, &client, cli.human).await,
         Command::Context => context::run(&client, cli.human).await,
+        Command::Notification(args) => notification::run(args, &client, cli.human).await,
+        Command::Browser(args) => browser::run(args, &client, cli.human).await,
     };
 
     if let Err(e) = result {
