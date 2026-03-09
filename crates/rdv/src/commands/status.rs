@@ -47,7 +47,10 @@ fn session_id() -> Option<String> {
 pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         Some(StatusCommand::Report { status }) => {
-            let sid = session_id().ok_or("RDV_SESSION_ID not set")?;
+            let sid = match session_id() {
+                Some(s) => s,
+                None => return Ok(()), // No session context — skip silently.
+            };
             let path = format!("/internal/agent-status?sessionId={sid}&status={status}");
             let result = client.post_empty(&path).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
