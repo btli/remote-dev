@@ -1,12 +1,13 @@
 import { db } from "@/db";
 import { projectTasks } from "@/db/schema";
-import { eq, and, desc, asc, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, isNull, inArray } from "drizzle-orm";
 import type {
   ProjectTask,
   CreateTaskInput,
   UpdateTaskInput,
   TaskLabel,
   TaskSubtask,
+  TaskSource,
   TaskStatus,
 } from "@/types/task";
 import { safeJsonParse } from "@/lib/utils";
@@ -188,4 +189,35 @@ export async function getTasksBySession(
 ): Promise<ProjectTask[]> {
   const all = await getAllTasksBySession(sessionId, userId);
   return all.filter((t) => t.source === "agent");
+}
+
+/** Bulk delete tasks by source, with optional session and completed-only filters. */
+export async function clearTasks(
+  userId: string,
+  folderId: string,
+  source: TaskSource,
+  options?: { sessionId?: string; completedOnly?: boolean }
+): Promise<number> {
+  const conditions = [
+    eq(projectTasks.userId, userId),
+    eq(projectTasks.folderId, folderId),
+    eq(projectTasks.source, source),
+  ];
+
+  if (options?.sessionId) {
+    conditions.push(eq(projectTasks.sessionId, options.sessionId));
+  }
+
+  if (options?.completedOnly) {
+    conditions.push(
+      inArray(projectTasks.status, ["done", "cancelled"])
+    );
+  }
+
+  const result = await db
+    .delete(projectTasks)
+    .where(and(...conditions))
+    .returning({ id: projectTasks.id });
+
+  return result.length;
 }

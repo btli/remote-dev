@@ -13,6 +13,7 @@ import type {
   ProjectTask,
   CreateTaskInput,
   UpdateTaskInput,
+  TaskSource,
 } from "@/types/task";
 import { usePreferencesContext } from "./PreferencesContext";
 
@@ -38,6 +39,10 @@ interface TaskContextValue {
     input: UpdateTaskInput
   ) => Promise<ProjectTask | null>;
   deleteTask: (id: string) => Promise<boolean>;
+  clearTasks: (
+    source: TaskSource,
+    options?: { sessionId?: string; completedOnly?: boolean }
+  ) => Promise<number>;
 }
 
 const TaskContext = createContext<TaskContextValue | null>(null);
@@ -156,6 +161,45 @@ export function TaskProvider({ children }: TaskProviderProps) {
     }
   }, []);
 
+  const clearTasks = useCallback(
+    async (
+      source: TaskSource,
+      options?: { sessionId?: string; completedOnly?: boolean }
+    ): Promise<number> => {
+      if (!activeFolderId) return 0;
+      try {
+        const params = new URLSearchParams({
+          folderId: activeFolderId,
+          source,
+        });
+        if (options?.sessionId) params.set("sessionId", options.sessionId);
+        if (options?.completedOnly) params.set("completedOnly", "true");
+
+        const response = await fetch(`/api/tasks?${params.toString()}`, {
+          method: "DELETE",
+        });
+        if (!response.ok) {
+          throw new Error("Failed to clear tasks");
+        }
+        const { deleted } = await response.json();
+
+        setTasks((prev) =>
+          prev.filter((t) => {
+            if (t.source !== source) return true;
+            if (options?.sessionId && t.sessionId !== options.sessionId) return true;
+            if (options?.completedOnly && t.status !== "done" && t.status !== "cancelled") return true;
+            return false;
+          })
+        );
+        return deleted;
+      } catch (err) {
+        console.error("Error clearing tasks:", err);
+        return 0;
+      }
+    },
+    [activeFolderId]
+  );
+
   const value = useMemo(
     () => ({
       tasks,
@@ -166,6 +210,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
       createTask,
       updateTask,
       deleteTask,
+      clearTasks,
     }),
     [
       tasks,
@@ -176,6 +221,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
       createTask,
       updateTask,
       deleteTask,
+      clearTasks,
     ]
   );
 
