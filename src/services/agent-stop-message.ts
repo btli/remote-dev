@@ -21,9 +21,6 @@ const POST_TASK_COMMANDS: Record<string, string> = Object.fromEntries(
   POST_TASK_CONFIG.map((t) => [t.title, t.command])
 );
 
-/** Pre-computed example commands for the stop-hook footer */
-const EXAMPLE_POST_COMMANDS = POST_TASK_CONFIG.map((t) => t.command).join(", ");
-
 /** Discriminated union for task classification in stop-hook messages */
 export type TaskCategory =
   | { kind: "post-task"; command: string | null }
@@ -54,19 +51,20 @@ export function buildStopMessage(incomplete: ProjectTask[]): string {
     "",
   ];
 
-  let hasPostTask = false;
+  const postTaskCommands: string[] = [];
 
   for (const task of incomplete) {
     const category = classifyTask(task);
+    const statusTag = `[${task.status}]`;
     const priorityNote = task.priority !== "medium" ? ` [${task.priority}]` : "";
 
     if (category.kind === "post-task") {
-      hasPostTask = true;
       const cmd = category.command ? ` — run ${category.command}` : "";
-      lines.push(`- ${task.title}${priorityNote}${cmd}`);
+      if (category.command) postTaskCommands.push(category.command);
+      lines.push(`- ${statusTag} ${task.title}${priorityNote}${cmd}`);
     } else {
       const sourceNote = category.kind === "user-assigned" ? " (user-assigned)" : "";
-      lines.push(`- ${task.title}${priorityNote}${sourceNote}`);
+      lines.push(`- ${statusTag} ${task.title}${priorityNote}${sourceNote}`);
     }
   }
 
@@ -75,8 +73,8 @@ export function buildStopMessage(incomplete: ProjectTask[]): string {
     "For each task: use TaskCreate to add it to your task list, complete the work, then mark done with TaskUpdate.",
   );
 
-  if (hasPostTask) {
-    lines.push(`For post-tasks: run the slash command listed above (e.g. ${EXAMPLE_POST_COMMANDS}).`);
+  if (postTaskCommands.length > 0) {
+    lines.push(`For post-tasks: run the slash command listed above (${postTaskCommands.join(", ")}).`);
   }
 
   return lines.join("\n");

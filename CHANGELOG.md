@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Stop hook TaskCreate instructions**: Stop hook now returns structured instructions telling the agent to use TaskCreate for each incomplete task (manual, agent-owned, post-tasks), replacing the plain text listing
 - **Agent hooks use rdv CLI**: Hooks now prefer `rdv` CLI commands over curl, with automatic curl fallback when rdv is not installed
 
 ### Removed
