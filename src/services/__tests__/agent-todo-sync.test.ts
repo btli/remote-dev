@@ -1,11 +1,35 @@
 /**
- * Tests for parsePostToolUsePayload — the pure parsing logic in agent-todo-sync.
+ * Tests for pure agent task sync and stop-hook message logic.
  *
- * We import from a pure module to avoid the DB import chain (node: modules
+ * We import from pure modules to avoid the DB import chain (node: modules
  * are incompatible with the happy-dom test environment).
  */
 import { describe, it, expect } from "vitest";
 import { parsePostToolUsePayload, mapAgentTaskStatus } from "../agent-todo-sync-pure";
+import { classifyTask, buildStopMessage, POST_TASK_MARKER_PREFIX } from "../agent-stop-message";
+import type { ProjectTask } from "@/types/task";
+
+/** Helper to create a minimal ProjectTask for testing */
+function makeTask(overrides: Partial<ProjectTask> & { title: string }): ProjectTask {
+  return {
+    id: "test-id",
+    userId: "user-1",
+    folderId: null,
+    sessionId: "session-1",
+    description: null,
+    status: "open",
+    priority: "medium",
+    source: "agent",
+    labels: [],
+    subtasks: [],
+    dueDate: null,
+    githubIssueUrl: null,
+    sortOrder: 0,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
 
 describe("mapAgentTaskStatus", () => {
   it("maps 'completed' to 'done'", () => {
@@ -161,5 +185,132 @@ describe("parsePostToolUsePayload", () => {
 
     expect(ops).toHaveLength(1);
     expect(ops[0].type).toBe("create");
+  });
+});
+
+describe("classifyTask", () => {
+  it("classifies a post-task with known command", () => {
+    const task = makeTask({
+      title: "Code Simplifier",
+      description: `${POST_TASK_MARKER_PREFIX}Code Simplifier`,
+    });
+    const result = classifyTask(task);
+    expect(result).toEqual({ kind: "post-task", command: "/simplify" });
+  });
+
+  it("classifies Code Review post-task", () => {
+    const task = makeTask({
+      title: "Code Review",
+      description: `${POST_TASK_MARKER_PREFIX}Code Review`,
+    });
+    const result = classifyTask(task);
+    expect(result).toEqual({ kind: "post-task", command: "/code-review" });
+  });
+
+  it("classifies a post-task with unknown command as null", () => {
+    const task = makeTask({
+      title: "Unknown Post Task",
+      description: `${POST_TASK_MARKER_PREFIX}Unknown Post Task`,
+    });
+    const result = classifyTask(task);
+    expect(result).toEqual({ kind: "post-task", command: null });
+  });
+
+  it("classifies a manual task as user-assigned", () => {
+    const task = makeTask({ title: "Fix login", source: "manual" });
+    const result = classifyTask(task);
+    expect(result).toEqual({ kind: "user-assigned" });
+  });
+
+  it("classifies an agent task as agent-owned", () => {
+    const task = makeTask({ title: "Implement feature", source: "agent" });
+    const result = classifyTask(task);
+    expect(result).toEqual({ kind: "agent-owned" });
+  });
+});
+
+describe("buildStopMessage", () => {
+  it("includes task count in header", () => {
+    const tasks = [makeTask({ title: "Task A" }), makeTask({ title: "Task B" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("2 incomplete task(s)");
+  });
+
+  it("lists agent-owned task without source tag", () => {
+    const tasks = [makeTask({ title: "Implement feature", source: "agent" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("- Implement feature");
+    expect(msg).not.toContain("(user-assigned)");
+  });
+
+  it("lists user-assigned task with source tag", () => {
+    const tasks = [makeTask({ title: "Fix login", source: "manual" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("- Fix login (user-assigned)");
+  });
+
+  it("lists post-task with slash command", () => {
+    const tasks = [
+      makeTask({
+        title: "Code Simplifier",
+        description: `${POST_TASK_MARKER_PREFIX}Code Simplifier`,
+      }),
+    ];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("- Code Simplifier — run /simplify");
+  });
+
+  it("includes priority for non-medium tasks", () => {
+    const tasks = [makeTask({ title: "Urgent fix", priority: "critical" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("[critical]");
+  });
+
+  it("omits priority for medium tasks", () => {
+    const tasks = [makeTask({ title: "Normal task", priority: "medium" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).not.toContain("[medium]");
+  });
+
+  it("includes TaskCreate instruction", () => {
+    const tasks = [makeTask({ title: "Some task" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("TaskCreate");
+  });
+
+  it("includes slash command footer when post-tasks are present", () => {
+    const tasks = [
+      makeTask({
+        title: "Code Review",
+        description: `${POST_TASK_MARKER_PREFIX}Code Review`,
+      }),
+    ];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("/code-review");
+    expect(msg).toContain("/simplify");
+  });
+
+  it("omits slash command footer when no post-tasks are present", () => {
+    const tasks = [makeTask({ title: "Fix bug", source: "manual" })];
+    const msg = buildStopMessage(tasks);
+    expect(msg).not.toContain("/simplify");
+    expect(msg).not.toContain("/code-review");
+  });
+
+  it("handles mixed task types", () => {
+    const tasks = [
+      makeTask({ title: "Fix bug", source: "manual", priority: "high" }),
+      makeTask({ title: "Write tests", source: "agent" }),
+      makeTask({
+        title: "Code Simplifier",
+        description: `${POST_TASK_MARKER_PREFIX}Code Simplifier`,
+        priority: "low",
+      }),
+    ];
+    const msg = buildStopMessage(tasks);
+    expect(msg).toContain("3 incomplete task(s)");
+    expect(msg).toContain("- Fix bug [high] (user-assigned)");
+    expect(msg).toContain("- Write tests");
+    expect(msg).toContain("- Code Simplifier [low] — run /simplify");
   });
 });
