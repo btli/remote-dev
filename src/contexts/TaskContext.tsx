@@ -185,6 +185,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
 
         setTasks((prev) =>
           prev.filter((t) => {
+            if (t.folderId !== activeFolderId) return true;
             if (t.source !== source) return true;
             if (options?.sessionId && t.sessionId !== options.sessionId) return true;
             if (options?.completedOnly && t.status !== "done" && t.status !== "cancelled") return true;

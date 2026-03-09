@@ -563,6 +563,7 @@ React Contexts in `src/contexts/`:
 ### Tasks
 - `GET /api/tasks` - List tasks (optional `?folderId=` filter)
 - `POST /api/tasks` - Create task
+- `DELETE /api/tasks` - Bulk clear tasks (requires `?folderId=&source=`, optional `?sessionId=&completedOnly=`)
 - `GET /api/tasks/:id` - Get task details
 - `PATCH /api/tasks/:id` - Update task
 - `DELETE /api/tasks/:id` - Delete task

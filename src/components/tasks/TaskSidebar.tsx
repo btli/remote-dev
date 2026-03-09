@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -434,15 +435,12 @@ function ClearTasksDialog({
           >
             Clear all ({totalCount})
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
+          <AlertDialogCancel
             className="w-full text-xs"
             disabled={isClearing}
-            onClick={onClose}
           >
             Cancel
-          </Button>
+          </AlertDialogCancel>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -702,7 +700,7 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
     async (source: TaskSource, completedOnly: boolean) => {
       await clearTasks(source, {
         sessionId: source === "agent" && activeSessionId ? activeSessionId : undefined,
-        completedOnly: completedOnly || undefined,
+        completedOnly: completedOnly ? true : undefined,
       });
     },
     [clearTasks, activeSessionId]
