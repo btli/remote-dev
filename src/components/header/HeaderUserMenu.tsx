@@ -10,11 +10,7 @@ import {
 } from "@/components/ui/tooltip";
 import { UserSettingsModal } from "@/components/preferences/UserSettingsModal";
 
-interface HeaderUserMenuProps {
-  email: string;
-}
-
-export function HeaderUserMenu({ email }: HeaderUserMenuProps) {
+export function HeaderUserMenu() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   return (
@@ -30,7 +26,7 @@ export function HeaderUserMenu({ email }: HeaderUserMenuProps) {
             <Settings className="h-4 w-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{email}</TooltipContent>
+        <TooltipContent>Settings</TooltipContent>
       </Tooltip>
 
       <UserSettingsModal

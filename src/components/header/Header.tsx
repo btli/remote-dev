@@ -63,7 +63,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
                 )
               }
             />
-            <HeaderUserMenu email={userEmail} />
+            <HeaderUserMenu />
             <form action={onSignOut}>
               <Button
                 variant="ghost"
@@ -117,7 +117,8 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
 
           <div className="w-px h-5 bg-border mx-1" />
 
-          <HeaderUserMenu email={userEmail} />
+          <span className="text-sm text-muted-foreground px-1">{userEmail}</span>
+          <HeaderUserMenu />
 
           <Tooltip>
             <TooltipTrigger asChild>
