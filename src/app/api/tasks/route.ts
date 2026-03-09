@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
-import { getTasks, createTask } from "@/services/task-service";
-import type { CreateTaskInput } from "@/types/task";
+import { getTasks, createTask, clearTasks } from "@/services/task-service";
+import type { CreateTaskInput, TaskSource } from "@/types/task";
 
 export const GET = withApiAuth(async (request, { userId }) => {
   const url = new URL(request.url);
@@ -22,4 +22,26 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
   const task = await createTask(userId, body);
   return NextResponse.json(task, { status: 201 });
+});
+
+export const DELETE = withApiAuth(async (request, { userId }) => {
+  const url = new URL(request.url);
+  const folderId = url.searchParams.get("folderId");
+  const source = url.searchParams.get("source") as TaskSource | null;
+  const sessionId = url.searchParams.get("sessionId") ?? undefined;
+  const completedOnly = url.searchParams.get("completedOnly") === "true";
+
+  if (!folderId || !source) {
+    return errorResponse("folderId and source are required", 400);
+  }
+
+  if (source !== "manual" && source !== "agent") {
+    return errorResponse("source must be 'manual' or 'agent'", 400);
+  }
+
+  const deleted = await clearTasks(userId, folderId, source, {
+    sessionId,
+    completedOnly,
+  });
+  return NextResponse.json({ deleted }, { status: 200 });
 });
