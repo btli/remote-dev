@@ -288,6 +288,7 @@ Located in `src/services/`:
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
 | `ClaudeSessionService` | Discover resumable Claude Code sessions from `.jsonl` files |
 | `TaskService` | Project task CRUD, folder-scoped queries |
+| `NotificationService` | Notification CRUD, debounced creation, read/delete management |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -415,6 +416,7 @@ React Contexts in `src/contexts/`:
 | `PortContext` | Port allocations, framework detection, monitoring |
 | `GitHubAccountContext` | Multi-GitHub account state with folder bindings |
 | `TaskContext` | Project tasks state with folder-scoped CRUD |
+| `NotificationContext` | Notification state with toast integration and delete operations |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -559,6 +561,11 @@ React Contexts in `src/contexts/`:
 - `GET /api/profiles/:id/appearance` - Get profile appearance settings
 - `PUT /api/profiles/:id/appearance` - Update profile appearance (mode, schemes, terminal settings)
 - `DELETE /api/profiles/:id/appearance` - Reset profile appearance to defaults
+
+### Notifications
+- `GET /api/notifications` - List notifications with unread count
+- `PATCH /api/notifications` - Mark notifications read (by ids or all)
+- `DELETE /api/notifications` - Delete notifications (by ids or all)
 
 ### Tasks
 - `GET /api/tasks` - List tasks (optional `?folderId=` filter)

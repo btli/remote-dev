@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Toast Notifications**: Real-time toast notifications for agent events (waiting, error, complete, exited) via sonner, positioned bottom-center with glassmorphism styling. Toasts are clickable to jump directly to the related session.
+- **Clear Notifications**: Per-item dismiss (X button on hover) and "Clear all" button in notification panel header. Hard deletes notifications from the database.
+- **Notification Panel Glassmorphism**: Upgraded notification panel to frosted glass style (`bg-popover/95 backdrop-blur-xl`) matching the rest of the app's modal/panel aesthetic.
 - **Clear all tasks**: Bulk delete tasks from the right sidebar with "Clear completed" and "Clear all" options, available for both Tasks and Agent Tasks sections
 
 - **rdv CLI (Rust)**: New CLI at `crates/rdv/` for agent interaction with the terminal server
