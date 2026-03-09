@@ -19,6 +19,7 @@ import { PortProvider } from "@/contexts/PortContext";
 import { SessionMCPProvider } from "@/contexts/SessionMCPContext";
 import { TaskProvider } from "@/contexts/TaskContext";
 import { GitHubAccountProvider } from "@/contexts/GitHubAccountContext";
+import { NotificationProvider } from "@/contexts/NotificationContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
 import type { TerminalSession } from "@/types/session";
@@ -101,6 +102,8 @@ export default async function Home() {
     splitGroupId: s.splitGroupId,
     splitOrder: s.splitOrder,
     splitSize: s.splitSize ?? 0.5,
+    parentSessionId: s.parentSessionId ?? null,
+    orchestratorRole: s.orchestratorRole as "parent" | "child" | null,
     status: s.status as "active" | "suspended" | "closed" | "trashed",
     pinned: s.pinned ?? false,
     tabOrder: s.tabOrder,
@@ -126,19 +129,21 @@ export default async function Home() {
                             <ScheduleProvider>
                               <TaskProvider>
                                 <SessionMCPProvider>
-                                  <div className="flex h-screen flex-col bg-background">
-                                    {/* Header - hidden on mobile, shown in sidebar instead */}
-                                    <Header
-                                      isGitHubConnected={isGitHubConnected}
-                                      userEmail={session.user.email || ""}
-                                      onSignOut={async () => {
-                                        "use server";
-                                        await signOut();
-                                      }}
-                                    />
-                                    {/* Main content */}
-                                    <SessionManager isGitHubConnected={isGitHubConnected} />
-                                  </div>
+                                  <NotificationProvider>
+                                    <div className="flex h-screen flex-col bg-background">
+                                      {/* Header - hidden on mobile, shown in sidebar instead */}
+                                      <Header
+                                        isGitHubConnected={isGitHubConnected}
+                                        userEmail={session.user.email || ""}
+                                        onSignOut={async () => {
+                                          "use server";
+                                          await signOut();
+                                        }}
+                                      />
+                                      {/* Main content */}
+                                      <SessionManager isGitHubConnected={isGitHubConnected} />
+                                    </div>
+                                  </NotificationProvider>
                                 </SessionMCPProvider>
                               </TaskProvider>
                             </ScheduleProvider>

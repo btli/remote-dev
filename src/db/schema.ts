@@ -9,6 +9,7 @@ import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
+import type { NotificationType } from "@/types/notification";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -486,6 +487,9 @@ export const terminalSessions = sqliteTable(
     }),
     splitOrder: integer("split_order").notNull().default(0),
     splitSize: real("split_size").default(0.5),
+    // Orchestration: parent-child session relationships
+    parentSessionId: text("parent_session_id"),
+    orchestratorRole: text("orchestrator_role").$type<"parent" | "child">(),
     status: text("status").$type<SessionStatus>().notNull().default("active"),
     pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     tabOrder: integer("tab_order").notNull().default(0),
@@ -507,6 +511,8 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_user_folder_idx").on(table.userId, table.folderId),
     // Index for filtering by terminal type
     index("terminal_session_type_idx").on(table.userId, table.terminalType),
+    // Index for orchestrator parent-child lookup
+    index("terminal_session_parent_idx").on(table.parentSessionId),
   ]
 );
 
@@ -1534,5 +1540,33 @@ export const projectTasks = sqliteTable(
     index("project_task_folder_idx").on(table.folderId),
     index("project_task_user_folder_idx").on(table.userId, table.folderId),
     index("project_task_session_idx").on(table.sessionId),
+  ]
+);
+
+// Notification events for in-app notification panel
+export const notificationEvents = sqliteTable(
+  "notification_event",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    sessionId: text("session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    sessionName: text("session_name"),
+    type: text("type").$type<NotificationType>().notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("notification_event_user_created_idx").on(table.userId, table.createdAt),
+    index("notification_event_user_read_idx").on(table.userId, table.readAt),
   ]
 );

@@ -43,6 +43,8 @@ export interface SessionProps {
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
+  parentSessionId: string | null;
+  orchestratorRole: "parent" | "child" | null;
   pinned: boolean;
   tabOrder: number;
   lastActivityAt: Date;
@@ -117,6 +119,8 @@ export class Session {
       splitGroupId: null,
       splitOrder: 0,
       splitSize: 100,
+      parentSessionId: null,
+      orchestratorRole: null,
       pinned: false,
       tabOrder: props.tabOrder ?? 0,
       lastActivityAt: now,
@@ -223,6 +227,14 @@ export class Session {
 
   get splitSize(): number {
     return this.props.splitSize;
+  }
+
+  get parentSessionId(): string | null {
+    return this.props.parentSessionId;
+  }
+
+  get orchestratorRole(): "parent" | "child" | null {
+    return this.props.orchestratorRole;
   }
 
   get pinned(): boolean {
