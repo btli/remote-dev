@@ -12,7 +12,7 @@
  * - Start working on an issue (creates worktree + agent session)
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   CircleDot,
   CircleCheck,
@@ -59,6 +59,7 @@ interface IssuesModalProps {
   repositoryId: string;
   repositoryName: string;
   repositoryUrl?: string;
+  initialIssueNumber?: number;
   onCreateWorktree?: (issue: GitHubIssueDTO, repositoryId: string) => void;
 }
 
@@ -68,6 +69,7 @@ export function IssuesModal({
   repositoryId,
   repositoryName,
   repositoryUrl,
+  initialIssueNumber,
   onCreateWorktree,
 }: IssuesModalProps) {
   return (
@@ -79,6 +81,7 @@ export function IssuesModal({
             repositoryId={repositoryId}
             repositoryName={repositoryName}
             repositoryUrl={repositoryUrl}
+            initialIssueNumber={initialIssueNumber}
             onCreateWorktree={onCreateWorktree}
           />
         )}
@@ -91,6 +94,7 @@ interface IssuesModalContentProps {
   repositoryId: string;
   repositoryName: string;
   repositoryUrl?: string;
+  initialIssueNumber?: number;
   onCreateWorktree?: (issue: GitHubIssueDTO, repositoryId: string) => void;
 }
 
@@ -98,6 +102,7 @@ function IssuesModalContent({
   repositoryId,
   repositoryName,
   repositoryUrl,
+  initialIssueNumber,
   onCreateWorktree,
 }: IssuesModalContentProps) {
   const {
@@ -116,7 +121,26 @@ function IssuesModalContent({
   const [stateFilter, setStateFilter] = useState<StateFilter>("open");
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [selectedIssue, setSelectedIssue] = useState<GitHubIssueDTO | null>(null);
+  const [selectedIssue, setSelectedIssue] = useState<GitHubIssueDTO | null>(() => {
+    if (initialIssueNumber) {
+      const found = issues.find((i) => i.number === initialIssueNumber);
+      return found ?? null;
+    }
+    return null;
+  });
+
+  // Sync selectedIssue when issues load after mount (handles late-loading data).
+  // The ref prevents re-selecting after the user navigates back to the list.
+  const initialIssueSynced = useRef(!!selectedIssue);
+  useEffect(() => {
+    if (initialIssueNumber && !initialIssueSynced.current && issues.length > 0) {
+      const found = issues.find((i) => i.number === initialIssueNumber);
+      if (found) {
+        setSelectedIssue(found);
+        initialIssueSynced.current = true;
+      }
+    }
+  }, [initialIssueNumber, issues]);
 
   // Fetch issues on mount
   useEffect(() => {
@@ -268,7 +292,7 @@ function IssuesModalContent({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pr-8">
             <Button
               variant="outline"
               size="sm"
@@ -474,7 +498,7 @@ function IssuesModalContent({
               )}
             </div>
           ) : (
-            <ScrollArea className="h-[calc(85vh-260px)]">
+            <ScrollArea className="flex-1 min-h-0 h-full">
               <div className="space-y-4 pr-4">
                 {/* Show grouped by state when viewing "all" */}
                 {stateFilter === "all" ? (

@@ -8,10 +8,12 @@
  * - Search PRs by title/branch
  * - Filter by state (Open/Merged/Closed)
  * - Filter by review status
+ * - Click-through detail view with markdown body and comments
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Image from "next/image";
+import ReactMarkdown from "react-markdown";
 import {
   GitPullRequest,
   GitMerge,
@@ -26,6 +28,10 @@ import {
   Clock,
   User,
   GitBranch,
+  ArrowLeft,
+  MessageSquare,
+  Loader2,
+  Copy,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
@@ -49,7 +55,8 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Badge } from "@/components/ui/badge";
-import { Copy } from "lucide-react";
+import { useRepositoryIssues } from "@/contexts/GitHubIssuesContext";
+import { REMARK_PLUGINS, MARKDOWN_COMPONENTS } from "./markdown-components";
 
 type StateFilter = "all" | "open" | "merged" | "closed";
 
@@ -59,6 +66,7 @@ interface PRsModalProps {
   repositoryId: string;
   repositoryName: string;
   repositoryUrl?: string;
+  initialPRNumber?: number;
   onCheckoutBranch?: (pr: PullRequest) => void;
 }
 
@@ -68,6 +76,7 @@ export function PRsModal({
   repositoryId,
   repositoryName,
   repositoryUrl,
+  initialPRNumber,
   onCheckoutBranch,
 }: PRsModalProps) {
   return (
@@ -79,6 +88,7 @@ export function PRsModal({
             repositoryId={repositoryId}
             repositoryName={repositoryName}
             repositoryUrl={repositoryUrl}
+            initialPRNumber={initialPRNumber}
             onCheckoutBranch={onCheckoutBranch}
           />
         )}
@@ -91,6 +101,7 @@ interface PRsModalContentProps {
   repositoryId: string;
   repositoryName: string;
   repositoryUrl?: string;
+  initialPRNumber?: number;
   onCheckoutBranch?: (pr: PullRequest) => void;
 }
 
@@ -98,6 +109,7 @@ function PRsModalContent({
   repositoryId,
   repositoryName,
   repositoryUrl,
+  initialPRNumber,
   onCheckoutBranch,
 }: PRsModalContentProps) {
   const { getRepositoryById, refreshStats, state } = useGitHubStats();
@@ -108,6 +120,30 @@ function PRsModalContent({
     () => repository?.pullRequests ?? [],
     [repository?.pullRequests]
   );
+
+  // Selected PR for detail view
+  const [selectedPR, setSelectedPR] = useState<PullRequest | null>(() => {
+    if (initialPRNumber) {
+      const found = (repository?.pullRequests ?? []).find(
+        (pr) => pr.number === initialPRNumber
+      );
+      return found ?? null;
+    }
+    return null;
+  });
+
+  // Sync selectedPR when pullRequests load after mount (handles late-loading data).
+  // The ref prevents re-selecting after the user navigates back to the list.
+  const initialPRSynced = useRef(!!selectedPR);
+  useEffect(() => {
+    if (initialPRNumber && !initialPRSynced.current && pullRequests.length > 0) {
+      const found = pullRequests.find((pr) => pr.number === initialPRNumber);
+      if (found) {
+        setSelectedPR(found);
+        initialPRSynced.current = true;
+      }
+    }
+  }, [initialPRNumber, pullRequests]);
 
   // Filter state - resets naturally when component unmounts (modal closes)
   const [searchQuery, setSearchQuery] = useState("");
@@ -130,7 +166,12 @@ function PRsModalContent({
         const matchesBranch = pr.branch.toLowerCase().includes(query);
         const matchesNumber = `#${pr.number}`.includes(query);
         const matchesAuthor = pr.author.toLowerCase().includes(query);
-        if (!matchesTitle && !matchesBranch && !matchesNumber && !matchesAuthor) {
+        if (
+          !matchesTitle &&
+          !matchesBranch &&
+          !matchesNumber &&
+          !matchesAuthor
+        ) {
           return false;
         }
       }
@@ -141,8 +182,12 @@ function PRsModalContent({
 
   // Count PRs by state
   const openCount = pullRequests.filter((pr) => pr.state === "open").length;
-  const mergedCount = pullRequests.filter((pr) => pr.state === "merged").length;
-  const closedCount = pullRequests.filter((pr) => pr.state === "closed").length;
+  const mergedCount = pullRequests.filter(
+    (pr) => pr.state === "merged"
+  ).length;
+  const closedCount = pullRequests.filter(
+    (pr) => pr.state === "closed"
+  ).length;
 
   const handleOpenInGitHub = useCallback((url: string) => {
     window.open(url, "_blank", "noopener,noreferrer");
@@ -156,10 +201,6 @@ function PRsModalContent({
     }
   }, []);
 
-  const handleRefresh = useCallback(() => {
-    refreshStats();
-  }, [refreshStats]);
-
   const clearFilters = useCallback(() => {
     setSearchQuery("");
     setStateFilter("open");
@@ -167,6 +208,19 @@ function PRsModalContent({
 
   const hasActiveFilters =
     searchQuery.trim() !== "" || stateFilter !== "open";
+
+  // Detail view
+  if (selectedPR) {
+    return (
+      <PRDetailView
+        pr={selectedPR}
+        repositoryId={repositoryId}
+        onBack={() => setSelectedPR(null)}
+        onOpenInGitHub={handleOpenInGitHub}
+        onCheckoutBranch={onCheckoutBranch}
+      />
+    );
+  }
 
   return (
     <>
@@ -178,7 +232,7 @@ function PRsModalContent({
               {repositoryName} Pull Requests
             </DialogTitle>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pr-8">
             {repositoryUrl && (
               <Button
                 variant="ghost"
@@ -193,7 +247,7 @@ function PRsModalContent({
             <Button
               variant="ghost"
               size="icon"
-              onClick={handleRefresh}
+              onClick={refreshStats}
               disabled={isLoading}
               className="h-8 w-8"
             >
@@ -310,12 +364,13 @@ function PRsModalContent({
             )}
           </div>
         ) : (
-          <ScrollArea className="h-[calc(85vh-260px)]">
+          <ScrollArea className="flex-1 min-h-0 h-full">
             <div className="space-y-2 pr-4">
               {filteredPRs.map((pr) => (
                 <PRCard
                   key={pr.id}
                   pr={pr}
+                  onSelect={setSelectedPR}
                   onOpenInGitHub={handleOpenInGitHub}
                   onCopyUrl={handleCopyUrl}
                   onCheckoutBranch={onCheckoutBranch}
@@ -329,14 +384,298 @@ function PRsModalContent({
   );
 }
 
+// =============================================================================
+// PR Detail View
+// =============================================================================
+
+const PR_STATE_CONFIG = {
+  open: { label: "Open", className: "bg-chart-1/20 text-chart-1" },
+  merged: { label: "Merged", className: "bg-purple-500/20 text-purple-500" },
+  closed: { label: "Closed", className: "bg-destructive/20 text-destructive" },
+} as const;
+
+interface IssueComment {
+  id: number;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  user: { login: string; avatar_url: string } | null;
+}
+
+interface PRDetailViewProps {
+  pr: PullRequest;
+  repositoryId: string;
+  onBack: () => void;
+  onOpenInGitHub: (url: string) => void;
+  onCheckoutBranch?: (pr: PullRequest) => void;
+}
+
+function PRDetailView({
+  pr,
+  repositoryId,
+  onBack,
+  onOpenInGitHub,
+  onCheckoutBranch,
+}: PRDetailViewProps) {
+  const [comments, setComments] = useState<IssueComment[]>([]);
+  const [loadingComments, setLoadingComments] = useState(true);
+
+  // Get PR body from the issues context (cached, includes all issues+PRs)
+  const { issues, isLoading: issuesLoading } = useRepositoryIssues(repositoryId);
+  const matchingIssue = useMemo(
+    () => issues.find((issue) => issue.number === pr.number),
+    [issues, pr.number]
+  );
+  const body = matchingIssue?.body ?? null;
+  const loadingBody = issuesLoading && !matchingIssue;
+
+  // Fetch comments
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch(
+      `/api/github/repositories/${repositoryId}/issues/${pr.number}/comments`
+    )
+      .then((res) =>
+        res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))
+      )
+      .then((data) => {
+        if (!cancelled) setComments(data.comments ?? []);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error("Failed to fetch comments:", err);
+          setComments([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingComments(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [repositoryId, pr.number]);
+
+  const stateIcon = useMemo(() => {
+    switch (pr.state) {
+      case "open":
+        return <GitPullRequest className="w-5 h-5 text-chart-1" />;
+      case "merged":
+        return <GitMerge className="w-5 h-5 text-purple-500" />;
+      case "closed":
+        return <CircleCheck className="w-5 h-5 text-destructive" />;
+      default:
+        return <GitPullRequest className="w-5 h-5" />;
+    }
+  }, [pr.state]);
+
+  const { label: stateLabel, className: stateClass } =
+    PR_STATE_CONFIG[pr.state] ?? PR_STATE_CONFIG.open;
+
+  return (
+    <>
+      <DialogHeader className="shrink-0">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2 min-w-0">
+            {stateIcon}
+            <div className="min-w-0">
+              <DialogTitle className="text-base leading-snug">
+                {pr.title}
+              </DialogTitle>
+              <DialogDescription className="text-xs mt-1 flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-primary">
+                  #{pr.number}
+                </span>
+                <span
+                  className={cn(
+                    "px-1.5 py-0.5 rounded text-[10px] font-medium",
+                    stateClass
+                  )}
+                >
+                  {stateLabel}
+                </span>
+                {pr.isDraft && (
+                  <Badge variant="outline" className="text-[10px] h-4 px-1">
+                    Draft
+                  </Badge>
+                )}
+                {pr.authorAvatarUrl ? (
+                  <span className="flex items-center gap-1">
+                    by
+                    <Image
+                      src={pr.authorAvatarUrl}
+                      alt={pr.author}
+                      width={14}
+                      height={14}
+                      className="w-3.5 h-3.5 rounded-full"
+                    />
+                    {pr.author}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1">
+                    by
+                    <User className="w-3 h-3" />
+                    {pr.author}
+                  </span>
+                )}
+              </DialogDescription>
+            </div>
+          </div>
+
+          {/* Actions - pr-8 to clear the dialog close button */}
+          <div className="flex items-center gap-1.5 shrink-0 pr-8">
+            {onCheckoutBranch && pr.state === "open" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onCheckoutBranch(pr)}
+                className="text-xs"
+              >
+                <GitBranch className="w-3.5 h-3.5 mr-1" />
+                Checkout
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenInGitHub(pr.url)}
+              className="text-xs"
+            >
+              <ExternalLink className="w-3.5 h-3.5 mr-1" />
+              GitHub
+            </Button>
+          </div>
+        </div>
+      </DialogHeader>
+
+      {/* Branch & metadata bar */}
+      <div className="shrink-0 flex flex-wrap items-center gap-3 text-xs text-muted-foreground border-b border-border pb-3">
+        <div className="flex items-center gap-1">
+          <GitBranch className="w-3.5 h-3.5" />
+          <code className="px-1.5 py-0.5 bg-muted rounded text-[10px]">
+            {pr.branch}
+          </code>
+          <span>→</span>
+          <code className="px-1.5 py-0.5 bg-muted rounded text-[10px]">
+            {pr.baseBranch}
+          </code>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-chart-2">+{pr.additions}</span>
+          <span className="text-destructive">-{pr.deletions}</span>
+        </div>
+        <span className="ml-auto">
+          Updated {formatRelativeTime(pr.updatedAt)}
+        </span>
+      </div>
+
+      {/* Scrollable body + comments */}
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="pr-4 space-y-6">
+          {/* PR Body */}
+          {loadingBody ? (
+            <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Loading description...
+            </div>
+          ) : body ? (
+            <ReactMarkdown
+              remarkPlugins={REMARK_PLUGINS}
+              components={MARKDOWN_COMPONENTS}
+            >
+              {body}
+            </ReactMarkdown>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">
+              No description provided.
+            </p>
+          )}
+
+          {/* Comments */}
+          {loadingComments ? (
+            <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Loading comments...
+            </div>
+          ) : comments.length > 0 ? (
+            <div className="space-y-3">
+              <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5" />
+                Comments ({comments.length})
+              </h4>
+              {comments.map((comment) => (
+                <div
+                  key={comment.id}
+                  className="rounded-lg border border-border/50 p-3 space-y-2"
+                >
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {comment.user && (
+                      <div className="flex items-center gap-1">
+                        {comment.user.avatar_url ? (
+                          <Image
+                            src={comment.user.avatar_url}
+                            alt={comment.user.login}
+                            width={16}
+                            height={16}
+                            className="w-4 h-4 rounded-full"
+                          />
+                        ) : (
+                          <User className="w-3 h-3" />
+                        )}
+                        <span className="font-medium text-foreground">
+                          {comment.user.login}
+                        </span>
+                      </div>
+                    )}
+                    <span>{formatRelativeTime(comment.created_at)}</span>
+                  </div>
+                  <ReactMarkdown
+                    remarkPlugins={REMARK_PLUGINS}
+                    components={MARKDOWN_COMPONENTS}
+                  >
+                    {comment.body}
+                  </ReactMarkdown>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </ScrollArea>
+
+      {/* Back button footer */}
+      <div className="shrink-0 pt-3 border-t border-border">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          Back to Pull Requests
+        </button>
+      </div>
+    </>
+  );
+}
+
+// =============================================================================
+// PR Card
+// =============================================================================
+
 interface PRCardProps {
   pr: PullRequest;
+  onSelect: (pr: PullRequest) => void;
   onOpenInGitHub: (url: string) => void;
   onCopyUrl: (url: string) => void;
   onCheckoutBranch?: (pr: PullRequest) => void;
 }
 
-function PRCard({ pr, onOpenInGitHub, onCopyUrl, onCheckoutBranch }: PRCardProps) {
+function PRCard({
+  pr,
+  onSelect,
+  onOpenInGitHub,
+  onCopyUrl,
+  onCheckoutBranch,
+}: PRCardProps) {
   const stateIcon = useMemo(() => {
     switch (pr.state) {
       case "open":
@@ -383,11 +722,11 @@ function PRCard({ pr, onOpenInGitHub, onCopyUrl, onCheckoutBranch }: PRCardProps
         <div
           role="button"
           tabIndex={0}
-          onClick={() => onOpenInGitHub(pr.url)}
+          onClick={() => onSelect(pr)}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              onOpenInGitHub(pr.url);
+              onSelect(pr);
             }
           }}
           className={cn(

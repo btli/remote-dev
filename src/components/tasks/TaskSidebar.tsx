@@ -553,9 +553,11 @@ function GitHubIssueLink({ issue, onLink, onSelect }: GitHubIssueLinkProps) {
 
 interface TaskSidebarProps {
   githubRepoId: string | null;
+  onViewIssue?: (issueNumber: number) => void;
+  onViewPR?: (prNumber: number) => void;
 }
 
-export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
+export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebarProps) {
   const { tasks, loading, createTask, updateTask, deleteTask, clearTasks, activeFolderId } =
     useTaskContext();
   const { activeSessionId } = useSessionContext();
@@ -902,7 +904,15 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
                         key={issue.number}
                         issue={issue}
                         onLink={() => handleLinkIssue(issue)}
-                        onSelect={() => setSelectedIssue(issue)}
+                        onSelect={() => {
+                          if (issue.isPullRequest && onViewPR) {
+                            onViewPR(issue.number);
+                          } else if (!issue.isPullRequest && onViewIssue) {
+                            onViewIssue(issue.number);
+                          } else {
+                            setSelectedIssue(issue);
+                          }
+                        }}
                       />
                     ))
                   )}
