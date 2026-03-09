@@ -3,14 +3,13 @@
 /**
  * TaskSidebar - Right sidebar for project task tracking
  *
- * Displays manual tasks (folder-scoped), agent tasks (session-scoped),
- * and GitHub issues for the active project.
+ * Unified flat list of all tasks (manual + agent), with inline expandable
+ * editor and GitHub issues section.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useTaskContext } from "@/contexts/TaskContext";
-import { useSessionContext } from "@/contexts/SessionContext";
 import {
   useRepositoryIssues,
   type GitHubIssueDTO,
@@ -28,9 +27,11 @@ import {
   Circle,
   Loader2,
   Trash2,
-  Check,
   Calendar,
   Link2,
+  User,
+  Lock,
+  FileText,
 } from "lucide-react";
 import { IssueDetailModal } from "@/components/github/IssueDetailModal";
 import { getIssueIcon } from "@/components/github/issue-icons";
@@ -53,12 +54,11 @@ import {
 } from "@/components/ui/tooltip";
 import type {
   ProjectTask,
-  TaskSource,
   TaskStatus,
-  TaskSubtask,
   UpdateTaskInput,
 } from "@/types/task";
 import { PRIORITY_CONFIG } from "@/types/task";
+import { TaskEditor } from "./TaskEditor";
 
 // --- Sidebar state persistence (mirrors left sidebar pattern) ---
 
@@ -167,207 +167,183 @@ function countByCompletion(tasks: ProjectTask[]): { active: number; completed: n
 
 interface TaskItemProps {
   task: ProjectTask;
+  isExpanded: boolean;
+  allTasks: ProjectTask[];
+  onExpand: () => void;
   onUpdate: (id: string, input: UpdateTaskInput) => void;
   onDelete: (id: string) => Promise<boolean>;
 }
 
-function TaskItem({ task, onUpdate, onDelete }: TaskItemProps) {
-  const [expanded, setExpanded] = useState(false);
+function TaskItem({ task, isExpanded, allTasks, onExpand, onUpdate, onDelete }: TaskItemProps) {
   const StatusIcon = STATUS_ICONS[task.status];
   const priorityConfig = PRIORITY_CONFIG[task.priority];
 
   const completedSubtasks = task.subtasks.filter((s) => s.completed).length;
   const totalSubtasks = task.subtasks.length;
-
-  const toggleSubtask = (subtaskId: string) => {
-    const updated = task.subtasks.map((s) =>
-      s.id === subtaskId ? { ...s, completed: !s.completed } : s
-    );
-    onUpdate(task.id, { subtasks: updated });
-  };
-
-  const addSubtask = (title: string) => {
-    const newSubtask: TaskSubtask = {
-      id: crypto.randomUUID(),
-      title,
-      completed: false,
-    };
-    onUpdate(task.id, { subtasks: [...task.subtasks, newSubtask] });
-  };
+  const isBlocked = task.blockedBy.length > 0;
 
   return (
-    <div
-      className={cn(
-        "group px-2 py-1.5 rounded-md transition-all duration-150",
-        "hover:bg-accent/50",
-        task.status === "done" && "opacity-60"
-      )}
-    >
-      {/* Main row */}
-      <div className="flex items-start gap-1.5">
-        {/* Status toggle */}
-        <button
-          onClick={() =>
-            onUpdate(task.id, { status: NEXT_STATUS[task.status] })
-          }
-          className="mt-0.5 shrink-0"
-        >
-          <StatusIcon
-            className={cn("w-3.5 h-3.5", STATUS_COLORS[task.status])}
-          />
-        </button>
-
-        {/* Title + meta */}
-        <div className="flex-1 min-w-0">
+    <div>
+      <div
+        className={cn(
+          "group px-2 py-1.5 rounded-md transition-all duration-150",
+          "hover:bg-accent/50",
+          task.status === "done" && "opacity-60",
+          isExpanded && "bg-accent/30"
+        )}
+      >
+        {/* Main row */}
+        <div className="flex items-start gap-1.5">
+          {/* Status toggle */}
           <button
-            onClick={() => setExpanded(!expanded)}
-            className="w-full text-left"
+            onClick={() =>
+              onUpdate(task.id, { status: NEXT_STATUS[task.status] })
+            }
+            className="mt-0.5 shrink-0"
           >
-            <span
-              className={cn(
-                "text-xs text-foreground line-clamp-2",
-                task.status === "done" && "line-through"
-              )}
-            >
-              {task.title}
-            </span>
+            <StatusIcon
+              className={cn("w-3.5 h-3.5", STATUS_COLORS[task.status])}
+            />
           </button>
 
-          {/* Meta row */}
-          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-            {/* Priority badge */}
-            <span
-              className="text-[10px] px-1 py-0.5 rounded"
-              style={{
-                backgroundColor: `#${priorityConfig.color}20`,
-                color: `#${priorityConfig.color}`,
-              }}
+          {/* Title + meta */}
+          <div className="flex-1 min-w-0">
+            <button
+              onClick={onExpand}
+              className="w-full text-left"
             >
-              {priorityConfig.label}
-            </span>
-
-            {/* Labels */}
-            {task.labels.slice(0, 2).map((label) => (
               <span
-                key={label.name}
+                className={cn(
+                  "text-xs text-foreground line-clamp-2",
+                  task.status === "done" && "line-through"
+                )}
+              >
+                {task.title}
+              </span>
+            </button>
+
+            {/* Meta row */}
+            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+              {/* Priority badge */}
+              <span
                 className="text-[10px] px-1 py-0.5 rounded"
                 style={{
-                  backgroundColor: `#${label.color}20`,
-                  color: `#${label.color}`,
+                  backgroundColor: `#${priorityConfig.color}20`,
+                  color: `#${priorityConfig.color}`,
                 }}
               >
-                {label.name}
+                {priorityConfig.label}
               </span>
-            ))}
-            {task.labels.length > 2 && (
-              <span className="text-[10px] text-muted-foreground">
-                +{task.labels.length - 2}
-              </span>
-            )}
 
-            {/* Subtask count */}
-            {totalSubtasks > 0 && (
-              <span className="text-[10px] text-muted-foreground">
-                {completedSubtasks}/{totalSubtasks}
-              </span>
-            )}
+              {/* Labels */}
+              {task.labels.slice(0, 2).map((label) => (
+                <span
+                  key={label.name}
+                  className="text-[10px] px-1 py-0.5 rounded"
+                  style={{
+                    backgroundColor: `#${label.color}20`,
+                    color: `#${label.color}`,
+                  }}
+                >
+                  {label.name}
+                </span>
+              ))}
+              {task.labels.length > 2 && (
+                <span className="text-[10px] text-muted-foreground">
+                  +{task.labels.length - 2}
+                </span>
+              )}
 
-            {/* Due date */}
-            {task.dueDate && (
-              <span
-                className={cn(
-                  "text-[10px] flex items-center gap-0.5",
-                  new Date(task.dueDate) < new Date() && task.status !== "done"
-                    ? "text-red-400"
-                    : "text-muted-foreground"
-                )}
-              >
-                <Calendar className="w-2.5 h-2.5" />
-                {new Date(task.dueDate).toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                })}
-              </span>
-            )}
+              {/* Subtask count */}
+              {totalSubtasks > 0 && (
+                <span className="text-[10px] text-muted-foreground">
+                  {completedSubtasks}/{totalSubtasks}
+                </span>
+              )}
 
-            {/* Source badge */}
-            {task.source === "agent" && (
-              <Bot className="w-2.5 h-2.5 text-primary/60" />
-            )}
+              {/* Due date */}
+              {task.dueDate && (
+                <span
+                  className={cn(
+                    "text-[10px] flex items-center gap-0.5",
+                    new Date(task.dueDate) < new Date() && task.status !== "done"
+                      ? "text-red-400"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  <Calendar className="w-2.5 h-2.5" />
+                  {new Date(task.dueDate).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </span>
+              )}
 
-            {/* GitHub link */}
-            {task.githubIssueUrl && (
-              <a
-                href={task.githubIssueUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Link2 className="w-2.5 h-2.5" />
-              </a>
-            )}
+              {/* Blocked indicator */}
+              {isBlocked && (
+                <Tooltip>
+                  <TooltipTrigger>
+                    <Lock className="w-2.5 h-2.5 text-orange-400" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    Blocked by {task.blockedBy.length} task(s)
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
+              {/* Source badge */}
+              {task.source === "agent" ? (
+                <Bot className="w-2.5 h-2.5 text-primary/60" />
+              ) : (
+                <User className="w-2.5 h-2.5 text-muted-foreground/40" />
+              )}
+
+              {/* GitHub link */}
+              {task.githubIssueUrl && (
+                <a
+                  href={task.githubIssueUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Link2 className="w-2.5 h-2.5" />
+                </a>
+              )}
+
+              {/* Instructions indicator */}
+              {task.instructions && (
+                <Tooltip>
+                  <TooltipTrigger>
+                    <FileText className="w-2.5 h-2.5 text-primary/60" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Has instructions</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
-        </div>
 
-        {/* Delete button (on hover) */}
-        <button
-          onClick={() => onDelete(task.id)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5"
-        >
-          <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
-        </button>
+          {/* Delete button (on hover) */}
+          <button
+            onClick={() => onDelete(task.id)}
+            className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5"
+          >
+            <Trash2 className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+          </button>
+        </div>
       </div>
 
-      {/* Expanded: subtasks */}
-      {expanded && (
-        <div className="mt-1.5 ml-5 space-y-1">
-          {task.subtasks.map((sub) => (
-            <div key={sub.id} className="flex items-center gap-1.5">
-              <button onClick={() => toggleSubtask(sub.id)}>
-                {sub.completed ? (
-                  <Check className="w-3 h-3 text-green-500" />
-                ) : (
-                  <Circle className="w-3 h-3 text-muted-foreground" />
-                )}
-              </button>
-              <span
-                className={cn(
-                  "text-[11px]",
-                  sub.completed
-                    ? "text-muted-foreground line-through"
-                    : "text-foreground"
-                )}
-              >
-                {sub.title}
-              </span>
-            </div>
-          ))}
-          <SubtaskQuickAdd onAdd={addSubtask} />
+      {/* Inline editor */}
+      {isExpanded && (
+        <div className="px-1 pb-1">
+          <TaskEditor
+            task={task}
+            allTasks={allTasks}
+            onUpdate={onUpdate}
+            onClose={onExpand}
+          />
         </div>
       )}
-    </div>
-  );
-}
-
-function SubtaskQuickAdd({ onAdd }: { onAdd: (title: string) => void }) {
-  const [value, setValue] = useState("");
-
-  return (
-    <div className="flex items-center gap-1">
-      <Plus className="w-3 h-3 text-muted-foreground shrink-0" />
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && value.trim()) {
-            onAdd(value.trim());
-            setValue("");
-          }
-        }}
-        placeholder="Add subtask..."
-        className="flex-1 bg-transparent text-[11px] text-foreground placeholder:text-muted-foreground/50 outline-none"
-      />
     </div>
   );
 }
@@ -378,7 +354,6 @@ interface ClearTasksDialogProps {
   open: boolean;
   onClose: () => void;
   onClear: (completedOnly: boolean) => Promise<void>;
-  sectionLabel: string;
   totalCount: number;
   completedCount: number;
 }
@@ -387,7 +362,6 @@ function ClearTasksDialog({
   open,
   onClose,
   onClear,
-  sectionLabel,
   totalCount,
   completedCount,
 }: ClearTasksDialogProps) {
@@ -408,7 +382,7 @@ function ClearTasksDialog({
       <AlertDialogContent className="max-w-sm">
         <AlertDialogHeader>
           <AlertDialogTitle className="text-sm">
-            Clear {sectionLabel}
+            Clear Tasks
           </AlertDialogTitle>
           <AlertDialogDescription className="text-xs">
             This action cannot be undone. Choose which tasks to remove:
@@ -444,29 +418,6 @@ function ClearTasksDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  );
-}
-
-// --- Clear button for section headers ---
-
-interface ClearButtonProps {
-  label: string;
-  onClick: () => void;
-}
-
-function ClearButton({ label, onClick }: ClearButtonProps) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={onClick}
-          className="text-muted-foreground hover:text-destructive transition-colors"
-        >
-          <Trash2 className="w-3 h-3" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="left">{label}</TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -510,6 +461,29 @@ function SectionHeader({
       </button>
       {action}
     </div>
+  );
+}
+
+// --- Clear button for section headers ---
+
+interface ClearButtonProps {
+  label: string;
+  onClick: () => void;
+}
+
+function ClearButton({ label, onClick }: ClearButtonProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className="text-muted-foreground hover:text-destructive transition-colors"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="left">{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -560,8 +534,6 @@ interface TaskSidebarProps {
 export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebarProps) {
   const { tasks, loading, createTask, updateTask, deleteTask, clearTasks, activeFolderId } =
     useTaskContext();
-  const { activeSessionId } = useSessionContext();
-
   // Sidebar state — initialize with server-safe defaults, hydrate from localStorage in useEffect
   const [collapsed, setCollapsed] = useState(true);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -571,9 +543,11 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
   }, []);
 
   // Section expand state
-  const [manualExpanded, setManualExpanded] = useState(true);
-  const [agentExpanded, setAgentExpanded] = useState(true);
+  const [tasksExpanded, setTasksExpanded] = useState(true);
   const [issuesExpanded, setIssuesExpanded] = useState(false);
+
+  // Expanded task editor state — at most one task expanded at a time
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
   // GitHub issues from existing context
   const { issues: githubIssues, isLoading: issuesLoading, refresh: refreshIssues } =
@@ -670,39 +644,22 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
     setCollapsed(next);
   }, [collapsed]);
 
-  // Split tasks by source (agent tasks filtered to active session)
-  const manualTasks = useMemo(
-    () => tasks.filter((t) => t.source === "manual"),
+  // Unified task list — all tasks, no split by source
+  const { active: openTaskCount, completed: completedCount } = useMemo(
+    () => countByCompletion(tasks),
     [tasks]
   );
-  const agentTasks = useMemo(
-    () => tasks.filter((t) => t.source === "agent" && activeSessionId != null && t.sessionId === activeSessionId),
-    [tasks, activeSessionId]
-  );
-
-  const { active: activeManualCount, completed: completedManualCount } = useMemo(
-    () => countByCompletion(manualTasks),
-    [manualTasks]
-  );
-
-  const { active: activeAgentCount, completed: completedAgentCount } = useMemo(
-    () => countByCompletion(agentTasks),
-    [agentTasks]
-  );
-
-  const openTaskCount = activeManualCount + activeAgentCount;
 
   // Clear tasks dialog state
-  const [clearDialogSource, setClearDialogSource] = useState<TaskSource | null>(null);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
 
   const handleClearTasks = useCallback(
-    async (source: TaskSource, completedOnly: boolean) => {
-      await clearTasks(source, {
-        sessionId: source === "agent" && activeSessionId ? activeSessionId : undefined,
-        completedOnly: completedOnly ? true : undefined,
+    async (completedOnly: boolean) => {
+      await clearTasks(undefined, {
+        completedOnly,
       });
     },
-    [clearTasks, activeSessionId]
+    [clearTasks]
   );
 
   // Handlers
@@ -794,33 +751,40 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
       ) : (
         <ScrollArea className="flex-1">
           <div className="py-1">
-            {/* Manual Tasks Section */}
+            {/* Unified Tasks Section */}
             <div>
               <SectionHeader
                 icon={ClipboardList}
                 title="Tasks"
-                count={activeManualCount}
-                expanded={manualExpanded}
-                onToggle={() => setManualExpanded(!manualExpanded)}
+                count={openTaskCount}
+                expanded={tasksExpanded}
+                onToggle={() => setTasksExpanded(!tasksExpanded)}
                 action={
-                  manualTasks.length > 0 ? (
-                    <ClearButton label="Clear tasks" onClick={() => setClearDialogSource("manual")} />
+                  tasks.length > 0 ? (
+                    <ClearButton label="Clear tasks" onClick={() => setClearDialogOpen(true)} />
                   ) : undefined
                 }
               />
-              {manualExpanded && (
+              {tasksExpanded && (
                 <>
                   <QuickAdd onAdd={handleAddTask} />
                   <div className="space-y-0.5 px-1">
-                    {manualTasks.length === 0 ? (
+                    {tasks.length === 0 ? (
                       <p className="text-[11px] text-muted-foreground px-3 py-2">
                         No tasks yet. Add one above.
                       </p>
                     ) : (
-                      manualTasks.map((task) => (
+                      tasks.map((task) => (
                         <TaskItem
                           key={task.id}
                           task={task}
+                          isExpanded={expandedTaskId === task.id}
+                          allTasks={tasks}
+                          onExpand={() =>
+                            setExpandedTaskId(
+                              expandedTaskId === task.id ? null : task.id
+                            )
+                          }
                           onUpdate={updateTask}
                           onDelete={deleteTask}
                         />
@@ -828,43 +792,6 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
                     )}
                   </div>
                 </>
-              )}
-            </div>
-
-            {/* Separator */}
-            <div className="border-t border-border my-1" />
-
-            {/* Agent Tasks Section */}
-            <div>
-              <SectionHeader
-                icon={Bot}
-                title="Agent Tasks"
-                count={activeAgentCount}
-                expanded={agentExpanded}
-                onToggle={() => setAgentExpanded(!agentExpanded)}
-                action={
-                  agentTasks.length > 0 ? (
-                    <ClearButton label="Clear agent tasks" onClick={() => setClearDialogSource("agent")} />
-                  ) : undefined
-                }
-              />
-              {agentExpanded && (
-                <div className="space-y-0.5 px-1">
-                  {agentTasks.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground px-3 py-2">
-                      No agent tasks. Agents create tasks via MCP or API.
-                    </p>
-                  ) : (
-                    agentTasks.map((task) => (
-                      <TaskItem
-                        key={task.id}
-                        task={task}
-                        onUpdate={updateTask}
-                        onDelete={deleteTask}
-                      />
-                    ))
-                  )}
-                </div>
               )}
             </div>
 
@@ -935,14 +862,13 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
       />
 
       {/* Clear tasks confirmation dialog */}
-      {clearDialogSource !== null && (
+      {clearDialogOpen && (
         <ClearTasksDialog
           open
-          onClose={() => setClearDialogSource(null)}
-          onClear={(completedOnly) => handleClearTasks(clearDialogSource, completedOnly)}
-          sectionLabel={clearDialogSource === "agent" ? "Agent Tasks" : "Tasks"}
-          totalCount={clearDialogSource === "agent" ? agentTasks.length : manualTasks.length}
-          completedCount={clearDialogSource === "agent" ? completedAgentCount : completedManualCount}
+          onClose={() => setClearDialogOpen(false)}
+          onClear={handleClearTasks}
+          totalCount={tasks.length}
+          completedCount={completedCount}
         />
       )}
     </div>

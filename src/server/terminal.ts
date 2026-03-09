@@ -304,6 +304,21 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
   return body;
 }
 
+function isLocalhostRequest(req: IncomingMessage): boolean {
+  const addr = req.socket.remoteAddress;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
+}
+
+async function parseRequestJson(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
+  const body = await readRequestBody(req);
+  try {
+    return JSON.parse(body);
+  } catch {
+    sendJson(res, 400, { error: "Invalid JSON" });
+    return null;
+  }
+}
+
 async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   const parsedUrl = new URL(req.url || "", "http://localhost");
   const pathname = parsedUrl.pathname;
@@ -408,6 +423,19 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // --- Localhost restriction for internal task endpoints ---
+  const isInternalTaskEndpoint =
+    pathname === "/internal/agent-stop-check" ||
+    pathname === "/internal/agent-todos" ||
+    pathname === "/internal/tasks" ||
+    pathname.startsWith("/internal/tasks/");
+  if (isInternalTaskEndpoint) {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+  }
+
   // Handle agent stop task check from Claude Code Stop hook
   // Called by hooks: POST /internal/agent-stop-check?sessionId=xxx
   // Returns incomplete tasks as text (agent should continue) or empty (agent can stop)
@@ -472,13 +500,120 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // Handle direct task CRUD from rdv CLI
+  // GET /internal/tasks?sessionId=xxx - list tasks for session
+  if (pathname === "/internal/tasks" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId parameter" });
+      return true;
+    }
+    try {
+      const { getSessionContext, getAllTasksBySession } = await import("@/services/task-service");
+      const session = await getSessionContext(sessionId);
+      if (!session) {
+        sendJson(res, 404, { error: "Session not found" });
+        return true;
+      }
+      const tasks = await getAllTasksBySession(sessionId, session.userId);
+      sendJson(res, 200, tasks);
+    } catch (error) {
+      console.error("[Internal Tasks] List error:", error);
+      sendJson(res, 500, { error: "Failed to list tasks" });
+    }
+    return true;
+  }
+
+  // POST /internal/tasks - create task for session
+  if (pathname === "/internal/tasks" && req.method === "POST") {
+    const input = await parseRequestJson(req, res);
+    if (!input) return true;
+    try {
+      const sessionId = input.sessionId as string;
+      if (!sessionId) {
+        sendJson(res, 400, { error: "Missing sessionId in body" });
+        return true;
+      }
+      const title = input.title as string | undefined;
+      if (!title?.trim()) {
+        sendJson(res, 400, { error: "title is required" });
+        return true;
+      }
+      const { getSessionContext, createTask } = await import("@/services/task-service");
+      const session = await getSessionContext(sessionId);
+      if (!session) {
+        sendJson(res, 404, { error: "Session not found" });
+        return true;
+      }
+      const task = await createTask(session.userId, {
+        folderId: session.folderId,
+        sessionId,
+        title,
+        description: (input.description as string | null) ?? null,
+        priority: (input.priority as "critical" | "high" | "medium" | "low" | undefined) ?? "medium",
+        source: "agent",
+      });
+      broadcastToClients({ type: "agent_todos_updated", sessionId, created: 1, updated: 0 });
+      sendJson(res, 201, task);
+    } catch (error) {
+      console.error("[Internal Tasks] Create error:", error);
+      sendJson(res, 500, { error: "Failed to create task" });
+    }
+    return true;
+  }
+
+  // PATCH /internal/tasks/:id - update task
+  if (pathname.startsWith("/internal/tasks/") && req.method === "PATCH") {
+    const taskId = pathname.replace("/internal/tasks/", "");
+    if (!taskId) {
+      sendJson(res, 400, { error: "Missing task ID" });
+      return true;
+    }
+    const input = await parseRequestJson(req, res);
+    if (!input) return true;
+    try {
+      const { getSessionContext, updateTask, getTaskOwner } = await import("@/services/task-service");
+
+      // Resolve userId: try sessionId from query/body, then look up from task
+      const sessionId = (query.sessionId as string) || (input.sessionId as string);
+      let userId: string | undefined;
+
+      if (sessionId) {
+        const session = await getSessionContext(sessionId);
+        if (session) userId = session.userId;
+      }
+
+      if (!userId) {
+        const owner = await getTaskOwner(taskId);
+        if (owner) userId = owner.userId;
+      }
+
+      if (!userId) {
+        sendJson(res, 404, { error: "Task not found" });
+        return true;
+      }
+
+      const task = await updateTask(taskId, userId, input);
+      if (!task) {
+        sendJson(res, 404, { error: "Task not found" });
+        return true;
+      }
+
+      if (task.sessionId) {
+        broadcastToClients({ type: "agent_todos_updated", sessionId: task.sessionId, created: 0, updated: 1 });
+      }
+      sendJson(res, 200, task);
+    } catch (error) {
+      console.error("[Internal Tasks] Update error:", error);
+      sendJson(res, 500, { error: "Failed to update task" });
+    }
+    return true;
+  }
+
   // Handle browser frame broadcast for browser pane sessions
   // POST /internal/browser-frame { sessionId, data } - broadcasts base64 screenshot to session client
   if (pathname === "/internal/browser-frame" && req.method === "POST") {
-    // Restrict to localhost callers only (same-machine process communication)
-    const remoteAddr = req.socket.remoteAddress;
-    const isLocalhost = remoteAddr === "127.0.0.1" || remoteAddr === "::1" || remoteAddr === "::ffff:127.0.0.1";
-    if (!isLocalhost) {
+    if (!isLocalhostRequest(req)) {
       sendJson(res, 403, { error: "Forbidden: localhost only" });
       return true;
     }

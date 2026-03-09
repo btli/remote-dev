@@ -1525,6 +1525,10 @@ export const projectTasks = sqliteTable(
     source: text("source").$type<TaskSource>().notNull().default("manual"),
     labels: text("labels").notNull().default("[]"), // JSON: TaskLabel[]
     subtasks: text("subtasks").notNull().default("[]"), // JSON: TaskSubtask[]
+    metadata: text("metadata").notNull().default("{}"), // JSON: Record<string, unknown>
+    instructions: text("instructions"), // User-editable instructions for agent context re-injection
+    agentTaskKey: text("agent_task_key"), // Stable dedup key for agent-synced tasks
+    owner: text("owner"), // Agent-assigned task owner
     dueDate: integer("due_date", { mode: "timestamp_ms" }),
     githubIssueUrl: text("github_issue_url"),
     sortOrder: integer("sort_order").notNull().default(0),
@@ -1540,6 +1544,28 @@ export const projectTasks = sqliteTable(
     index("project_task_folder_idx").on(table.folderId),
     index("project_task_user_folder_idx").on(table.userId, table.folderId),
     index("project_task_session_idx").on(table.sessionId),
+    index("project_task_agent_key_idx").on(table.sessionId, table.agentTaskKey),
+  ]
+);
+
+/**
+ * Task dependency junction table.
+ * Models blocks/blockedBy relationships between tasks.
+ */
+export const taskDependencies = sqliteTable(
+  "task_dependency",
+  {
+    blockerId: text("blocker_id")
+      .notNull()
+      .references(() => projectTasks.id, { onDelete: "cascade" }),
+    blockedId: text("blocked_id")
+      .notNull()
+      .references(() => projectTasks.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.blockerId, table.blockedId] }),
+    index("task_dep_blocker_idx").on(table.blockerId),
+    index("task_dep_blocked_idx").on(table.blockedId),
   ]
 );
 
