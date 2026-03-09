@@ -38,12 +38,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type {
   ProjectTask,
+  TaskSource,
   TaskStatus,
   TaskSubtask,
   UpdateTaskInput,
@@ -142,6 +151,18 @@ const NEXT_STATUS: Record<TaskStatus, TaskStatus> = {
   done: "open",
   cancelled: "open",
 };
+
+function isCompleted(task: ProjectTask): boolean {
+  return task.status === "done" || task.status === "cancelled";
+}
+
+function countByCompletion(tasks: ProjectTask[]): { active: number; completed: number } {
+  let completed = 0;
+  for (const task of tasks) {
+    if (isCompleted(task)) completed++;
+  }
+  return { active: tasks.length - completed, completed };
+}
 
 interface TaskItemProps {
   task: ProjectTask;
@@ -350,6 +371,107 @@ function SubtaskQuickAdd({ onAdd }: { onAdd: (title: string) => void }) {
   );
 }
 
+// --- Clear tasks confirmation dialog ---
+
+interface ClearTasksDialogProps {
+  open: boolean;
+  onClose: () => void;
+  onClear: (completedOnly: boolean) => Promise<void>;
+  sectionLabel: string;
+  totalCount: number;
+  completedCount: number;
+}
+
+function ClearTasksDialog({
+  open,
+  onClose,
+  onClear,
+  sectionLabel,
+  totalCount,
+  completedCount,
+}: ClearTasksDialogProps) {
+  const [isClearing, setIsClearing] = useState(false);
+
+  const handleClear = async (completedOnly: boolean) => {
+    setIsClearing(true);
+    try {
+      await onClear(completedOnly);
+    } finally {
+      setIsClearing(false);
+      onClose();
+    }
+  };
+
+  return (
+    <AlertDialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <AlertDialogContent className="max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-sm">
+            Clear {sectionLabel}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-xs">
+            This action cannot be undone. Choose which tasks to remove:
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="flex-col gap-2 sm:flex-col">
+          {completedCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs"
+              disabled={isClearing}
+              onClick={() => handleClear(true)}
+            >
+              Clear completed ({completedCount})
+            </Button>
+          )}
+          <Button
+            variant="destructive"
+            size="sm"
+            className="w-full text-xs"
+            disabled={isClearing}
+            onClick={() => handleClear(false)}
+          >
+            Clear all ({totalCount})
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full text-xs"
+            disabled={isClearing}
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// --- Clear button for section headers ---
+
+interface ClearButtonProps {
+  label: string;
+  onClick: () => void;
+}
+
+function ClearButton({ label, onClick }: ClearButtonProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className="text-muted-foreground hover:text-destructive transition-colors"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="left">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 // --- Section header ---
 
 interface SectionHeaderProps {
@@ -436,7 +558,7 @@ interface TaskSidebarProps {
 }
 
 export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
-  const { tasks, loading, createTask, updateTask, deleteTask, activeFolderId } =
+  const { tasks, loading, createTask, updateTask, deleteTask, clearTasks, activeFolderId } =
     useTaskContext();
   const { activeSessionId } = useSessionContext();
 
@@ -561,22 +683,29 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
     [tasks, activeSessionId]
   );
 
-  const openTaskCount = useMemo(
-    () => tasks.filter((t) =>
-      (t.status === "open" || t.status === "in_progress") &&
-      (t.source === "manual" || (activeSessionId != null && t.sessionId === activeSessionId))
-    ).length,
-    [tasks, activeSessionId]
-  );
-
-  const activeManualCount = useMemo(
-    () => manualTasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length,
+  const { active: activeManualCount, completed: completedManualCount } = useMemo(
+    () => countByCompletion(manualTasks),
     [manualTasks]
   );
 
-  const activeAgentCount = useMemo(
-    () => agentTasks.filter((t) => t.status !== "done" && t.status !== "cancelled").length,
+  const { active: activeAgentCount, completed: completedAgentCount } = useMemo(
+    () => countByCompletion(agentTasks),
     [agentTasks]
+  );
+
+  const openTaskCount = activeManualCount + activeAgentCount;
+
+  // Clear tasks dialog state
+  const [clearDialogSource, setClearDialogSource] = useState<TaskSource | null>(null);
+
+  const handleClearTasks = useCallback(
+    async (source: TaskSource, completedOnly: boolean) => {
+      await clearTasks(source, {
+        sessionId: source === "agent" && activeSessionId ? activeSessionId : undefined,
+        completedOnly: completedOnly || undefined,
+      });
+    },
+    [clearTasks, activeSessionId]
   );
 
   // Handlers
@@ -676,6 +805,11 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
                 count={activeManualCount}
                 expanded={manualExpanded}
                 onToggle={() => setManualExpanded(!manualExpanded)}
+                action={
+                  manualTasks.length > 0 ? (
+                    <ClearButton label="Clear tasks" onClick={() => setClearDialogSource("manual")} />
+                  ) : undefined
+                }
               />
               {manualExpanded && (
                 <>
@@ -711,6 +845,11 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
                 count={activeAgentCount}
                 expanded={agentExpanded}
                 onToggle={() => setAgentExpanded(!agentExpanded)}
+                action={
+                  agentTasks.length > 0 ? (
+                    <ClearButton label="Clear agent tasks" onClick={() => setClearDialogSource("agent")} />
+                  ) : undefined
+                }
               />
               {agentExpanded && (
                 <div className="space-y-0.5 px-1">
@@ -789,6 +928,18 @@ export function TaskSidebar({ githubRepoId }: TaskSidebarProps) {
         onClose={() => setSelectedIssue(null)}
         issue={selectedIssue}
       />
+
+      {/* Clear tasks confirmation dialog */}
+      {clearDialogSource !== null && (
+        <ClearTasksDialog
+          open
+          onClose={() => setClearDialogSource(null)}
+          onClear={(completedOnly) => handleClearTasks(clearDialogSource, completedOnly)}
+          sectionLabel={clearDialogSource === "agent" ? "Agent Tasks" : "Tasks"}
+          totalCount={clearDialogSource === "agent" ? agentTasks.length : manualTasks.length}
+          completedCount={clearDialogSource === "agent" ? completedAgentCount : completedManualCount}
+        />
+      )}
     </div>
   );
 }
