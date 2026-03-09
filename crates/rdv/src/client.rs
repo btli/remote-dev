@@ -53,6 +53,14 @@ impl Client {
         handle_response(resp).await
     }
 
+    pub async fn post_empty_with_query<Q>(&self, path: &str, query: &Q) -> Result<serde_json::Value, Box<dyn std::error::Error>>
+    where
+        Q: Serialize + ?Sized,
+    {
+        let resp = self.inner.post(self.url(path)).query(query).send().await?;
+        handle_response(resp).await
+    }
+
     pub async fn patch<T, B>(&self, path: &str, body: &B) -> Result<T, Box<dyn std::error::Error>>
     where
         T: DeserializeOwned,

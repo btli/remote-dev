@@ -75,7 +75,8 @@ export async function createBrowserSession(sessionId: string, url?: string): Pro
   });
   const page = await context.newPage();
 
-  if (url && validateUrl(url)) {
+  if (url) {
+    if (!validateUrl(url)) throw new Error("Invalid URL: only http/https allowed");
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
   }
 

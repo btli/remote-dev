@@ -565,12 +565,9 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
   // Sidebar state — initialize with server-safe defaults, hydrate from localStorage in useEffect
   const [collapsed, setCollapsed] = useState(true);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
-  const [hydrated, setHydrated] = useState(false);
-
   useEffect(() => {
     setCollapsed(getStoredCollapsed());
     setWidth(getStoredWidth());
-    setHydrated(true);
   }, []);
 
   // Section expand state

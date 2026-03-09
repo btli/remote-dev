@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
+import * as SessionService from "@/services/session-service";
 
 /**
  * GET /api/sessions/:id/browser/snapshot - Get accessibility tree snapshot
  *
  * Returns JSON representation of the page's accessibility tree.
  */
-export const GET = withApiAuth(async (_request, { params }) => {
+export const GET = withApiAuth(async (_request, { userId, params }) => {
   try {
     if (!params?.id) return errorResponse("Session ID required", 400);
+
+    const session = await SessionService.getSession(params.id, userId);
+    if (!session) return errorResponse("Session not found", 404);
 
     if (!BrowserService.hasSession(params.id)) {
       return errorResponse("No browser session found", 404);
