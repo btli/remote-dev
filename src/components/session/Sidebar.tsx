@@ -108,6 +108,7 @@ interface SidebarProps {
   onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onFolderNewSession: (folderId: string) => void;
   onFolderNewAgent: (folderId: string) => void;
+  onFolderNewOrchestrator: (folderId: string) => void;
   onFolderResumeClaudeSession: (folderId: string) => void;
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
@@ -129,6 +130,14 @@ interface SidebarProps {
 }
 
 /**
+ * Whether a session type has agent-like behavior (activity status tracking, exit states).
+ * Both agent and orchestrator sessions share these UI characteristics.
+ */
+function hasAgentBehavior(session: TerminalSession): boolean {
+  return session.terminalType === "agent" || session.terminalType === "orchestrator";
+}
+
+/**
  * Resolve sidebar icon color class for a session based on agent activity status.
  * Agent sessions get color-coded by their real-time activity; non-agent sessions
  * use simple active/inactive styling.
@@ -138,7 +147,7 @@ function getSessionIconColor(
   isActive: boolean,
   getAgentActivityStatus: (sessionId: string) => string
 ): string {
-  if (session.terminalType !== "agent") {
+  if (!hasAgentBehavior(session)) {
     return isActive ? "text-primary" : "text-muted-foreground";
   }
 
@@ -189,6 +198,7 @@ export function Sidebar({
   onFolderSettings,
   onFolderNewSession,
   onFolderNewAgent,
+  onFolderNewOrchestrator,
   onFolderResumeClaudeSession,
   onFolderAdvancedSession,
   onFolderNewWorktree,
@@ -1070,7 +1080,7 @@ export function Sidebar({
                   ? "bg-primary/20 border border-border"
                   : "hover:bg-accent/50 border border-transparent",
                 isDragOverSession && "bg-primary/20 border-primary/30",
-                !isActive && (session.terminalType === "agent" || session.terminalType === "orchestrator") &&
+                !isActive && hasAgentBehavior(session) &&
                   ["waiting", "error"].includes(getAgentActivityStatus(session.id) ?? "") && "ring-2 ring-yellow-400/70 animate-pulse"
               )}
             >
@@ -1267,7 +1277,7 @@ export function Sidebar({
                 // Mobile: z-10 for swipe layering; solid bg-card only on the swiped row to cover the close button
                 isMobile && "z-10",
                 isMobile && swipedSessionId === session.id && "bg-card",
-                !isActive && (session.terminalType === "agent" || session.terminalType === "orchestrator") &&
+                !isActive && hasAgentBehavior(session) &&
                   ["waiting", "error"].includes(getAgentActivityStatus(session.id) ?? "") && "ring-2 ring-yellow-400/70 animate-pulse"
               )}
             >
@@ -2103,6 +2113,10 @@ export function Sidebar({
                               <ContextMenuItem onClick={() => onFolderNewAgent(node.id)}>
                                 <Sparkles className="w-3.5 h-3.5 mr-2" />
                                 New Agent
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => onFolderNewOrchestrator(node.id)}>
+                                <Network className="w-3.5 h-3.5 mr-2" />
+                                New Orchestrator
                               </ContextMenuItem>
                               <ContextMenuItem onClick={() => onFolderResumeClaudeSession(node.id)}>
                                 <History className="w-3.5 h-3.5 mr-2" />

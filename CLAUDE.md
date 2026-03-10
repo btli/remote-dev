@@ -54,8 +54,6 @@ bun run test:coverage  # Run tests with coverage
 
 # Database
 bun run db:push      # Push schema changes to SQLite
-bun run db:generate  # Generate migration files
-bun run db:migrate   # Run migrations
 bun run db:studio    # Open Drizzle Studio
 bun run db:seed      # Seed authorized users
 bun run db:migrate-agents  # One-time agent session migration
