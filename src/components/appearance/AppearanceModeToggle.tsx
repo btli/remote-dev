@@ -84,7 +84,7 @@ export function AppearanceModeToggle({
  * Shows only icon, cycles through modes on click
  */
 export function AppearanceModeToggleCompact({ className }: { className?: string }) {
-  const { settings, effectiveMode, setMode, loading } = useAppearance();
+  const { settings, setMode, loading } = useAppearance();
   const currentMode = settings?.appearanceMode ?? "system";
 
   const handleClick = () => {

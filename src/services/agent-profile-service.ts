@@ -18,12 +18,12 @@ import {
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "fs/promises";
-import { join, resolve as pathResolve, isAbsolute } from "path";
+import { join } from "path";
 import { homedir } from "os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
-import { execFile, execFileNoThrow } from "@/lib/exec";
+import { execFileNoThrow } from "@/lib/exec";
 import { safeJsonParse } from "@/lib/utils";
 import { getProfilesDir } from "@/lib/paths";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
@@ -54,34 +54,6 @@ function sanitizeGitConfigValue(value: string): string {
     .replace(/\r/g, "\\r") // Escape carriage returns
     .replace(/\t/g, "\\t") // Escape tabs
     .replace(/"/g, '\\"'); // Escape quotes
-}
-
-/**
- * Validate an SSH key path to prevent command injection.
- * Returns the validated path or throws an error.
- */
-function validateSshKeyPath(keyPath: string): string {
-  // Must be absolute path
-  if (!isAbsolute(keyPath)) {
-    throw new Error("SSH key path must be an absolute path");
-  }
-
-  // Check for shell metacharacters that could enable injection
-  const shellMetachars = /[;&|`$()[\]{}\\'"<>!#~*?\n\r]/;
-  if (shellMetachars.test(keyPath)) {
-    throw new Error("SSH key path contains invalid characters");
-  }
-
-  // Resolve to canonical path (prevents ../ traversal)
-  const resolved = pathResolve(keyPath);
-
-  // Must be within user's home directory or /tmp for safety
-  const home = homedir();
-  if (!resolved.startsWith(home) && !resolved.startsWith("/tmp/")) {
-    throw new Error("SSH key path must be within home directory or /tmp");
-  }
-
-  return resolved;
 }
 
 /**

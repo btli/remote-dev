@@ -8,6 +8,7 @@
  */
 
 import { useState } from "react";
+import Image from "next/image";
 import { Github, Loader2 } from "lucide-react";
 import {
   Select,
@@ -88,9 +89,11 @@ export function FolderAccountBinder({ folderId }: FolderAccountBinderProps) {
               value={account.providerAccountId}
             >
               <span className="flex items-center gap-2">
-                <img
+                <Image
                   src={account.avatarUrl}
                   alt={account.login}
+                  width={16}
+                  height={16}
                   className="w-4 h-4 rounded-full"
                 />
                 @{account.login}
