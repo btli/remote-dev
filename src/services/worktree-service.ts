@@ -458,22 +458,44 @@ export async function createBranchWithWorktree(
     const err = error as Error & { stderr?: string };
     const stderr = err.stderr || err.message;
 
-    // Detect path conflicts from git error messages
-    // Git returns different errors for:
-    // - "fatal: '<path>' already exists" - target path exists as file/dir
-    // - "fatal: '<branch>' is already checked out" - branch in use
-    if (stderr.includes("already exists") || stderr.includes("already checked out")) {
-      // If the target path is already a valid git worktree, reuse it.
-      // This handles retries where a previous session creation created the
-      // worktree but failed afterwards (e.g., "Start Working" on an issue).
-      if (existsSync(targetPath) && await isGitRepo(targetPath)) {
+    // If the target path already exists as a valid git worktree, reuse it.
+    // This handles retries where a previous attempt created the worktree
+    // but session creation failed afterwards (e.g., "Start Working" on an issue).
+    if (existsSync(targetPath) && await isGitRepo(targetPath)) {
+      return { branch: branchName, worktreePath: targetPath };
+    }
+
+    // "a branch named 'X' already exists" — branch exists from a previous
+    // attempt but the worktree path was cleaned up. Retry without -b to
+    // use the existing branch instead of trying to create it again.
+    if (stderr.includes("a branch named") && stderr.includes("already exists")) {
+      try {
+        const retryArgs = ["-C", repoPath, "worktree", "add", targetPath, branchName];
+        await execFile("git", retryArgs);
         return { branch: branchName, worktreePath: targetPath };
+      } catch (retryError) {
+        const retryErr = retryError as Error & { stderr?: string };
+        throw new WorktreeServiceError(
+          "Failed to create worktree with existing branch",
+          "CREATE_FAILED",
+          retryErr.stderr || retryErr.message
+        );
       }
-      const code = stderr.includes("already checked out") ? "BRANCH_IN_USE" : "PATH_EXISTS";
-      const msg = code === "BRANCH_IN_USE"
-        ? "Branch is already checked out in another worktree"
-        : "Worktree path already exists";
-      throw new WorktreeServiceError(msg, code, code === "BRANCH_IN_USE" ? branchName : targetPath);
+    }
+
+    if (stderr.includes("already checked out")) {
+      throw new WorktreeServiceError(
+        "Branch is already checked out in another worktree",
+        "BRANCH_IN_USE",
+        branchName
+      );
+    }
+    if (stderr.includes("already exists")) {
+      throw new WorktreeServiceError(
+        "Worktree path already exists",
+        "PATH_EXISTS",
+        targetPath
+      );
     }
 
     throw new WorktreeServiceError(
