@@ -1075,24 +1075,26 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     maybeAutoFollowFolder,
   ]);
 
-  // Handler for creating a new agent session in a specific folder
-  const handleFolderNewAgent = useCallback(
-    async (folderId: string) => {
+  // Shared factory for creating typed sessions within a specific folder.
+  // Both agent and orchestrator folder handlers follow the same pattern.
+  const createFolderTypedSession = useCallback(
+    async (folderId: string, terminalType: "agent" | "orchestrator") => {
       const prefs = resolvePreferencesForFolder(folderId);
-      const name = generateSessionName(folderId);
+      const baseName = generateSessionName(folderId);
+      const name = terminalType === "orchestrator" ? `${baseName} (Orchestrator)` : baseName;
       try {
         const newSession = await createSession({
           name,
           projectPath: prefs.defaultWorkingDirectory || undefined,
           folderId,
-          terminalType: "agent",
+          terminalType,
         });
         if (newSession) {
           registerSessionFolder(newSession.id, folderId);
           setActiveFolder(folderId);
         }
       } catch (error) {
-        logSessionError("create agent session", error);
+        logSessionError(`create ${terminalType} session`, error);
       }
     },
     [
@@ -1103,6 +1105,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       registerSessionFolder,
       logSessionError,
     ]
+  );
+
+  const handleFolderNewAgent = useCallback(
+    (folderId: string) => createFolderTypedSession(folderId, "agent"),
+    [createFolderTypedSession]
+  );
+
+  const handleFolderNewOrchestrator = useCallback(
+    (folderId: string) => createFolderTypedSession(folderId, "orchestrator"),
+    [createFolderTypedSession]
   );
 
   // Handler to open the Resume Claude Session modal for a folder
@@ -1543,6 +1555,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
             onFolderNewAgent={handleFolderNewAgent}
+            onFolderNewOrchestrator={handleFolderNewOrchestrator}
             onFolderResumeClaudeSession={handleFolderResumeClaudeSession}
             onFolderAdvancedSession={handleFolderAdvancedSession}
             onFolderNewWorktree={handleFolderNewWorktree}

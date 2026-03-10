@@ -27,8 +27,6 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "bun run src/db/seed.ts",
