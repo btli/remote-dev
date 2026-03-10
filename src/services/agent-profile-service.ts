@@ -817,6 +817,76 @@ async function cleanStaleMcpJson(mcpJsonPath: string): Promise<void> {
   }
 }
 
+/**
+ * Validate that installed hooks are functional.
+ * Runs `rdv hook validate` to check server connectivity and session context.
+ * If validation fails and rdv is available, reinstalls hooks (auto-repair).
+ *
+ * @returns validation result with details
+ */
+export async function validateAgentHooks(
+  configDir: string,
+  provider: AgentProvider,
+  sessionId: string,
+  env: Record<string, string>
+): Promise<{ valid: boolean; repaired: boolean; error?: string }> {
+  if (provider !== "claude") return { valid: true, repaired: false };
+
+  const { execFile } = await import("child_process");
+  const { promisify } = await import("util");
+  const execFileAsync = promisify(execFile);
+
+  // Check 1: Is rdv available?
+  try {
+    await execFileAsync("rdv", ["--version"], { timeout: 3000 });
+  } catch {
+    // rdv not installed — hooks use curl fallback, which is fine
+    return { valid: true, repaired: false };
+  }
+
+  // Check 2: Run rdv hook validate with session env vars
+  try {
+    const mergedEnv = { ...process.env, ...env };
+    const { stdout } = await execFileAsync("rdv", ["hook", "validate"], {
+      timeout: 10000,
+      env: mergedEnv,
+    });
+
+    const result = JSON.parse(stdout);
+    if (result.valid) {
+      return { valid: true, repaired: false };
+    }
+
+    // Validation failed — attempt auto-repair by reinstalling hooks
+    console.warn(`[session:${sessionId}] Hook validation failed, attempting repair:`, result.checks);
+    await installAgentHooks(configDir, provider);
+
+    // Re-validate after repair
+    try {
+      const { stdout: retryOut } = await execFileAsync("rdv", ["hook", "validate"], {
+        timeout: 10000,
+        env: mergedEnv,
+      });
+      const retryResult = JSON.parse(retryOut);
+      if (retryResult.valid) {
+        console.log(`[session:${sessionId}] Hook auto-repair succeeded`);
+        return { valid: true, repaired: true };
+      }
+      return { valid: false, repaired: true, error: "Auto-repair failed: hooks still invalid after reinstall" };
+    } catch (retryErr) {
+      return { valid: false, repaired: true, error: `Auto-repair validation error: ${retryErr}` };
+    }
+  } catch (err) {
+    // rdv hook validate itself failed (e.g. subcommand not recognized = old rdv binary)
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (errMsg.includes("unrecognized subcommand")) {
+      console.warn(`[session:${sessionId}] rdv binary is outdated (missing hook validate), skipping validation`);
+      return { valid: true, repaired: false };
+    }
+    return { valid: false, repaired: false, error: errMsg };
+  }
+}
+
 // ============================================================================
 // Profile Secrets Management
 // ============================================================================
