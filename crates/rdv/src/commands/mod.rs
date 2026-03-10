@@ -6,5 +6,6 @@ pub mod hook;
 pub mod notification;
 pub mod session;
 pub mod status;
+pub mod system;
 pub mod task;
 pub mod worktree;

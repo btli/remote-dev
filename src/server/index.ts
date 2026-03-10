@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import { createTerminalServer } from "./terminal.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
+import { updateScheduler } from "../services/update-scheduler.js";
 import { execFile } from "../lib/exec.js";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -49,8 +50,18 @@ async function startServer(): Promise<void> {
     console.error("[Server] Failed to start scheduler:", error);
   }
 
+  // Start update checker (polls GitHub Releases on a configurable interval)
+  try {
+    updateScheduler.start();
+    console.log("[Server] Update scheduler started");
+  } catch (error) {
+    console.error("[Server] Failed to start update scheduler:", error);
+  }
+
   async function shutdown(signal: string): Promise<void> {
     console.log(`\n[Server] ${signal} received, shutting down gracefully...`);
+
+    updateScheduler.stop();
 
     try {
       await schedulerOrchestrator.stop();
