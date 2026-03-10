@@ -1,7 +1,7 @@
 # Remote Dev - Terminal WebSocket Server
 # systemd user unit file
 #
-# This is a dependency of remote-dev.service.
+# Part of remote-dev.service: stopped/restarted when the main service is.
 # It runs the terminal server that handles PTY/tmux connections.
 
 [Unit]
