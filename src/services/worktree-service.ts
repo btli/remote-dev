@@ -466,19 +466,23 @@ export async function createBranchWithWorktree(
     }
 
     // "a branch named 'X' already exists" — branch exists from a previous
-    // attempt but the worktree path was cleaned up. Retry without -b to
-    // use the existing branch instead of trying to create it again.
+    // attempt but the worktree path was cleaned up. Prune stale worktree
+    // entries and retry without -b to use the existing branch.
     if (stderr.includes("a branch named") && stderr.includes("already exists")) {
+      // Prune stale worktree entries (e.g., from deleted paths)
+      await execFileNoThrow("git", ["-C", repoPath, "worktree", "prune"]);
       try {
         const retryArgs = ["-C", repoPath, "worktree", "add", targetPath, branchName];
         await execFile("git", retryArgs);
         return { branch: branchName, worktreePath: targetPath };
       } catch (retryError) {
         const retryErr = retryError as Error & { stderr?: string };
+        const retryStderr = retryErr.stderr || retryErr.message;
+        console.error(`[worktree] retry failed for branch ${branchName}: ${retryStderr}`);
         throw new WorktreeServiceError(
-          "Failed to create worktree with existing branch",
+          `Failed to create worktree with existing branch: ${retryStderr}`,
           "CREATE_FAILED",
-          retryErr.stderr || retryErr.message
+          retryStderr
         );
       }
     }
