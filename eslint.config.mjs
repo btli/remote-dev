@@ -16,6 +16,10 @@ const eslintConfig = defineConfig([
     ".trash/**",
     // Test coverage reports
     "coverage/**",
+    // Standalone Node.js scripts (CJS)
+    "scripts/**",
+    // Mobile app (separate React Native project)
+    "packages/**",
   ]),
 ]);
 

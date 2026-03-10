@@ -11,7 +11,7 @@
  * - Click-through detail view with markdown body and comments
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import {
@@ -121,29 +121,17 @@ function PRsModalContent({
     [repository?.pullRequests]
   );
 
-  // Selected PR for detail view
-  const [selectedPR, setSelectedPR] = useState<PullRequest | null>(() => {
-    if (initialPRNumber) {
-      const found = (repository?.pullRequests ?? []).find(
-        (pr) => pr.number === initialPRNumber
-      );
-      return found ?? null;
-    }
-    return null;
-  });
-
-  // Sync selectedPR when pullRequests load after mount (handles late-loading data).
-  // The ref prevents re-selecting after the user navigates back to the list.
-  const initialPRSynced = useRef(!!selectedPR);
-  useEffect(() => {
-    if (initialPRNumber && !initialPRSynced.current && pullRequests.length > 0) {
-      const found = pullRequests.find((pr) => pr.number === initialPRNumber);
-      if (found) {
-        setSelectedPR(found);
-        initialPRSynced.current = true;
-      }
-    }
-  }, [initialPRNumber, pullRequests]);
+  // Track selected PR by number — derive the full object from the pullRequests list.
+  // This naturally handles late-loading data: when PRs load, the memo recalculates.
+  const [selectedPRNumber, setSelectedPRNumber] = useState<number | null>(
+    initialPRNumber ?? null
+  );
+  const selectedPR = useMemo(
+    () => selectedPRNumber !== null
+      ? pullRequests.find((pr) => pr.number === selectedPRNumber) ?? null
+      : null,
+    [selectedPRNumber, pullRequests]
+  );
 
   // Filter state - resets naturally when component unmounts (modal closes)
   const [searchQuery, setSearchQuery] = useState("");
@@ -215,7 +203,7 @@ function PRsModalContent({
       <PRDetailView
         pr={selectedPR}
         repositoryId={repositoryId}
-        onBack={() => setSelectedPR(null)}
+        onBack={() => setSelectedPRNumber(null)}
         onOpenInGitHub={handleOpenInGitHub}
         onCheckoutBranch={onCheckoutBranch}
       />
@@ -370,7 +358,7 @@ function PRsModalContent({
                 <PRCard
                   key={pr.id}
                   pr={pr}
-                  onSelect={setSelectedPR}
+                  onSelect={(pr) => setSelectedPRNumber(pr.number)}
                   onOpenInGitHub={handleOpenInGitHub}
                   onCopyUrl={handleCopyUrl}
                   onCheckoutBranch={onCheckoutBranch}

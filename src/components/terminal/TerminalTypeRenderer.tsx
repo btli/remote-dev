@@ -65,7 +65,6 @@ export function TerminalTypeRenderer({
   onOutput,
   onDimensionsChange,
   onSessionClose,
-  onNavigateToSession,
   onAgentStateChange,
   onAgentActivityStatus,
   onAgentTodosUpdated,

@@ -41,7 +41,6 @@ export function createShellPlugin(config: ShellPluginConfig = {}): TerminalTypeP
 
     createSession(
       input: CreateSessionInput,
-      _session: Partial<TerminalSession>
     ): SessionConfig {
       return {
         // null = use user's default shell via tmux

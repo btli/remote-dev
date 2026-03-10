@@ -16,7 +16,7 @@ import { existsSync, readFileSync, writeFileSync, chmodSync } from "fs";
 import { join } from "path";
 import { getRdvDir } from "./paths";
 import { db } from "@/db";
-import { apiKeys, authorizedUsers, users } from "@/db/schema";
+import { apiKeys, users } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createApiKey, validateApiKey } from "@/services/api-key-service";
 

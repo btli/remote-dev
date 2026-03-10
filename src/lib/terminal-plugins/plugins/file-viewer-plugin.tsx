@@ -76,7 +76,6 @@ export function createFileViewerPlugin(
 
     createSession(
       input: CreateSessionInput,
-      _session: Partial<TerminalSession>
     ): SessionConfig {
       // Extract file path from input
       const typedInput = input as CreateTypedSessionInput;
@@ -109,10 +108,7 @@ export function createFileViewerPlugin(
       };
     },
 
-    onSessionExit(
-      _session: TerminalSession,
-      _exitCode: number | null
-    ): ExitBehavior {
+    onSessionExit(): ExitBehavior {
       // File viewer sessions don't "exit" in the traditional sense
       // Closing is a user action, not a process exit
       return {
@@ -159,7 +155,7 @@ export function createFileViewerPlugin(
       return null;
     },
 
-    canHandle(session: TerminalSession): boolean {
+    canHandle(): boolean {
       // File viewer plugin handles sessions with file type metadata
       // This would be checked via a terminalType field once added to schema
       return false; // Will be updated when terminalType is added

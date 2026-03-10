@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Image from "next/image";
 import { ArrowLeft, ArrowRight, RotateCw, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -193,10 +194,12 @@ export function BrowserPane({ session }: BrowserPaneProps) {
             <p className="text-sm text-muted-foreground">Enter a URL to browse</p>
           </div>
         ) : screenshotUrl ? (
-          <img
+          <Image
             src={screenshotUrl}
             alt="Browser view"
-            className="w-full h-full object-contain cursor-pointer"
+            fill
+            unoptimized
+            className="object-contain cursor-pointer"
             onClick={handleClick}
           />
         ) : (
