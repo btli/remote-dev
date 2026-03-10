@@ -306,6 +306,8 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
 
 function isLocalhostRequest(req: IncomingMessage): boolean {
   const addr = req.socket.remoteAddress;
+  // Unix domain socket connections have no remoteAddress — they are inherently local
+  if (!addr) return true;
   return addr === "127.0.0.1" || addr === "::1" || addr === "::ffff:127.0.0.1";
 }
 
