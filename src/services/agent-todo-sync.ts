@@ -268,9 +268,9 @@ export async function checkTasksOnStop(
 }
 
 /**
- * Archive non-terminal agent tasks for a session.
- * Called when a session is closed. Cancels tasks that are still
- * open or in-progress (since the agent is no longer running).
+ * Cancel incomplete agent tasks for a session.
+ * Called when a session is closed. Sets open/in-progress tasks to
+ * "cancelled" (since the agent is no longer running).
  * Leaves "done" tasks untouched to preserve their completed status.
  */
 export async function archiveSessionTodos(

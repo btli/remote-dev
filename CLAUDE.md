@@ -277,7 +277,8 @@ src/
 | `folder_secrets_config` | Per-folder secrets provider configuration |
 | `github_account_metadata` | Linked GitHub account metadata (login, avatar, default flag, config dir) |
 | `folder_github_account_link` | Per-folder GitHub account bindings |
-| `project_task` | Project tasks with priority, labels, subtasks, and due dates |
+| `project_task` | Project tasks with priority, labels, subtasks, dependencies, and due dates |
+| `task_dependency` | Junction table for task blocked-by relationships |
 
 ### Service Layer
 
@@ -304,7 +305,7 @@ Located in `src/services/`:
 | `AgentProfileAppearanceService` | Per-profile appearance settings |
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
 | `ClaudeSessionService` | Discover resumable Claude Code sessions from `.jsonl` files |
-| `TaskService` | Project task CRUD, folder-scoped queries |
+| `TaskService` | Project task CRUD, folder-scoped queries, dependency management, bulk archival |
 | `NotificationService` | Notification CRUD, debounced creation, read/delete management |
 | `BrowserService` | Headless browser automation (navigate, click, type, screenshot) |
 | `OrchestratorService` | Multi-agent session coordination and lifecycle |
@@ -417,6 +418,7 @@ bun run test:coverage  # Run tests with coverage
 | `AgentCLIStatusPanel.tsx` | CLI installation status for all supported agents |
 | `AgentProfileAppearanceSettings.tsx` | Per-profile theming with mode toggle and color schemes |
 | `TaskSidebar.tsx` | Right sidebar for project-scoped task tracking |
+| `TaskEditor.tsx` | Inline expandable task editor with subtasks, dependencies, and metadata |
 
 ### State Management
 
@@ -600,7 +602,7 @@ React Contexts in `src/contexts/`:
 ### Tasks
 - `GET /api/tasks` - List tasks (optional `?folderId=` filter)
 - `POST /api/tasks` - Create task
-- `DELETE /api/tasks` - Bulk clear tasks (requires `?folderId=&source=`, optional `?sessionId=&completedOnly=`)
+- `DELETE /api/tasks` - Bulk clear tasks (requires `?folderId=`, optional `?source=&sessionId=&completedOnly=`)
 - `GET /api/tasks/:id` - Get task details
 - `PATCH /api/tasks/:id` - Update task
 - `DELETE /api/tasks/:id` - Delete task
