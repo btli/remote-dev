@@ -1,6 +1,5 @@
 /**
  * Shared utilities for agent-related terminal plugins.
- * Used by both AgentPlugin and OrchestratorPlugin.
  */
 
 import type { AgentProviderType, AgentProviderConfig } from "@/types/session";

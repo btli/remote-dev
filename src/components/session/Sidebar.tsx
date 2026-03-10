@@ -108,7 +108,6 @@ interface SidebarProps {
   onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onFolderNewSession: (folderId: string) => void;
   onFolderNewAgent: (folderId: string) => void;
-  onFolderNewOrchestrator: (folderId: string) => void;
   onFolderResumeClaudeSession: (folderId: string) => void;
   onFolderAdvancedSession: (folderId: string) => void;
   onFolderNewWorktree: (folderId: string) => void;
@@ -197,7 +196,6 @@ export function Sidebar({
   onFolderSettings,
   onFolderNewSession,
   onFolderNewAgent,
-  onFolderNewOrchestrator,
   onFolderResumeClaudeSession,
   onFolderAdvancedSession,
   onFolderNewWorktree,
@@ -2112,10 +2110,6 @@ export function Sidebar({
                               <ContextMenuItem onClick={() => onFolderNewAgent(node.id)}>
                                 <Sparkles className="w-3.5 h-3.5 mr-2" />
                                 New Agent
-                              </ContextMenuItem>
-                              <ContextMenuItem onClick={() => onFolderNewOrchestrator(node.id)}>
-                                <Network className="w-3.5 h-3.5 mr-2" />
-                                New Orchestrator
                               </ContextMenuItem>
                               <ContextMenuItem onClick={() => onFolderResumeClaudeSession(node.id)}>
                                 <History className="w-3.5 h-3.5 mr-2" />

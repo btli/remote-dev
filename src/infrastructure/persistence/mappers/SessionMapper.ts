@@ -39,8 +39,6 @@ export interface SessionDbRecord {
   splitGroupId: string | null;
   splitOrder: number | null;
   splitSize: number | null;
-  parentSessionId: string | null;
-  orchestratorRole: string | null;
   status: string;
   pinned: boolean | number | null;
   tabOrder: number;
@@ -76,8 +74,6 @@ export interface SessionDbInsert {
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
-  parentSessionId: string | null;
-  orchestratorRole: "parent" | "child" | null;
   status: "active" | "suspended" | "closed" | "trashed";
   pinned: boolean;
   tabOrder: number;
@@ -158,8 +154,6 @@ export class SessionMapper {
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
-      parentSessionId: null,
-      orchestratorRole: null,
       // Cast is safe because SessionStatus.toString() only returns valid status values
       status: session.status.toString() as SessionDbInsert["status"],
       pinned: session.pinned,
