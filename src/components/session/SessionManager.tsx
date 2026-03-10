@@ -943,7 +943,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           terminalType: "agent",
           agentProvider,
           autoLaunchAgent: true,
-          agentFlags: ["-p", `'${escapedPrompt}'`],
+          agentFlags: [`'${escapedPrompt}'`],
         });
         if (newSession) {
           setActiveSession(newSession.id);
