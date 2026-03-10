@@ -218,8 +218,11 @@ export async function createWorktree(
     worktreePath ||
     join(dirname(repoPath), `${basename(repoPath)}-${sanitizeBranchName(branch)}`);
 
-  // Check if path already exists
+  // If path already exists and is a valid git worktree, reuse it
   if (existsSync(targetPath)) {
+    if (await isGitRepo(targetPath)) {
+      return targetPath;
+    }
     throw new WorktreeServiceError(
       "Worktree path already exists",
       "PATH_EXISTS",
@@ -459,19 +462,18 @@ export async function createBranchWithWorktree(
     // Git returns different errors for:
     // - "fatal: '<path>' already exists" - target path exists as file/dir
     // - "fatal: '<branch>' is already checked out" - branch in use
-    if (stderr.includes("already exists")) {
-      throw new WorktreeServiceError(
-        "Worktree path already exists",
-        "PATH_EXISTS",
-        targetPath
-      );
-    }
-    if (stderr.includes("already checked out")) {
-      throw new WorktreeServiceError(
-        "Branch is already checked out in another worktree",
-        "BRANCH_IN_USE",
-        branchName
-      );
+    if (stderr.includes("already exists") || stderr.includes("already checked out")) {
+      // If the target path is already a valid git worktree, reuse it.
+      // This handles retries where a previous session creation created the
+      // worktree but failed afterwards (e.g., "Start Working" on an issue).
+      if (existsSync(targetPath) && await isGitRepo(targetPath)) {
+        return { branch: branchName, worktreePath: targetPath };
+      }
+      const code = stderr.includes("already checked out") ? "BRANCH_IN_USE" : "PATH_EXISTS";
+      const msg = code === "BRANCH_IN_USE"
+        ? "Branch is already checked out in another worktree"
+        : "Worktree path already exists";
+      throw new WorktreeServiceError(msg, code, code === "BRANCH_IN_USE" ? branchName : targetPath);
     }
 
     throw new WorktreeServiceError(
