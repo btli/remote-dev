@@ -9,7 +9,7 @@
  * - session-mcp-discovery-service.ts (session-scoped, no DB)
  */
 
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 // =============================================================================
 // Types

@@ -17,9 +17,9 @@ import {
   terminalSessions,
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
-import { mkdir, writeFile, readFile, access } from "fs/promises";
-import { join } from "path";
-import { homedir } from "os";
+import { mkdir, writeFile, readFile, access } from "node:fs/promises";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";

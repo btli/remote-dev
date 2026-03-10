@@ -1,8 +1,8 @@
 /**
  * Safe execution utilities using execFile to prevent shell injection
  */
-import { execFile as execFileCallback, spawn } from "child_process";
-import { promisify } from "util";
+import { execFile as execFileCallback, spawn } from "node:child_process";
+import { promisify } from "node:util";
 
 const execFilePromise = promisify(execFileCallback);
 

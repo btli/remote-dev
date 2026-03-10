@@ -3,8 +3,8 @@ import { createTerminalServer } from "./terminal.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { updateScheduler } from "../services/update-scheduler.js";
 import { execFile } from "../lib/exec.js";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 config({ path: ".env.local" });
 

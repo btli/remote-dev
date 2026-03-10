@@ -3,8 +3,8 @@
  */
 import { execFile, execFileNoThrow, execFileCheck } from "@/lib/exec";
 import type { WorktreeInfo, BranchInfo } from "@/types/github";
-import { existsSync, mkdirSync, copyFileSync, constants as fsConstants, accessSync } from "fs";
-import { join, basename, dirname } from "path";
+import { join, basename, dirname } from "node:path";
+import { getFs, runtimeJoin, runtimeDirname, runtimeBasename } from "@/lib/dynamic-fs";
 import { WorktreeServiceError } from "@/lib/errors";
 import { sanitizeBranchName } from "@/lib/git-utils";
 
@@ -216,10 +216,12 @@ export async function createWorktree(
   // Generate worktree path if not provided
   const targetPath =
     worktreePath ||
-    join(dirname(repoPath), `${basename(repoPath)}-${sanitizeBranchName(branch)}`);
+    runtimeJoin(runtimeDirname(repoPath), `${runtimeBasename(repoPath)}-${sanitizeBranchName(branch)}`);
+
+  const fs = await getFs();
 
   // If path already exists and is a valid git worktree, reuse it
-  if (existsSync(targetPath)) {
+  if (fs.existsSync(targetPath)) {
     if (await isGitRepo(targetPath)) {
       return targetPath;
     }
@@ -232,8 +234,8 @@ export async function createWorktree(
 
   // Create parent directory if needed
   const parentDir = dirname(targetPath);
-  if (!existsSync(parentDir)) {
-    mkdirSync(parentDir, { recursive: true });
+  if (!fs.existsSync(parentDir)) {
+    fs.mkdirSync(parentDir, { recursive: true });
   }
 
   // Build the git worktree add command
@@ -396,7 +398,9 @@ export async function createBranchWithWorktree(
   // Build args to specify the start point for the new branch
   const targetPath =
     worktreePath ||
-    join(dirname(repoPath), `${basename(repoPath)}-${sanitizeBranchName(branchName)}`);
+    runtimeJoin(runtimeDirname(repoPath), `${runtimeBasename(repoPath)}-${sanitizeBranchName(branchName)}`);
+
+  const fs = await getFs();
 
   // Create parent directory if needed
   // Note: We intentionally avoid TOCTOU by NOT checking existsSync first.
@@ -405,7 +409,7 @@ export async function createBranchWithWorktree(
   // which is the proper way to handle concurrent worktree creation attempts.
   const parentDir = dirname(targetPath);
   try {
-    mkdirSync(parentDir, { recursive: true });
+    fs.mkdirSync(parentDir, { recursive: true });
   } catch (error) {
     const fsError = error as NodeJS.ErrnoException;
     // EEXIST is fine - directory already exists (race with another process)
@@ -461,7 +465,7 @@ export async function createBranchWithWorktree(
     // If the target path already exists as a valid git worktree, reuse it.
     // This handles retries where a previous attempt created the worktree
     // but session creation failed afterwards (e.g., "Start Working" on an issue).
-    if (existsSync(targetPath) && await isGitRepo(targetPath)) {
+    if (fs.existsSync(targetPath) && await isGitRepo(targetPath)) {
       return { branch: branchName, worktreePath: targetPath };
     }
 
@@ -573,7 +577,8 @@ export async function getWorktreeStatus(
   repoPath: string,
   worktreePath: string
 ): Promise<WorktreeStatus> {
-  const exists = existsSync(worktreePath);
+  const fs = await getFs();
+  const exists = fs.existsSync(worktreePath);
   const isRegistered = await isWorktreeRegistered(repoPath, worktreePath);
 
   // If directory doesn't exist, return early
@@ -694,32 +699,33 @@ export interface CopyEnvFilesResult {
  * @param worktreePath - Path to the worktree
  * @returns Result indicating which files were copied and skipped
  */
-export function copyEnvFilesToWorktree(
+export async function copyEnvFilesToWorktree(
   sourceRepoPath: string,
   worktreePath: string
-): CopyEnvFilesResult {
+): Promise<CopyEnvFilesResult> {
+  const fs = await getFs();
   const result: CopyEnvFilesResult = {
     copied: [],
     skipped: [],
   };
 
   for (const envFile of ENV_FILES_TO_COPY) {
-    const sourcePath = join(sourceRepoPath, envFile);
-    const targetPath = join(worktreePath, envFile);
+    const sourcePath = runtimeJoin(sourceRepoPath, envFile);
+    const targetPath = runtimeJoin(worktreePath, envFile);
 
     try {
       // Check if source file exists and is readable
-      accessSync(sourcePath, fsConstants.R_OK);
+      fs.accessSync(sourcePath, fs.constants.R_OK);
 
       // Check if target already exists (don't overwrite)
-      if (existsSync(targetPath)) {
+      if (fs.existsSync(targetPath)) {
         console.log(`Skipping ${envFile}: already exists in worktree`);
         result.skipped.push(envFile);
         continue;
       }
 
       // Copy the file
-      copyFileSync(sourcePath, targetPath);
+      fs.copyFileSync(sourcePath, targetPath);
       console.log(`Copied ${envFile} to worktree`);
       result.copied.push(envFile);
     } catch {
@@ -759,7 +765,7 @@ export async function createWorktreeWithEnv(
   // Copy env files if requested
   let envResult: CopyEnvFilesResult = { copied: [], skipped: [] };
   if (copyEnvFiles) {
-    envResult = copyEnvFilesToWorktree(repoPath, resultPath);
+    envResult = await copyEnvFilesToWorktree(repoPath, resultPath);
   }
 
   return {
@@ -805,7 +811,7 @@ export async function createBranchWithWorktreeAndEnv(
   // Copy env files if requested
   let envResult: CopyEnvFilesResult = { copied: [], skipped: [] };
   if (copyEnvFiles) {
-    envResult = copyEnvFilesToWorktree(repoPath, result.worktreePath);
+    envResult = await copyEnvFilesToWorktree(repoPath, result.worktreePath);
   }
 
   return {

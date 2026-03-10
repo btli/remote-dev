@@ -9,9 +9,9 @@ import { Release } from "@/domain/entities/Release";
 import type { ReleasePlatform } from "@/domain/entities/Release";
 import type { ReleaseGateway } from "@/application/ports/ReleaseGateway";
 import { NetworkError } from "@/domain/errors/UpdateError";
-import { createWriteStream } from "fs";
+import { createWriteStream } from "node:fs";
 import { pipeline } from "stream/promises";
-import { Readable } from "stream";
+import { Readable } from "node:stream";
 
 const GITHUB_API_HEADERS = {
   Accept: "application/vnd.github.v3+json",

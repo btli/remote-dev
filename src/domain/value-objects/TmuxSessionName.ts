@@ -11,7 +11,7 @@
  */
 
 import { InvalidValueError } from "../errors/DomainError";
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
 
 // rdv-{uuid} pattern: rdv- followed by 36 character UUID
 const TMUX_NAME_PATTERN = /^rdv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

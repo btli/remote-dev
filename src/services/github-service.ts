@@ -12,8 +12,8 @@ import type {
   FolderNode,
   CloneResult,
 } from "@/types/github";
-import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { GitHubServiceError } from "@/lib/errors";
 import { decryptSafe } from "@/lib/encryption";
 import { getReposDir } from "@/lib/paths";

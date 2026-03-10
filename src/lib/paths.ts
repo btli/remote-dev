@@ -16,9 +16,9 @@
  * └── rdv/               # rdv CLI runtime files (.local-key)
  */
 
-import { homedir } from "os";
-import { join } from "path";
-import { existsSync, mkdirSync } from "fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
 
 /**
  * Get the base data directory for the application.

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { platform, arch, homedir } from "os";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { platform, arch, homedir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 

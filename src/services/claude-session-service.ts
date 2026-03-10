@@ -5,11 +5,11 @@
  * from ~/.claude/projects/<encoded-path>/ (or profile-isolated equivalent).
  */
 
-import { createReadStream } from "fs";
-import { readdir, stat } from "fs/promises";
+import { createReadStream } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { createInterface } from "readline";
-import { join, basename } from "path";
-import { homedir } from "os";
+import { join, basename } from "node:path";
+import { homedir } from "node:os";
 import type { ClaudeSessionSummary } from "@/types/claude-session";
 
 export type { ClaudeSessionSummary };

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import { resolve, sep } from "path";
-import { readdir, stat, access, realpath } from "fs/promises";
-import { constants } from "fs";
+import { resolve, sep } from "node:path";
+import { getFsPromises, getFs } from "@/lib/dynamic-fs";
 
 interface DirectoryEntry {
   name: string;
@@ -29,7 +28,8 @@ async function validateBrowsePath(inputPath: string): Promise<string | null> {
     // This prevents bypasses like /var -> /private/var on macOS
     let realPath: string;
     try {
-      realPath = await realpath(resolved);
+      const fsp = await getFsPromises();
+      realPath = await fsp.realpath(resolved);
     } catch {
       // If realpath fails (path doesn't exist), use resolved path
       // The existence check later will handle non-existent paths
@@ -89,20 +89,23 @@ export const GET = withAuth(async (request) => {
     return errorResponse("Invalid path - must be within allowed directories", 400);
   }
 
+  const fsp = await getFsPromises();
+  const fs = await getFs();
+
   // Check if path exists and is accessible
   try {
-    await access(validatedPath, constants.R_OK);
+    await fsp.access(validatedPath, fs.constants.R_OK);
   } catch {
     return errorResponse("Path does not exist or is not accessible", 404);
   }
 
   try {
-    const pathStat = await stat(validatedPath);
+    const pathStat = await fsp.stat(validatedPath);
     if (!pathStat.isDirectory()) {
       return errorResponse("Path is not a directory", 400);
     }
 
-    const rawEntries = await readdir(validatedPath);
+    const rawEntries = await fsp.readdir(validatedPath);
     const entries: DirectoryEntry[] = [];
 
     for (const name of rawEntries) {
@@ -118,7 +121,7 @@ export const GET = withAuth(async (request) => {
 
       const fullPath = resolve(validatedPath, name);
       try {
-        const entryStat = await stat(fullPath);
+        const entryStat = await fsp.stat(fullPath);
         const isDirectory = entryStat.isDirectory();
 
         // Skip files if dirsOnly

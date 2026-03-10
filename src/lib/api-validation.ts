@@ -4,7 +4,7 @@
  * Provides common validation functions used across multiple API routes.
  */
 
-import { resolve } from "path";
+import { resolve } from "node:path";
 import type { EnvironmentVariables } from "@/types/environment";
 import { validateEnvVarKey, validateEnvVarValue } from "@/types/environment";
 

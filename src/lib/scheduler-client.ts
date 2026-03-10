@@ -7,7 +7,7 @@
  * Supports both TCP port mode (development) and Unix socket mode (production).
  */
 
-import http from "http";
+import http from "node:http";
 
 /**
  * Get the terminal server socket path if using Unix socket mode

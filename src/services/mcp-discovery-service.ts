@@ -8,7 +8,7 @@
 import { db } from "@/db";
 import { mcpDiscoveredTools, mcpDiscoveredResources, mcpServers } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import type { MCPServer, MCPTool, MCPResource } from "@/types/agent";
 import * as MCPRegistryService from "./mcp-registry-service";
 import { MCPDiscoveryError } from "@/lib/errors";

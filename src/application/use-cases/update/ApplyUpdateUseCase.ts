@@ -23,8 +23,8 @@ import {
 } from "@/domain/errors/UpdateError";
 import { getUpdateDownloadDir } from "@/lib/paths";
 import { GITHUB_OWNER, GITHUB_REPO } from "./constants";
-import { join } from "path";
-import { existsSync, mkdirSync, unlinkSync } from "fs";
+import { join } from "node:path";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 
 /** Remove a file, ignoring errors (e.g., file already deleted). */
 function safeUnlink(path: string): void {

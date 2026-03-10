@@ -7,7 +7,7 @@
 import { db } from "@/db";
 import { apiKeys } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { ApiKeyServiceError } from "@/lib/errors";
 
 // Re-export for API routes

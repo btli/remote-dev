@@ -6,7 +6,7 @@
  * Next.js API routes and the terminal server.
  */
 
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 /**
  * Get AUTH_SECRET with production guard.

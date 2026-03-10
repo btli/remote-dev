@@ -86,9 +86,7 @@ import {
   GetUpdateStatusUseCase,
 } from "@/application/use-cases/update";
 import { AppVersion } from "@/domain/value-objects/AppVersion";
-import { readFileSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import { resolve } from "node:path";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
@@ -339,22 +337,16 @@ export const listGitHubAccountsUseCase = new ListGitHubAccountsUseCase(
  * Falls back to 0.0.0 if neither path resolves.
  */
 function readAppVersion(): AppVersion {
-  const possiblePaths = [
-    resolve(process.cwd(), "package.json"),
-    resolve(dirname(fileURLToPath(import.meta.url)), "../../package.json"),
-  ];
-
-  for (const pkgPath of possiblePaths) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-      if (pkg.version) {
-        return AppVersion.fromString(pkg.version);
-      }
-    } catch {
-      continue;
+  try {
+    const fs = require("node:fs");
+    const pkgPath = resolve(process.cwd(), "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    if (pkg.version) {
+      return AppVersion.fromString(pkg.version);
     }
+  } catch {
+    // fall through
   }
-
   return AppVersion.fromString("0.0.0");
 }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
-import { readFile, stat } from "fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 

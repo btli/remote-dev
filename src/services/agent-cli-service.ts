@@ -5,8 +5,8 @@
  * for running agent CLIs with proper environment isolation.
  */
 
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { AgentProvider } from "@/types/agent";
 import { PROVIDER_CLI_COMMANDS } from "@/types/agent";
 

@@ -5,8 +5,8 @@
  * gh CLI reads for authentication when GH_CONFIG_DIR is set.
  */
 
-import { mkdir, writeFile, rm, access } from "fs/promises";
-import { join } from "path";
+import { mkdir, writeFile, rm, access } from "node:fs/promises";
+import { join } from "node:path";
 import { getGhConfigsDir } from "@/lib/paths";
 import type { GhCliConfigGateway } from "@/application/ports/GhCliConfigGateway";
 

@@ -14,7 +14,7 @@
 import type { TarballInstaller } from "@/application/ports/TarballInstaller";
 import { ExtractionError } from "@/domain/errors/UpdateError";
 import { getReleasesDir, getUpdateStagingDir } from "@/lib/paths";
-import { join } from "path";
+import { join } from "node:path";
 import {
   createReadStream,
   existsSync,
@@ -24,10 +24,10 @@ import {
   rmSync,
   symlinkSync,
   unlinkSync,
-} from "fs";
-import { createHash } from "crypto";
-import { execFile } from "child_process";
-import { promisify } from "util";
+} from "node:fs";
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
@@ -120,7 +120,7 @@ export class TarballInstallerImpl implements TarballInstaller {
       const hash = createHash("sha256");
       const stream = createReadStream(filePath);
 
-      stream.on("data", (data: Buffer) => hash.update(data));
+      stream.on("data", (data: string | Buffer) => hash.update(data));
       stream.on("end", () => resolve(hash.digest("hex")));
       stream.on("error", reject);
     });

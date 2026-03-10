@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import { dirname, resolve } from "path";
+import { dirname, resolve } from "node:path";
 import * as GitHubService from "@/services/github-service";
 import * as WorktreeService from "@/services/worktree-service";
 
