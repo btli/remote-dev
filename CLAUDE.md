@@ -171,9 +171,14 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv browser type` | Type text in browser |
 | `rdv browser evaluate` | Evaluate JavaScript |
 | `rdv session git-status` | Get git status for session |
+| `rdv hook pre-tool-use` | Handle PreToolUse hook (report running) |
+| `rdv hook post-tool-use` | Handle PostToolUse hook (sync tasks from stdin) |
+| `rdv hook pre-compact` | Handle PreCompact hook (report compacting) |
+| `rdv hook notification` | Handle Notification hook (report waiting) |
 | `rdv hook stop` | Handle Stop hook: report idle, check tasks, notify |
 | `rdv hook notify <event>` | Send notification for lifecycle event |
 | `rdv hook session-end` | Handle SessionEnd hook: report ended status |
+| `rdv hook validate` | Validate hooks: check connectivity + auto-repair |
 | `rdv status` | System dashboard |
 | `rdv context` | Show current session context |
 

@@ -260,7 +260,7 @@ export async function createSession(
     const configDir = profile?.configDir ?? process.env.HOME;
     if (configDir) {
       const configDirs = await resolveAgentConfigDirs(configDir, startupCommand, sessionId);
-      await ensureAgentConfig(configDirs, effectiveAgentProvider, sessionId);
+      await ensureAgentConfig(configDirs, effectiveAgentProvider, sessionId, rdvEnv);
     }
   }
 
@@ -1040,7 +1040,8 @@ async function resolveAgentConfigDirs(
 async function ensureAgentConfig(
   configDirs: Set<string>,
   provider: Exclude<AgentProviderType, "none">,
-  sessionId: string
+  sessionId: string,
+  rdvEnv?: Record<string, string>
 ): Promise<void> {
   if (provider !== "claude") return;
 
@@ -1050,6 +1051,22 @@ async function ensureAgentConfig(
         .catch((e) => console.error(`[session:${sessionId}] Failed to install agent hooks at ${dir}:`, e))
     )
   );
+
+  // Validate hooks if env vars are available (session creation path)
+  if (rdvEnv && Object.keys(rdvEnv).length > 0) {
+    const primaryDir = [...configDirs][0];
+    if (primaryDir) {
+      AgentProfileService.validateAgentHooks(primaryDir, provider, sessionId, rdvEnv)
+        .then((result) => {
+          if (!result.valid) {
+            console.error(`[session:${sessionId}] Hook validation failed: ${result.error}`);
+          } else if (result.repaired) {
+            console.log(`[session:${sessionId}] Hooks were auto-repaired`);
+          }
+        })
+        .catch((e) => console.error(`[session:${sessionId}] Hook validation error:`, e));
+    }
+  }
 }
 
 /**
