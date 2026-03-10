@@ -1,0 +1,26 @@
+# Remote Dev - Next.js Web Server
+# systemd user unit file
+#
+# Install: ~/.config/systemd/user/remote-dev.service
+# Enable:  systemctl --user enable --now remote-dev
+# Status:  systemctl --user status remote-dev
+# Logs:    journalctl --user -u remote-dev -f
+
+[Unit]
+Description=Remote Dev Web Server
+After=network.target
+Wants=remote-dev-terminal.service
+
+[Service]
+Type=simple
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=/usr/bin/node scripts/standalone-server.js
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=__DATA_DIR__/.env.local
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

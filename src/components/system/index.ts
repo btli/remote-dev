@@ -1,0 +1,1 @@
+export { UpdateManager } from "./UpdateManager";

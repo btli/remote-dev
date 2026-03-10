@@ -130,6 +130,44 @@ export function getRdvDir(): string {
 }
 
 /**
+ * Get the releases directory path.
+ * Stores versioned release installations for the update system.
+ *
+ * Structure:
+ * ~/.remote-dev/releases/
+ * ├── 0.2.1/        # Versioned release directories
+ * ├── 0.3.0/
+ * └── current -> 0.3.0  # Symlink to active release
+ */
+export function getReleasesDir(): string {
+  return join(getDataDir(), "releases");
+}
+
+/**
+ * Get the current release symlink path.
+ * Points to the active release directory.
+ */
+export function getCurrentReleaseDir(): string {
+  return join(getReleasesDir(), "current");
+}
+
+/**
+ * Get the update staging directory path.
+ * Used as a temporary directory during the update process.
+ */
+export function getUpdateStagingDir(): string {
+  return join(getDataDir(), ".update-staging");
+}
+
+/**
+ * Get the update download directory path.
+ * Used to store downloaded tarballs before extraction.
+ */
+export function getUpdateDownloadDir(): string {
+  return join(getDataDir(), ".update-download");
+}
+
+/**
  * Ensure the data directory and essential subdirectories exist.
  * Called during application startup.
  */
@@ -145,6 +183,7 @@ export function ensureDataDirectories(): void {
     getRecordingsDir(),
     getServerDir(),
     getRdvDir(),
+    getReleasesDir(),
   ];
 
   for (const dir of dirs) {
@@ -191,6 +230,18 @@ export const AppPaths = {
   },
   get rdvDir() {
     return getRdvDir();
+  },
+  get releasesDir() {
+    return getReleasesDir();
+  },
+  get currentReleaseDir() {
+    return getCurrentReleaseDir();
+  },
+  get updateStagingDir() {
+    return getUpdateStagingDir();
+  },
+  get updateDownloadDir() {
+    return getUpdateDownloadDir();
   },
   ensureDirectories: ensureDataDirectories,
 } as const;
