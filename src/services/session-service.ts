@@ -185,10 +185,11 @@ export async function createSession(
       : preferences.startupCommand || undefined;
 
   // Handle agent-aware session: auto-launch the agent CLI
-  // The agent command replaces any existing startup command (e.g., folder preference)
-  // to avoid duplicating the agent invocation (e.g., `claude && claude -p '...'`)
+  // Use the folder's startupCommand as the base command if set (e.g., `jclaude`
+  // wrapper), otherwise fall back to the provider's default command (e.g., `claude`).
+  // The agent command replaces any plain startup command to avoid duplication.
   if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
-    const agentCommand = buildAgentCommand(input.agentProvider, input.agentFlags);
+    const agentCommand = buildAgentCommand(input.agentProvider, input.agentFlags, startupCommand);
     if (agentCommand) {
       startupCommand = agentCommand;
     }
@@ -975,18 +976,34 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
 }
 
 /**
- * Build the agent CLI command for auto-launch
+ * Build the agent CLI command for auto-launch.
+ *
+ * @param customCommand - Optional folder startup command to use as base
+ *   (e.g., `jclaude` wrapper). If it matches the provider's command name,
+ *   the custom command is used instead.
  */
-function buildAgentCommand(provider: AgentProviderType, flags?: string[]): string | null {
+function buildAgentCommand(
+  provider: AgentProviderType,
+  flags?: string[],
+  customCommand?: string
+): string | null {
   const config = AGENT_PROVIDERS.find((p) => p.id === provider);
   if (!config || !config.command) {
     return null;
   }
 
+  // Use the folder's startup command as the base if it's a simple command name
+  // (e.g., "jclaude" wrapper for the "claude" provider). Only use it if it's
+  // a single word (no flags/args) to avoid double-flag issues.
+  const baseCommand =
+    customCommand && !customCommand.includes(" ")
+      ? customCommand
+      : config.command;
+
   const allFlags = [...config.defaultFlags, ...(flags ?? [])];
   const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
 
-  return `${config.command}${flagsStr}`;
+  return `${baseCommand}${flagsStr}`;
 }
 
 /**
