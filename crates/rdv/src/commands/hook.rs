@@ -79,13 +79,13 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                     Some(a) => format!("Agent stopped: {a}"),
                     None => "Agent stopped".to_string(),
                 };
-                let body = json!({
+                let payload = json!({
                     "sessionId": sid,
                     "type": "agent_complete",
                     "title": title,
                     "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
                 });
-                let _ = client.post_json("/api/notifications", &body).await;
+                let _ = client.post_json("/internal/notify", &payload).await;
             }
         }
         HookCommand::Notify { event, body } => {
@@ -100,7 +100,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 "title": event,
                 "body": body.unwrap_or_default(),
             });
-            let _ = client.post_json("/api/notifications", &payload).await;
+            let _ = client.post_json("/internal/notify", &payload).await;
         }
         HookCommand::SessionEnd { skip_learn } => {
             let sid = match client.session_id() {
@@ -121,7 +121,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                     "title": "Session ended",
                     "body": "Consider running `rdv learn analyze` to extract learnings.",
                 });
-                let _ = client.post_json("/api/notifications", &payload).await;
+                let _ = client.post_json("/internal/notify", &payload).await;
             }
         }
     }

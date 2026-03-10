@@ -425,6 +425,47 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // POST /internal/notify — create a notification from rdv CLI hooks
+  if (pathname === "/internal/notify" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true; // invalid JSON already responded
+    const { sessionId, type, title, body: notifBody } = payload;
+    if (!sessionId || !type || !title) {
+      sendJson(res, 400, { error: "Missing sessionId, type, or title" });
+      return true;
+    }
+
+    Promise.all([import("@/db"), import("@/db/schema"), import("drizzle-orm"), import("@/services/notification-service")])
+      .then(async ([{ db }, { terminalSessions }, { eq }, NotificationService]) => {
+        const session = await db.query.terminalSessions.findFirst({
+          where: eq(terminalSessions.id, sessionId as string),
+          columns: { name: true, userId: true },
+        });
+        if (!session) return;
+        const notification = await NotificationService.createNotification({
+          userId: session.userId,
+          sessionId: sessionId as string,
+          sessionName: session.name,
+          type: type as import("@/types/notification").NotificationType,
+          title: title as string,
+          body: (notifBody as string) ?? undefined,
+        });
+        if (!notification) return; // debounced
+        broadcastToClients({
+          type: "notification",
+          notification: {
+            ...notification,
+            createdAt: notification.createdAt instanceof Date ? notification.createdAt.toISOString() : notification.createdAt,
+            readAt: null,
+          },
+        });
+      })
+      .catch((err) => console.error("[Notify] Failed to create notification:", err));
+
+    sendJson(res, 200, { success: true });
+    return true;
+  }
+
   // --- Localhost restriction for internal task endpoints ---
   const isInternalTaskEndpoint =
     pathname === "/internal/agent-stop-check" ||
