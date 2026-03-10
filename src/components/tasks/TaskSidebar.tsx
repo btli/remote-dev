@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * TaskSidebar - Right sidebar for project task tracking
- *
- * Unified flat list of all tasks (manual + agent), with inline expandable
- * editor and GitHub issues section.
+ * TaskSidebar - Right sidebar for project task tracking, GitHub issues,
+ * and schedule management.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useTaskContext } from "@/contexts/TaskContext";
+import { useScheduleContext } from "@/contexts/ScheduleContext";
+import { useSessionContext } from "@/contexts/SessionContext";
 import {
   useRepositoryIssues,
   type GitHubIssueDTO,
@@ -32,12 +32,18 @@ import {
   User,
   Lock,
   FileText,
+  Clock,
+  Repeat,
+  Play,
 } from "lucide-react";
 import { IssueDetailModal } from "@/components/github/IssueDetailModal";
 import { getIssueIcon } from "@/components/github/issue-icons";
+import { CreateScheduleModal } from "@/components/schedule/CreateScheduleModal";
+import { EditScheduleModal } from "@/components/schedule/EditScheduleModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -58,6 +64,7 @@ import type {
   UpdateTaskInput,
 } from "@/types/task";
 import { PRIORITY_CONFIG } from "@/types/task";
+import type { SessionScheduleWithSession } from "@/types/schedule";
 import { TaskEditor } from "./TaskEditor";
 
 // --- Sidebar state persistence (mirrors left sidebar pattern) ---
@@ -523,17 +530,202 @@ function GitHubIssueLink({ issue, onLink, onSelect }: GitHubIssueLinkProps) {
   );
 }
 
+// --- Schedule item ---
+
+function formatNextRun(date: Date | null): string {
+  if (!date) return "Not scheduled";
+  const d = new Date(date);
+  const now = new Date();
+  const diff = d.getTime() - now.getTime();
+
+  if (diff < 0) return "Overdue";
+  if (diff < 60000) return "< 1 min";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} min`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+interface ScheduleItemProps {
+  schedule: SessionScheduleWithSession;
+  onEdit: () => void;
+  onDelete: () => void;
+  onToggle: (enabled: boolean) => void;
+  onRunNow: () => void;
+  isRunning: boolean;
+}
+
+function getScheduleStatusColor(schedule: SessionScheduleWithSession, isCompleted: boolean): string {
+  if (!schedule.enabled) return "text-muted-foreground";
+  if (schedule.status === "failed") return "text-red-400";
+  if (isCompleted) return "text-blue-400";
+  return "text-primary";
+}
+
+function ScheduleStatusLabel({ schedule, isCompleted }: { schedule: SessionScheduleWithSession; isCompleted: boolean }) {
+  if (isCompleted) {
+    return <span className="text-[10px] text-blue-400">Completed</span>;
+  }
+  if (schedule.status === "failed") {
+    return <span className="text-[10px] text-red-400">Failed</span>;
+  }
+  if (schedule.status === "paused" || !schedule.enabled) {
+    return <span className="text-[10px] text-muted-foreground">Paused</span>;
+  }
+  return (
+    <span className="text-[10px] text-muted-foreground">
+      Next: {formatNextRun(schedule.nextRunAt)}
+    </span>
+  );
+}
+
+function ScheduleItem({ schedule, onEdit, onDelete, onToggle, onRunNow, isRunning }: ScheduleItemProps) {
+  const isOneTime = schedule.scheduleType === "one-time";
+  const isCompleted = isOneTime && schedule.status === "completed";
+  const statusColor = getScheduleStatusColor(schedule, isCompleted);
+  const TypeIcon = isOneTime ? Calendar : Repeat;
+
+  return (
+    <div className="group px-2 py-1.5 rounded-md transition-all duration-150 hover:bg-accent/50">
+      <div className="flex items-start gap-1.5">
+        {/* Type icon */}
+        <TypeIcon className={cn("w-3.5 h-3.5 mt-0.5 shrink-0", statusColor)} />
+
+        {/* Name + meta */}
+        <div className="flex-1 min-w-0">
+          <button onClick={onEdit} className="w-full text-left">
+            <span className={cn(
+              "text-xs text-foreground line-clamp-1",
+              !schedule.enabled && "opacity-50"
+            )}>
+              {schedule.name}
+            </span>
+          </button>
+
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <ScheduleStatusLabel schedule={schedule} isCompleted={isCompleted} />
+
+            {/* Session name */}
+            <span className="text-[10px] text-muted-foreground/50 truncate">
+              {schedule.session?.name}
+            </span>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
+          {/* Enable/disable toggle — always visible */}
+          <Switch
+            checked={schedule.enabled}
+            onCheckedChange={onToggle}
+            className="scale-[0.55]"
+          />
+
+          {/* Run now — hover only */}
+          <button
+            onClick={onRunNow}
+            disabled={isRunning}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-green-400"
+          >
+            {isRunning ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Play className="w-3 h-3" />
+            )}
+          </button>
+
+          {/* Delete — hover only */}
+          <button
+            onClick={onDelete}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Delete schedule confirmation dialog ---
+
+interface DeleteScheduleDialogProps {
+  open: boolean;
+  scheduleName: string;
+  onConfirm: () => Promise<void>;
+  onClose: () => void;
+}
+
+function DeleteScheduleDialog({ open, scheduleName, onConfirm, onClose }: DeleteScheduleDialogProps) {
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleConfirm = async () => {
+    setIsDeleting(true);
+    try {
+      await onConfirm();
+    } finally {
+      setIsDeleting(false);
+      onClose();
+    }
+  };
+
+  return (
+    <AlertDialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <AlertDialogContent className="max-w-sm">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-sm">Delete Schedule</AlertDialogTitle>
+          <AlertDialogDescription className="text-xs">
+            Are you sure you want to delete{" "}
+            <span className="text-foreground font-medium">&quot;{scheduleName}&quot;</span>?
+            This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="flex-col gap-2 sm:flex-col">
+          <Button
+            variant="destructive"
+            size="sm"
+            className="w-full text-xs"
+            disabled={isDeleting}
+            onClick={handleConfirm}
+          >
+            {isDeleting ? "Deleting..." : "Delete"}
+          </Button>
+          <AlertDialogCancel className="w-full text-xs" disabled={isDeleting}>
+            Cancel
+          </AlertDialogCancel>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 // --- Main TaskSidebar ---
 
 interface TaskSidebarProps {
   githubRepoId: string | null;
   onViewIssue?: (issueNumber: number) => void;
   onViewPR?: (prNumber: number) => void;
+  /** Session ID to pre-select in CreateScheduleModal (from context menu trigger) */
+  scheduleTargetSessionId?: string | null;
+  /** Called after CreateScheduleModal opens to reset the trigger */
+  onScheduleTargetConsumed?: () => void;
 }
 
-export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebarProps) {
+export function TaskSidebar({
+  githubRepoId,
+  onViewIssue,
+  onViewPR,
+  scheduleTargetSessionId,
+  onScheduleTargetConsumed,
+}: TaskSidebarProps) {
   const { tasks, loading, createTask, updateTask, deleteTask, clearTasks, activeFolderId } =
     useTaskContext();
+  const { schedules, toggleEnabled, deleteSchedule, executeNow } = useScheduleContext();
+  const { sessions } = useSessionContext();
+  const activeSessions = useMemo(
+    () => sessions.filter((s) => s.status !== "closed"),
+    [sessions]
+  );
+
   // Sidebar state — lazy-initialize from localStorage (SSR-safe: functions only run on client)
   const [collapsed, setCollapsed] = useState(getStoredCollapsed);
   const [width, setWidth] = useState(getStoredWidth);
@@ -541,6 +733,24 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
   // Section expand state
   const [tasksExpanded, setTasksExpanded] = useState(true);
   const [issuesExpanded, setIssuesExpanded] = useState(false);
+  const [schedulesExpanded, setSchedulesExpanded] = useState(false);
+
+  // Schedule modal/dialog state
+  const [createScheduleOpen, setCreateScheduleOpen] = useState(false);
+  const [createScheduleSessionId, setCreateScheduleSessionId] = useState<string | null>(null);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [runningScheduleId, setRunningScheduleId] = useState<string | null>(null);
+
+  // Open CreateScheduleModal when triggered from session context menu
+  useEffect(() => {
+    if (scheduleTargetSessionId) {
+      setCreateScheduleSessionId(scheduleTargetSessionId);
+      setSchedulesExpanded(true);
+      setCreateScheduleOpen(true);
+      onScheduleTargetConsumed?.();
+    }
+  }, [scheduleTargetSessionId, onScheduleTargetConsumed]);
 
   // Expanded task editor state — at most one task expanded at a time
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
@@ -678,6 +888,21 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
     [createTask, activeFolderId]
   );
 
+  // Schedule handlers
+  const handleRunNow = useCallback(
+    async (scheduleId: string) => {
+      setRunningScheduleId(scheduleId);
+      try {
+        await executeNow(scheduleId);
+      } catch (err) {
+        console.error("Failed to execute schedule:", err);
+      } finally {
+        setRunningScheduleId(null);
+      }
+    },
+    [executeNow]
+  );
+
   // Collapsed state - icon strip
   if (collapsed) {
     return (
@@ -737,16 +962,17 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
         </button>
       </div>
 
-      {/* No folder selected */}
-      {!activeFolderId ? (
-        <div className="flex-1 flex items-center justify-center px-4">
-          <p className="text-xs text-muted-foreground text-center">
-            Select a project folder to view tasks
-          </p>
-        </div>
-      ) : (
-        <ScrollArea className="flex-1">
-          <div className="py-1">
+      <ScrollArea className="flex-1">
+        <div className="py-1">
+          {/* Tasks and GitHub — require active folder */}
+          {!activeFolderId ? (
+            <div className="flex items-center justify-center px-4 py-8">
+              <p className="text-xs text-muted-foreground text-center">
+                Select a project folder to view tasks
+              </p>
+            </div>
+          ) : (
+            <>
             {/* Unified Tasks Section */}
             <div>
               <SectionHeader
@@ -839,9 +1065,58 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
                 </div>
               )}
             </div>
+          </>
+          )}
+
+          {/* Separator */}
+          <div className="border-t border-border my-1" />
+
+          {/* Schedules Section — always visible (not folder-scoped) */}
+          <div>
+            <SectionHeader
+              icon={Clock}
+              title="Schedules"
+              count={schedules.length}
+              expanded={schedulesExpanded}
+              onToggle={() => setSchedulesExpanded(!schedulesExpanded)}
+              action={
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => setCreateScheduleOpen(true)}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">New schedule</TooltipContent>
+                </Tooltip>
+              }
+            />
+            {schedulesExpanded && (
+              <div className="space-y-0.5 px-1">
+                {schedules.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground px-3 py-2">
+                    No schedules. Click + to create one.
+                  </p>
+                ) : (
+                  schedules.map((schedule) => (
+                    <ScheduleItem
+                      key={schedule.id}
+                      schedule={schedule}
+                      onEdit={() => setEditingScheduleId(schedule.id)}
+                      onDelete={() => setDeleteTarget({ id: schedule.id, name: schedule.name })}
+                      onToggle={(enabled) => toggleEnabled(schedule.id, enabled)}
+                      onRunNow={() => handleRunNow(schedule.id)}
+                      isRunning={runningScheduleId === schedule.id}
+                    />
+                  ))
+                )}
+              </div>
+            )}
           </div>
-        </ScrollArea>
-      )}
+        </div>
+      </ScrollArea>
 
       {/* Loading overlay */}
       {loading && (
@@ -865,6 +1140,40 @@ export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebar
           onClear={handleClearTasks}
           totalCount={tasks.length}
           completedCount={completedCount}
+        />
+      )}
+
+      {/* Create Schedule Modal */}
+      <CreateScheduleModal
+        open={createScheduleOpen}
+        onClose={() => {
+          setCreateScheduleOpen(false);
+          setCreateScheduleSessionId(null);
+        }}
+        sessions={activeSessions}
+        session={
+          createScheduleSessionId
+            ? activeSessions.find((s) => s.id === createScheduleSessionId) ?? null
+            : undefined
+        }
+      />
+
+      {/* Edit Schedule Modal */}
+      {editingScheduleId && (
+        <EditScheduleModal
+          open
+          onClose={() => setEditingScheduleId(null)}
+          scheduleId={editingScheduleId}
+        />
+      )}
+
+      {/* Delete Schedule Confirmation */}
+      {deleteTarget && (
+        <DeleteScheduleDialog
+          open
+          scheduleName={deleteTarget.name}
+          onConfirm={() => deleteSchedule(deleteTarget.id)}
+          onClose={() => setDeleteTarget(null)}
         />
       )}
     </div>

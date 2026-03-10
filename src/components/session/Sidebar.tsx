@@ -6,7 +6,7 @@ import {
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
-  GitPullRequest, CircleDot, Clock, CalendarClock, KeyRound, Fingerprint, Network,
+  GitPullRequest, CircleDot, Clock, KeyRound, Fingerprint, Network,
   Pin, PinOff, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -118,8 +118,6 @@ interface SidebarProps {
   trashCount: number;
   onTrashOpen: () => void;
   onSessionSchedule?: (sessionId: string) => void;
-  onSessionSchedulesView?: (sessionId: string, sessionName: string) => void;
-  onSchedulesOpen?: () => void;
   onProfilesOpen?: () => void;
   onPortsOpen?: () => void;
   onViewIssues?: (folderId: string) => void;
@@ -206,8 +204,6 @@ export function Sidebar({
   trashCount,
   onTrashOpen,
   onSessionSchedule,
-  onSessionSchedulesView,
-  onSchedulesOpen,
   onProfilesOpen,
   onPortsOpen,
   onViewIssues,
@@ -350,9 +346,8 @@ export function Sidebar({
     getSplitForSession,
   } = useSplitContext();
 
-  // Schedule context for showing schedule indicators
-  const { schedules, getSchedulesForSession } = useScheduleContext();
-  const activeScheduleCount = schedules.filter(s => s.enabled).length;
+  // Schedule context for showing schedule indicators on session rows
+  const { getSchedulesForSession } = useScheduleContext();
 
   // Find active session and check if it's an agent session
   const activeSession = sessions.find(s => s.id === activeSessionId);
@@ -1327,7 +1322,7 @@ export function Sidebar({
               )}
             </div>
 
-            {/* Schedule count indicator - right side, clickable */}
+            {/* Schedule count indicator */}
             {(() => {
               const schedules = getSchedulesForSession(session.id);
               const activeCount = schedules.filter(s => s.enabled).length;
@@ -1335,19 +1330,13 @@ export function Sidebar({
               return (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSessionSchedulesView?.(session.id, session.name);
-                      }}
-                      className="flex items-center gap-0.5 text-[9px] text-primary shrink-0 hover:text-primary/80 transition-colors"
-                    >
+                    <span className="flex items-center gap-0.5 text-[9px] text-primary shrink-0">
                       <Clock className="w-2.5 h-2.5" />
                       {activeCount}
-                    </button>
+                    </span>
                   </TooltipTrigger>
                   <TooltipContent side="right" className="text-xs">
-                    {activeCount} scheduled command{activeCount !== 1 ? 's' : ''} - click to view
+                    {activeCount} scheduled command{activeCount !== 1 ? 's' : ''}
                   </TooltipContent>
                 </Tooltip>
               );
@@ -2378,25 +2367,6 @@ export function Sidebar({
       {/* Footer - hide when collapsed */}
       {!collapsed && (
         <div className="px-3 py-1.5 border-t border-border space-y-1">
-          {/* Schedules button */}
-          {onSchedulesOpen && (
-            <button
-              onClick={onSchedulesOpen}
-              className={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-muted-foreground hover:text-foreground",
-                "hover:bg-muted/50 transition-colors"
-              )}
-            >
-              <CalendarClock className="w-3.5 h-3.5" />
-              <span>Schedules</span>
-              {activeScheduleCount > 0 && (
-                <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                  {activeScheduleCount}
-                </span>
-              )}
-            </button>
-          )}
           {/* Profiles button */}
           {onProfilesOpen && (
             <button
