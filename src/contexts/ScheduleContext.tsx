@@ -6,6 +6,8 @@ import {
   useReducer,
   useCallback,
   useEffect,
+  useRef,
+  useMemo,
   type ReactNode,
 } from "react";
 import type {
@@ -18,6 +20,7 @@ import type {
   ScheduleState,
   ScheduleAction,
 } from "@/types/schedule";
+import { useSessionContext } from "@/contexts/SessionContext";
 
 // =============================================================================
 // Context State
@@ -104,28 +107,45 @@ interface ScheduleProviderProps {
 
 export function ScheduleProvider({ children }: ScheduleProviderProps) {
   const [state, dispatch] = useReducer(scheduleReducer, initialState);
+  const { activeSessionId } = useSessionContext();
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Fetch all schedules on mount
+  // Fetch schedules scoped to the active session
   const refreshSchedules = useCallback(async () => {
+    if (!activeSessionId) {
+      dispatch({ type: "LOAD_SUCCESS", schedules: [] });
+      return;
+    }
+
+    // Cancel any in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     dispatch({ type: "LOAD_START" });
     try {
-      const response = await fetch("/api/schedules");
+      const response = await fetch(
+        `/api/schedules?sessionId=${encodeURIComponent(activeSessionId)}`,
+        { signal: controller.signal }
+      );
       if (!response.ok) {
         throw new Error("Failed to load schedules");
       }
       const data = await response.json();
       dispatch({ type: "LOAD_SUCCESS", schedules: data.schedules || [] });
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       dispatch({
         type: "LOAD_ERROR",
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }, []);
+  }, [activeSessionId]);
 
-  // Load schedules on mount
+  // Re-fetch when active session changes; abort on unmount
   useEffect(() => {
     refreshSchedules();
+    return () => abortRef.current?.abort();
   }, [refreshSchedules]);
 
   // Create a new schedule
@@ -288,18 +308,32 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
     [state.schedules]
   );
 
-  const value: ScheduleContextValue = {
-    ...state,
-    refreshSchedules,
-    createSchedule,
-    updateSchedule,
-    deleteSchedule,
-    toggleEnabled,
-    executeNow,
-    getExecutionHistory,
-    getScheduleWithCommands,
-    getSchedulesForSession,
-  };
+  const value = useMemo<ScheduleContextValue>(
+    () => ({
+      ...state,
+      refreshSchedules,
+      createSchedule,
+      updateSchedule,
+      deleteSchedule,
+      toggleEnabled,
+      executeNow,
+      getExecutionHistory,
+      getScheduleWithCommands,
+      getSchedulesForSession,
+    }),
+    [
+      state,
+      refreshSchedules,
+      createSchedule,
+      updateSchedule,
+      deleteSchedule,
+      toggleEnabled,
+      executeNow,
+      getExecutionHistory,
+      getScheduleWithCommands,
+      getSchedulesForSession,
+    ]
+  );
 
   return (
     <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>
