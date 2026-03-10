@@ -54,8 +54,6 @@ interface TaskContextValue {
     source?: TaskSource,
     options?: { sessionId?: string; completedOnly?: boolean }
   ) => Promise<number>;
-  /** Get tasks for a specific session (uses full list, useful for badges) */
-  getTasksForSession: (sessionId: string) => ProjectTask[];
 }
 
 const TaskContext = createContext<TaskContextValue | null>(null);
@@ -215,12 +213,6 @@ export function TaskProvider({ children }: TaskProviderProps) {
     [activeFolderId]
   );
 
-  const getTasksForSession = useCallback(
-    (sessionId: string): ProjectTask[] =>
-      allTasks.filter((t) => t.sessionId === sessionId),
-    [allTasks]
-  );
-
   const activeSessionTasks = useMemo(
     () =>
       activeSessionId
@@ -240,7 +232,6 @@ export function TaskProvider({ children }: TaskProviderProps) {
       updateTask,
       deleteTask,
       clearTasks,
-      getTasksForSession,
     }),
     [
       activeSessionTasks,
@@ -252,7 +243,6 @@ export function TaskProvider({ children }: TaskProviderProps) {
       updateTask,
       deleteTask,
       clearTasks,
-      getTasksForSession,
     ]
   );
 
