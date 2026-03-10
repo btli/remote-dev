@@ -94,7 +94,7 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
         TaskCommand::List => {
             let sid = session_id()?;
             let tasks: Vec<Task> = client
-                .get_with_query("/internal/tasks", &[("sessionId", &sid)])
+                .get_with_query("/api/tasks", &[("sessionId", &sid)])
                 .await?;
             if human {
                 let rows: Vec<TaskRow> = tasks.iter().map(TaskRow::from).collect();
@@ -117,7 +117,7 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             if let Some(desc) = description {
                 body["description"] = json!(desc);
             }
-            let result: serde_json::Value = client.post_json("/internal/tasks", &body).await?;
+            let result: serde_json::Value = client.post_json("/api/tasks", &body).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         TaskCommand::Update {
@@ -136,12 +136,12 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             if let Some(p) = priority {
                 body["priority"] = json!(p);
             }
-            let result: serde_json::Value = client.patch(&format!("/internal/tasks/{id}"), &body).await?;
+            let result: serde_json::Value = client.patch(&format!("/api/tasks/{id}"), &body).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         TaskCommand::Complete { id } => {
             let body = json!({ "status": "done" });
-            let result: serde_json::Value = client.patch(&format!("/internal/tasks/{id}"), &body).await?;
+            let result: serde_json::Value = client.patch(&format!("/api/tasks/{id}"), &body).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         TaskCommand::Check => {

@@ -12,7 +12,8 @@
  * ├── projects/          # Worktree storage
  * ├── repos/             # Cloned repositories
  * ├── recordings/        # Session recordings
- * └── server/            # Server runtime files
+ * ├── server/            # Server runtime files
+ * └── rdv/               # rdv CLI runtime files (.local-key)
  */
 
 import { homedir } from "os";
@@ -121,6 +122,14 @@ export function getServerDir(): string {
 }
 
 /**
+ * Get the rdv CLI runtime directory path.
+ * Stores CLI-related runtime files like the local API key.
+ */
+export function getRdvDir(): string {
+  return join(getDataDir(), "rdv");
+}
+
+/**
  * Ensure the data directory and essential subdirectories exist.
  * Called during application startup.
  */
@@ -135,6 +144,7 @@ export function ensureDataDirectories(): void {
     getGhConfigsDir(),
     getRecordingsDir(),
     getServerDir(),
+    getRdvDir(),
   ];
 
   for (const dir of dirs) {
@@ -178,6 +188,9 @@ export const AppPaths = {
   },
   get serverDir() {
     return getServerDir();
+  },
+  get rdvDir() {
+    return getRdvDir();
   },
   ensureDirectories: ensureDataDirectories,
 } as const;
