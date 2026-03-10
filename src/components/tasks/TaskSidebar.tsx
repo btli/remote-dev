@@ -979,7 +979,7 @@ export function TaskSidebar({
             </div>
           ) : (
             <>
-            {/* Unified Tasks Section — session-scoped */}
+            {/* Tasks Section */}
             <div>
               <SectionHeader
                 icon={ClipboardList}

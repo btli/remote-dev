@@ -215,15 +215,12 @@ export function TaskProvider({ children }: TaskProviderProps) {
     [activeFolderId]
   );
 
-  // Get tasks for a specific session (uses full folder list, useful for badges)
   const getTasksForSession = useCallback(
-    (sessionId: string): ProjectTask[] => {
-      return allTasks.filter((t) => t.sessionId === sessionId);
-    },
+    (sessionId: string): ProjectTask[] =>
+      allTasks.filter((t) => t.sessionId === sessionId),
     [allTasks]
   );
 
-  // Expose only active session's tasks for the right sidebar display
   const activeSessionTasks = useMemo(
     () =>
       activeSessionId
@@ -234,7 +231,6 @@ export function TaskProvider({ children }: TaskProviderProps) {
 
   const value = useMemo(
     () => ({
-      // Override tasks with session-scoped list for consumers (TaskSidebar)
       tasks: activeSessionTasks,
       loading,
       error,
