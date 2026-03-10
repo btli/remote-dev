@@ -75,7 +75,7 @@ const TerminalWithKeyboard = dynamic(
   { ssr: false }
 );
 
-// Dynamically import TerminalTypeRenderer for browser/orchestrator session types
+// Dynamically import TerminalTypeRenderer for browser session types
 const TerminalTypeRenderer = dynamic(
   () =>
     import("@/components/terminal/TerminalTypeRenderer").then(
@@ -1075,26 +1075,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     maybeAutoFollowFolder,
   ]);
 
-  // Shared factory for creating typed sessions within a specific folder.
-  // Both agent and orchestrator folder handlers follow the same pattern.
-  const createFolderTypedSession = useCallback(
-    async (folderId: string, terminalType: "agent" | "orchestrator") => {
+  const handleFolderNewAgent = useCallback(
+    async (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
-      const baseName = generateSessionName(folderId);
-      const name = terminalType === "orchestrator" ? `${baseName} (Orchestrator)` : baseName;
+      const name = generateSessionName(folderId);
       try {
         const newSession = await createSession({
           name,
           projectPath: prefs.defaultWorkingDirectory || undefined,
           folderId,
-          terminalType,
+          terminalType: "agent",
         });
         if (newSession) {
           registerSessionFolder(newSession.id, folderId);
           setActiveFolder(folderId);
         }
       } catch (error) {
-        logSessionError(`create ${terminalType} session`, error);
+        logSessionError("create agent session", error);
       }
     },
     [
@@ -1105,16 +1102,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       registerSessionFolder,
       logSessionError,
     ]
-  );
-
-  const handleFolderNewAgent = useCallback(
-    (folderId: string) => createFolderTypedSession(folderId, "agent"),
-    [createFolderTypedSession]
-  );
-
-  const handleFolderNewOrchestrator = useCallback(
-    (folderId: string) => createFolderTypedSession(folderId, "orchestrator"),
-    [createFolderTypedSession]
   );
 
   // Handler to open the Resume Claude Session modal for a folder
@@ -1555,7 +1542,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onFolderSettings={handleFolderSettings}
             onFolderNewSession={handleFolderNewSession}
             onFolderNewAgent={handleFolderNewAgent}
-            onFolderNewOrchestrator={handleFolderNewOrchestrator}
             onFolderResumeClaudeSession={handleFolderResumeClaudeSession}
             onFolderAdvancedSession={handleFolderAdvancedSession}
             onFolderNewWorktree={handleFolderNewWorktree}
@@ -1757,9 +1743,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                       );
                     }
 
-                    // Browser and orchestrator types use TerminalTypeRenderer
-                    // which handles BrowserPane and OrchestratorView respectively
-                    if (session.terminalType === "browser" || session.terminalType === "orchestrator") {
+                    // Browser type uses TerminalTypeRenderer for BrowserPane
+                    if (session.terminalType === "browser") {
                       return (
                         <div className="absolute inset-0 z-10">
                           <TerminalTypeRenderer

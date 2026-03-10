@@ -102,8 +102,6 @@ export default async function Home() {
     splitGroupId: s.splitGroupId,
     splitOrder: s.splitOrder,
     splitSize: s.splitSize ?? 0.5,
-    parentSessionId: s.parentSessionId ?? null,
-    orchestratorRole: s.orchestratorRole as "parent" | "child" | null,
     status: s.status as "active" | "suspended" | "closed" | "trashed",
     pinned: s.pinned ?? false,
     tabOrder: s.tabOrder,

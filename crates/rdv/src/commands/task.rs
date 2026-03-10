@@ -157,11 +157,19 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             if let Err(e) = idle_result {
                 eprintln!("warning: failed to report idle status: {e}");
             }
-            let result = result?;
-            // Print the task message if present (tells the agent about incomplete tasks)
-            if let Some(msg) = result.get("message").and_then(|v| v.as_str()) {
-                if !msg.is_empty() {
-                    println!("{msg}");
+            // On failure, output a message to stdout so the Stop hook prevents
+            // the agent from exiting (non-zero exit would let it stop).
+            match result {
+                Ok(val) => {
+                    if let Some(msg) = val.get("message").and_then(|v| v.as_str()) {
+                        if !msg.is_empty() {
+                            println!("{msg}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to check tasks: {e}");
+                    println!("Unable to verify task completion — please check your rdv task list before stopping.");
                 }
             }
         }

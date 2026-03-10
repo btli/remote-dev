@@ -185,13 +185,12 @@ export async function createSession(
       : preferences.startupCommand || undefined;
 
   // Handle agent-aware session: auto-launch the agent CLI
+  // The agent command replaces any existing startup command (e.g., folder preference)
+  // to avoid duplicating the agent invocation (e.g., `claude && claude -p '...'`)
   if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
     const agentCommand = buildAgentCommand(input.agentProvider, input.agentFlags);
     if (agentCommand) {
-      // If there's already a startup command, chain them
-      startupCommand = startupCommand
-        ? `${startupCommand} && ${agentCommand}`
-        : agentCommand;
+      startupCommand = agentCommand;
     }
   }
 

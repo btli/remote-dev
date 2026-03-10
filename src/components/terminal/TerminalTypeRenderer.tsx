@@ -37,7 +37,7 @@ interface TerminalTypeRendererProps {
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
   onSessionClose?: (sessionId: string) => void;
-  /** Called when the user wants to navigate/switch to another session (e.g. child in orchestrator) */
+  /** Called when the user wants to navigate/switch to another session */
   onNavigateToSession?: (sessionId: string) => void;
   onAgentStateChange?: (sessionId: string, state: "running" | "exited" | "restarting" | "closed") => void;
   /** Called when agent activity status changes (from Claude Code hooks) */
