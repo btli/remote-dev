@@ -187,13 +187,27 @@ function HookListEditor({ hooks, onChange, disabled }: HookEditorProps) {
   );
 }
 
+/** Hook type definitions for the editor sections */
+type HookTypeKey = keyof Omit<ClaudeCodeHooks, "disableAllHooks">;
+
+interface HookSectionConfig {
+  key: HookTypeKey;
+  title: string;
+  description: string;
+}
+
+const HOOK_SECTIONS: HookSectionConfig[] = [
+  { key: "PreToolUse", title: "Pre-Tool Use Hooks", description: "Commands to run before a tool is executed" },
+  { key: "PostToolUse", title: "Post-Tool Use Hooks", description: "Commands to run after a tool has executed" },
+  { key: "PreCompact", title: "Pre-Compact Hooks", description: "Commands to run before context compaction" },
+  { key: "Notification", title: "Notification Hooks", description: "Commands to run when a notification is triggered" },
+  { key: "Stop", title: "Stop Hooks", description: "Commands to run when the agent stops" },
+];
+
 /**
  * ClaudeCodeHooksEditor - Hook configuration for Claude Code
  *
- * Manages:
- * - Pre-tool use hooks (before tool execution)
- * - Post-tool use hooks (after tool execution)
- * - Global hook disable option
+ * Manages all hook event types with a global disable option.
  */
 export function ClaudeCodeHooksEditor({
   config,
@@ -209,9 +223,10 @@ export function ClaudeCodeHooksEditor({
     });
   };
 
+  const allDisabled = disabled || hooks.disableAllHooks;
+
   return (
     <div className="space-y-6">
-      {/* Global Disable */}
       <SettingToggle
         label="Disable All Hooks"
         description="Temporarily disable all hooks without removing them"
@@ -220,118 +235,28 @@ export function ClaudeCodeHooksEditor({
         disabled={disabled}
       />
 
-      {/* Pre-Tool Hooks */}
-      <div
-        className={cn(
-          "space-y-3 rounded-lg border border-border p-4",
-          hooks.disableAllHooks && "opacity-50"
-        )}
-      >
-        <div>
-          <h4 className="text-sm font-medium text-foreground">
-            Pre-Tool Use Hooks
-          </h4>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Commands to run before a tool is executed
-          </p>
+      {HOOK_SECTIONS.map(({ key, title, description }) => (
+        <div
+          key={key}
+          className={cn(
+            "space-y-3 rounded-lg border border-border p-4",
+            hooks.disableAllHooks && "opacity-50"
+          )}
+        >
+          <div>
+            <h4 className="text-sm font-medium text-foreground">{title}</h4>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {description}
+            </p>
+          </div>
+
+          <HookListEditor
+            hooks={hooks[key] || []}
+            onChange={(updated) => updateHooks({ [key]: updated })}
+            disabled={allDisabled}
+          />
         </div>
-
-        <HookListEditor
-          hooks={hooks.PreToolUse || []}
-          onChange={(PreToolUse) => updateHooks({ PreToolUse })}
-          disabled={disabled || hooks.disableAllHooks}
-        />
-      </div>
-
-      {/* Post-Tool Hooks */}
-      <div
-        className={cn(
-          "space-y-3 rounded-lg border border-border p-4",
-          hooks.disableAllHooks && "opacity-50"
-        )}
-      >
-        <div>
-          <h4 className="text-sm font-medium text-foreground">
-            Post-Tool Use Hooks
-          </h4>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Commands to run after a tool has executed
-          </p>
-        </div>
-
-        <HookListEditor
-          hooks={hooks.PostToolUse || []}
-          onChange={(PostToolUse) => updateHooks({ PostToolUse })}
-          disabled={disabled || hooks.disableAllHooks}
-        />
-      </div>
-
-      {/* Pre-Compact Hooks */}
-      <div
-        className={cn(
-          "space-y-3 rounded-lg border border-border p-4",
-          hooks.disableAllHooks && "opacity-50"
-        )}
-      >
-        <div>
-          <h4 className="text-sm font-medium text-foreground">
-            Pre-Compact Hooks
-          </h4>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Commands to run before context compaction
-          </p>
-        </div>
-
-        <HookListEditor
-          hooks={hooks.PreCompact || []}
-          onChange={(PreCompact) => updateHooks({ PreCompact })}
-          disabled={disabled || hooks.disableAllHooks}
-        />
-      </div>
-
-      {/* Notification Hooks */}
-      <div
-        className={cn(
-          "space-y-3 rounded-lg border border-border p-4",
-          hooks.disableAllHooks && "opacity-50"
-        )}
-      >
-        <div>
-          <h4 className="text-sm font-medium text-foreground">
-            Notification Hooks
-          </h4>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Commands to run when a notification is triggered
-          </p>
-        </div>
-
-        <HookListEditor
-          hooks={hooks.Notification || []}
-          onChange={(Notification) => updateHooks({ Notification })}
-          disabled={disabled || hooks.disableAllHooks}
-        />
-      </div>
-
-      {/* Stop Hooks */}
-      <div
-        className={cn(
-          "space-y-3 rounded-lg border border-border p-4",
-          hooks.disableAllHooks && "opacity-50"
-        )}
-      >
-        <div>
-          <h4 className="text-sm font-medium text-foreground">Stop Hooks</h4>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Commands to run when the agent stops
-          </p>
-        </div>
-
-        <HookListEditor
-          hooks={hooks.Stop || []}
-          onChange={(Stop) => updateHooks({ Stop })}
-          disabled={disabled || hooks.disableAllHooks}
-        />
-      </div>
+      ))}
     </div>
   );
 }
