@@ -18,6 +18,7 @@ import type {
   TaskSubtask,
 } from "@/types/task";
 import { usePreferencesContext } from "./PreferencesContext";
+import { useSessionContext } from "./SessionContext";
 
 /** Hydrate date strings from API response into Date objects */
 function hydrateTask(raw: Record<string, unknown>): ProjectTask {
@@ -37,6 +38,7 @@ function hydrateTask(raw: Record<string, unknown>): ProjectTask {
 }
 
 interface TaskContextValue {
+  /** Tasks scoped to the active session (or empty when no session is active) */
   tasks: ProjectTask[];
   loading: boolean;
   error: string | null;
@@ -52,6 +54,8 @@ interface TaskContextValue {
     source?: TaskSource,
     options?: { sessionId?: string; completedOnly?: boolean }
   ) => Promise<number>;
+  /** Get tasks for a specific session (uses full list, useful for badges) */
+  getTasksForSession: (sessionId: string) => ProjectTask[];
 }
 
 const TaskContext = createContext<TaskContextValue | null>(null);
@@ -69,15 +73,16 @@ interface TaskProviderProps {
 }
 
 export function TaskProvider({ children }: TaskProviderProps) {
-  const [tasks, setTasks] = useState<ProjectTask[]>([]);
+  const [allTasks, setAllTasks] = useState<ProjectTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { activeProject } = usePreferencesContext();
   const activeFolderId = activeProject.folderId;
+  const { activeSessionId } = useSessionContext();
 
   const refreshTasks = useCallback(async () => {
     if (!activeFolderId) {
-      setTasks([]);
+      setAllTasks([]);
       return;
     }
 
@@ -91,7 +96,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
         throw new Error("Failed to fetch tasks");
       }
       const data = await response.json();
-      setTasks(data.map(hydrateTask));
+      setAllTasks(data.map(hydrateTask));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -119,7 +124,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
           throw new Error("Failed to create task");
         }
         const task = hydrateTask(await response.json());
-        setTasks((prev) => [task, ...prev]);
+        setAllTasks((prev) => [task, ...prev]);
         return task;
       } catch (err) {
         console.error("Error creating task:", err);
@@ -144,7 +149,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
           throw new Error("Failed to update task");
         }
         const task = hydrateTask(await response.json());
-        setTasks((prev) => prev.map((t) => (t.id === id ? task : t)));
+        setAllTasks((prev) => prev.map((t) => (t.id === id ? task : t)));
         return task;
       } catch (err) {
         console.error("Error updating task:", err);
@@ -162,7 +167,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
       if (!response.ok) {
         throw new Error("Failed to delete task");
       }
-      setTasks((prev) => prev.filter((t) => t.id !== id));
+      setAllTasks((prev) => prev.filter((t) => t.id !== id));
       return true;
     } catch (err) {
       console.error("Error deleting task:", err);
@@ -192,7 +197,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
         }
         const { deleted } = await response.json();
 
-        setTasks((prev) =>
+        setAllTasks((prev) =>
           prev.filter((t) => {
             if (t.folderId !== activeFolderId) return true;
             if (source && t.source !== source) return true;
@@ -210,9 +215,27 @@ export function TaskProvider({ children }: TaskProviderProps) {
     [activeFolderId]
   );
 
+  // Get tasks for a specific session (uses full folder list, useful for badges)
+  const getTasksForSession = useCallback(
+    (sessionId: string): ProjectTask[] => {
+      return allTasks.filter((t) => t.sessionId === sessionId);
+    },
+    [allTasks]
+  );
+
+  // Expose only active session's tasks for the right sidebar display
+  const activeSessionTasks = useMemo(
+    () =>
+      activeSessionId
+        ? allTasks.filter((t) => t.sessionId === activeSessionId)
+        : [],
+    [allTasks, activeSessionId]
+  );
+
   const value = useMemo(
     () => ({
-      tasks,
+      // Override tasks with session-scoped list for consumers (TaskSidebar)
+      tasks: activeSessionTasks,
       loading,
       error,
       activeFolderId,
@@ -221,9 +244,10 @@ export function TaskProvider({ children }: TaskProviderProps) {
       updateTask,
       deleteTask,
       clearTasks,
+      getTasksForSession,
     }),
     [
-      tasks,
+      activeSessionTasks,
       loading,
       error,
       activeFolderId,
@@ -232,6 +256,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
       updateTask,
       deleteTask,
       clearTasks,
+      getTasksForSession,
     ]
   );
 

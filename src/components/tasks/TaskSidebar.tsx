@@ -862,18 +862,23 @@ export function TaskSidebar({
   const handleClearTasks = useCallback(
     async (completedOnly: boolean) => {
       await clearTasks(undefined, {
+        sessionId: activeSessionId ?? undefined,
         completedOnly,
       });
     },
-    [clearTasks]
+    [clearTasks, activeSessionId]
   );
 
   // Handlers
   const handleAddTask = useCallback(
     (title: string) => {
-      createTask({ title, folderId: activeFolderId });
+      createTask({
+        title,
+        folderId: activeFolderId,
+        sessionId: activeSessionId ?? undefined,
+      });
     },
-    [createTask, activeFolderId]
+    [createTask, activeFolderId, activeSessionId]
   );
 
   const handleLinkIssue = useCallback(
@@ -881,11 +886,12 @@ export function TaskSidebar({
       createTask({
         title: issue.title,
         folderId: activeFolderId,
+        sessionId: activeSessionId ?? undefined,
         githubIssueUrl: issue.htmlUrl,
         description: `Linked from GitHub #${issue.number}`,
       });
     },
-    [createTask, activeFolderId]
+    [createTask, activeFolderId, activeSessionId]
   );
 
   // Schedule handlers
@@ -973,7 +979,7 @@ export function TaskSidebar({
             </div>
           ) : (
             <>
-            {/* Unified Tasks Section */}
+            {/* Unified Tasks Section — session-scoped */}
             <div>
               <SectionHeader
                 icon={ClipboardList}
@@ -988,32 +994,38 @@ export function TaskSidebar({
                 }
               />
               {tasksExpanded && (
-                <>
-                  <QuickAdd onAdd={handleAddTask} />
-                  <div className="space-y-0.5 px-1">
-                    {tasks.length === 0 ? (
-                      <p className="text-[11px] text-muted-foreground px-3 py-2">
-                        No tasks yet. Add one above.
-                      </p>
-                    ) : (
-                      tasks.map((task) => (
-                        <TaskItem
-                          key={task.id}
-                          task={task}
-                          isExpanded={expandedTaskId === task.id}
-                          allTasks={tasks}
-                          onExpand={() =>
-                            setExpandedTaskId(
-                              expandedTaskId === task.id ? null : task.id
-                            )
-                          }
-                          onUpdate={updateTask}
-                          onDelete={deleteTask}
-                        />
-                      ))
-                    )}
-                  </div>
-                </>
+                <div className="space-y-0.5 px-1">
+                  {!activeSession ? (
+                    <p className="text-[11px] text-muted-foreground px-3 py-2">
+                      Select a session to view tasks
+                    </p>
+                  ) : (
+                    <>
+                      <QuickAdd onAdd={handleAddTask} />
+                      {tasks.length === 0 ? (
+                        <p className="text-[11px] text-muted-foreground px-3 py-2">
+                          No tasks yet. Add one above.
+                        </p>
+                      ) : (
+                        tasks.map((task) => (
+                          <TaskItem
+                            key={task.id}
+                            task={task}
+                            isExpanded={expandedTaskId === task.id}
+                            allTasks={tasks}
+                            onExpand={() =>
+                              setExpandedTaskId(
+                                expandedTaskId === task.id ? null : task.id
+                              )
+                            }
+                            onUpdate={updateTask}
+                            onDelete={deleteTask}
+                          />
+                        ))
+                      )}
+                    </>
+                  )}
+                </div>
               )}
             </div>
 
