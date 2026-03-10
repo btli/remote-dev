@@ -1,12 +1,12 @@
 import { WebSocketServer, WebSocket } from "ws";
-import { createServer, type IncomingMessage, type ServerResponse } from "http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 
-import { execFile, execFileSync } from "child_process";
-import * as fs from "fs";
-import { tmpdir } from "os";
-import { resolve as pathResolve } from "path";
+import { execFile, execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve as pathResolve } from "node:path";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
 

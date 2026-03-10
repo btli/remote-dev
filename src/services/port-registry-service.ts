@@ -15,8 +15,8 @@ import type {
   PortRegistryEntry,
 } from "@/types/environment";
 import { extractPortVariables, RESERVED_PORTS } from "@/types/environment";
-import { execFile as execFileCallback } from "child_process";
-import { promisify } from "util";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 

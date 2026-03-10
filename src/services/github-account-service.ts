@@ -7,8 +7,8 @@
 import { db } from "@/db";
 import { accounts, githubRepositories, githubAccountMetadata, folderGitHubAccountLinks } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { existsSync, readdirSync, statSync, rmSync } from "fs";
-import { join } from "path";
+import { existsSync, readdirSync, statSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import * as GitHubService from "./github-service";
 import { ghCliConfigGateway } from "@/infrastructure/container";
 

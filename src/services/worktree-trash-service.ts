@@ -15,8 +15,8 @@ import {
   folderPreferences,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { existsSync, mkdirSync, renameSync, rmSync } from "fs";
-import { join, dirname, basename } from "path";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { join, dirname, basename } from "node:path";
 import type { TrashItem, RestoreResult } from "@/types/trash";
 import * as TmuxService from "./tmux-service";
 import { sanitizeBranchName, getRepoRoot } from "./worktree-service";

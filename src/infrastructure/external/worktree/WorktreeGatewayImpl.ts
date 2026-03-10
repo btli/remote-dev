@@ -69,7 +69,7 @@ export class WorktreeGatewayImpl implements WorktreeGateway {
    * Copy .env files from main repo to worktree.
    */
   async copyEnvFiles(repoPath: string, worktreePath: string): Promise<void> {
-    WorktreeService.copyEnvFilesToWorktree(repoPath, worktreePath);
+    await WorktreeService.copyEnvFilesToWorktree(repoPath, worktreePath);
   }
 
   /**

@@ -12,8 +12,8 @@
  * The key is NOT suitable for multi-user or shared-host deployments.
  */
 
-import { existsSync, readFileSync, writeFileSync, chmodSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { join } from "node:path";
 import { getRdvDir } from "./paths";
 import { db } from "@/db";
 import { apiKeys, users } from "@/db/schema";

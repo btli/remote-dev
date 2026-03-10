@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
-import { writeFile, rename, unlink, mkdir } from "fs/promises";
-import { dirname } from "path";
+import { writeFile, rename, unlink, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 
 const MAX_CONTENT_SIZE = 10 * 1024 * 1024; // 10MB
 

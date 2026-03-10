@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { setupConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { existsSync } from "fs";
+import { existsSync } from "node:fs";
 
 interface SetupConfiguration {
   workingDirectory: string;

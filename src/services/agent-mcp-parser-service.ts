@@ -9,9 +9,9 @@
  * - OpenCode: No MCP support
  */
 
-import { readFile, access, writeFile } from "fs/promises";
-import { join } from "path";
-import { homedir } from "os";
+import { readFile, access, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { AgentProviderType } from "@/types/session";
 import type {
   ParsedMCPServer,

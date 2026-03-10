@@ -4,8 +4,8 @@
  * Detects frameworks and runtimes from project configuration files.
  * Used by Port Manager to suggest appropriate ports.
  */
-import { promises as fs } from "fs";
-import path from "path";
+import path from "node:path";
+import { getFsPromises, runtimeJoin } from "@/lib/dynamic-fs";
 import type {
   RuntimeId,
   FrameworkSignature,
@@ -238,7 +238,7 @@ export async function detectRuntime(
   ];
 
   for (const check of lockfileChecks) {
-    if (await fileExists(path.join(workingDirectory, check.file))) {
+    if (await fileExists(runtimeJoin(workingDirectory, check.file))) {
       return {
         id: check.runtime,
         name: check.name,
@@ -248,7 +248,7 @@ export async function detectRuntime(
   }
 
   // Check for package.json without lockfile (generic Node)
-  if (await fileExists(path.join(workingDirectory, "package.json"))) {
+  if (await fileExists(runtimeJoin(workingDirectory, "package.json"))) {
     return {
       id: "node",
       name: "Node.js",
@@ -272,8 +272,9 @@ interface PackageJson {
 
 async function readPackageJson(workingDirectory: string): Promise<PackageJson | null> {
   try {
-    const content = await fs.readFile(
-      path.join(workingDirectory, "package.json"),
+    const fsp = await getFsPromises();
+    const content = await fsp.readFile(
+      runtimeJoin(workingDirectory, "package.json"),
       "utf-8"
     );
     return JSON.parse(content) as PackageJson;
@@ -284,8 +285,9 @@ async function readPackageJson(workingDirectory: string): Promise<PackageJson | 
 
 async function readRequirementsTxt(workingDirectory: string): Promise<string[]> {
   try {
-    const content = await fs.readFile(
-      path.join(workingDirectory, "requirements.txt"),
+    const fsp = await getFsPromises();
+    const content = await fsp.readFile(
+      runtimeJoin(workingDirectory, "requirements.txt"),
       "utf-8"
     );
     return content
@@ -299,8 +301,9 @@ async function readRequirementsTxt(workingDirectory: string): Promise<string[]> 
 
 async function readGemfile(workingDirectory: string): Promise<string[]> {
   try {
-    const content = await fs.readFile(
-      path.join(workingDirectory, "Gemfile"),
+    const fsp = await getFsPromises();
+    const content = await fsp.readFile(
+      runtimeJoin(workingDirectory, "Gemfile"),
       "utf-8"
     );
     const gems: string[] = [];
@@ -317,7 +320,8 @@ async function readGemfile(workingDirectory: string): Promise<string[]> {
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
-    await fs.access(filePath);
+    const fsp = await getFsPromises();
+    await fsp.access(filePath);
     return true;
   } catch {
     return false;
@@ -340,7 +344,7 @@ async function detectFramework(
   // Check config files (highest confidence)
   if (signature.detection.configFiles) {
     for (const configFile of signature.detection.configFiles) {
-      const configPath = path.join(workingDirectory, configFile);
+      const configPath = runtimeJoin(workingDirectory, configFile);
       if (await fileExists(configPath)) {
         return {
           ...baseResult,

@@ -16,8 +16,8 @@ import * as TmuxService from "@/services/tmux-service";
 import { checkPortsInUse } from "@/services/port-registry-service";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
 import { TmuxEnvironment } from "@/domain/value-objects/TmuxEnvironment";
-import { homedir } from "os";
-import { randomUUID } from "crypto";
+import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 // Test-specific prefix to avoid conflicts with real sessions
 const TEST_PREFIX = "rdv-test-";

@@ -8,8 +8,8 @@
 
 import type { ServiceRestarter } from "@/application/ports/ServiceRestarter";
 import { getServerDir } from "@/lib/paths";
-import { join } from "path";
-import { readFileSync, existsSync } from "fs";
+import { join } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
 
 export class ProcessServiceRestarter implements ServiceRestarter {
   restart(delayMs: number = 500): void {

@@ -1,6 +1,6 @@
-import { mkdirSync, copyFileSync, chmodSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { mkdirSync, copyFileSync, chmodSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 const SHIM_DIR = join(homedir(), ".remote-dev", "bin");
 

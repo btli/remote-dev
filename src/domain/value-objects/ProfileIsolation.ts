@@ -14,7 +14,7 @@
  * XDG Base Directory Spec: https://specifications.freedesktop.org/basedir-spec/latest/
  */
 
-import { join } from "path";
+import { join } from "node:path";
 import { InvalidValueError } from "../errors/DomainError";
 import { TmuxEnvironment } from "./TmuxEnvironment";
 

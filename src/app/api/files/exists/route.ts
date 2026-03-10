@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
-import { stat } from "fs/promises";
+import { stat } from "node:fs/promises";
 
 /**
  * POST /api/files/exists

@@ -5,7 +5,7 @@
  * Used by the mobile app after CF Access browser authentication.
  */
 
-import { createHash, randomBytes } from "crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import { detectFrameworks } from "@/services/framework-detection-service";
-import { promises as fs } from "fs";
-import path from "path";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 /**
  * POST /api/ports/detect-frameworks

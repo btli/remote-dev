@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
-import { randomUUID } from "crypto";
+import { writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 /**
  * Directory for storing uploaded images.

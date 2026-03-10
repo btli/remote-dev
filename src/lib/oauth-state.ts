@@ -5,7 +5,7 @@
  * State parameters contain a payload and signature that must validate on callback.
  */
 
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 

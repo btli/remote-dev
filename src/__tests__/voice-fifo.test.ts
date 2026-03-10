@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from "vitest";
-import { execFileSync, fork } from "child_process";
-import { existsSync, unlinkSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { execFileSync, fork } from "node:child_process";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("voice FIFO", () => {
   const testFifo = join(tmpdir(), "rdv-voice-test-fifo.fifo");
@@ -34,7 +34,7 @@ describe("voice FIFO", () => {
     const writerScript = join(tmpdir(), "rdv-voice-test-writer.mjs");
 
     writeFileSync(readerScript, `
-      import { openSync, readSync, closeSync, constants } from "fs";
+      import { openSync, readSync, closeSync, constants } from "node:fs";
       const fifo = process.argv[2];
       const fd = openSync(fifo, constants.O_RDONLY);
       const buf = Buffer.alloc(320);
@@ -45,7 +45,7 @@ describe("voice FIFO", () => {
     `);
 
     writeFileSync(writerScript, `
-      import { openSync, readFileSync, writeSync, closeSync, constants } from "fs";
+      import { openSync, readFileSync, writeSync, closeSync, constants } from "node:fs";
       const fifo = process.argv[2];
       const dataPath = process.argv[3];
       const data = readFileSync(dataPath);

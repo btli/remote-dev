@@ -1088,7 +1088,7 @@ async function createWorktreeWithErrorHandling(
     );
 
     // Copy .env files from main repo to worktree
-    WorktreeService.copyEnvFilesToWorktree(repoPath, result.worktreePath);
+    await WorktreeService.copyEnvFilesToWorktree(repoPath, result.worktreePath);
 
     return result;
   } catch (error) {
