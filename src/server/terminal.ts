@@ -593,7 +593,17 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         return true;
       }
 
-      const task = await updateTask(taskId, userId, input);
+      // Allowlist fields to prevent arbitrary writes
+      const allowedFields: Record<string, unknown> = {};
+      if (input.title !== undefined) allowedFields.title = input.title;
+      if (input.description !== undefined) allowedFields.description = input.description;
+      if (input.status !== undefined) allowedFields.status = input.status;
+      if (input.priority !== undefined) allowedFields.priority = input.priority;
+      if (input.metadata !== undefined) allowedFields.metadata = input.metadata;
+      if (input.instructions !== undefined) allowedFields.instructions = input.instructions;
+      if (input.owner !== undefined) allowedFields.owner = input.owner;
+
+      const task = await updateTask(taskId, userId, allowedFields);
       if (!task) {
         sendJson(res, 404, { error: "Task not found" });
         return true;
