@@ -37,6 +37,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **rdv Browser Commands**: `rdv browser navigate|screenshot|snapshot|click|type|evaluate|back|forward` for headless browser automation.
 - **rdv Notification Commands**: `rdv notification list|read|delete` for notification management.
 - **rdv Session Commands**: `rdv session children|spawn|git-status` for child session management and git status.
+- **Schedule Sidebar**: Moved schedule management from standalone modal to the right sidebar under GitHub issues, with inline enable/disable toggles, run-now buttons, and delete confirmation.
+- **Schedule Session Picker**: `CreateScheduleModal` now includes a session dropdown for creating schedules from the sidebar without a pre-selected session.
+
+### Changed
+
+- **Schedule Management Location**: Schedule viewing and creation moved from left sidebar footer button + `SchedulesModal` to the right `TaskSidebar`.
+
+### Removed
+
+- **SchedulesModal**: Removed standalone schedule management modal (replaced by right sidebar section).
+- **Schedules Footer Button**: Removed "Schedules" button from the left sidebar footer.
 
 ### Fixed
 

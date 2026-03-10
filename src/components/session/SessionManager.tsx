@@ -11,7 +11,6 @@ import { RecordingsModal } from "@/components/session/RecordingsModal";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
 import { ResumeSessionModal } from "./ResumeSessionModal";
-import { CreateScheduleModal, SchedulesModal } from "@/components/schedule";
 import { ProfilesModal } from "@/components/profiles/ProfilesModal";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { TaskSidebar } from "@/components/tasks/TaskSidebar";
@@ -268,11 +267,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [resumeModalProjectPath, setResumeModalProjectPath] = useState("");
   const [resumeModalProfileId, setResumeModalProfileId] = useState<string | undefined>(undefined);
 
-  // Schedule modal state
-  const [isCreateScheduleOpen, setIsCreateScheduleOpen] = useState(false);
-  const [scheduleTargetSession, setScheduleTargetSession] = useState<typeof activeSessions[0] | null>(null);
-  const [isSchedulesOpen, setIsSchedulesOpen] = useState(false);
-  const [schedulesFilterSession, setSchedulesFilterSession] = useState<{ id: string; name: string } | null>(null);
+  // Schedule target session — passed to TaskSidebar to open schedule creation
+  const [scheduleTargetSessionId, setScheduleTargetSessionId] = useState<string | null>(null);
 
   // Profiles modal state
   const [isProfilesModalOpen, setIsProfilesModalOpen] = useState(false);
@@ -661,17 +657,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [sessions, updateSession, logSessionError]
   );
 
-  // Open schedule modal for a session
-  const handleScheduleSession = useCallback(
-    (sessionId: string) => {
-      const session = sessions.find((s) => s.id === sessionId);
-      if (session) {
-        setScheduleTargetSession(session);
-        setIsCreateScheduleOpen(true);
-      }
-    },
-    [sessions]
-  );
+  // Open schedule modal for a session (via context menu)
+  // setScheduleTargetSessionId is a stable state setter, no useCallback needed
+  const handleScheduleSession = setScheduleTargetSessionId;
 
   // Folder handlers now use the context methods directly
   // When moving a session with a githubRepoId, move ALL sessions for that repo together
@@ -1547,14 +1535,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
             onSessionSchedule={handleScheduleSession}
-            onSessionSchedulesView={(sessionId, sessionName) => {
-              setSchedulesFilterSession({ id: sessionId, name: sessionName });
-              setIsSchedulesOpen(true);
-            }}
-            onSchedulesOpen={() => {
-              setSchedulesFilterSession(null);
-              setIsSchedulesOpen(true);
-            }}
             onProfilesOpen={() => setIsProfilesModalOpen(true)}
             onPortsOpen={() => setIsPortsModalOpen(true)}
             onViewIssues={handleViewIssues}
@@ -1813,11 +1793,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         )}
       </div>
 
-      {/* Right sidebar - Task Tracker */}
+      {/* Right sidebar - Task Tracker + Schedules */}
       <TaskSidebar
         githubRepoId={taskSidebarRepoId}
         onViewIssue={handleViewIssueByNumber}
         onViewPR={handleViewPRByNumber}
+        scheduleTargetSessionId={scheduleTargetSessionId}
+        onScheduleTargetConsumed={() => setScheduleTargetSessionId(null)}
       />
 
       {/* New Session Wizard */}
@@ -1907,27 +1889,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         projectPath={resumeModalProjectPath}
         profileId={resumeModalProfileId}
         onResume={handleResumeClaudeSession}
-      />
-
-      {/* Create Schedule Modal */}
-      <CreateScheduleModal
-        open={isCreateScheduleOpen}
-        onClose={() => {
-          setIsCreateScheduleOpen(false);
-          setScheduleTargetSession(null);
-        }}
-        session={scheduleTargetSession}
-      />
-
-      {/* Schedules Management Modal */}
-      <SchedulesModal
-        open={isSchedulesOpen}
-        onClose={() => {
-          setIsSchedulesOpen(false);
-          setSchedulesFilterSession(null);
-        }}
-        sessionId={schedulesFilterSession?.id}
-        sessionName={schedulesFilterSession?.name}
       />
 
       {/* Profiles Modal */}
