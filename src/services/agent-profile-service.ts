@@ -699,17 +699,17 @@ export async function installAgentHooks(
   // Activity status hooks - rdv CLI preferred, curl fallback
   const preToolUseHook = {
     matcher: "",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report running", curlForStatus("running")), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook pre-tool-use", curlForStatus("running")), timeout: 5 }],
   };
 
   const preCompactHook = {
     matcher: "",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report compacting", curlForStatus("compacting")), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook pre-compact", curlForStatus("compacting")), timeout: 5 }],
   };
 
   const notificationHook = {
     matcher: "permission_prompt|elicitation_dialog",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report waiting", curlForStatus("waiting")), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook notification", curlForStatus("waiting")), timeout: 5 }],
   };
 
   // Stop hook: report idle + check for incomplete tasks.
@@ -721,7 +721,7 @@ export async function installAgentHooks(
     '[ -n "$TASK_MSG" ] && printf "%s" "$TASK_MSG"';
 
   const stopHook = {
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv task check", stopCurlFallback), timeout: 15 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook stop", stopCurlFallback), timeout: 15 }],
   };
 
   // Task sync hook: reads PostToolUse JSON from stdin
@@ -735,7 +735,7 @@ export async function installAgentHooks(
 
   const postToolUseTodoHook = {
     matcher: "TaskCreate|TaskUpdate|TodoWrite",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv task sync", todoCurlFallback), timeout: 10 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook post-tool-use", todoCurlFallback), timeout: 10 }],
   };
 
   // Merge with existing hooks — replace any old RDV hooks (both rdv CLI and legacy curl)
