@@ -616,6 +616,7 @@ export async function resolveEffectiveHome(
  *  Uses the specific shell idiom from rdvOrCurlCommand() to avoid matching
  *  user-written hooks that happen to invoke rdv directly. */
 const RDV_HOOK_MARKER = "if command -v rdv";
+const RDV_HOOK_DIRECT_MARKER = "rdv hook ";
 const LEGACY_ACTIVITY_HOOK_MARKER = "/internal/agent-status";
 const LEGACY_TODO_HOOK_MARKER = "/internal/agent-todos";
 
@@ -741,7 +742,7 @@ export async function installAgentHooks(
   // Merge with existing hooks — replace any old RDV hooks (both rdv CLI and legacy curl)
   // with current version, preserving user-defined hooks.
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
-  const hookMarkers = [RDV_HOOK_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
+  const hookMarkers = [RDV_HOOK_MARKER, RDV_HOOK_DIRECT_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
 
   const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
   const existingPreCompact = Array.isArray(existingHooks.PreCompact) ? existingHooks.PreCompact : [];
