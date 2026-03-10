@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e0808279-79f6-4db6-9a6d-76939d9371e4",
-  "prevId": "ad0f0a2c-8470-44b5-ad2a-b65e9ecd8fa3",
+  "id": "6280f1bd-3825-4ce0-a431-60dd39bd33ce",
+  "prevId": "e0808279-79f6-4db6-9a6d-76939d9371e4",
   "tables": {
     "account": {
       "name": "account",
@@ -1334,6 +1334,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "default_agent_provider": {
+          "name": "default_agent_provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "environment_vars": {
           "name": "environment_vars",
           "type": "text",
@@ -2129,6 +2136,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "is_pull_request": {
+          "name": "is_pull_request",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "is_new": {
           "name": "is_new",
@@ -3103,6 +3118,123 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "notification_event": {
+      "name": "notification_event",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "session_name": {
+          "name": "session_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "read_at": {
+          "name": "read_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "notification_event_user_created_idx": {
+          "name": "notification_event_user_created_idx",
+          "columns": [
+            "user_id",
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "notification_event_user_read_idx": {
+          "name": "notification_event_user_read_idx",
+          "columns": [
+            "user_id",
+            "read_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "notification_event_user_id_user_id_fk": {
+          "name": "notification_event_user_id_user_id_fk",
+          "tableFrom": "notification_event",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "notification_event_session_id_terminal_session_id_fk": {
+          "name": "notification_event_session_id_terminal_session_id_fk",
+          "tableFrom": "notification_event",
+          "tableTo": "terminal_session",
+          "columnsFrom": [
+            "session_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "port_registry": {
       "name": "port_registry",
       "columns": {
@@ -3657,6 +3789,35 @@
           "autoincrement": false,
           "default": "'[]'"
         },
+        "metadata": {
+          "name": "metadata",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "instructions": {
+          "name": "instructions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "agent_task_key": {
+          "name": "agent_task_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "due_date": {
           "name": "due_date",
           "type": "integer",
@@ -3721,6 +3882,14 @@
           "name": "project_task_session_idx",
           "columns": [
             "session_id"
+          ],
+          "isUnique": false
+        },
+        "project_task_agent_key_idx": {
+          "name": "project_task_agent_key_idx",
+          "columns": [
+            "session_id",
+            "agent_task_key"
           ],
           "isUnique": false
         }
@@ -4890,6 +5059,80 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "task_dependency": {
+      "name": "task_dependency",
+      "columns": {
+        "blocker_id": {
+          "name": "blocker_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "blocked_id": {
+          "name": "blocked_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "task_dep_blocker_idx": {
+          "name": "task_dep_blocker_idx",
+          "columns": [
+            "blocker_id"
+          ],
+          "isUnique": false
+        },
+        "task_dep_blocked_idx": {
+          "name": "task_dep_blocked_idx",
+          "columns": [
+            "blocked_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "task_dependency_blocker_id_project_task_id_fk": {
+          "name": "task_dependency_blocker_id_project_task_id_fk",
+          "tableFrom": "task_dependency",
+          "tableTo": "project_task",
+          "columnsFrom": [
+            "blocker_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "task_dependency_blocked_id_project_task_id_fk": {
+          "name": "task_dependency_blocked_id_project_task_id_fk",
+          "tableFrom": "task_dependency",
+          "tableTo": "project_task",
+          "columnsFrom": [
+            "blocked_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "task_dependency_blocker_id_blocked_id_pk": {
+          "columns": [
+            "blocker_id",
+            "blocked_id"
+          ],
+          "name": "task_dependency_blocker_id_blocked_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "terminal_session": {
       "name": "terminal_session",
       "columns": {
@@ -4937,6 +5180,13 @@
         },
         "worktree_branch": {
           "name": "worktree_branch",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "worktree_type": {
+          "name": "worktree_type",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -5001,6 +5251,13 @@
           "autoincrement": false,
           "default": 0
         },
+        "agent_activity_status": {
+          "name": "agent_activity_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "type_metadata": {
           "name": "type_metadata",
           "type": "text",
@@ -5030,6 +5287,20 @@
           "notNull": false,
           "autoincrement": false,
           "default": 0.5
+        },
+        "parent_session_id": {
+          "name": "parent_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "orchestrator_role": {
+          "name": "orchestrator_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "status": {
           "name": "status",
@@ -5121,6 +5392,13 @@
           "columns": [
             "user_id",
             "terminal_type"
+          ],
+          "isUnique": false
+        },
+        "terminal_session_parent_idx": {
+          "name": "terminal_session_parent_idx",
+          "columns": [
+            "parent_session_id"
           ],
           "isUnique": false
         }
@@ -5387,6 +5665,14 @@
         },
         "auto_follow_active_session": {
           "name": "auto_follow_active_session",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "notifications_enabled": {
+          "name": "notifications_enabled",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,

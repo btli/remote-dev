@@ -15,7 +15,7 @@ import { safeJsonParse } from "@/lib/utils";
 /**
  * Parse a raw DB row into a ProjectTask with JSON fields decoded.
  * blockedBy is set to empty array — callers that need it should use
- * getTasksWithDependencies or populate it separately.
+ * getTasks / getTask (which call loadDependencyMap) or populate it separately.
  */
 function parseTaskRow(row: typeof projectTasks.$inferSelect): ProjectTask {
   return {
@@ -364,20 +364,23 @@ export async function setDependencies(
   taskId: string,
   blockerIds: string[]
 ): Promise<void> {
-  // Remove existing blockers for this task
-  await db
-    .delete(taskDependencies)
-    .where(eq(taskDependencies.blockedId, taskId));
-
   // Filter out self-references and duplicates
   const unique = [...new Set(blockerIds.filter((id) => id !== taskId))];
-  if (unique.length === 0) return;
 
-  await db.insert(taskDependencies).values(
-    unique.map((blockerId) => ({
-      blockerId,
-      blockedId: taskId,
-    }))
-  );
+  await db.transaction(async (tx) => {
+    // Remove existing blockers for this task
+    await tx
+      .delete(taskDependencies)
+      .where(eq(taskDependencies.blockedId, taskId));
+
+    if (unique.length === 0) return;
+
+    await tx.insert(taskDependencies).values(
+      unique.map((blockerId) => ({
+        blockerId,
+        blockedId: taskId,
+      }))
+    );
+  });
 }
 
