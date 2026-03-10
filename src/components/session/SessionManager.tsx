@@ -926,13 +926,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           labelsStr ? `Labels: ${labelsStr}` : "",
         ].filter(Boolean).join("\n");
 
-        // Shell-escape for ANSI-C $'...' quoting: backslashes, single quotes, and control chars
-        const escapedPrompt = issuePrompt
-          .replace(/\\/g, "\\\\")
-          .replace(/'/g, "\\'")
-          .replace(/\n/g, "\\n")
-          .replace(/\r/g, "\\r")
-          .replace(/\t/g, "\\t");
+        // Shell-escape for single-quote wrapping: replace ' with '\''
+        const escapedPrompt = issuePrompt.replace(/'/g, "'\\''");
 
         // Resolve folder's default agent provider (fallback to claude)
         const folderPrefs = resolvePreferencesForFolder(issuesModal.folderId);
@@ -948,7 +943,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           terminalType: "agent",
           agentProvider,
           autoLaunchAgent: true,
-          agentFlags: ["-p", `$'${escapedPrompt}'`],
+          agentFlags: ["-p", `'${escapedPrompt}'`],
         });
         if (newSession) {
           setActiveSession(newSession.id);
