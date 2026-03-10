@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.remote.app</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>__INSTALL_DIR__/scripts/standalone-server.js</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__INSTALL_DIR__</string>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__DATA_DIR__/logs/nextjs.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__DATA_DIR__/logs/nextjs.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+</dict>
+</plist>
