@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated `ClaudeCodeHooks` type to include all hook event types (PreCompact, Notification, Stop, SessionStart, SessionEnd)
 - Hook editor UI now supports all Claude Code hook types
 
+### Fixed
+
+- **Schedule session scoping**: Schedules sidebar now shows only the active session's schedules instead of all schedules, and schedule creation auto-detects the active session instead of showing a session picker
+
 ### Added
 
 - `rdv hook validate` command for checking hook server connectivity

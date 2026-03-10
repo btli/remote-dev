@@ -43,10 +43,8 @@ import { DateTimePicker } from "@/components/ui/date-time-picker";
 interface CreateScheduleModalProps {
   open: boolean;
   onClose: () => void;
-  /** Pre-selected session (e.g. from context menu). Hides session picker. */
+  /** The session to create the schedule for (active session or context-menu target). */
   session?: TerminalSession | null;
-  /** Available sessions for the picker (used when no session is pre-selected). */
-  sessions?: TerminalSession[];
 }
 
 interface CommandRow extends ScheduleCommandInput {
@@ -57,13 +55,10 @@ export function CreateScheduleModal({
   open,
   onClose,
   session,
-  sessions,
 }: CreateScheduleModalProps) {
   const { createSchedule } = useScheduleContext();
 
-  // Session picker state (used when no session pre-selected)
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const activeSession = session ?? sessions?.find((s) => s.id === selectedSessionId) ?? null;
+  const activeSession = session ?? null;
 
   // Form state
   const [name, setName] = useState("");
@@ -93,7 +88,6 @@ export function CreateScheduleModal({
     (isOpen: boolean) => {
       if (isOpen) {
         const target = session ?? null;
-        setSelectedSessionId(null);
         setName(target ? `Schedule for ${target.name}` : "");
         setScheduleType("one-time");
         setCronExpression("0 9 * * *");
@@ -300,40 +294,6 @@ export function CreateScheduleModal({
 
         <ScrollArea className="max-h-[calc(85vh-140px)] pr-4">
           <div className="space-y-4 mt-3">
-            {/* Session Picker — shown when no session pre-selected */}
-            {!session && sessions && (
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Session *</Label>
-                {sessions.length > 0 ? (
-                  <Select
-                    value={selectedSessionId ?? ""}
-                    onValueChange={(value) => {
-                      setSelectedSessionId(value);
-                      const s = sessions.find((sess) => sess.id === value);
-                      if (s && !name.trim()) {
-                        setName(`Schedule for ${s.name}`);
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="h-8 text-xs bg-card/50 border-border">
-                      <SelectValue placeholder="Select a session..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sessions.map((s) => (
-                        <SelectItem key={s.id} value={s.id} className="text-xs">
-                          {s.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    No active sessions. Create a session first.
-                  </p>
-                )}
-              </div>
-            )}
-
             {/* Schedule Name */}
             <div className="space-y-1.5">
               <Label htmlFor="schedule-name" className="text-xs text-muted-foreground">
