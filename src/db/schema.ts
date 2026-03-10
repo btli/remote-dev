@@ -487,9 +487,8 @@ export const terminalSessions = sqliteTable(
     }),
     splitOrder: integer("split_order").notNull().default(0),
     splitSize: real("split_size").default(0.5),
-    // Orchestration: parent-child session relationships
-    parentSessionId: text("parent_session_id"),
-    orchestratorRole: text("orchestrator_role").$type<"parent" | "child">(),
+    parentSessionId: text("parent_session_id"),  // deprecated, unused
+    orchestratorRole: text("orchestrator_role").$type<"parent" | "child">(),  // deprecated, unused
     status: text("status").$type<SessionStatus>().notNull().default("active"),
     pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     tabOrder: integer("tab_order").notNull().default(0),
@@ -511,8 +510,6 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_user_folder_idx").on(table.userId, table.folderId),
     // Index for filtering by terminal type
     index("terminal_session_type_idx").on(table.userId, table.terminalType),
-    // Index for orchestrator parent-child lookup
-    index("terminal_session_parent_idx").on(table.parentSessionId),
   ]
 );
 

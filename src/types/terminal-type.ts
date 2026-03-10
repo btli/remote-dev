@@ -16,12 +16,12 @@ import type { AgentProviderType, TerminalSession, CreateSessionInput } from "./s
  * - file: Read/edit file without terminal (CLAUDE.md editor)
  * - Custom types can be added via plugin registration
  */
-export type TerminalType = "shell" | "agent" | "file" | "browser" | "orchestrator" | string;
+export type TerminalType = "shell" | "agent" | "file" | "browser" | string;
 
 /**
  * Built-in terminal types (cannot be unregistered)
  */
-export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "orchestrator"];
+export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser"];
 
 /**
  * Session exit behavior determines what happens when the main process exits
@@ -52,7 +52,7 @@ export interface SessionConfig {
   /** Whether to create a tmux session (false for file viewer) */
   useTmux: boolean;
   /** Additional metadata stored with session */
-  metadata?: AgentSessionMetadata | FileViewerMetadata | BrowserSessionMetadata | OrchestratorSessionMetadata | Record<string, unknown>;
+  metadata?: AgentSessionMetadata | FileViewerMetadata | BrowserSessionMetadata | Record<string, unknown>;
 }
 
 /**
@@ -361,11 +361,3 @@ export interface BrowserSessionMetadata {
   lastScreenshotAt: Date | null;
 }
 
-/**
- * Orchestrator metadata stored with the session
- */
-export interface OrchestratorSessionMetadata {
-  childSessionIds: string[];
-  maxChildren: number;
-  autoSpawn: boolean;
-}

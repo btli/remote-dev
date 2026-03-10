@@ -1,4 +1,3 @@
-use std::env;
 use std::io::Read;
 
 use clap::{Args, Subcommand};
@@ -85,16 +84,12 @@ impl From<&Task> for TaskRow {
     }
 }
 
-fn session_id() -> Result<String, Box<dyn std::error::Error>> {
-    env::var("RDV_SESSION_ID").map_err(|_| "RDV_SESSION_ID not set".into())
-}
-
 pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         TaskCommand::List => {
-            let sid = session_id()?;
+            let sid = client.session_id().ok_or("RDV_SESSION_ID not set")?;
             let tasks: Vec<Task> = client
-                .get_with_query("/api/tasks", &[("sessionId", &sid)])
+                .get_with_query("/api/tasks", &[("sessionId", sid)])
                 .await?;
             if human {
                 let rows: Vec<TaskRow> = tasks.iter().map(TaskRow::from).collect();
@@ -108,7 +103,7 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             priority,
             description,
         } => {
-            let sid = session_id()?;
+            let sid = client.session_id().ok_or("RDV_SESSION_ID not set")?;
             let mut body = json!({
                 "sessionId": sid,
                 "title": title,
@@ -145,16 +140,16 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         TaskCommand::Check => {
-            let sid = match session_id() {
-                Ok(s) => s,
-                Err(_) => {
+            let sid = match client.session_id() {
+                Some(s) => s,
+                None => {
                     // No session context (e.g. running outside an agent session) — nothing to check.
                     return Ok(());
                 }
             };
             // Report idle status (best-effort, warn on failure) and check tasks concurrently
-            let idle_query = [("sessionId", sid.as_str()), ("status", "idle")];
-            let check_query = [("sessionId", sid.as_str())];
+            let idle_query = [("sessionId", sid), ("status", "idle")];
+            let check_query = [("sessionId", sid)];
             let (idle_result, result) = tokio::join!(
                 client.post_empty_with_query("/internal/agent-status", &idle_query),
                 client.post_empty_with_query("/internal/agent-stop-check", &check_query)
@@ -171,9 +166,9 @@ pub async fn run(args: TaskArgs, client: &Client, human: bool) -> Result<(), Box
             }
         }
         TaskCommand::Sync => {
-            let sid = match session_id() {
-                Ok(s) => s,
-                Err(_) => {
+            let sid = match client.session_id() {
+                Some(s) => s,
+                None => {
                     // No session context — drain stdin and exit silently.
                     let _ = std::io::stdin().read_to_end(&mut Vec::new());
                     return Ok(());

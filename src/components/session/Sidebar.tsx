@@ -131,10 +131,9 @@ interface SidebarProps {
 
 /**
  * Whether a session type has agent-like behavior (activity status tracking, exit states).
- * Both agent and orchestrator sessions share these UI characteristics.
  */
 function hasAgentBehavior(session: TerminalSession): boolean {
-  return session.terminalType === "agent" || session.terminalType === "orchestrator";
+  return session.terminalType === "agent";
 }
 
 /**

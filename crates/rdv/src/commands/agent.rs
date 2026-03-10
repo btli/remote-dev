@@ -41,6 +41,11 @@ struct AgentSession {
     working_directory: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SessionsResponse {
+    sessions: Vec<AgentSession>,
+}
+
 #[derive(Tabled)]
 struct AgentRow {
     #[tabled(rename = "ID")]
@@ -81,8 +86,9 @@ pub async fn run(args: AgentArgs, client: &Client, human: bool) -> Result<(), Bo
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         AgentCommand::List => {
-            let sessions: Vec<AgentSession> =
+            let resp: SessionsResponse =
                 client.get_with_query("/api/sessions", &[("type", "agent")]).await?;
+            let sessions = resp.sessions;
             if human {
                 let rows: Vec<AgentRow> = sessions.iter().map(AgentRow::from).collect();
                 println!("{}", Table::new(rows));

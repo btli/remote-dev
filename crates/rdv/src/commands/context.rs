@@ -1,5 +1,3 @@
-use std::env;
-
 use colored::Colorize;
 use serde::Deserialize;
 use serde_json::json;
@@ -22,7 +20,7 @@ struct SessionContext {
 }
 
 pub async fn run(client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let sid = env::var("RDV_SESSION_ID").map_err(|_| "RDV_SESSION_ID not set")?;
+    let sid = client.session_id().ok_or("RDV_SESSION_ID not set")?;
     let session: SessionContext = client.get(&format!("/api/sessions/{sid}")).await?;
 
     if human {

@@ -98,7 +98,6 @@ Sessions have a `terminalType` field that determines their behavior. The plugin 
 | `shell` | Standard terminal with bash/zsh | General command-line work |
 | `agent` | AI agent as shell process | Claude Code, Codex, Gemini sessions |
 | `file` | File viewer/editor (no terminal) | Editing CLAUDE.md configs |
-| `orchestrator` | Multi-agent coordinator | Orchestrating parallel agent sessions |
 | `browser` | Headless browser automation | Web scraping, testing, screenshots |
 
 **Plugin Architecture:**
@@ -171,8 +170,6 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv browser click` | Click at coordinates |
 | `rdv browser type` | Type text in browser |
 | `rdv browser evaluate` | Evaluate JavaScript |
-| `rdv session children` | List child sessions |
-| `rdv session spawn` | Spawn child session |
 | `rdv session git-status` | Get git status for session |
 | `rdv status` | System dashboard |
 | `rdv context` | Show current session context |
@@ -199,7 +196,6 @@ Plugin structure for marketplace distribution:
 | `.claude-plugin/marketplace.json` | Marketplace config |
 | `skills/rdv/SKILL.md` | rdv CLI skill for agents |
 | `commands/rdv-status.md` | /rdv-status slash command |
-| `agents/rdv-orchestrator.md` | Multi-agent orchestrator |
 | `hooks/hooks.json` | Hook config for agent status/task sync |
 
 ### Clean Architecture (Domain Layer)
@@ -306,7 +302,6 @@ Located in `src/services/`:
 | `TaskService` | Project task CRUD, folder-scoped queries, dependency management, bulk archival |
 | `NotificationService` | Notification CRUD, debounced creation, read/delete management |
 | `BrowserService` | Headless browser automation (navigate, click, type, screenshot) |
-| `OrchestratorService` | Multi-agent session coordination and lifecycle |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -476,8 +471,6 @@ React Contexts in `src/contexts/`:
 - `GET /api/sessions/:id/token` - Get session WebSocket token
 - `POST /api/sessions/:id/exec` - Execute command (fire-and-forget)
 - `POST /api/sessions/reorder` - Reorder tabs
-- `GET /api/sessions/:id/children` - List child sessions
-- `POST /api/sessions/:id/children` - Spawn child session
 - `GET /api/sessions/:id/git-status` - Get git status
 - `POST /api/sessions/:id/browser/navigate` - Navigate browser
 - `GET /api/sessions/:id/browser/screenshot` - Take screenshot

@@ -1,5 +1,3 @@
-use std::env;
-
 use clap::{Args, Subcommand};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -32,6 +30,11 @@ struct SessionSummary {
     terminal_type: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SessionsResponse {
+    sessions: Vec<SessionSummary>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]
 struct TaskSummary {
@@ -40,18 +43,15 @@ struct TaskSummary {
     status: Option<String>,
 }
 
-fn session_id() -> Option<String> {
-    env::var("RDV_SESSION_ID").ok()
-}
 
 pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         Some(StatusCommand::Report { status }) => {
-            let sid = match session_id() {
+            let sid = match client.session_id() {
                 Some(s) => s,
                 None => return Ok(()), // No session context — skip silently.
             };
-            let query = [("sessionId", sid.as_str()), ("status", status.as_str())];
+            let query = [("sessionId", sid), ("status", status.as_str())];
             let result = client.post_empty_with_query("/internal/agent-status", &query).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
@@ -63,7 +63,8 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
             }
 
             // Sessions
-            let sessions: Vec<SessionSummary> = client.get("/api/sessions").await?;
+            let resp: SessionsResponse = client.get("/api/sessions").await?;
+            let sessions = resp.sessions;
             let active = sessions.iter().filter(|s| s.status.as_deref() == Some("active")).count();
             let agents = sessions
                 .iter()
@@ -71,7 +72,7 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
                 .count();
 
             // Fetch tasks once (only when running inside a session)
-            let task_counts = if let Some(sid) = session_id() {
+            let task_counts = if let Some(sid) = client.session_id() {
                 let tasks: Vec<TaskSummary> = client
                     .get_with_query("/api/tasks", &[("sessionId", &sid)])
                     .await

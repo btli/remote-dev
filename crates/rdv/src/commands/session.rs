@@ -26,12 +26,9 @@ enum SessionCommand {
         /// Working directory for the session
         #[arg(long)]
         working_dir: Option<String>,
-        /// Terminal type (shell, agent, orchestrator, browser)
+        /// Terminal type (shell, agent, browser)
         #[arg(long)]
         r#type: Option<String>,
-        /// Parent session ID (for child sessions)
-        #[arg(long)]
-        parent_id: Option<String>,
     },
     /// Close (delete) a session
     Close {
@@ -55,28 +52,6 @@ enum SessionCommand {
         /// Command to execute
         cmd: String,
     },
-    /// List child sessions
-    Children {
-        /// Parent session ID
-        id: String,
-    },
-    /// Spawn a child session
-    Spawn {
-        /// Parent session ID
-        id: String,
-        /// Folder ID for the child session
-        #[arg(long)]
-        folder_id: Option<String>,
-        /// Agent provider (claude, codex, gemini, opencode)
-        #[arg(long)]
-        agent_provider: Option<String>,
-        /// Child session name
-        #[arg(long)]
-        name: Option<String>,
-        /// Project path for the child session
-        #[arg(long)]
-        project_path: Option<String>,
-    },
     /// Get git status for a session's working directory
     GitStatus {
         /// Session ID
@@ -95,6 +70,11 @@ struct Session {
     working_directory: Option<String>,
     #[serde(rename = "terminalType")]
     terminal_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionsResponse {
+    sessions: Vec<Session>,
 }
 
 #[derive(Tabled)]
@@ -126,7 +106,8 @@ impl From<&Session> for SessionRow {
 pub async fn run(args: SessionArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         SessionCommand::List => {
-            let sessions: Vec<Session> = client.get("/api/sessions").await?;
+            let resp: SessionsResponse = client.get("/api/sessions").await?;
+            let sessions = resp.sessions;
             if human {
                 let rows: Vec<SessionRow> = sessions.iter().map(SessionRow::from).collect();
                 println!("{}", Table::new(rows));
@@ -139,7 +120,6 @@ pub async fn run(args: SessionArgs, client: &Client, human: bool) -> Result<(), 
             folder_id,
             working_dir,
             r#type,
-            parent_id,
         } => {
             let mut body = json!({});
             if let Some(n) = name {
@@ -153,9 +133,6 @@ pub async fn run(args: SessionArgs, client: &Client, human: bool) -> Result<(), 
             }
             if let Some(t) = r#type {
                 body["terminalType"] = json!(t);
-            }
-            if let Some(p) = parent_id {
-                body["parentId"] = json!(p);
             }
             let result: serde_json::Value = client.post_json("/api/sessions", &body).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -175,42 +152,6 @@ pub async fn run(args: SessionArgs, client: &Client, human: bool) -> Result<(), 
         SessionCommand::Exec { id, cmd } => {
             let body = json!({ "command": cmd });
             let result: serde_json::Value = client.post_json(&format!("/api/sessions/{id}/exec"), &body).await?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
-        }
-        SessionCommand::Children { id } => {
-            let children: Vec<Session> = client
-                .get(&format!("/api/sessions/{id}/children"))
-                .await?;
-            if human {
-                let rows: Vec<SessionRow> = children.iter().map(SessionRow::from).collect();
-                println!("{}", Table::new(rows));
-            } else {
-                println!("{}", serde_json::to_string_pretty(&json!(children))?);
-            }
-        }
-        SessionCommand::Spawn {
-            id,
-            folder_id,
-            agent_provider,
-            name,
-            project_path,
-        } => {
-            let mut body = json!({});
-            if let Some(f) = folder_id {
-                body["folderId"] = json!(f);
-            }
-            if let Some(a) = agent_provider {
-                body["agentProvider"] = json!(a);
-            }
-            if let Some(n) = name {
-                body["name"] = json!(n);
-            }
-            if let Some(p) = project_path {
-                body["projectPath"] = json!(p);
-            }
-            let result: serde_json::Value = client
-                .post_json(&format!("/api/sessions/{id}/children"), &body)
-                .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         SessionCommand::GitStatus { id } => {
