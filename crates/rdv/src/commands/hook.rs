@@ -48,17 +48,23 @@ enum HookCommand {
     Validate,
 }
 
+/// Report an agent activity status to the terminal server.
+/// Silently returns if no session ID is available.
+async fn report_status(client: &Client, status: &str) {
+    let sid = match client.session_id() {
+        Some(s) => s,
+        None => return,
+    };
+    let query = [("sessionId", sid), ("status", status)];
+    if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
+        eprintln!("warning: failed to report {status} status: {e}");
+    }
+}
+
 pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         HookCommand::PreToolUse => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => return Ok(()),
-            };
-            let query = [("sessionId", sid), ("status", "running")];
-            if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
-                eprintln!("warning: failed to report running status: {e}");
-            }
+            report_status(client, "running").await;
         }
         HookCommand::PostToolUse => {
             let sid = match client.session_id() {
@@ -78,24 +84,10 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             }
         }
         HookCommand::PreCompact => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => return Ok(()),
-            };
-            let query = [("sessionId", sid), ("status", "compacting")];
-            if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
-                eprintln!("warning: failed to report compacting status: {e}");
-            }
+            report_status(client, "compacting").await;
         }
         HookCommand::Notification => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => return Ok(()),
-            };
-            let query = [("sessionId", sid), ("status", "waiting")];
-            if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
-                eprintln!("warning: failed to report waiting status: {e}");
-            }
+            report_status(client, "waiting").await;
         }
         HookCommand::Stop { agent, reason } => {
             let sid = match client.session_id() {
@@ -103,7 +95,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 None => return Ok(()),
             };
 
-            // Report idle status and check tasks concurrently (same as `task check`)
+            // Report idle status and check tasks concurrently
             let idle_query = [("sessionId", sid), ("status", "idle")];
             let check_query = [("sessionId", sid)];
             let (idle_result, check_result) = tokio::join!(
@@ -114,7 +106,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 eprintln!("warning: failed to report idle status: {e}");
             }
 
-            // Output task check message first (blocks stop if tasks remain)
+            // Output task check message (blocks stop if tasks remain)
             let stop_blocked = match &check_result {
                 Ok(val) => {
                     let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
@@ -167,11 +159,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 None => return Ok(()),
             };
 
-            // Report ended status
-            let query = [("sessionId", sid), ("status", "ended")];
-            if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
-                eprintln!("warning: failed to report ended status: {e}");
-            }
+            report_status(client, "ended").await;
 
             if !skip_learn {
                 let payload = json!({
@@ -189,31 +177,29 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             let sid = client.session_id();
 
             // Check 1: RDV_SESSION_ID available
-            let sid_check = match sid {
-                Some(_) => json!({ "check": "session_id", "status": "ok" }),
-                None => {
-                    all_ok = false;
-                    json!({ "check": "session_id", "status": "fail", "error": "RDV_SESSION_ID not set" })
-                }
-            };
-            results.push(sid_check);
+            let has_sid = sid.is_some();
+            if !has_sid {
+                all_ok = false;
+            }
+            results.push(if has_sid {
+                json!({ "check": "session_id", "status": "ok" })
+            } else {
+                json!({ "check": "session_id", "status": "fail", "error": "RDV_SESSION_ID not set" })
+            });
 
             // Check 2: Terminal server reachable (agent-status endpoint)
-            let terminal_check = match sid {
-                Some(s) => {
-                    let query = [("sessionId", s), ("status", "running")];
-                    match client.post_empty_with_query("/internal/agent-status", &query).await {
-                        Ok(_) => json!({ "check": "terminal_server", "status": "ok" }),
-                        Err(e) => {
-                            all_ok = false;
-                            json!({ "check": "terminal_server", "status": "fail", "error": e.to_string() })
-                        }
+            let terminal_check = if let Some(s) = sid {
+                let query = [("sessionId", s), ("status", "running")];
+                match client.post_empty_with_query("/internal/agent-status", &query).await {
+                    Ok(_) => json!({ "check": "terminal_server", "status": "ok" }),
+                    Err(e) => {
+                        all_ok = false;
+                        json!({ "check": "terminal_server", "status": "fail", "error": e.to_string() })
                     }
                 }
-                None => {
-                    all_ok = false;
-                    json!({ "check": "terminal_server", "status": "skip", "reason": "no session ID" })
-                }
+            } else {
+                all_ok = false;
+                json!({ "check": "terminal_server", "status": "skip", "reason": "no session ID" })
             };
             results.push(terminal_check);
 
