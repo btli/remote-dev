@@ -1593,3 +1593,16 @@ export const notificationEvents = sqliteTable(
     index("notification_event_user_read_idx").on(table.userId, table.readAt),
   ]
 );
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// System Update Cache
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const systemUpdateCache = sqliteTable("system_update_cache", {
+  id: text("id").primaryKey().default("singleton"),
+  lastChecked: integer("last_checked", { mode: "timestamp_ms" }),
+  cachedReleaseJson: text("cached_release_json"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});

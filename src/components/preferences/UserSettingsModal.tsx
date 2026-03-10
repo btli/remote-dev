@@ -29,6 +29,7 @@ import { useFolderContext } from "@/contexts/FolderContext";
 import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appearance";
 import { TmuxSessionManager } from "@/components/tmux";
 import { AgentCLIStatusPanel } from "@/components/agents";
+import { UpdateManager } from "@/components/system";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { cn } from "@/lib/utils";
@@ -83,6 +84,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
   const [localSettings, setLocalSettings] = useState<UpdateUserSettingsInput>({});
   const [saving, setSaving] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
 
   // Check if there are unsaved changes
   const hasChanges = Object.keys(localSettings).length > 0;
@@ -103,10 +105,16 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
     onClose: handleActualClose,
   });
 
-  // Reset local settings when modal opens
+  // Reset local settings when modal opens, and check for updates
   useEffect(() => {
     if (open && userSettings) {
       setLocalSettings({});
+    }
+    if (open) {
+      fetch("/api/system/update")
+        .then((res) => res.json())
+        .then((data) => setUpdateAvailable(data.updateAvailable === true))
+        .catch(() => {});
     }
   }, [open, userSettings]);
 
@@ -176,7 +184,12 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
               <span className="hidden sm:inline">Project</span>
             </TabsTrigger>
             <TabsTrigger value="system" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
-              <Server className="w-4 h-4 shrink-0" />
+              <div className="relative">
+                <Server className="w-4 h-4 shrink-0" />
+                {updateAvailable && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </div>
               <span className="hidden sm:inline">System</span>
             </TabsTrigger>
           </TabsList>
@@ -471,7 +484,10 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
           </TabsContent>
 
           <TabsContent value="system" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
-            <TmuxSessionManager />
+            <UpdateManager />
+            <div className="border-t border-border pt-4">
+              <TmuxSessionManager />
+            </div>
           </TabsContent>
         </Tabs>
 
