@@ -2,6 +2,36 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as NotificationService from "@/services/notification-service";
 
+// POST /api/notifications - create notification
+export const POST = withApiAuth(async (request, { userId }) => {
+  try {
+    const result = await parseJsonBody<{
+      sessionId?: string;
+      type?: string;
+      title?: string;
+      body?: string;
+    }>(request);
+    if ("error" in result) return result.error;
+    const { sessionId, type, title, body } = result.data;
+
+    if (!title) {
+      return errorResponse("title is required", 400);
+    }
+
+    const notification = await NotificationService.createNotification({
+      userId,
+      sessionId: sessionId ?? undefined,
+      type: (type ?? "info") as import("@/types/notification").NotificationType,
+      title,
+      body: body ?? undefined,
+    });
+    return NextResponse.json(notification ?? { debounced: true });
+  } catch (error) {
+    console.error("Error creating notification:", error);
+    return errorResponse("Failed to create notification", 500);
+  }
+});
+
 // GET /api/notifications?limit=50&unreadOnly=false
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
