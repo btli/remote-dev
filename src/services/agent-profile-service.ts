@@ -616,6 +616,7 @@ export async function resolveEffectiveHome(
  *  Uses the specific shell idiom from rdvOrCurlCommand() to avoid matching
  *  user-written hooks that happen to invoke rdv directly. */
 const RDV_HOOK_MARKER = "if command -v rdv";
+const RDV_HOOK_DIRECT_MARKER = "rdv hook ";
 const LEGACY_ACTIVITY_HOOK_MARKER = "/internal/agent-status";
 const LEGACY_TODO_HOOK_MARKER = "/internal/agent-todos";
 
@@ -699,17 +700,17 @@ export async function installAgentHooks(
   // Activity status hooks - rdv CLI preferred, curl fallback
   const preToolUseHook = {
     matcher: "",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report running", curlForStatus("running")), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook pre-tool-use", curlForStatus("running")), timeout: 5 }],
   };
 
   const preCompactHook = {
     matcher: "",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report compacting", curlForStatus("compacting")), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook pre-compact", curlForStatus("compacting")), timeout: 5 }],
   };
 
   const notificationHook = {
     matcher: "permission_prompt|elicitation_dialog",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv status report waiting", curlForStatus("waiting")), timeout: 5 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook notification", curlForStatus("waiting")), timeout: 5 }],
   };
 
   // Stop hook: report idle + check for incomplete tasks.
@@ -721,7 +722,7 @@ export async function installAgentHooks(
     '[ -n "$TASK_MSG" ] && printf "%s" "$TASK_MSG"';
 
   const stopHook = {
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv task check", stopCurlFallback), timeout: 15 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook stop", stopCurlFallback), timeout: 15 }],
   };
 
   // Task sync hook: reads PostToolUse JSON from stdin
@@ -735,13 +736,13 @@ export async function installAgentHooks(
 
   const postToolUseTodoHook = {
     matcher: "TaskCreate|TaskUpdate|TodoWrite",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv task sync", todoCurlFallback), timeout: 10 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook post-tool-use", todoCurlFallback), timeout: 10 }],
   };
 
   // Merge with existing hooks — replace any old RDV hooks (both rdv CLI and legacy curl)
   // with current version, preserving user-defined hooks.
   const existingHooks = (existingSettings.hooks ?? {}) as Record<string, unknown[]>;
-  const hookMarkers = [RDV_HOOK_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
+  const hookMarkers = [RDV_HOOK_MARKER, RDV_HOOK_DIRECT_MARKER, LEGACY_ACTIVITY_HOOK_MARKER, LEGACY_TODO_HOOK_MARKER];
 
   const existingPreToolUse = Array.isArray(existingHooks.PreToolUse) ? existingHooks.PreToolUse : [];
   const existingPreCompact = Array.isArray(existingHooks.PreCompact) ? existingHooks.PreCompact : [];
@@ -815,6 +816,62 @@ async function cleanStaleMcpJson(mcpJsonPath: string): Promise<void> {
   } catch {
     // File doesn't exist or isn't valid JSON — nothing to clean
   }
+}
+
+/**
+ * Validate that installed hooks are functional.
+ * Runs `rdv hook validate` to check server connectivity and session context.
+ * If validation fails and rdv is available, reinstalls hooks (auto-repair).
+ *
+ * @returns validation result with details
+ */
+export async function validateAgentHooks(
+  configDir: string,
+  provider: AgentProvider,
+  sessionId: string,
+  env: Record<string, string>
+): Promise<{ valid: boolean; repaired: boolean; error?: string }> {
+  if (provider !== "claude") return { valid: true, repaired: false };
+
+  // Check if rdv is available (hooks use curl fallback if not)
+  const versionCheck = await execFileNoThrow("rdv", ["--version"], { timeout: 3000 });
+  if (versionCheck.exitCode !== 0) {
+    return { valid: true, repaired: false };
+  }
+
+  const mergedEnv = { ...process.env, ...env } as NodeJS.ProcessEnv;
+  const validateResult = await execFileNoThrow("rdv", ["hook", "validate"], {
+    timeout: 10000,
+    env: mergedEnv,
+  });
+
+  // Old rdv binary without the validate subcommand
+  if (validateResult.stderr.includes("unrecognized subcommand")) {
+    console.warn(`[session:${sessionId}] rdv binary is outdated (missing hook validate), skipping validation`);
+    return { valid: true, repaired: false };
+  }
+
+  const parsed = safeJsonParse(validateResult.stdout, null as { valid: boolean; checks?: unknown[] } | null);
+  if (parsed?.valid) {
+    return { valid: true, repaired: false };
+  }
+
+  // Validation failed or parse failed -- attempt auto-repair
+  console.warn(`[session:${sessionId}] Hook validation failed, attempting repair:`, parsed?.checks ?? validateResult.stderr);
+  await installAgentHooks(configDir, provider);
+
+  // Re-validate after repair
+  const retryResult = await execFileNoThrow("rdv", ["hook", "validate"], {
+    timeout: 10000,
+    env: mergedEnv,
+  });
+  const retryParsed = safeJsonParse(retryResult.stdout, null as { valid: boolean } | null);
+  if (retryParsed?.valid) {
+    console.log(`[session:${sessionId}] Hook auto-repair succeeded`);
+    return { valid: true, repaired: true };
+  }
+
+  return { valid: false, repaired: true, error: "Auto-repair failed: hooks still invalid after reinstall" };
 }
 
 // ============================================================================
