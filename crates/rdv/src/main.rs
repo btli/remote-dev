@@ -3,7 +3,7 @@ mod commands;
 mod config;
 
 use clap::Parser;
-use commands::{agent, browser, context, folder, notification, session, status, task, worktree};
+use commands::{agent, browser, context, folder, hook, notification, session, status, task, worktree};
 
 #[derive(Parser)]
 #[command(name = "rdv", version, about = "CLI for Remote Dev terminal server")]
@@ -28,6 +28,8 @@ enum Command {
     Task(task::TaskArgs),
     /// Manage folders
     Folder(folder::FolderArgs),
+    /// Handle Claude Code lifecycle hooks (stop, notify, session-end)
+    Hook(hook::HookArgs),
     /// Show dashboard status or report agent status
     Status(status::StatusArgs),
     /// Show current session context
@@ -50,6 +52,7 @@ async fn main() {
         Command::Agent(args) => agent::run(args, &client, cli.human).await,
         Command::Task(args) => task::run(args, &client, cli.human).await,
         Command::Folder(args) => folder::run(args, &client, cli.human).await,
+        Command::Hook(args) => hook::run(args, &client, cli.human).await,
         Command::Status(args) => status::run(args, &client, cli.human).await,
         Command::Context => context::run(&client, cli.human).await,
         Command::Notification(args) => notification::run(args, &client, cli.human).await,
