@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use clap::{Args, Subcommand};
 use serde_json::json;
 
@@ -11,6 +13,14 @@ pub struct HookArgs {
 
 #[derive(Subcommand)]
 enum HookCommand {
+    /// Handle PreToolUse hook: report "running" status
+    PreToolUse,
+    /// Handle PostToolUse hook: sync task/todo data from stdin
+    PostToolUse,
+    /// Handle PreCompact hook: report "compacting" status
+    PreCompact,
+    /// Handle Notification hook: report "waiting" status
+    Notification,
     /// Handle Stop hook: report idle status, check tasks, create notification
     Stop {
         /// Agent provider name (e.g. "claude", "codex")
@@ -34,10 +44,59 @@ enum HookCommand {
         #[arg(long)]
         skip_learn: bool,
     },
+    /// Validate that all hooks can reach the server and are functional
+    Validate,
 }
 
 pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
+        HookCommand::PreToolUse => {
+            let sid = match client.session_id() {
+                Some(s) => s,
+                None => return Ok(()),
+            };
+            let query = [("sessionId", sid), ("status", "running")];
+            if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
+                eprintln!("warning: failed to report running status: {e}");
+            }
+        }
+        HookCommand::PostToolUse => {
+            let sid = match client.session_id() {
+                Some(s) => s,
+                None => {
+                    let _ = std::io::stdin().read_to_end(&mut Vec::new());
+                    return Ok(());
+                }
+            };
+            let mut buf = Vec::new();
+            std::io::stdin().read_to_end(&mut buf)?;
+            if let Err(e) = client
+                .post_raw_bytes(&format!("/internal/agent-todos?sessionId={sid}"), buf)
+                .await
+            {
+                eprintln!("warning: failed to sync tasks: {e}");
+            }
+        }
+        HookCommand::PreCompact => {
+            let sid = match client.session_id() {
+                Some(s) => s,
+                None => return Ok(()),
+            };
+            let query = [("sessionId", sid), ("status", "compacting")];
+            if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
+                eprintln!("warning: failed to report compacting status: {e}");
+            }
+        }
+        HookCommand::Notification => {
+            let sid = match client.session_id() {
+                Some(s) => s,
+                None => return Ok(()),
+            };
+            let query = [("sessionId", sid), ("status", "waiting")];
+            if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
+                eprintln!("warning: failed to report waiting status: {e}");
+            }
+        }
         HookCommand::Stop { agent, reason } => {
             let sid = match client.session_id() {
                 Some(s) => s,
@@ -122,6 +181,60 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                     "body": "Consider running `rdv learn analyze` to extract learnings.",
                 });
                 let _ = client.post_json("/internal/notify", &payload).await;
+            }
+        }
+        HookCommand::Validate => {
+            let mut results: Vec<serde_json::Value> = Vec::new();
+            let mut all_ok = true;
+            let sid = client.session_id();
+
+            // Check 1: RDV_SESSION_ID available
+            let sid_check = match sid {
+                Some(_) => json!({ "check": "session_id", "status": "ok" }),
+                None => {
+                    all_ok = false;
+                    json!({ "check": "session_id", "status": "fail", "error": "RDV_SESSION_ID not set" })
+                }
+            };
+            results.push(sid_check);
+
+            // Check 2: Terminal server reachable (agent-status endpoint)
+            let terminal_check = match sid {
+                Some(s) => {
+                    let query = [("sessionId", s), ("status", "running")];
+                    match client.post_empty_with_query("/internal/agent-status", &query).await {
+                        Ok(_) => json!({ "check": "terminal_server", "status": "ok" }),
+                        Err(e) => {
+                            all_ok = false;
+                            json!({ "check": "terminal_server", "status": "fail", "error": e.to_string() })
+                        }
+                    }
+                }
+                None => {
+                    all_ok = false;
+                    json!({ "check": "terminal_server", "status": "skip", "reason": "no session ID" })
+                }
+            };
+            results.push(terminal_check);
+
+            // Check 3: API server reachable (sessions endpoint)
+            let api_check = match client.get::<serde_json::Value>("/api/sessions").await {
+                Ok(_) => json!({ "check": "api_server", "status": "ok" }),
+                Err(e) => {
+                    all_ok = false;
+                    json!({ "check": "api_server", "status": "fail", "error": e.to_string() })
+                }
+            };
+            results.push(api_check);
+
+            let output = json!({
+                "valid": all_ok,
+                "checks": results,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+
+            if !all_ok {
+                std::process::exit(1);
             }
         }
     }
