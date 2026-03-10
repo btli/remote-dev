@@ -3,21 +3,36 @@
  * @see https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Startup");
+
 export async function register() {
   // Only run on server (not edge runtime)
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Prune old log entries (7-day retention)
+    try {
+      const { pruneLogsUseCase } = await import("@/infrastructure/container");
+      const pruned = pruneLogsUseCase.execute();
+      if (pruned > 0) {
+        log.info(`Pruned ${pruned} expired log entries`);
+      }
+    } catch (error) {
+      log.error("Log pruning failed", { error: String(error) });
+    }
+
     // Run startup cleanup for expired trash items
-    console.log("[Startup] Running trash cleanup...");
+    log.debug("Running trash cleanup...");
     try {
       const { cleanupExpiredItems } = await import("@/services/trash-service");
       const result = await cleanupExpiredItems();
       if (result.deletedCount > 0) {
-        console.log(`[Startup] Cleaned up ${result.deletedCount} expired trash items`);
+        log.info(`Cleaned up ${result.deletedCount} expired trash items`);
       } else {
-        console.log("[Startup] No expired trash items to clean up");
+        log.debug("No expired trash items to clean up");
       }
     } catch (error) {
-      console.error("[Startup] Trash cleanup failed:", error);
+      log.error("Trash cleanup failed", { error: String(error) });
     }
   }
 }

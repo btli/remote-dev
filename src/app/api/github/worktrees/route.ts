@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 import * as WorktreeService from "@/services/worktree-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * POST /api/github/worktrees - Create a git worktree for a branch
@@ -53,7 +56,7 @@ export const POST = withAuth(async (request, { userId }) => {
     defaultBranch = repository.defaultBranch;
   }
 
-  console.log("Creating worktree:", {
+  log.info("Creating worktree", {
     repositoryId,
     projectPath,
     branch,

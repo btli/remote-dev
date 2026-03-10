@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as ApiKeyService from "@/services/api-key-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/keys");
 
 const MAX_KEYS_PER_USER = 10;
 
@@ -15,7 +18,7 @@ export const GET = withAuth(async (_request, { userId }) => {
     const keys = await ApiKeyService.listApiKeys(userId);
     return NextResponse.json({ keys });
   } catch (error) {
-    console.error("Error listing API keys:", error);
+    log.error("Error listing API keys", { error: String(error) });
     return errorResponse("Failed to list API keys", 500);
   }
 });
@@ -71,7 +74,7 @@ export const POST = withAuth(async (request, { userId }) => {
       { status: 201 }
     );
   } catch (error) {
-    console.error("Error creating API key:", error);
+    log.error("Error creating API key", { error: String(error) });
 
     if (error instanceof ApiKeyService.ApiKeyServiceError) {
       return errorResponse(error.message, 400, error.code);

@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
 import * as TmuxService from "@/services/tmux-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * POST /api/sessions/:id/exec - Execute a command in a terminal session (fire-and-forget)
@@ -72,7 +75,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
       message: "Command sent. Use WebSocket for real-time output.",
     });
   } catch (error) {
-    console.error("Error executing command:", error);
+    log.error("Error executing command", { error: String(error) });
 
     if (error instanceof TmuxService.TmuxServiceError) {
       return errorResponse(error.message, 400, error.code);

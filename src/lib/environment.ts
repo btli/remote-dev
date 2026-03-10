@@ -18,6 +18,8 @@ import type {
 } from "@/types/environment";
 import { isEnvVarDisabled } from "@/types/environment";
 import type { FolderPreferencesWithMeta } from "@/types/preferences";
+// NOTE: This module is shared between server and client (via PreferencesContext).
+// Cannot use the structured logger here as it depends on Node-only better-sqlite3.
 
 /**
  * Resolve environment variables with hierarchical inheritance.
@@ -186,12 +188,12 @@ export function parseEnvironmentVars(
   try {
     const parsed = JSON.parse(json);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      console.warn("Invalid environment variables format, expected object");
+      console.warn("[Environment] Invalid environment variables format, expected object");
       return null;
     }
     return parsed as EnvironmentVariables;
   } catch (error) {
-    console.warn("Failed to parse environment variables JSON:", error);
+    console.warn("[Environment] Failed to parse environment variables JSON:", error);
     return null;
   }
 }

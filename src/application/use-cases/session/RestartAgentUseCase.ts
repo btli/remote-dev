@@ -20,6 +20,9 @@ import type { Session } from "@/domain/entities/Session";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import { EntityNotFoundError, InvalidStateTransitionError } from "@/domain/errors/DomainError";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("RestartAgent");
 
 export interface RestartAgentInput {
   sessionId: string;
@@ -127,7 +130,7 @@ export class RestartAgentUseCase {
         const revertedSession = restartingSession.markAgentExited(null);
         await this.sessionRepository.save(revertedSession);
       } catch {
-        console.error(`Failed to revert session state after tmux gone: ${input.sessionId}`);
+        log.error("Failed to revert session state after tmux gone", { sessionId: input.sessionId });
       }
       throw new RestartAgentError(
         `Tmux session ${tmuxName} no longer exists. Session must be recreated.`,
@@ -148,7 +151,7 @@ export class RestartAgentUseCase {
         await this.sessionRepository.save(revertedSession);
       } catch {
         // Log but don't mask original error
-        console.error(`Failed to revert session state after restart failure: ${input.sessionId}`);
+        log.error("Failed to revert session state after restart failure", { sessionId: input.sessionId });
       }
       throw new RestartAgentError(
         `Failed to send restart command: ${(error as Error).message}`,

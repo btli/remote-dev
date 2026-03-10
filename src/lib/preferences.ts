@@ -21,6 +21,8 @@ import type {
   PreferenceSource,
   ExtendedPreferenceSourceMap,
 } from "@/types/preferences";
+// NOTE: This module is shared between server and client (via PreferencesContext).
+// Cannot use the structured logger here as it depends on Node-only better-sqlite3.
 
 /**
  * System-wide default preferences
@@ -67,10 +69,10 @@ export function buildAncestryChain(
   while (currentId) {
     // Circular reference protection - this indicates data corruption
     if (visited.has(currentId)) {
-      console.error(
-        "Data integrity issue: Circular reference detected in folder hierarchy",
-        { folderId: currentId, visited: Array.from(visited) }
-      );
+      console.error("[Preferences] Data integrity issue: Circular reference detected in folder hierarchy", {
+        folderId: currentId,
+        visited: Array.from(visited),
+      });
       break;
     }
     visited.add(currentId);
@@ -80,9 +82,7 @@ export function buildAncestryChain(
       // Missing folder in hierarchy - may indicate orphaned data or race condition
       if (currentId !== folderId) {
         // Only warn if it's not the target folder (target might just not exist yet)
-        console.warn(
-          `Folder ${currentId} not found in hierarchy during ancestry chain build`
-        );
+        console.warn("[Preferences] Folder not found in hierarchy during ancestry chain build:", currentId);
       }
       break;
     }

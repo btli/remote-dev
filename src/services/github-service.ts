@@ -15,6 +15,9 @@ import type {
 import { existsSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { GitHubServiceError } from "@/lib/errors";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("GitHub");
 import { decryptSafe } from "@/lib/encryption";
 import { getReposDir } from "@/lib/paths";
 
@@ -549,7 +552,7 @@ export function getFolderStructure(
       return nodes.sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
       // Log error for debugging but return empty array to not break UI
-      console.warn(`[GitHubService] Failed to read directory ${path}:`, error);
+      log.warn("Failed to read directory", { path, error: String(error) });
       return [];
     }
   }

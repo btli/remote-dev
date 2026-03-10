@@ -60,6 +60,46 @@ bun run db:migrate-agents  # One-time agent session migration
 bun run db:migrate-github-accounts  # Backfill GitHub account metadata from existing OAuth accounts
 ```
 
+## Logging (NON-NEGOTIABLE)
+
+**NEVER use `console.log`, `console.error`, `console.warn`, or `console.debug` directly in server-side code.**
+
+All server-side logging MUST use the structured logger:
+
+```typescript
+import { createLogger } from "@/lib/logger";
+const log = createLogger("MyNamespace");
+
+log.error("Something failed", { error: String(err), sessionId });
+log.warn("Deprecation notice", { feature: "oldApi" });
+log.info("Session created", { sessionId, userId });
+log.debug("Connection details", { cols, rows, tmuxName });
+log.trace("Raw data received", { bytes: data.length });
+```
+
+### Log Level Guidelines
+- **error**: Failures that need attention (DB errors, crashes, auth failures)
+- **warn**: Non-critical issues (deprecated usage, fallback behavior, retry)
+- **info**: Important state changes (server start/stop, session create/close, job execution)
+- **debug**: Routine operational details (connection requests, tmux attach, resize)
+- **trace**: Very verbose output (raw data, internal state dumps)
+
+### Conventions
+- Namespace: PascalCase service/module name (e.g., `"SessionService"`, `"Terminal"`, `"Scheduler"`)
+- API routes: use path format (e.g., `"api/sessions"`, `"api/github"`)
+- Pass structured data as second argument — don't interpolate into message strings
+- Error objects: always stringify with `{ error: String(error) }` or `{ error: err.message }`
+- The `LOG_LEVEL` env var controls minimum level (default: `info` in dev, `warn` in prod)
+
+### Exceptions
+- Client-side code (React components, contexts in browser) may use `console.error` directly since the logger is server-only
+- The logger itself (`src/infrastructure/logging/`) uses `console.*` internally
+
+### Storage
+- Logs are stored in a separate SQLite database at `~/.remote-dev/logs/logs.db`
+- 7-day retention, pruned on startup
+- Viewable in Settings → Logs tab
+
 ## Architecture
 
 ### Two-Server Model
@@ -460,6 +500,10 @@ React Contexts in `src/contexts/`:
 | `src/services/split-service.ts` | Split pane operations |
 | `src/components/split/SplitPaneLayout.tsx` | Split layout component |
 | `crates/rdv/` | Rust CLI for agent interaction |
+| `src/lib/logger.ts` | Logger re-export (`createLogger` factory) |
+| `src/infrastructure/logging/AppLogger.ts` | Logger implementation (level gating, console + DB write) |
+| `src/infrastructure/logging/LogDatabase.ts` | Separate logs.db SQLite connection |
+| `src/components/system/LogViewer.tsx` | Log viewer UI component |
 | `src/lib/terminal-plugins/registry.ts` | Terminal type plugin registry |
 | `src/lib/terminal-plugins/plugins/*.tsx` | Built-in terminal type plugins |
 | `src/types/terminal-type.ts` | Terminal type system interfaces |

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/splits");
 
 /**
  * PUT /api/splits/:id/layout - Update pane sizes in a split
@@ -32,7 +35,7 @@ export const PUT = withAuth(async (request, { userId, params }) => {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error updating split layout:", error);
+    log.error("Error updating split layout", { error: String(error) });
     if (error instanceof SplitService.SplitServiceError) {
       return errorResponse(error.message, 404, error.code);
     }

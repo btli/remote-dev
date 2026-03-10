@@ -7,6 +7,9 @@
 
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import { InvalidValueError } from "@/domain/errors/DomainError";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("KillTmuxSession");
 
 export interface KillTmuxSessionInput {
   /** The tmux session name (e.g., "rdv-abc123-...") */
@@ -41,7 +44,7 @@ export class KillTmuxSessionUseCase {
     }
 
     // Log the operation for audit trail
-    console.log(`[TmuxSession] User ${userId} terminating session: ${sessionName}`);
+    log.info("Terminating tmux session", { userId, sessionName });
 
     // Kill the session (idempotent - succeeds even if already gone)
     await this.tmuxGateway.killSession(sessionName);

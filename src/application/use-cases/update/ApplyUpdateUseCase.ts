@@ -25,6 +25,9 @@ import { getUpdateDownloadDir } from "@/lib/paths";
 import { GITHUB_OWNER, GITHUB_REPO } from "./constants";
 import { join } from "node:path";
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("ApplyUpdate");
 
 /** Remove a file, ignoring errors (e.g., file already deleted). */
 function safeUnlink(path: string): void {
@@ -68,13 +71,13 @@ export class ApplyUpdateUseCase {
       }
 
       // Download the tarball
-      console.log(`[Update] Downloading v${versionStr} from ${release.downloadUrl}`);
+      log.info("Downloading update", { version: versionStr, url: release.downloadUrl });
       await this.releaseGateway.downloadRelease(
         release.downloadUrl,
         tarballPath,
         (downloaded, total) => {
           const pct = total > 0 ? ((downloaded / total) * 100).toFixed(1) : "?";
-          console.log(`[Update] Download progress: ${pct}%`);
+          log.debug("Download progress", { percent: pct });
         }
       );
 
@@ -82,7 +85,7 @@ export class ApplyUpdateUseCase {
       await this.verifyChecksum(release, tarballPath);
 
       // Extract and install
-      console.log(`[Update] Installing v${versionStr}`);
+      log.info("Installing update", { version: versionStr });
       await this.tarballInstaller.install(tarballPath, versionStr);
 
       // Clear cached release (update has been applied)
@@ -95,11 +98,11 @@ export class ApplyUpdateUseCase {
       // Keep applyInProgress=true after successful apply to prevent duplicate
       // requests before the restart takes effect.
       if (this.serviceRestarter.isRestartSupported()) {
-        console.log("[Update] Scheduling service restart...");
+        log.info("Scheduling service restart");
         this.serviceRestarter.restart(500);
       } else {
         this.applyInProgress = false;
-        console.log("[Update] Restart not supported in this environment. Please restart manually.");
+        log.info("Restart not supported in this environment - please restart manually");
       }
 
       return { version: versionStr };
@@ -119,16 +122,16 @@ export class ApplyUpdateUseCase {
       );
 
     if (!checksum) {
-      console.log("[Update] No checksum available, skipping verification");
+      log.info("No checksum available, skipping verification");
       return;
     }
 
-    console.log("[Update] Verifying checksum...");
+    log.info("Verifying checksum");
     const valid = await this.tarballInstaller.verify(tarballPath, checksum);
     if (!valid) {
       safeUnlink(tarballPath);
       throw new ChecksumMismatchError(checksum, "(computed from download)");
     }
-    console.log("[Update] Checksum verified");
+    log.info("Checksum verified");
   }
 }

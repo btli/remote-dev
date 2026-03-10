@@ -23,6 +23,9 @@ import { homedir } from "node:os";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("AgentProfile");
 import { execFileNoThrow } from "@/lib/exec";
 import { safeJsonParse } from "@/lib/utils";
 import { getProfilesDir } from "@/lib/paths";
@@ -431,7 +434,7 @@ export async function getProfileEnvironment(
     }
   } catch (error) {
     // Log but don't fail if secrets fetch fails
-    console.error(`Failed to fetch secrets for profile ${profileId}:`, error);
+    log.error("Failed to fetch secrets for profile", { profileId, error: String(error) });
   }
 
   return env;
@@ -847,7 +850,7 @@ export async function validateAgentHooks(
 
   // Old rdv binary without the validate subcommand
   if (validateResult.stderr.includes("unrecognized subcommand")) {
-    console.warn(`[session:${sessionId}] rdv binary is outdated (missing hook validate), skipping validation`);
+    log.warn("rdv binary is outdated (missing hook validate), skipping validation", { sessionId });
     return { valid: true, repaired: false };
   }
 
@@ -857,7 +860,7 @@ export async function validateAgentHooks(
   }
 
   // Validation failed or parse failed -- attempt auto-repair
-  console.warn(`[session:${sessionId}] Hook validation failed, attempting repair:`, parsed?.checks ?? validateResult.stderr);
+  log.warn("Hook validation failed, attempting repair", { sessionId, checks: parsed?.checks, stderr: validateResult.stderr });
   await installAgentHooks(configDir, provider);
 
   // Re-validate after repair
@@ -867,7 +870,7 @@ export async function validateAgentHooks(
   });
   const retryParsed = safeJsonParse(retryResult.stdout, null as { valid: boolean } | null);
   if (retryParsed?.valid) {
-    console.log(`[session:${sessionId}] Hook auto-repair succeeded`);
+    log.info("Hook auto-repair succeeded", { sessionId });
     return { valid: true, repaired: true };
   }
 
@@ -1050,10 +1053,7 @@ export async function fetchProfileSecrets(
   try {
     providerConfig = JSON.parse(config.providerConfig) as Record<string, string>;
   } catch (error) {
-    console.error(
-      `Failed to parse provider config for profile ${profileId}:`,
-      error
-    );
+    log.error("Failed to parse provider config for profile", { profileId, error: String(error) });
     return null;
   }
 

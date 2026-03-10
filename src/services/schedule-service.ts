@@ -19,6 +19,9 @@ import { eq, and, desc, asc, inArray } from "drizzle-orm";
 import { Cron } from "croner";
 import { ScheduleServiceError } from "@/lib/errors";
 import * as TmuxService from "./tmux-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Schedule");
 import type {
   SessionSchedule,
   SessionScheduleWithSession,
@@ -748,10 +751,7 @@ export async function executeSchedule(
 
           // Retry if we have attempts left
           if (attempt < maxAttempts) {
-            console.log(
-              `[ScheduleService] Command attempt ${attempt}/${maxAttempts} failed for schedule ${schedule.id}, ` +
-                `retrying in ${schedule.retryDelaySeconds || 1}s...`
-            );
+            log.warn(`Command attempt ${attempt}/${maxAttempts} failed, retrying in ${schedule.retryDelaySeconds || 1}s...`, { scheduleId: schedule.id });
             await new Promise((resolve) =>
               setTimeout(resolve, (schedule.retryDelaySeconds || 1) * 1000)
             );

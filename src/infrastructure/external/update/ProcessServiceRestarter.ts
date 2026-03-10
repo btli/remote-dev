@@ -10,6 +10,9 @@ import type { ServiceRestarter } from "@/application/ports/ServiceRestarter";
 import { getServerDir } from "@/lib/paths";
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("ProcessServiceRestarter");
 
 export class ProcessServiceRestarter implements ServiceRestarter {
   restart(delayMs: number = 500): void {
@@ -33,30 +36,30 @@ export class ProcessServiceRestarter implements ServiceRestarter {
     const nextPid = this.readPid(join(serverDir, "next.pid"));
     const terminalPid = this.readPid(join(serverDir, "terminal.pid"));
 
-    console.log("[Restarter] Sending SIGTERM to managed processes...");
+    log.info("Sending SIGTERM to managed processes");
 
     // Kill terminal server first, then Next.js
     if (terminalPid) {
       try {
         process.kill(terminalPid, "SIGTERM");
-        console.log(`[Restarter] Sent SIGTERM to terminal server (PID: ${terminalPid})`);
+        log.info("Sent SIGTERM to terminal server", { pid: terminalPid });
       } catch (error) {
-        console.error(`[Restarter] Failed to signal terminal server:`, error);
+        log.error("Failed to signal terminal server", { error: String(error) });
       }
     }
 
     if (nextPid) {
       try {
         process.kill(nextPid, "SIGTERM");
-        console.log(`[Restarter] Sent SIGTERM to Next.js (PID: ${nextPid})`);
+        log.info("Sent SIGTERM to Next.js", { pid: nextPid });
       } catch (error) {
-        console.error(`[Restarter] Failed to signal Next.js:`, error);
+        log.error("Failed to signal Next.js", { error: String(error) });
       }
     }
 
     // If we can't find PID files, SIGTERM ourselves as a fallback
     if (!nextPid && !terminalPid) {
-      console.log("[Restarter] No PID files found, sending SIGTERM to self");
+      log.info("No PID files found, sending SIGTERM to self");
       process.kill(process.pid, "SIGTERM");
     }
   }

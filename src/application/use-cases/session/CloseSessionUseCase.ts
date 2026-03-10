@@ -10,6 +10,9 @@ import type { Session } from "@/domain/entities/Session";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import { EntityNotFoundError } from "@/domain/errors/DomainError";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("CloseSession");
 
 export interface CloseSessionInput {
   sessionId: string;
@@ -37,7 +40,7 @@ export class CloseSessionUseCase {
     await this.tmuxGateway
       .killSession(session.tmuxSessionName.toString())
       .catch((error) => {
-        console.warn(`Tmux session already gone: ${error.message}`);
+        log.debug("Tmux session already gone", { error: error.message });
       });
 
     // Transition to closed state (validates current state)

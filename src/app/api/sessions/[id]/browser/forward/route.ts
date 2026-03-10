@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
 import * as SessionService from "@/services/session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * POST /api/sessions/:id/browser/forward - Navigate forward in browser history
@@ -21,7 +24,7 @@ export const POST = withApiAuth(async (_request, { userId, params }) => {
     const currentUrl = await BrowserService.getCurrentUrl(params.id);
     return NextResponse.json({ url: currentUrl });
   } catch (error) {
-    console.error("Browser forward error:", error);
+    log.error("Browser forward error", { error: String(error) });
     return errorResponse("Forward navigation failed", 500);
   }
 });

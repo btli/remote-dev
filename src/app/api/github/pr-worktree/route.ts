@@ -6,6 +6,9 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as GitHubStatsService from "@/services/github-stats-service";
 import type { PRWorktreeRequest, PRWorktreeResponse } from "@/types/github-stats";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * Map error code to HTTP status
@@ -54,7 +57,7 @@ export const POST = withAuth(async (request, { userId }) => {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error("Error creating PR worktree:", error);
+    log.error("Error creating PR worktree", { error: String(error) });
     const err = error as Error & { code?: string };
 
     const response: PRWorktreeResponse = {

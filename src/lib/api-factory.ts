@@ -10,6 +10,9 @@
 
 import { NextResponse } from "next/server";
 import { withAuth, withApiAuth, errorResponse, parseJsonBody } from "./api";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("APIFactory");
 
 type RouteContext = {
   userId: string;
@@ -26,7 +29,7 @@ export function handleServiceError(
   error: unknown,
   defaultMessage: string
 ): NextResponse {
-  console.error(defaultMessage, error);
+  log.error(defaultMessage, { error: String(error) });
 
   if (error instanceof Error && "code" in error) {
     const serviceError = error as ServiceError;

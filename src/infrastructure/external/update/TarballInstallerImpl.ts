@@ -14,6 +14,7 @@
 import type { TarballInstaller } from "@/application/ports/TarballInstaller";
 import { ExtractionError } from "@/domain/errors/UpdateError";
 import { getReleasesDir, getUpdateStagingDir } from "@/lib/paths";
+import { createLogger } from "@/lib/logger";
 import { join } from "node:path";
 import {
   createReadStream,
@@ -30,6 +31,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const log = createLogger("TarballInstaller");
 
 export class TarballInstallerImpl implements TarballInstaller {
   async install(tarballPath: string, version: string): Promise<void> {
@@ -70,8 +72,8 @@ export class TarballInstallerImpl implements TarballInstaller {
       symlinkSync(version, tempLink);
       renameSync(tempLink, currentLink);
 
-      console.log(`[TarballInstaller] Installed v${version} -> ${versionDir}`);
-      console.log(`[TarballInstaller] Symlink: current -> ${version}`);
+      log.info("Installed release", { version, versionDir });
+      log.info("Updated symlink", { link: "current", target: version });
 
       // Clean up old releases (keep last 3)
       this.cleanupOldReleases(releasesDir, version);
@@ -146,7 +148,7 @@ export class TarballInstallerImpl implements TarballInstaller {
       const toRemove = versions.slice(2);
       for (const version of toRemove) {
         const dir = join(releasesDir, version);
-        console.log(`[TarballInstaller] Removing old release: ${version}`);
+        log.info("Removing old release", { version });
         rmSync(dir, { recursive: true, force: true });
       }
     } catch {

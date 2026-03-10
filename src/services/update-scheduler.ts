@@ -6,6 +6,9 @@
  */
 
 import { checkForUpdatesUseCase } from "@/infrastructure/container";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("UpdateScheduler");
 
 const DEFAULT_INTERVAL_HOURS = 4;
 
@@ -24,7 +27,7 @@ class UpdateScheduler {
     );
     const intervalMs = intervalHours * 60 * 60 * 1000;
 
-    console.log(`[UpdateScheduler] Checking for updates every ${intervalHours} hours`);
+    log.info(`Checking for updates every ${intervalHours} hours`);
 
     // Perform initial check after 30 seconds (let server fully start)
     this.initialCheckHandle = setTimeout(() => {
@@ -47,17 +50,17 @@ class UpdateScheduler {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
     }
-    console.log("[UpdateScheduler] Stopped");
+    log.info("Stopped");
   }
 
   private async check(): Promise<void> {
     try {
       const result = await checkForUpdatesUseCase.execute({ force: false });
       if (result.state.isAvailable()) {
-        console.log(`[UpdateScheduler] Update available: v${result.latestVersion}`);
+        log.info(`Update available: v${result.latestVersion}`);
       }
     } catch (error) {
-      console.error("[UpdateScheduler] Check failed:", error);
+      log.error("Check failed", { error: String(error) });
     }
   }
 }

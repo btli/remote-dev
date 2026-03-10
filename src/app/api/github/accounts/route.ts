@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import { listGitHubAccountsUseCase } from "@/infrastructure/container";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * GET /api/github/accounts
@@ -20,7 +23,7 @@ export const GET = withAuth(async (_request, { userId }) => {
       folderBindings: Object.fromEntries(result.folderBindings),
     });
   } catch (error) {
-    console.error("[api/github/accounts] Error listing accounts:", error);
+    log.error("Error listing accounts", { error: String(error) });
     return errorResponse("Failed to list GitHub accounts", 500);
   }
 });

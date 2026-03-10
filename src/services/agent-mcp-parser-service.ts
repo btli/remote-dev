@@ -19,6 +19,9 @@ import type {
   UpdateMCPServerConfigInput,
 } from "@/types/agent-mcp";
 import type { MCPTransport } from "@/types/agent";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("AgentMCP");
 
 /**
  * Get MCP config file paths to check for an agent provider.
@@ -351,7 +354,7 @@ export async function parseSessionMCPConfig(
         }
       }
     } catch (error) {
-      console.error(`Error parsing MCP config ${configPath}:`, error);
+      log.error("Error parsing MCP config", { configPath, error: String(error) });
     }
   }
 

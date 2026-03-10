@@ -4,6 +4,9 @@ import { validateProjectPath } from "@/lib/api-validation";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput, SessionStatus } from "@/types/session";
 import { WORKTREE_TYPES } from "@/types/session";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * GET /api/sessions - List user's terminal sessions
@@ -31,7 +34,7 @@ export const GET = withApiAuth(async (request, { userId }) => {
 
     return NextResponse.json({ sessions });
   } catch (error) {
-    console.error("Error listing sessions:", error);
+    log.error("Error listing sessions", { error: String(error) });
     return errorResponse("Failed to list sessions", 500);
   }
 });
@@ -107,7 +110,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
     return NextResponse.json(newSession, { status: 201 });
   } catch (error) {
-    console.error("Error creating session:", error);
+    log.error("Error creating session", { error: String(error) });
 
     if (error instanceof SessionService.SessionServiceError) {
       return errorResponse(error.message, 400, error.code);

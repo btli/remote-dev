@@ -9,6 +9,14 @@ import { tmpdir } from "node:os";
 import { resolve as pathResolve } from "node:path";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
+import { createLogger } from "../lib/logger.js";
+
+const log = createLogger("Terminal");
+const agentLog = createLogger("AgentExit");
+const agentStatusLog = createLogger("AgentStatus");
+const notifyLog = createLogger("Notify");
+const voiceLog = createLogger("Voice");
+const internalLog = createLogger("InternalAPI");
 
 // Re-export for backwards compatibility with API routes
 export { generateWsToken } from "../lib/ws-token.js";
@@ -177,7 +185,7 @@ function createVoiceFifo(session: TerminalSession): string {
   // Open FIFO for writing asynchronously — blocks until reader opens
   fs.open(fifoPath, fs.constants.O_WRONLY, (err, fd) => {
     if (err) {
-      console.error(`[Voice] Failed to open FIFO for writing: ${err.message}`);
+      voiceLog.error("Failed to open FIFO for writing", { error: err.message });
       return;
     }
     session.voiceFifoFd = fd;
@@ -186,13 +194,13 @@ function createVoiceFifo(session: TerminalSession): string {
       try {
         fs.writeSync(fd, chunk);
       } catch (flushErr) {
-        console.warn(`[Voice] Failed to flush buffered chunk: ${flushErr}`);
+        voiceLog.warn("Failed to flush buffered chunk", { error: String(flushErr) });
         break;
       }
     }
     session.voiceAudioBuffer = [];
     session.voiceFifoReady = true;
-    console.log(`[Voice] FIFO writer connected for session ${session.sessionId}`);
+    voiceLog.debug("FIFO writer connected", { sessionId: session.sessionId });
   });
 
   return fifoPath;
@@ -342,7 +350,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
 
-    console.log(`[Agent Exit] Session ${sessionId} exited with code ${exitCode ?? "unknown"}`);
+    agentLog.info("Session exited", { sessionId, exitCode: exitCode ?? "unknown" });
 
     // Find the WebSocket connection for this session and notify the client
     const session = sessions.get(sessionId);
@@ -355,9 +363,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           exitedAt: new Date().toISOString(),
         })
       );
-      console.log(`[Agent Exit] Notified client for session ${sessionId}`);
+      agentLog.debug("Notified client", { sessionId });
     } else {
-      console.log(`[Agent Exit] No active WebSocket for session ${sessionId}`);
+      agentLog.debug("No active WebSocket", { sessionId });
     }
 
     sendJson(res, 200, { success: true, sessionId, exitCode });
@@ -383,7 +391,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       .then(([{ db }, { terminalSessions }, { eq }]) =>
         db.update(terminalSessions).set({ agentActivityStatus: status }).where(eq(terminalSessions.id, sessionId))
       )
-      .catch((err) => console.error("[Agent Status] Failed to persist activity status:", err));
+      .catch((err) => agentStatusLog.error("Failed to persist activity status", { error: String(err) }));
 
     // Create in-app notification for waiting/error statuses (fire-and-forget, with 5s debounce via service)
     if (status === "waiting" || status === "error") {
@@ -418,7 +426,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
             },
           });
         })
-        .catch((err) => console.error("[Agent Status] Failed to create notification:", err));
+        .catch((err) => agentStatusLog.error("Failed to create notification", { error: String(err) }));
     }
 
     sendJson(res, 200, { success: true });
@@ -460,7 +468,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           },
         });
       })
-      .catch((err) => console.error("[Notify] Failed to create notification:", err));
+      .catch((err) => notifyLog.error("Failed to create notification", { error: String(err) }));
 
     sendJson(res, 200, { success: true });
     return true;
@@ -501,7 +509,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         sendJson(res, 200, { message: message ?? null });
       }
     } catch (error) {
-      console.error("[Agent Stop Check] Error:", error);
+      internalLog.error("Agent stop check error", { error: String(error) });
       // On error, allow the agent to stop (don't block on failures)
       const wantsText = req.headers.accept?.includes("text/plain");
       if (wantsText) {
@@ -534,7 +542,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       broadcastToClients({ type: "agent_todos_updated", sessionId, ...result });
       sendJson(res, 200, { success: true, ...result });
     } catch (error) {
-      console.error("[Agent Todos] Sync error:", error);
+      internalLog.error("Agent todos sync error", { error: String(error) });
       sendJson(res, 500, {
         error: error instanceof Error ? error.message : "Sync failed",
       });
@@ -561,7 +569,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       const tasks = await getAllTasksBySession(sessionId, session.userId);
       sendJson(res, 200, tasks);
     } catch (error) {
-      console.error("[Internal Tasks] List error:", error);
+      internalLog.error("Tasks list error", { error: String(error) });
       sendJson(res, 500, { error: "Failed to list tasks" });
     }
     return true;
@@ -599,7 +607,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       broadcastToClients({ type: "agent_todos_updated", sessionId, created: 1, updated: 0 });
       sendJson(res, 201, task);
     } catch (error) {
-      console.error("[Internal Tasks] Create error:", error);
+      internalLog.error("Task create error", { error: String(error) });
       sendJson(res, 500, { error: "Failed to create task" });
     }
     return true;
@@ -657,7 +665,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       }
       sendJson(res, 200, task);
     } catch (error) {
-      console.error("[Internal Tasks] Update error:", error);
+      internalLog.error("Task update error", { error: String(error) });
       sendJson(res, 500, { error: "Failed to update task" });
     }
     return true;
@@ -737,7 +745,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         sendJson(res, 404, { error: "Unknown action" });
     }
   } catch (error) {
-    console.error("[InternalAPI] Scheduler error:", error);
+    internalLog.error("Scheduler error", { error: String(error) });
     sendJson(res, 500, { error: "Internal error" });
   }
   return true;
@@ -751,11 +759,11 @@ interface ServerOptions {
 export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   // Check tmux is installed at startup
   if (!checkTmuxInstalled()) {
-    console.error("ERROR: tmux is not installed. Please install with: brew install tmux");
-    console.error("Terminal persistence will not work without tmux.");
+    log.error("tmux is not installed. Please install with: brew install tmux");
+    log.error("Terminal persistence will not work without tmux.");
     // Continue anyway for development, but log the warning
   } else {
-    console.log("tmux detected - session persistence enabled");
+    log.info("tmux detected - session persistence enabled");
   }
 
   // Create HTTP server to handle both WebSocket upgrades and internal API
@@ -775,16 +783,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
   // Listen on socket or port
   if (options.socket) {
     server.listen(options.socket, () => {
-      console.log(`Terminal server running on unix:${options.socket}`);
-      console.log(`  - WebSocket: unix:${options.socket}`);
-      console.log(`  - Internal API: unix:${options.socket}/internal/scheduler/*`);
+      log.info("Terminal server running", { transport: "unix", socket: options.socket, websocket: `unix:${options.socket}`, internalApi: `unix:${options.socket}/internal/scheduler/*` });
     });
   } else {
     const port = options.port || 6002;
     server.listen(port, () => {
-      console.log(`Terminal server running on http://localhost:${port}`);
-      console.log(`  - WebSocket: ws://localhost:${port}`);
-      console.log(`  - Internal API: http://localhost:${port}/internal/scheduler/*`);
+      log.info("Terminal server running", { transport: "http", port, websocket: `ws://localhost:${port}`, internalApi: `http://localhost:${port}/internal/scheduler/*` });
     });
   }
 
@@ -831,7 +835,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // Prevent rapid reconnection attempts that can exhaust PTY resources
     // If this session is already in the process of connecting, reject
     if (connectingSessionIds.has(sessionId)) {
-      console.warn(`Connection rejected: session ${sessionId} is already connecting`);
+      log.warn("Connection rejected: session already connecting", { sessionId });
       ws.send(JSON.stringify({ type: "error", message: "Connection in progress, please wait" }));
       ws.close(4004, "Connection in progress");
       return;
@@ -841,14 +845,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
 
-    console.log(`Connection request: sessionId=${sessionId}, tmux=${tmuxSessionName}, tmuxExists=${tmuxExists}`);
+    log.debug("Connection request", { sessionId, tmuxSessionName, tmuxExists });
 
     let ptyProcess: IPty;
 
     try {
       if (tmuxExists) {
         // Attach to existing tmux session
-        console.log(`Attaching to existing tmux session: ${tmuxSessionName}`);
+        log.debug("Attaching to existing tmux session", { tmuxSessionName });
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
 
         ws.send(JSON.stringify({
@@ -858,7 +862,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         }));
       } else {
         // Create new tmux session
-        console.log(`Creating new tmux session: ${tmuxSessionName} (history-limit: ${tmuxHistoryLimit})`);
+        log.debug("Creating new tmux session", { tmuxSessionName, historyLimit: tmuxHistoryLimit });
         createTmuxSession(tmuxSessionName, cols, rows, cwd, tmuxHistoryLimit);
 
         // Set up voice mode environment for agent sessions
@@ -868,7 +872,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             const shimDir = ensureSoxShim();
             execFileSync("tmux", ["set-environment", "-t", tmuxSessionName, "PATH", `${shimDir}:${process.env.PATH || ""}`]);
           } catch (error) {
-            console.warn(`[Voice] Failed to install sox shim for ${sessionId}:`, error);
+            voiceLog.warn("Failed to install sox shim", { sessionId, error: String(error) });
             // Non-fatal — voice just won't work for this session
           }
         }
@@ -882,7 +886,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         }));
       }
     } catch (error) {
-      console.error(`Failed to create/attach tmux session: ${error}`);
+      log.error("Failed to create/attach tmux session", { error: String(error) });
       connectingSessionIds.delete(sessionId);
       ws.send(JSON.stringify({
         type: "error",
@@ -915,7 +919,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // Connection established, allow future reconnection attempts
     connectingSessionIds.delete(sessionId);
 
-    console.log(`Terminal session ${sessionId} started (${cols}x${rows}) - tmux: ${tmuxSessionName}`);
+    log.debug("Terminal session started", { sessionId, cols, rows, tmuxSessionName });
 
     // Note: Environment variables are now injected at session creation time
     // (in TmuxService.createSession) BEFORE the startup command runs.
@@ -929,13 +933,13 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
-      console.log(`Terminal session ${sessionId} PTY exited with code ${exitCode} (type: ${terminalType})`);
+      log.debug("PTY exited", { sessionId, exitCode, terminalType });
 
       if (ws.readyState === WebSocket.OPEN) {
         // For agent terminals, send a special agent_exited message
         // The frontend will show an exit screen with restart/close options
         if (terminalType === "agent") {
-          console.log(`Agent session ${sessionId} exited - sending agent_exited event`);
+          agentLog.info("Agent session exited - sending agent_exited event", { sessionId });
           ws.send(JSON.stringify({
             type: "agent_exited",
             sessionId,
@@ -963,7 +967,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             if (session.voiceFifoReady && session.voiceFifoFd !== null) {
               fs.write(session.voiceFifoFd, pcmData, (writeErr) => {
                 if (writeErr) {
-                  console.warn(`[Voice] FIFO write error: ${writeErr.message}`);
+                  voiceLog.warn("FIFO write error", { error: writeErr.message });
                 }
               });
             } else if (session.voiceAudioBuffer.length < MAX_VOICE_BUFFER_CHUNKS) {
@@ -1034,7 +1038,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             break;
           }
           case "detach":
-            console.log(`Detaching from tmux session: ${tmuxSessionName}`);
+            log.debug("Detaching from tmux session", { tmuxSessionName });
             cleanupSession(sessionId);
             ws.close();
             break;
@@ -1048,7 +1052,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               break;
             }
 
-            console.log(`Restarting agent session: ${sessionId}`);
+            agentLog.info("Restarting agent session", { sessionId });
             try {
               try { destroyPty(session.pty); } catch { /* old PTY may be dead */ }
 
@@ -1065,7 +1069,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               });
 
               newPty.onExit(({ exitCode: newExitCode }) => {
-                console.log(`Restarted agent session ${sessionId} exited with code ${newExitCode}`);
+                agentLog.info("Restarted agent session exited", { sessionId, exitCode: newExitCode });
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify({
                     type: "agent_exited",
@@ -1083,7 +1087,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                 tmuxSessionName,
               }));
             } catch (error) {
-              console.error(`Failed to restart agent session ${sessionId}:`, error);
+              agentLog.error("Failed to restart agent session", { sessionId, error: String(error) });
               cleanupSession(sessionId);
               ws.send(JSON.stringify({
                 type: "error",
@@ -1100,7 +1104,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             }
             try {
               const fifoPath = createVoiceFifo(session);
-              console.log(`[Voice] Created FIFO for session ${sessionId}: ${fifoPath}`);
+              voiceLog.debug("Created FIFO", { sessionId, fifoPath });
               // Simulate holding SPACE to trigger Claude Code voice recording.
               // Send initial space immediately, then repeat at 50ms to mimic key-hold.
               // Server-side avoids round-trip latency from browser → WS → server.
@@ -1115,14 +1119,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               }, 50);
               ws.send(JSON.stringify({ type: "voice_ready", sessionId }));
             } catch (error) {
-              console.error(`[Voice] Failed to create FIFO for ${sessionId}:`, error);
+              voiceLog.error("Failed to create FIFO", { sessionId, error: String(error) });
               ws.send(JSON.stringify({ type: "voice_error", message: `Voice setup failed: ${(error as Error).message}` }));
             }
             break;
           }
 
           case "voice_stop": {
-            console.log(`[Voice] Stopping voice for session ${sessionId}`);
+            voiceLog.debug("Stopping voice", { sessionId });
             // Stop simulating SPACE hold
             if (session.voiceSpaceInterval) {
               clearInterval(session.voiceSpaceInterval);
@@ -1147,12 +1151,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
 
     ws.on("close", () => {
-      console.log(`WebSocket closed for session ${sessionId}`);
+      log.debug("WebSocket closed", { sessionId });
       cleanupSession(sessionId);
     });
 
     ws.on("error", (error) => {
-      console.error(`Terminal session ${sessionId} error:`, error);
+      log.error("Terminal session error", { sessionId, error: String(error) });
       cleanupSession(sessionId);
     });
 
@@ -1165,12 +1169,12 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
 // Graceful shutdown: destroy PTY wrappers but preserve tmux sessions for reconnection
 function cleanup() {
-  console.log("Shutting down terminal server (tmux sessions preserved)...");
+  log.info("Shutting down terminal server (tmux sessions preserved)...");
   for (const [id, session] of sessions) {
     cleanupVoiceFifo(session);
     try { destroyPty(session.pty); } catch { /* PTY may already be dead */ }
     session.ws.close();
-    console.log(`Closed PTY wrapper for session ${id}`);
+    log.debug("Closed PTY wrapper", { sessionId: id });
   }
   sessions.clear();
   process.exit(0);

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import * as TrashService from "@/services/trash-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/cron");
 
 /**
  * POST /api/cron/trash-cleanup - Scheduled cleanup of expired trash items
@@ -18,7 +21,7 @@ export async function POST(request: Request) {
     const cronSecret = process.env.CRON_SECRET;
 
     if (!cronSecret) {
-      console.warn("[Cron] CRON_SECRET not configured - cron endpoint disabled");
+      log.warn("CRON_SECRET not configured - cron endpoint disabled");
       return NextResponse.json(
         { error: "Cron endpoint not configured" },
         { status: 503 }
@@ -38,7 +41,7 @@ export async function POST(request: Request) {
     const providedSecret = bearerToken || querySecret;
 
     if (providedSecret !== cronSecret) {
-      console.warn("[Cron] Invalid or missing cron secret");
+      log.warn("Invalid or missing cron secret");
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
@@ -46,10 +49,10 @@ export async function POST(request: Request) {
     }
 
     // Run cleanup
-    console.log("[Cron] Running scheduled trash cleanup...");
+    log.info("Running scheduled trash cleanup...");
     const result = await TrashService.cleanupExpiredItems();
 
-    console.log(`[Cron] Cleanup complete: ${result.deletedCount} items deleted`);
+    log.info(`Cleanup complete: ${result.deletedCount} items deleted`);
 
     return NextResponse.json({
       success: true,
@@ -57,7 +60,7 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("[Cron] Trash cleanup failed:", error);
+    log.error("Trash cleanup failed", { error: String(error) });
     return NextResponse.json(
       { error: "Cleanup failed" },
       { status: 500 }

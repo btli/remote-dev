@@ -3,6 +3,9 @@ import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as ScheduleService from "@/services/schedule-service";
 import { notifyScheduleCreated } from "@/lib/scheduler-client";
 import type { CreateScheduleInput } from "@/types/schedule";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/schedules");
 
 /**
  * GET /api/schedules - List user's schedules
@@ -16,7 +19,7 @@ export const GET = withApiAuth(async (request, { userId }) => {
     const schedules = await ScheduleService.listSchedules(userId, sessionId);
     return NextResponse.json({ schedules });
   } catch (error) {
-    console.error("Error listing schedules:", error);
+    log.error("Error listing schedules", { error: String(error) });
     return errorResponse("Failed to list schedules", 500);
   }
 });
@@ -69,13 +72,13 @@ export const POST = withApiAuth(async (request, { userId }) => {
     // will be picked up when it starts and loads all enabled schedules
     if (schedule.enabled) {
       notifyScheduleCreated(schedule.id).catch((err) =>
-        console.warn("[API] Failed to notify scheduler of new schedule:", err)
+        log.warn("Failed to notify scheduler of new schedule", { error: String(err) })
       );
     }
 
     return NextResponse.json(schedule, { status: 201 });
   } catch (error) {
-    console.error("Error creating schedule:", error);
+    log.error("Error creating schedule", { error: String(error) });
     if (error instanceof ScheduleService.ScheduleServiceError) {
       const status = error.code === "SESSION_NOT_FOUND" ? 404 : 400;
       return errorResponse(error.message, status, error.code);

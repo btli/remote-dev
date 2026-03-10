@@ -11,6 +11,9 @@ import { Release } from "@/domain/entities/Release";
 import type { ReleaseGateway } from "@/application/ports/ReleaseGateway";
 import type { ReleaseRepository } from "@/application/ports/ReleaseRepository";
 import { GITHUB_OWNER, GITHUB_REPO } from "./constants";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("CheckForUpdates");
 
 export interface CheckForUpdatesInput {
   force?: boolean;
@@ -82,7 +85,7 @@ export class CheckForUpdatesUseCase {
       };
     } catch (error) {
       // Don't update lastChecked on failure so it retries next interval
-      console.error("[UpdateCheck] Failed to check for updates:", error);
+      log.error("Failed to check for updates", { error: String(error) });
       return {
         state: UpdateState.error(
           error instanceof Error ? error.message : "Unknown error checking for updates"

@@ -8,6 +8,9 @@
 import { NextResponse } from "next/server";
 import { getAuthSession } from "@/lib/auth-utils";
 import * as ApiKeyService from "@/services/api-key-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("API");
 
 /**
  * Route context type for dynamic routes
@@ -60,7 +63,7 @@ export function withAuth(
 
       return await handler(request, { userId: session.user.id, params });
     } catch (error) {
-      console.error("Unhandled error in API route:", error);
+      log.error("Unhandled error in API route", { error: String(error) });
       return NextResponse.json(
         { error: "Internal server error" },
         { status: 500 }
@@ -133,7 +136,7 @@ export function withApiAuth(
 
       return await handler(request, { userId, params });
     } catch (error) {
-      console.error("Unhandled error in API route:", error);
+      log.error("Unhandled error in API route", { error: String(error) });
       return NextResponse.json(
         { error: "Internal server error" },
         { status: 500 }
@@ -169,7 +172,7 @@ export function errorResponse(
 ): NextResponse<{ error: string; code?: string; details?: string }> {
   // Log server errors for debugging
   if (status >= 500) {
-    console.error(`API Error [${status}]:`, message, code ? `(${code})` : "", details || "");
+    log.error("API error", { status, message, code, details });
   }
 
   const body: { error: string; code?: string; details?: string } = { error: message };

@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
 import * as SessionService from "@/services/session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * GET /api/sessions/:id/browser/screenshot - Get current page screenshot
@@ -32,7 +35,7 @@ export const GET = withApiAuth(async (_request, { userId, params }) => {
       },
     }) as NextResponse;
   } catch (error) {
-    console.error("Browser screenshot error:", error);
+    log.error("Browser screenshot error", { error: String(error) });
     return errorResponse("Screenshot failed", 500);
   }
 });

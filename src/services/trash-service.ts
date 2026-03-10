@@ -22,6 +22,9 @@ import type {
 } from "@/types/trash";
 import * as WorktreeTrashService from "./worktree-trash-service";
 import { TrashServiceError } from "@/lib/errors";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Trash");
 
 // Re-export for backwards compatibility
 export { TrashServiceError };
@@ -319,7 +322,7 @@ export async function cleanupExpiredItems(): Promise<CleanupResult> {
       deletedIds.push(item.id);
     } catch (error) {
       // Log error but continue with other items
-      console.error(`Failed to cleanup trash item ${item.id}:`, error);
+      log.error("Failed to cleanup trash item", { trashItemId: item.id, error: String(error) });
     }
   }
 

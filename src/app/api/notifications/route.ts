@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as NotificationService from "@/services/notification-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/notifications");
 
 // POST /api/notifications - create notification
 export const POST = withApiAuth(async (request, { userId }) => {
@@ -27,7 +30,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
     });
     return NextResponse.json(notification ?? { debounced: true });
   } catch (error) {
-    console.error("Error creating notification:", error);
+    log.error("Error creating notification", { error: String(error) });
     return errorResponse("Failed to create notification", 500);
   }
 });
@@ -45,7 +48,7 @@ export const GET = withApiAuth(async (request, { userId }) => {
     ]);
     return NextResponse.json({ notifications, unreadCount });
   } catch (error) {
-    console.error("Error listing notifications:", error);
+    log.error("Error listing notifications", { error: String(error) });
     return errorResponse("Failed to list notifications", 500);
   }
 });
@@ -66,7 +69,7 @@ export const PATCH = withApiAuth(async (request, { userId }) => {
     }
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error marking notifications read:", error);
+    log.error("Error marking notifications read", { error: String(error) });
     return errorResponse("Failed to update notifications", 500);
   }
 });
@@ -87,7 +90,7 @@ export const DELETE = withApiAuth(async (request, { userId }) => {
     }
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error deleting notifications:", error);
+    log.error("Error deleting notifications", { error: String(error) });
     return errorResponse("Failed to delete notifications", 500);
   }
 });

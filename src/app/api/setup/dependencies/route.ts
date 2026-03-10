@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { platform } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/setup");
 
 const execFileAsync = promisify(execFile);
 
@@ -182,7 +185,7 @@ export async function GET() {
 
     return NextResponse.json(results);
   } catch (error) {
-    console.error("Dependency check failed:", error);
+    log.error("Dependency check failed", { error: String(error) });
     return NextResponse.json(
       { error: "Failed to check dependencies" },
       { status: 500 }

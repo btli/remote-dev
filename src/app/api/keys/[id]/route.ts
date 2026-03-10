@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import * as ApiKeyService from "@/services/api-key-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/keys");
 
 /**
  * GET /api/keys/:id - Get a single API key by ID
@@ -26,7 +29,7 @@ export const GET = withAuth(async (_request, { userId, params }) => {
       createdAt: key.createdAt.toISOString(),
     });
   } catch (error) {
-    console.error("Error getting API key:", error);
+    log.error("Error getting API key", { error: String(error) });
     return errorResponse("Failed to get API key", 500);
   }
 });
@@ -48,7 +51,7 @@ export const DELETE = withAuth(async (_request, { userId, params }) => {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error deleting API key:", error);
+    log.error("Error deleting API key", { error: String(error) });
 
     if (error instanceof ApiKeyService.ApiKeyServiceError) {
       if (error.code === "KEY_NOT_FOUND") {

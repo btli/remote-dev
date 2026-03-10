@@ -11,6 +11,9 @@ import type {
   SessionEventHandler,
   TerminalType,
 } from "@/types/terminal-type";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("PluginEventBus");
 
 /**
  * Subscription handle returned when subscribing to events
@@ -129,10 +132,7 @@ class SessionEventBusImpl {
         try {
           await entry.handler(event);
         } catch (error) {
-          console.error(
-            `[EventBus] Handler error for ${event.type}:`,
-            error
-          );
+          log.error("Handler error", { eventType: event.type, error: String(error) });
           // Re-throw to be captured by allSettled
           throw error;
         }
@@ -142,9 +142,11 @@ class SessionEventBusImpl {
     // Log any failures (but don't throw)
     const failures = results.filter((r) => r.status === "rejected");
     if (failures.length > 0) {
-      console.warn(
-        `[EventBus] ${failures.length}/${results.length} handlers failed for ${event.type}`
-      );
+      log.warn("Some event handlers failed", {
+        failed: failures.length,
+        total: results.length,
+        eventType: event.type,
+      });
     }
   }
 

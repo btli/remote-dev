@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/splits");
 
 /**
  * POST /api/splits/:id/sessions - Add a session to the split
@@ -28,7 +31,7 @@ export const POST = withAuth(async (request, { userId, params }) => {
 
     return NextResponse.json(split, { status: 201 });
   } catch (error) {
-    console.error("Error adding to split:", error);
+    log.error("Error adding to split", { error: String(error) });
     if (error instanceof SplitService.SplitServiceError) {
       return errorResponse(error.message, 400, error.code);
     }
@@ -52,7 +55,7 @@ export const DELETE = withAuth(async (request, { userId }) => {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error removing from split:", error);
+    log.error("Error removing from split", { error: String(error) });
     return errorResponse("Failed to remove from split", 500);
   }
 });

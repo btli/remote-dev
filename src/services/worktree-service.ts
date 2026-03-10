@@ -3,10 +3,13 @@
  */
 import { execFile, execFileNoThrow, execFileCheck } from "@/lib/exec";
 import type { WorktreeInfo, BranchInfo } from "@/types/github";
-import { join, basename, dirname } from "node:path";
+import { dirname } from "node:path";
 import { getFs, runtimeJoin, runtimeDirname, runtimeBasename } from "@/lib/dynamic-fs";
 import { WorktreeServiceError } from "@/lib/errors";
 import { sanitizeBranchName } from "@/lib/git-utils";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("WorktreeService");
 
 /**
  * Files that should be copied from main repo to worktree.
@@ -82,9 +85,7 @@ async function fetchRemoteRefs(repoPath: string): Promise<boolean> {
   ]);
 
   if (fetchResult.exitCode !== 0) {
-    console.warn(
-      `Warning: Could not fetch from origin: ${fetchResult.stderr}`
-    );
+    log.warn("Could not fetch from origin", { error: fetchResult.stderr });
     return false;
   }
 
@@ -482,7 +483,7 @@ export async function createBranchWithWorktree(
       } catch (retryError) {
         const retryErr = retryError as Error & { stderr?: string };
         const retryStderr = retryErr.stderr || retryErr.message;
-        console.error(`[worktree] retry failed for branch ${branchName}: ${retryStderr}`);
+        log.error("Retry failed for branch", { branchName, error: retryStderr });
         throw new WorktreeServiceError(
           `Failed to create worktree with existing branch: ${retryStderr}`,
           "CREATE_FAILED",
@@ -719,14 +720,14 @@ export async function copyEnvFilesToWorktree(
 
       // Check if target already exists (don't overwrite)
       if (fs.existsSync(targetPath)) {
-        console.log(`Skipping ${envFile}: already exists in worktree`);
+        log.debug(`Skipping ${envFile}: already exists in worktree`);
         result.skipped.push(envFile);
         continue;
       }
 
       // Copy the file
       fs.copyFileSync(sourcePath, targetPath);
-      console.log(`Copied ${envFile} to worktree`);
+      log.debug(`Copied ${envFile} to worktree`);
       result.copied.push(envFile);
     } catch {
       // File doesn't exist or isn't readable - skip silently

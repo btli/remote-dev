@@ -12,6 +12,9 @@ import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import { TmuxSystemSession, TMUX_SESSION_PREFIX } from "@/domain/entities/TmuxSystemSession";
 import { TmuxSessionList } from "@/domain/value-objects/TmuxSessionList";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("KillOrphanedSessions");
 
 export interface KillOrphanedSessionsInput {
   userId: string;
@@ -68,7 +71,7 @@ export class KillOrphanedSessionsUseCase {
     const killedSessionNames: string[] = [];
     const errors: Array<{ sessionName: string; error: string }> = [];
 
-    console.log(`[TmuxSession] User ${userId} killing ${orphanedNames.length} orphaned sessions`);
+    log.info("Killing orphaned sessions", { userId, count: orphanedNames.length });
 
     for (const sessionName of orphanedNames) {
       try {
@@ -76,12 +79,12 @@ export class KillOrphanedSessionsUseCase {
         killedSessionNames.push(sessionName);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        console.error(`[TmuxSession] Failed to kill orphaned session ${sessionName}:`, errorMessage);
+        log.error("Failed to kill orphaned session", { sessionName, error: errorMessage });
         errors.push({ sessionName, error: errorMessage });
       }
     }
 
-    console.log(`[TmuxSession] Cleanup complete: ${killedSessionNames.length} killed, ${errors.length} errors`);
+    log.info("Orphan cleanup complete", { killed: killedSessionNames.length, errors: errors.length });
 
     return {
       success: errors.length === 0,
