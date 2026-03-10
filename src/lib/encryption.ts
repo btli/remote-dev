@@ -12,7 +12,6 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from "crypt
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96 bits for GCM
 const AUTH_TAG_LENGTH = 16; // 128 bits
-const KEY_LENGTH = 32; // 256 bits
 
 /**
  * Derive a 256-bit encryption key from AUTH_SECRET.

@@ -18,7 +18,7 @@
 
 import { db } from "../src/db";
 import { accounts, githubAccountMetadata } from "../src/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { decryptSafe } from "../src/lib/encryption";
 import { getGhConfigsDir } from "../src/lib/paths";
 import { join } from "path";

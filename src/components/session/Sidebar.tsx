@@ -254,25 +254,28 @@ export function Sidebar({
     isHorizontal: boolean | null;
   }>({ startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null });
 
-  // Reset swipe state and DOM ref when swiped session is removed
-  useEffect(() => {
-    if (swipedSessionId && !sessions.some(s => s.id === swipedSessionId)) {
-      swipeTouchRef.current = { startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null };
+  // Reset swipe state when swiped session is removed or sidebar collapses
+  const [prevCollapsed, setPrevCollapsed] = useState(collapsed);
+  if (swipedSessionId && !sessions.some(s => s.id === swipedSessionId)) {
+    setSwipedSessionId(null);
+  }
+  if (collapsed !== prevCollapsed) {
+    setPrevCollapsed(collapsed);
+    if (collapsed && swipedSessionId) {
       setSwipedSessionId(null);
     }
-  }, [sessions, swipedSessionId]);
-
-  // Reset swipe state when sidebar collapses (e.g., mobile drawer closes)
+  }
+  // DOM cleanup after swipe is cleared (effect may access refs safely)
   useEffect(() => {
-    if (!collapsed || !swipedSessionId) return;
-    const { el } = swipeTouchRef.current;
-    if (el) {
-      el.style.transform = "";
-      el.style.transition = "";
+    if (!swipedSessionId) {
+      const ref = swipeTouchRef.current;
+      if (ref.el) {
+        ref.el.style.transform = "";
+        ref.el.style.transition = "";
+      }
+      swipeTouchRef.current = { startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null };
     }
-    swipeTouchRef.current = { startX: 0, startY: 0, sessionId: null, el: null, isHorizontal: null };
-    setSwipedSessionId(null);
-  }, [collapsed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [swipedSessionId]);
 
   // Touch drag state for touch-capable devices (folder reordering; disabled on mobile phones where context menu is used instead)
   const touchDragRef = useRef<{
