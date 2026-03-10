@@ -1,0 +1,24 @@
+# Remote Dev - Terminal WebSocket Server
+# systemd user unit file
+#
+# Part of remote-dev.service: stopped/restarted when the main service is.
+# It runs the terminal server that handles PTY/tmux connections.
+
+[Unit]
+Description=Remote Dev Terminal Server
+After=network.target
+PartOf=remote-dev.service
+
+[Service]
+Type=simple
+WorkingDirectory=__INSTALL_DIR__
+ExecStart=/usr/bin/node dist-terminal/index.js
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=__DATA_DIR__/.env.local
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target
