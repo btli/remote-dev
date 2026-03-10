@@ -132,7 +132,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 };
                 let payload = json!({
                     "sessionId": sid,
-                    "type": "agent_complete",
+                    "type": "agent_exited",
                     "title": title,
                     "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
                 });
