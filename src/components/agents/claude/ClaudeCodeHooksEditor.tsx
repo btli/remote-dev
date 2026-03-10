@@ -10,7 +10,7 @@ import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import type {
   ClaudeCodeConfig,
   ClaudeCodeHooks,
-  ClaudeCodeHook,
+  ClaudeCodeHookEntry,
 } from "@/types/agent-config";
 
 interface ClaudeCodeHooksEditorProps {
@@ -20,8 +20,8 @@ interface ClaudeCodeHooksEditorProps {
 }
 
 interface HookEditorProps {
-  hooks: ClaudeCodeHook[];
-  onChange: (hooks: ClaudeCodeHook[]) => void;
+  hooks: ClaudeCodeHookEntry[];
+  onChange: (hooks: ClaudeCodeHookEntry[]) => void;
   disabled?: boolean;
 }
 
@@ -34,8 +34,8 @@ function HookEntry({
   onRemove,
   disabled,
 }: {
-  hook: ClaudeCodeHook;
-  onChange: (hook: ClaudeCodeHook) => void;
+  hook: ClaudeCodeHookEntry;
+  onChange: (hook: ClaudeCodeHookEntry) => void;
   onRemove: () => void;
   disabled?: boolean;
 }) {
@@ -56,7 +56,7 @@ function HookEntry({
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           )}
           <span className="text-sm font-mono">
-            {hook.matcher || hook.command || "New Hook"}
+            {hook.matcher || hook.hooks[0]?.command || "New Hook"}
           </span>
         </div>
         <Button
@@ -92,8 +92,19 @@ function HookEntry({
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Command</Label>
             <Input
-              value={hook.command || ""}
-              onChange={(e) => onChange({ ...hook, command: e.target.value })}
+              value={hook.hooks[0]?.command || ""}
+              onChange={(e) =>
+                onChange({
+                  ...hook,
+                  hooks: [
+                    {
+                      type: "command" as const,
+                      command: e.target.value,
+                      timeout: hook.hooks[0]?.timeout,
+                    },
+                  ],
+                })
+              }
               placeholder="Command to execute (e.g., echo 'Hook triggered')"
               disabled={disabled}
               className="font-mono text-sm"
@@ -103,8 +114,19 @@ function HookEntry({
           <SliderWithInput
             label="Timeout"
             description="Maximum execution time in milliseconds"
-            value={hook.timeout ?? 5000}
-            onChange={(timeout) => onChange({ ...hook, timeout })}
+            value={hook.hooks[0]?.timeout ?? 5000}
+            onChange={(timeout) =>
+              onChange({
+                ...hook,
+                hooks: [
+                  {
+                    ...hook.hooks[0],
+                    type: "command" as const,
+                    timeout,
+                  },
+                ],
+              })
+            }
             min={100}
             max={60000}
             step={100}
@@ -122,10 +144,13 @@ function HookEntry({
  */
 function HookListEditor({ hooks, onChange, disabled }: HookEditorProps) {
   const addHook = () => {
-    onChange([...hooks, { matcher: "", command: "", timeout: 5000 }]);
+    onChange([
+      ...hooks,
+      { hooks: [{ type: "command", command: "", timeout: 5000 }] },
+    ]);
   };
 
-  const updateHook = (index: number, hook: ClaudeCodeHook) => {
+  const updateHook = (index: number, hook: ClaudeCodeHookEntry) => {
     const updated = [...hooks];
     updated[index] = hook;
     onChange(updated);
@@ -237,6 +262,73 @@ export function ClaudeCodeHooksEditor({
         <HookListEditor
           hooks={hooks.PostToolUse || []}
           onChange={(PostToolUse) => updateHooks({ PostToolUse })}
+          disabled={disabled || hooks.disableAllHooks}
+        />
+      </div>
+
+      {/* Pre-Compact Hooks */}
+      <div
+        className={cn(
+          "space-y-3 rounded-lg border border-border p-4",
+          hooks.disableAllHooks && "opacity-50"
+        )}
+      >
+        <div>
+          <h4 className="text-sm font-medium text-foreground">
+            Pre-Compact Hooks
+          </h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Commands to run before context compaction
+          </p>
+        </div>
+
+        <HookListEditor
+          hooks={hooks.PreCompact || []}
+          onChange={(PreCompact) => updateHooks({ PreCompact })}
+          disabled={disabled || hooks.disableAllHooks}
+        />
+      </div>
+
+      {/* Notification Hooks */}
+      <div
+        className={cn(
+          "space-y-3 rounded-lg border border-border p-4",
+          hooks.disableAllHooks && "opacity-50"
+        )}
+      >
+        <div>
+          <h4 className="text-sm font-medium text-foreground">
+            Notification Hooks
+          </h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Commands to run when a notification is triggered
+          </p>
+        </div>
+
+        <HookListEditor
+          hooks={hooks.Notification || []}
+          onChange={(Notification) => updateHooks({ Notification })}
+          disabled={disabled || hooks.disableAllHooks}
+        />
+      </div>
+
+      {/* Stop Hooks */}
+      <div
+        className={cn(
+          "space-y-3 rounded-lg border border-border p-4",
+          hooks.disableAllHooks && "opacity-50"
+        )}
+      >
+        <div>
+          <h4 className="text-sm font-medium text-foreground">Stop Hooks</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Commands to run when the agent stops
+          </p>
+        </div>
+
+        <HookListEditor
+          hooks={hooks.Stop || []}
+          onChange={(Stop) => updateHooks({ Stop })}
           disabled={disabled || hooks.disableAllHooks}
         />
       </div>

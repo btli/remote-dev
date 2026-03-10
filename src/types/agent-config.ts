@@ -39,15 +39,25 @@ export interface ClaudeCodeSandbox {
   network?: ClaudeCodeSandboxNetwork;
 }
 
-export interface ClaudeCodeHook {
-  matcher?: string;
-  command?: string;
+export interface ClaudeCodeHookCommand {
+  type: "command";
+  command: string;
   timeout?: number;
 }
 
+export interface ClaudeCodeHookEntry {
+  matcher?: string;
+  hooks: ClaudeCodeHookCommand[];
+}
+
 export interface ClaudeCodeHooks {
-  PreToolUse?: ClaudeCodeHook[];
-  PostToolUse?: ClaudeCodeHook[];
+  PreToolUse?: ClaudeCodeHookEntry[];
+  PostToolUse?: ClaudeCodeHookEntry[];
+  PreCompact?: ClaudeCodeHookEntry[];
+  Notification?: ClaudeCodeHookEntry[];
+  Stop?: ClaudeCodeHookEntry[];
+  SessionStart?: ClaudeCodeHookEntry[];
+  SessionEnd?: ClaudeCodeHookEntry[];
   disableAllHooks?: boolean;
 }
 
