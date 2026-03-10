@@ -2,7 +2,7 @@
  * SessionService - Manages terminal session lifecycle and persistence
  */
 import { db } from "@/db";
-import { terminalSessions, githubRepositories } from "@/db/schema";
+import { terminalSessions, githubRepositories, apiKeys } from "@/db/schema";
 import { eq, and, asc, desc, inArray } from "drizzle-orm";
 import type {
   TerminalSession,
@@ -230,7 +230,10 @@ export async function createSession(
   let agentApiKey: string | undefined;
   if (isAgentSession) {
     try {
-      const keyResult = await createApiKey(userId, `agent-session-${sessionId}`);
+      const keyName = `agent-session-${sessionId}`;
+      // Delete any stale keys for this session before creating a new one
+      await db.delete(apiKeys).where(and(eq(apiKeys.userId, userId), eq(apiKeys.name, keyName)));
+      const keyResult = await createApiKey(userId, keyName);
       agentApiKey = keyResult.key;
     } catch (error) {
       console.error(`[session:${sessionId}] Failed to create API key for agent session:`, error);
@@ -800,7 +803,10 @@ export async function resumeSession(
       // Create a fresh API key for the resumed agent session
       let agentApiKey: string | undefined;
       try {
-        const keyResult = await createApiKey(userId, `agent-session-${sessionId}`);
+        const keyName = `agent-session-${sessionId}`;
+        // Delete stale keys before creating a fresh one
+        await db.delete(apiKeys).where(and(eq(apiKeys.userId, userId), eq(apiKeys.name, keyName)));
+        const keyResult = await createApiKey(userId, keyName);
         agentApiKey = keyResult.key;
       } catch (error) {
         console.error(`[session:${sessionId}] Failed to create API key on resume:`, error);
@@ -894,6 +900,15 @@ export async function closeSession(
         eq(terminalSessions.userId, userId)
       )
     );
+
+  // Revoke agent-session API key so it can't be used after close
+  try {
+    await db.delete(apiKeys).where(
+      and(eq(apiKeys.userId, userId), eq(apiKeys.name, `agent-session-${sessionId}`))
+    );
+  } catch (error) {
+    console.error(`[Session:${sessionId}] Failed to revoke API key:`, error);
+  }
 
   // Auto-archive completed agent tasks for this session
   try {

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Local CLI Credentials**: Auto-provisioned API key at `~/.remote-dev/rdv/.local-key` so `rdv` CLI authenticates without manual `RDV_API_KEY` setup. Key is created at server startup with 0600 permissions.
+- **rdv Dual-Server Routing**: CLI now routes `/api/*` to Next.js and `/internal/*` to the terminal server, with Unix socket and TCP support for both.
+- **rdv Browser Commands**: `rdv browser navigate|screenshot|snapshot|click|type|evaluate|back|forward` for headless browser automation.
+- **rdv Notification Commands**: `rdv notification list|read|delete` for notification management.
+- **rdv Session Commands**: `rdv session children|spawn|git-status` for child session management and git status.
+
+### Fixed
+
+- **Port fallback**: Agent sessions now correctly fall back to terminal port 6002 (was 3001).
+- **API key cleanup**: Agent-session API keys are revoked on session close and deduplicated on create/resume, preventing unbounded accumulation.
+- **Static imports**: Replaced unnecessary dynamic imports in session-service with static imports.
+
 - **Toast Notifications**: Real-time toast notifications for agent events (waiting, error, complete, exited) via sonner, positioned bottom-center with glassmorphism styling. Toasts are clickable to jump directly to the related session.
 - **Clear Notifications**: Per-item dismiss (X button on hover) and "Clear all" button in notification panel header. Hard deletes notifications from the database.
 - **Notification Panel Glassmorphism**: Upgraded notification panel to frosted glass style (`bg-popover/95 backdrop-blur-xl`) matching the rest of the app's modal/panel aesthetic.

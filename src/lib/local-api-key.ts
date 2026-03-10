@@ -51,12 +51,18 @@ export async function ensureLocalApiKey(): Promise<void> {
   const authorized = await db.query.authorizedUsers.findFirst({
     orderBy: (au, { asc }) => [asc(au.createdAt)],
   });
-  if (!authorized) return; // No authorized users seeded yet
+  if (!authorized) {
+    console.log("Local API key: skipped (no authorized users seeded yet — run db:seed first)");
+    return;
+  }
 
   const user = await db.query.users.findFirst({
     where: eq(users.email, authorized.email),
   });
-  if (!user) return; // User hasn't logged in yet
+  if (!user) {
+    console.log(`Local API key: skipped (${authorized.email} hasn't logged in yet)`);
+    return;
+  }
 
   // Delete any stale local-access keys before creating a new one
   await db
