@@ -720,10 +720,10 @@ export function TaskSidebar({
   const { tasks, loading, createTask, updateTask, deleteTask, clearTasks, activeFolderId } =
     useTaskContext();
   const { schedules, toggleEnabled, deleteSchedule, executeNow } = useScheduleContext();
-  const { sessions } = useSessionContext();
-  const activeSessions = useMemo(
-    () => sessions.filter((s) => s.status !== "closed"),
-    [sessions]
+  const { sessions, activeSessionId } = useSessionContext();
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId]
   );
 
   // Sidebar state — lazy-initialize from localStorage (SSR-safe: functions only run on client)
@@ -1071,7 +1071,7 @@ export function TaskSidebar({
           {/* Separator */}
           <div className="border-t border-border my-1" />
 
-          {/* Schedules Section — always visible (not folder-scoped) */}
+          {/* Schedules Section — session-scoped */}
           <div>
             <SectionHeader
               icon={Clock}
@@ -1080,22 +1080,28 @@ export function TaskSidebar({
               expanded={schedulesExpanded}
               onToggle={() => setSchedulesExpanded(!schedulesExpanded)}
               action={
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => setCreateScheduleOpen(true)}
-                      className="text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <Plus className="w-3 h-3" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="left">New schedule</TooltipContent>
-                </Tooltip>
+                activeSession ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setCreateScheduleOpen(true)}
+                        className="text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">New schedule</TooltipContent>
+                  </Tooltip>
+                ) : undefined
               }
             />
             {schedulesExpanded && (
               <div className="space-y-0.5 px-1">
-                {schedules.length === 0 ? (
+                {!activeSession ? (
+                  <p className="text-[11px] text-muted-foreground px-3 py-2">
+                    Select a session to view schedules
+                  </p>
+                ) : schedules.length === 0 ? (
                   <p className="text-[11px] text-muted-foreground px-3 py-2">
                     No schedules. Click + to create one.
                   </p>
@@ -1150,11 +1156,10 @@ export function TaskSidebar({
           setCreateScheduleOpen(false);
           setCreateScheduleSessionId(null);
         }}
-        sessions={activeSessions}
         session={
           createScheduleSessionId
-            ? activeSessions.find((s) => s.id === createScheduleSessionId) ?? null
-            : undefined
+            ? sessions.find((s) => s.id === createScheduleSessionId && s.status !== "closed") ?? null
+            : activeSession
         }
       />
 
