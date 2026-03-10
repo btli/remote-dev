@@ -850,7 +850,7 @@ export function TaskSidebar({
     setCollapsed(next);
   }, [collapsed]);
 
-  // Unified task list — all tasks, no split by source
+  // Session-scoped task counts (tasks is filtered to activeSessionId by TaskContext)
   const { active: openTaskCount, completed: completedCount } = useMemo(
     () => countByCompletion(tasks),
     [tasks]
