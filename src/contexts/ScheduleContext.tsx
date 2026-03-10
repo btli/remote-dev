@@ -6,6 +6,7 @@ import {
   useReducer,
   useCallback,
   useEffect,
+  useMemo,
   type ReactNode,
 } from "react";
 import type {
@@ -18,6 +19,7 @@ import type {
   ScheduleState,
   ScheduleAction,
 } from "@/types/schedule";
+import { useSessionContext } from "@/contexts/SessionContext";
 
 // =============================================================================
 // Context State
@@ -104,8 +106,9 @@ interface ScheduleProviderProps {
 
 export function ScheduleProvider({ children }: ScheduleProviderProps) {
   const [state, dispatch] = useReducer(scheduleReducer, initialState);
+  const { activeSessionId } = useSessionContext();
 
-  // Fetch all schedules on mount
+  // Fetch all user schedules
   const refreshSchedules = useCallback(async () => {
     dispatch({ type: "LOAD_START" });
     try {
@@ -280,7 +283,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
     []
   );
 
-  // Get schedules for a specific session
+  // Get schedules for a specific session (uses full list for badges/guards)
   const getSchedulesForSession = useCallback(
     (sessionId: string): SessionScheduleWithSession[] => {
       return state.schedules.filter((s) => s.sessionId === sessionId);
@@ -288,18 +291,44 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
     [state.schedules]
   );
 
-  const value: ScheduleContextValue = {
-    ...state,
-    refreshSchedules,
-    createSchedule,
-    updateSchedule,
-    deleteSchedule,
-    toggleEnabled,
-    executeNow,
-    getExecutionHistory,
-    getScheduleWithCommands,
-    getSchedulesForSession,
-  };
+  // Expose only active session's schedules for the right sidebar display
+  const activeSessionSchedules = useMemo(
+    () =>
+      activeSessionId
+        ? state.schedules.filter((s) => s.sessionId === activeSessionId)
+        : [],
+    [state.schedules, activeSessionId]
+  );
+
+  const value = useMemo<ScheduleContextValue>(
+    () => ({
+      ...state,
+      // Override schedules with session-scoped list for consumers (TaskSidebar)
+      schedules: activeSessionSchedules,
+      refreshSchedules,
+      createSchedule,
+      updateSchedule,
+      deleteSchedule,
+      toggleEnabled,
+      executeNow,
+      getExecutionHistory,
+      getScheduleWithCommands,
+      getSchedulesForSession,
+    }),
+    [
+      state,
+      activeSessionSchedules,
+      refreshSchedules,
+      createSchedule,
+      updateSchedule,
+      deleteSchedule,
+      toggleEnabled,
+      executeNow,
+      getExecutionHistory,
+      getScheduleWithCommands,
+      getSchedulesForSession,
+    ]
+  );
 
   return (
     <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>
