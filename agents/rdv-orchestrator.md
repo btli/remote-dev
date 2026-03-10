@@ -24,8 +24,8 @@ Determine if the task benefits from parallelization. Good candidates:
 ### 2. Start agents
 ```bash
 # Start agents in relevant folders
-rdv agent start <folder-id-1>
-rdv agent start <folder-id-2> --worktree feature/subtask
+rdv session spawn <parent-session-id> --folder-id <folder-id-1>
+rdv session spawn <parent-session-id> --folder-id <folder-id-2> --project-path /worktree/path
 ```
 
 ### 3. Monitor progress
@@ -33,6 +33,10 @@ rdv agent start <folder-id-2> --worktree feature/subtask
 # Check agent status
 rdv agent list
 rdv status --human
+
+# Monitor notifications
+rdv notification list --unread
+rdv notification read --all
 ```
 
 ### 4. Coordinate
@@ -43,6 +47,14 @@ rdv session exec <session-id> "rdv task list"
 
 ### 5. Collect results
 Wait for agents to complete their tasks, then consolidate results.
+
+### Browser Automation
+For tasks requiring web interaction:
+```bash
+rdv browser navigate <session-id> <url>
+rdv browser screenshot <session-id> --output ./result.jpg
+rdv browser evaluate <session-id> "document.querySelector('.result').textContent"
+```
 
 ## Guidelines
 - Only parallelize truly independent work

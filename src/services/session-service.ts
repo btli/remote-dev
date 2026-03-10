@@ -2,7 +2,7 @@
  * SessionService - Manages terminal session lifecycle and persistence
  */
 import { db } from "@/db";
-import { terminalSessions, githubRepositories } from "@/db/schema";
+import { terminalSessions, githubRepositories, apiKeys } from "@/db/schema";
 import { eq, and, asc, desc, inArray } from "drizzle-orm";
 import type {
   TerminalSession,
@@ -26,6 +26,7 @@ import { initializeBuiltInPlugins } from "@/lib/terminal-plugins/init";
 import { githubAccountRepository } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 import { archiveSessionTodos } from "./agent-todo-sync";
+import { createApiKey } from "@/services/api-key-service";
 
 // Initialize plugins on module load
 initializeBuiltInPlugins();
@@ -225,12 +226,31 @@ export async function createSession(
   // Socket mode (prod): uses TERMINAL_SOCKET; Port mode (dev): uses TERMINAL_PORT
   const terminalSocket = process.env.TERMINAL_SOCKET;
   console.log(`[session:${sessionId}] isAgentSession=${!!isAgentSession} provider=${effectiveAgentProvider} terminalType=${input.terminalType} TERMINAL_PORT=${process.env.TERMINAL_PORT}`);
+  // Auto-create API key for agent sessions so they can make authenticated API calls
+  let agentApiKey: string | undefined;
+  if (isAgentSession) {
+    try {
+      const keyName = `agent-session-${sessionId}`;
+      // Delete any stale keys for this session before creating a new one
+      await db.delete(apiKeys).where(and(eq(apiKeys.userId, userId), eq(apiKeys.name, keyName)));
+      const keyResult = await createApiKey(userId, keyName);
+      agentApiKey = keyResult.key;
+    } catch (error) {
+      console.error(`[session:${sessionId}] Failed to create API key for agent session:`, error);
+      // Non-fatal: agent can still work without API key
+    }
+  }
+
   const rdvEnv: Record<string, string> = isAgentSession
     ? {
         RDV_SESSION_ID: sessionId,
         ...(terminalSocket
           ? { RDV_TERMINAL_SOCKET: terminalSocket }
-          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "3001" }),
+          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "6002" }),
+        ...(process.env.SOCKET_PATH
+          ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
+          : { RDV_API_PORT: process.env.PORT ?? "6001" }),
+        ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
       }
     : {};
 
@@ -780,12 +800,28 @@ export async function resumeSession(
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
     // sessions, or stale if the folder's account binding or OAuth token changed)
     try {
+      // Create a fresh API key for the resumed agent session
+      let agentApiKey: string | undefined;
+      try {
+        const keyName = `agent-session-${sessionId}`;
+        // Delete stale keys before creating a fresh one
+        await db.delete(apiKeys).where(and(eq(apiKeys.userId, userId), eq(apiKeys.name, keyName)));
+        const keyResult = await createApiKey(userId, keyName);
+        agentApiKey = keyResult.key;
+      } catch (error) {
+        console.error(`[session:${sessionId}] Failed to create API key on resume:`, error);
+      }
+
       const terminalSocket = process.env.TERMINAL_SOCKET;
       const rdvEnv: Record<string, string> = {
         RDV_SESSION_ID: sessionId,
         ...(terminalSocket
           ? { RDV_TERMINAL_SOCKET: terminalSocket }
-          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "3001" }),
+          : { RDV_TERMINAL_PORT: process.env.TERMINAL_PORT ?? "6002" }),
+        ...(process.env.SOCKET_PATH
+          ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
+          : { RDV_API_PORT: process.env.PORT ?? "6001" }),
+        ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
       };
 
       let ghAccountEnv: Record<string, string> = {};
@@ -864,6 +900,15 @@ export async function closeSession(
         eq(terminalSessions.userId, userId)
       )
     );
+
+  // Revoke agent-session API key so it can't be used after close
+  try {
+    await db.delete(apiKeys).where(
+      and(eq(apiKeys.userId, userId), eq(apiKeys.name, `agent-session-${sessionId}`))
+    );
+  } catch (error) {
+    console.error(`[Session:${sessionId}] Failed to revoke API key:`, error);
+  }
 
   // Auto-archive completed agent tasks for this session
   try {

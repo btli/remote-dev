@@ -70,6 +70,18 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
                 .filter(|s| s.terminal_type.as_deref() == Some("agent"))
                 .count();
 
+            // Fetch tasks once (only when running inside a session)
+            let task_counts = if let Some(sid) = session_id() {
+                let tasks: Vec<TaskSummary> = client
+                    .get_with_query("/api/tasks", &[("sessionId", &sid)])
+                    .await
+                    .unwrap_or_default();
+                let done = tasks.iter().filter(|t| t.status.as_deref() == Some("done")).count();
+                Some((tasks.len(), tasks.len() - done, done))
+            } else {
+                None
+            };
+
             if human {
                 println!(
                     "{}: {} total, {} active, {} agents",
@@ -78,19 +90,11 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
                     active,
                     agents,
                 );
-
-                // Tasks (only if we have a session)
-                if let Some(sid) = session_id() {
-                    let tasks: Vec<TaskSummary> = client
-                        .get_with_query("/internal/tasks", &[("sessionId", &sid)])
-                        .await
-                        .unwrap_or_default();
-                    let done = tasks.iter().filter(|t| t.status.as_deref() == Some("done")).count();
-                    let pending = tasks.len() - done;
+                if let Some((total, pending, done)) = task_counts {
                     println!(
                         "{}: {} total, {} pending, {} done",
                         "Tasks".bold(),
-                        tasks.len(),
+                        total,
                         pending,
                         done,
                     );
@@ -103,20 +107,13 @@ pub async fn run(args: StatusArgs, client: &Client, human: bool) -> Result<(), B
                         "agents": agents,
                     },
                 });
-
-                if let Some(sid) = session_id() {
-                    let tasks: Vec<TaskSummary> = client
-                        .get_with_query("/internal/tasks", &[("sessionId", &sid)])
-                        .await
-                        .unwrap_or_default();
-                    let done = tasks.iter().filter(|t| t.status.as_deref() == Some("done")).count();
+                if let Some((total, pending, done)) = task_counts {
                     dashboard["tasks"] = json!({
-                        "total": tasks.len(),
-                        "pending": tasks.len() - done,
+                        "total": total,
+                        "pending": pending,
                         "done": done,
                     });
                 }
-
                 println!("{}", serde_json::to_string_pretty(&dashboard)?);
             }
         }

@@ -84,6 +84,74 @@ rdv task complete <id>
 rdv task check
 ```
 
+## Notification Management
+
+```bash
+# List unread notifications
+rdv notification list --unread
+
+# List recent notifications (limit to 10)
+rdv notification list --limit 10
+
+# Mark specific notifications as read
+rdv notification read <id1> <id2>
+
+# Mark all notifications as read
+rdv notification read --all
+
+# Delete specific notifications
+rdv notification delete <id1> <id2>
+
+# Delete all notifications
+rdv notification delete --all
+```
+
+## Browser Automation
+
+Control headless browser sessions:
+
+```bash
+# Navigate to a URL
+rdv browser navigate <session-id> https://example.com
+
+# Take a screenshot
+rdv browser screenshot <session-id> --output ./screenshot.jpg
+
+# Get accessibility snapshot
+rdv browser snapshot <session-id>
+
+# Click at coordinates
+rdv browser click <session-id> 100 200
+
+# Type text (optionally with CSS selector)
+rdv browser type <session-id> "hello world" --selector "#input-field"
+
+# Evaluate JavaScript
+rdv browser evaluate <session-id> "document.title"
+
+# Navigate back/forward
+rdv browser back <session-id>
+rdv browser forward <session-id>
+```
+
+## Session Children & Spawning
+
+Manage child sessions for parallel work:
+
+```bash
+# List child sessions
+rdv session children <parent-session-id>
+
+# Spawn a child agent session
+rdv session spawn <parent-session-id> --agent-provider claude --name "subtask-1"
+
+# Spawn with specific folder and project path
+rdv session spawn <parent-id> --folder-id <fid> --project-path /path/to/project
+
+# Get git status for a session
+rdv session git-status <session-id>
+```
+
 ## System Status
 
 ```bash
@@ -125,4 +193,12 @@ rdv agent start <folder-id> --worktree feature/subtask
 ```bash
 rdv worktree create --repo . --branch feature/experiment
 rdv session create --name "experiment" --working-dir /path/to/worktree
+```
+
+### 4. Orchestrate parallel agents with children
+```bash
+rdv session spawn <my-session-id> --agent-provider claude --name "backend-work"
+rdv session spawn <my-session-id> --agent-provider claude --name "frontend-work"
+rdv session children <my-session-id>   # Monitor child sessions
+rdv notification list --unread         # Check for notifications
 ```
