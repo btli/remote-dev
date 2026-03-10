@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Consolidated all lifecycle hook commands under `rdv hook` namespace (`pre-tool-use`, `post-tool-use`, `pre-compact`, `notification`, `validate`)
+- Updated `ClaudeCodeHooks` type to include all hook event types (PreCompact, Notification, Stop, SessionStart, SessionEnd)
+- Hook editor UI now supports all Claude Code hook types
+
 ### Added
+
+- `rdv hook validate` command for checking hook server connectivity
+- Automatic hook validation on agent session creation with auto-repair
+- Hook deduplication now detects both wrapped and direct `rdv hook` commands
+
+### Fixed
+- Hooks no longer reference nonexistent rdv subcommands (consolidated under `rdv hook` namespace)
 
 - **Background Service Installation**: Production service management via systemd (Linux) and launchd (macOS)
   - `scripts/install-service.sh` installs and enables user-level service units
