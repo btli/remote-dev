@@ -152,6 +152,23 @@ rdv session spawn <parent-id> --folder-id <fid> --project-path /path/to/project
 rdv session git-status <session-id>
 ```
 
+## Lifecycle Hooks
+
+Commands designed for Claude Code hook integration:
+
+```bash
+# Stop hook: report idle, check tasks, notify (used by Stop hook)
+rdv hook stop --agent claude --reason "task complete"
+
+# Notify about a lifecycle event
+rdv hook notify task_complete
+rdv hook notify error --body "Build failed"
+
+# Session end: report ended status, optionally skip learning (used by SessionEnd hook)
+rdv hook session-end
+rdv hook session-end --skip-learn
+```
+
 ## System Status
 
 ```bash
