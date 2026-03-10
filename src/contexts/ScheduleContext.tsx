@@ -6,7 +6,6 @@ import {
   useReducer,
   useCallback,
   useEffect,
-  useRef,
   useMemo,
   type ReactNode,
 } from "react";
@@ -108,44 +107,28 @@ interface ScheduleProviderProps {
 export function ScheduleProvider({ children }: ScheduleProviderProps) {
   const [state, dispatch] = useReducer(scheduleReducer, initialState);
   const { activeSessionId } = useSessionContext();
-  const abortRef = useRef<AbortController | null>(null);
 
-  // Fetch schedules scoped to the active session
+  // Fetch all user schedules
   const refreshSchedules = useCallback(async () => {
-    if (!activeSessionId) {
-      dispatch({ type: "LOAD_SUCCESS", schedules: [] });
-      return;
-    }
-
-    // Cancel any in-flight request
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
     dispatch({ type: "LOAD_START" });
     try {
-      const response = await fetch(
-        `/api/schedules?sessionId=${encodeURIComponent(activeSessionId)}`,
-        { signal: controller.signal }
-      );
+      const response = await fetch("/api/schedules");
       if (!response.ok) {
         throw new Error("Failed to load schedules");
       }
       const data = await response.json();
       dispatch({ type: "LOAD_SUCCESS", schedules: data.schedules || [] });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
       dispatch({
         type: "LOAD_ERROR",
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }, [activeSessionId]);
+  }, []);
 
-  // Re-fetch when active session changes; abort on unmount
+  // Load schedules on mount
   useEffect(() => {
     refreshSchedules();
-    return () => abortRef.current?.abort();
   }, [refreshSchedules]);
 
   // Create a new schedule
@@ -300,7 +283,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
     []
   );
 
-  // Get schedules for a specific session
+  // Get schedules for a specific session (uses full list for badges/guards)
   const getSchedulesForSession = useCallback(
     (sessionId: string): SessionScheduleWithSession[] => {
       return state.schedules.filter((s) => s.sessionId === sessionId);
@@ -308,9 +291,20 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
     [state.schedules]
   );
 
+  // Expose only active session's schedules for the right sidebar display
+  const activeSessionSchedules = useMemo(
+    () =>
+      activeSessionId
+        ? state.schedules.filter((s) => s.sessionId === activeSessionId)
+        : [],
+    [state.schedules, activeSessionId]
+  );
+
   const value = useMemo<ScheduleContextValue>(
     () => ({
       ...state,
+      // Override schedules with session-scoped list for consumers (TaskSidebar)
+      schedules: activeSessionSchedules,
       refreshSchedules,
       createSchedule,
       updateSchedule,
@@ -323,6 +317,7 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
     }),
     [
       state,
+      activeSessionSchedules,
       refreshSchedules,
       createSchedule,
       updateSchedule,
