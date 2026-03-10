@@ -14,6 +14,7 @@ pub struct Client {
     terminal_client: reqwest::Client,
     terminal_base_url: String,
     api_key: Option<String>,
+    session_id: Option<String>,
 }
 
 fn build_client(method: &ConnectionMethod) -> reqwest::Client {
@@ -34,7 +35,13 @@ impl Client {
             terminal_client: build_client(&cfg.terminal),
             terminal_base_url: cfg.terminal_base_url(),
             api_key: cfg.api_key.clone(),
+            session_id: cfg.session_id.clone(),
         }
+    }
+
+    /// Returns the current session ID from `RDV_SESSION_ID`, if set.
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
     }
 
     /// Build a request builder routed to the correct server with auth applied.
@@ -78,15 +85,6 @@ impl Client {
         } else {
             Err(format_http_error(resp).await.into())
         }
-    }
-
-    pub async fn post<T, B>(&self, path: &str, body: &B) -> Result<T, Box<dyn std::error::Error>>
-    where
-        T: DeserializeOwned,
-        B: Serialize + ?Sized,
-    {
-        let resp = self.request(reqwest::Method::POST, path).json(body).send().await?;
-        handle_response(resp).await
     }
 
     pub async fn post_empty(&self, path: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {

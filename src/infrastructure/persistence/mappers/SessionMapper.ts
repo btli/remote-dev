@@ -114,8 +114,6 @@ export class SessionMapper {
       splitGroupId: record.splitGroupId,
       splitOrder: record.splitOrder ?? 0,
       splitSize: record.splitSize ?? 100,
-      parentSessionId: record.parentSessionId ?? null,
-      orchestratorRole: (record.orchestratorRole as "parent" | "child") ?? null,
       pinned: !!record.pinned,
       tabOrder: record.tabOrder,
       lastActivityAt: toDate(record.lastActivityAt),
@@ -160,8 +158,8 @@ export class SessionMapper {
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
-      parentSessionId: session.parentSessionId,
-      orchestratorRole: session.orchestratorRole,
+      parentSessionId: null,
+      orchestratorRole: null,
       // Cast is safe because SessionStatus.toString() only returns valid status values
       status: session.status.toString() as SessionDbInsert["status"],
       pinned: session.pinned,
@@ -198,8 +196,6 @@ export class SessionMapper {
     splitGroupId: string | null;
     splitOrder: number;
     splitSize: number;
-    parentSessionId: string | null;
-    orchestratorRole: "parent" | "child" | null;
     status: string;
     pinned: boolean;
     tabOrder: number;
@@ -229,8 +225,6 @@ export class SessionMapper {
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
-      parentSessionId: session.parentSessionId,
-      orchestratorRole: session.orchestratorRole,
       status: session.status.toString(),
       pinned: session.pinned,
       tabOrder: session.tabOrder,

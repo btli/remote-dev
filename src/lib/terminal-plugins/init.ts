@@ -9,7 +9,6 @@ import { TerminalTypeRegistry } from "./registry";
 import { ShellPlugin } from "./plugins/shell-plugin";
 import { AgentPlugin } from "./plugins/agent-plugin";
 import { FileViewerPlugin } from "./plugins/file-viewer-plugin";
-import { OrchestratorPlugin } from "./plugins/orchestrator-plugin";
 import { BrowserPlugin } from "./plugins/browser-plugin";
 
 let initialized = false;
@@ -33,7 +32,6 @@ export function initializeBuiltInPlugins(): void {
   TerminalTypeRegistry.register(ShellPlugin, { builtIn: true });
   TerminalTypeRegistry.register(AgentPlugin, { builtIn: true });
   TerminalTypeRegistry.register(FileViewerPlugin, { builtIn: true });
-  TerminalTypeRegistry.register(OrchestratorPlugin, { builtIn: true });
   TerminalTypeRegistry.register(BrowserPlugin, { builtIn: true });
 
   // Set default type to shell

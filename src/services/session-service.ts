@@ -408,11 +408,8 @@ export async function createSession(
         terminalType,
         typeMetadata,
         agentProvider: input.agentProvider ?? "claude",
-        // Orchestration
-        parentSessionId: input.parentSessionId ?? null,
-        orchestratorRole: input.parentSessionId ? "child" : (terminalType === "orchestrator" ? "parent" : null),
         // Set agent state for agent terminal type
-        agentExitState: terminalType === "agent" || terminalType === "orchestrator" ? "running" : null,
+        agentExitState: terminalType === "agent" ? "running" : null,
         agentExitCode: null,
         agentExitedAt: null,
         agentRestartCount: 0,
@@ -969,8 +966,6 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
     splitGroupId: dbSession.splitGroupId,
     splitOrder: dbSession.splitOrder,
     splitSize: dbSession.splitSize ?? 0.5,
-    parentSessionId: dbSession.parentSessionId ?? null,
-    orchestratorRole: dbSession.orchestratorRole as "parent" | "child" | null,
     status: dbSession.status as SessionStatus,
     pinned: dbSession.pinned ?? false,
     tabOrder: dbSession.tabOrder,

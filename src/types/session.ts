@@ -54,9 +54,6 @@ export interface TerminalSession {
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
-  // Orchestration: parent-child session relationships
-  parentSessionId: string | null;
-  orchestratorRole: "parent" | "child" | null;
   status: SessionStatus;
   pinned: boolean;
   tabOrder: number;
@@ -81,8 +78,6 @@ export interface CreateSessionInput {
   agentFlags?: string[];              // Additional flags for the agent CLI
   // For file terminal type
   filePath?: string;                  // Path to file being edited
-  // Orchestration
-  parentSessionId?: string;           // Parent session for orchestrated children
   // Feature session fields
   startupCommand?: string;      // Override resolved preferences
   featureDescription?: string;  // Original feature description

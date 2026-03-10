@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, Network } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint } from "lucide-react";
 import { PathInput } from "@/components/common";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { useProfileContext } from "@/contexts/ProfileContext";
@@ -45,7 +45,7 @@ interface NewSessionWizardProps {
     baseBranch?: string;
     profileId?: string;
     // Terminal type for plugin-based rendering
-    terminalType?: "shell" | "agent" | "file" | "orchestrator";
+    terminalType?: "shell" | "agent" | "file";
     // Agent-aware session fields
     agentProvider?: "claude" | "codex" | "gemini" | "opencode" | "none";
     autoLaunchAgent?: boolean;
@@ -65,7 +65,7 @@ type WizardStep =
   | "feature-confirm"
   | "template-list"
   | "save-template";
-type SessionType = "simple" | "github" | "folder" | "feature" | "orchestrator" | "template";
+type SessionType = "simple" | "github" | "folder" | "feature" | "template";
 
 export function NewSessionWizard({
   open,
@@ -188,7 +188,7 @@ export function NewSessionWizard({
     setSessionType(type);
     if (type === "simple" || type === "folder") {
       setStep("simple-form");
-    } else if (type === "feature" || type === "orchestrator") {
+    } else if (type === "feature") {
       setStep("feature-form");
     } else if (type === "template") {
       setStep("template-list");
@@ -343,10 +343,9 @@ export function NewSessionWizard({
       // For custom commands, still pass as startupCommand (shell type)
       // For known agents, use the terminal type system
       const isKnownAgent = selectedAgent !== "custom";
-      const isOrchestrator = sessionType === "orchestrator";
 
       await onCreate({
-        name: sessionName || featureDescription || (isOrchestrator ? "Orchestrator" : "Feature Session"),
+        name: sessionName || featureDescription || "Feature Session",
         projectPath: featureProjectPath || undefined,
         featureDescription,
         createWorktree: featureCreateWorktree,
@@ -354,8 +353,7 @@ export function NewSessionWizard({
         worktreeBranch: featureCreateWorktree ? generatedBranchName : undefined,
         worktreeType: featureCreateWorktree ? worktreeType : undefined,
         profileId: selectedProfileId || undefined,
-        // Terminal type system: orchestrator or agent for known agents
-        terminalType: isOrchestrator ? "orchestrator" : isKnownAgent ? "agent" : "shell",
+        terminalType: isKnownAgent ? "agent" : "shell",
         // Map selected agent to provider (claude, codex, gemini, opencode)
         agentProvider: isKnownAgent
           ? (selectedAgent as "claude" | "codex" | "gemini" | "opencode")
@@ -385,7 +383,7 @@ export function NewSessionWizard({
             {step === "github-repo" && "Select a GitHub repository"}
             {step === "github-branch" && `Choose a branch for ${selectedRepo?.name}`}
             {step === "github-confirm" && "Review and create your session"}
-            {step === "feature-form" && (sessionType === "orchestrator" ? "Configure your orchestrator session" : "Configure your feature session")}
+            {step === "feature-form" && "Configure your feature session"}
             {step === "feature-confirm" && "Review and create your session"}
             {step === "template-list" && "Select a saved template to use"}
           </DialogDescription>
@@ -420,12 +418,6 @@ export function NewSessionWizard({
                 title="Feature Session"
                 description="Start an AI agent session for a new feature"
                 onClick={() => handleTypeSelect("feature")}
-              />
-              <SessionTypeCard
-                icon={<Network className="w-5 h-5" />}
-                title="Orchestrator"
-                description="Coordinate multiple AI agents in parallel"
-                onClick={() => handleTypeSelect("orchestrator")}
               />
               {templates.length > 0 && (
                 <SessionTypeCard

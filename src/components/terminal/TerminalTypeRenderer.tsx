@@ -6,7 +6,6 @@
  * This component delegates to the appropriate UI based on the session's terminalType:
  * - shell: Standard Terminal component
  * - agent: Terminal with agent exit screen overlay
- * - orchestrator: Agent terminal wrapped in OrchestratorView
  * - file: CodeMirrorEditor for file viewing/editing
  * - browser: BrowserPane with screenshot streaming
  */
@@ -17,7 +16,6 @@ import { Terminal, type TerminalRef } from "./Terminal";
 import { AgentExitScreen } from "./AgentExitScreen";
 import { VoiceMicButton } from "./VoiceMicButton";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
-import { OrchestratorView } from "./OrchestratorView";
 import { BrowserPane } from "./BrowserPane";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { FileViewerMetadata } from "@/types/terminal-type";
@@ -113,8 +111,7 @@ export function TerminalTypeRenderer({
     onSessionClose?.(session.id);
   }, [session.id, onAgentStateChange, onSessionClose]);
 
-  // Shared agent terminal content (used by both agent and orchestrator cases)
-  const renderAgentTerminal = (terminalType: "agent" | "orchestrator") => (
+  const renderAgentTerminal = (terminalType: "agent") => (
     <div className="relative w-full h-full">
       <Terminal
         ref={terminalRef}
@@ -185,18 +182,6 @@ export function TerminalTypeRenderer({
 
     case "agent":
       return renderAgentTerminal("agent");
-
-    case "orchestrator":
-      return (
-        <OrchestratorView
-          session={session}
-          onNavigateToSession={(id) => {
-            onNavigateToSession?.(id);
-          }}
-        >
-          {renderAgentTerminal("orchestrator")}
-        </OrchestratorView>
-      );
 
     case "browser":
       return <BrowserPane session={session} />;
