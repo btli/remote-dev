@@ -7,7 +7,7 @@
  * labels, subtasks, metadata viewer, and dependency display.
  */
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -49,12 +49,18 @@ export function TaskEditor({ task, allTasks, onUpdate, onClose }: TaskEditorProp
   const [instructions, setInstructions] = useState(task.instructions ?? "");
   const [showMetadata, setShowMetadata] = useState(false);
 
-  // Sync local state when task changes externally
-  useEffect(() => {
+  // Sync local state when task changes externally (React-recommended "store previous props" pattern)
+  const [prevTaskProps, setPrevTaskProps] = useState({ title: task.title, description: task.description, instructions: task.instructions });
+  if (
+    prevTaskProps.title !== task.title ||
+    prevTaskProps.description !== task.description ||
+    prevTaskProps.instructions !== task.instructions
+  ) {
+    setPrevTaskProps({ title: task.title, description: task.description, instructions: task.instructions });
     setTitle(task.title);
     setDescription(task.description ?? "");
     setInstructions(task.instructions ?? "");
-  }, [task.title, task.description, task.instructions]);
+  }
 
   const saveTitle = () => {
     const trimmed = title.trim();

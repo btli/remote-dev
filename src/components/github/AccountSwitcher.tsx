@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import Image from "next/image";
 import {
   Github,
   Star,
@@ -113,9 +114,11 @@ export function AccountSwitcher() {
                   key={account.providerAccountId}
                   className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card/30 hover:bg-card/50 transition-colors"
                 >
-                  <img
+                  <Image
                     src={account.avatarUrl}
                     alt={account.login}
+                    width={40}
+                    height={40}
                     className="w-10 h-10 rounded-full"
                   />
                   <div className="flex-1 min-w-0">

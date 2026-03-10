@@ -24,7 +24,7 @@ import {
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { clearSecretsCache } from "@/hooks/useEnvironmentWithSecrets";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
-import type { UpdateFolderPreferencesInput, Preferences, ExtendedPreferences } from "@/types/preferences";
+import type { UpdateFolderPreferencesInput, Preferences } from "@/types/preferences";
 import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
 import type { EnvironmentVariables, ResolvedEnvVar, PortConflict } from "@/types/environment";
 import { getSourceLabel } from "@/lib/preferences";

@@ -11,7 +11,7 @@
  * 4. Runtime port conflicts detected
  * 5. Environment stack merges correctly
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import * as TmuxService from "@/services/tmux-service";
 import { checkPortsInUse } from "@/services/port-registry-service";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";

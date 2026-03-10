@@ -17,12 +17,11 @@ import { Globe } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
   TerminalTypePlugin,
-  TerminalRenderProps,
   SessionConfig,
   ExitBehavior,
   BrowserSessionMetadata,
 } from "@/types/terminal-type";
-import type { TerminalSession, CreateSessionInput } from "@/types/session";
+import type { TerminalSession } from "@/types/session";
 
 export const BrowserPlugin: TerminalTypePlugin = {
   type: "browser",
@@ -32,10 +31,7 @@ export const BrowserPlugin: TerminalTypePlugin = {
   priority: 80,
   builtIn: true,
 
-  createSession(
-    _input: CreateSessionInput,
-    _session: Partial<TerminalSession>
-  ): SessionConfig {
+  createSession(): SessionConfig {
     const metadata: BrowserSessionMetadata = {
       currentUrl: null,
       viewportWidth: 1280,
@@ -52,10 +48,7 @@ export const BrowserPlugin: TerminalTypePlugin = {
     };
   },
 
-  onSessionExit(
-    _session: TerminalSession,
-    _exitCode: number | null
-  ): ExitBehavior {
+  onSessionExit(): ExitBehavior {
     return {
       showExitScreen: false,
       canRestart: false,
@@ -75,7 +68,6 @@ export const BrowserPlugin: TerminalTypePlugin = {
 
   renderContent(
     session: TerminalSession,
-    _props: TerminalRenderProps
   ): ReactNode {
     // Return a marker that the UI layer will interpret
     // The actual BrowserPane component is rendered by TerminalTypeRenderer

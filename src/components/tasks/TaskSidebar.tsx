@@ -534,13 +534,9 @@ interface TaskSidebarProps {
 export function TaskSidebar({ githubRepoId, onViewIssue, onViewPR }: TaskSidebarProps) {
   const { tasks, loading, createTask, updateTask, deleteTask, clearTasks, activeFolderId } =
     useTaskContext();
-  // Sidebar state — initialize with server-safe defaults, hydrate from localStorage in useEffect
-  const [collapsed, setCollapsed] = useState(true);
-  const [width, setWidth] = useState(DEFAULT_WIDTH);
-  useEffect(() => {
-    setCollapsed(getStoredCollapsed());
-    setWidth(getStoredWidth());
-  }, []);
+  // Sidebar state — lazy-initialize from localStorage (SSR-safe: functions only run on client)
+  const [collapsed, setCollapsed] = useState(getStoredCollapsed);
+  const [width, setWidth] = useState(getStoredWidth);
 
   // Section expand state
   const [tasksExpanded, setTasksExpanded] = useState(true);

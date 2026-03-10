@@ -12,7 +12,7 @@
  * - Start working on an issue (creates worktree + agent session)
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   CircleDot,
   CircleCheck,
@@ -121,26 +121,17 @@ function IssuesModalContent({
   const [stateFilter, setStateFilter] = useState<StateFilter>("open");
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [selectedIssue, setSelectedIssue] = useState<GitHubIssueDTO | null>(() => {
-    if (initialIssueNumber) {
-      const found = issues.find((i) => i.number === initialIssueNumber);
-      return found ?? null;
-    }
-    return null;
-  });
-
-  // Sync selectedIssue when issues load after mount (handles late-loading data).
-  // The ref prevents re-selecting after the user navigates back to the list.
-  const initialIssueSynced = useRef(!!selectedIssue);
-  useEffect(() => {
-    if (initialIssueNumber && !initialIssueSynced.current && issues.length > 0) {
-      const found = issues.find((i) => i.number === initialIssueNumber);
-      if (found) {
-        setSelectedIssue(found);
-        initialIssueSynced.current = true;
-      }
-    }
-  }, [initialIssueNumber, issues]);
+  // Track selected issue by number — derive the full object from the issues list.
+  // This naturally handles late-loading data: when issues load, the memo recalculates.
+  const [selectedIssueNumber, setSelectedIssueNumber] = useState<number | null>(
+    initialIssueNumber ?? null
+  );
+  const selectedIssue = useMemo(
+    () => selectedIssueNumber !== null
+      ? issues.find((i) => i.number === selectedIssueNumber) ?? null
+      : null,
+    [selectedIssueNumber, issues]
+  );
 
   // Fetch issues on mount
   useEffect(() => {
@@ -228,7 +219,7 @@ function IssuesModalContent({
   );
 
   const handleSelectIssue = useCallback((issue: GitHubIssueDTO) => {
-    setSelectedIssue(issue);
+    setSelectedIssueNumber(issue.number);
   }, []);
 
   const handleRefresh = useCallback(() => {
@@ -269,7 +260,7 @@ function IssuesModalContent({
         <IssueDetailPanel
           issue={selectedIssue}
           repositoryId={repositoryId}
-          onBack={() => setSelectedIssue(null)}
+          onBack={() => setSelectedIssueNumber(null)}
           onStartWorking={handleCreateWorktree}
           onOpenInGitHub={handleOpenInGitHub}
         />
