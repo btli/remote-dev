@@ -9,12 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Background Service Installation**: Production service management via systemd (Linux) and launchd (macOS)
+  - `scripts/install-service.sh` installs and enables user-level service units
+  - `scripts/uninstall-service.sh` stops and removes service units
+  - systemd: two-unit design (Next.js + terminal server) with `PartOf=` lifecycle binding
+  - launchd: two plist agents with `KeepAlive` and stdout/stderr logging
+  - Service config templates in `scripts/service-config/` with placeholder substitution
+- **Self-Update Mechanism**: Check for and apply updates from GitHub Releases
+  - `CheckForUpdatesUseCase`: polls GitHub API with 1-hour cache, compares semver versions
+  - `ApplyUpdateUseCase`: downloads tarball, verifies SHA-256 checksum, extracts to versioned directory, atomically switches `current` symlink, and triggers service restart
+  - `TarballInstallerImpl`: atomic release installation with staging directory, old release cleanup (keeps last 3)
+  - `GitHubReleaseGateway`: unauthenticated GitHub API client for release metadata and checksum fetching
+  - `UpdateScheduler`: configurable periodic update checks (default 6 hours)
+  - `ServiceRestarterImpl`: PID-based service restart via `kill -USR2` or process re-exec
+  - Settings UI: System > Updates page showing current version, update state, and manual check/apply controls
+  - API endpoints: `GET/POST /api/system/update` with `withApiAuth` for CLI and UI access
+  - `rdv system update [check|apply]`: CLI commands for update management
+- **CI/CD Release Pipeline**: GitHub Actions workflow for building platform release tarballs
+  - Matrix builds for linux-x64, linux-arm64 (native runner), darwin-x64, darwin-arm64
+  - Produces `remote-dev-{version}-{platform}.tar.gz` with SHA-256 checksums
+  - Triggered on version tags (`v*`)
+  - `scripts/pack-release.sh`: builds Next.js, terminal server, and Rust CLI, then packages into distributable tarball
+- **rdv Hook Commands**: `rdv hook stop|notify|session-end` for Claude Code lifecycle hook integration (stop reporting, lifecycle notifications, session-end handling).
+- **POST /api/notifications**: New endpoint to create notifications programmatically via API.
 - **Local CLI Credentials**: Auto-provisioned API key at `~/.remote-dev/rdv/.local-key` so `rdv` CLI authenticates without manual `RDV_API_KEY` setup. Key is created at server startup with 0600 permissions.
 - **rdv Dual-Server Routing**: CLI now routes `/api/*` to Next.js and `/internal/*` to the terminal server, with Unix socket and TCP support for both.
 - **rdv Browser Commands**: `rdv browser navigate|screenshot|snapshot|click|type|evaluate|back|forward` for headless browser automation.
 - **rdv Notification Commands**: `rdv notification list|read|delete` for notification management.
 - **rdv Session Commands**: `rdv session children|spawn|git-status` for child session management and git status.
-- **rdv Hook Commands**: `rdv hook stop|notify|session-end` for Claude Code lifecycle hooks (stop check, notifications, learning extraction).
 - **Schedule Sidebar**: Moved schedule management from standalone modal to the right sidebar under GitHub issues, with inline enable/disable toggles, run-now buttons, and delete confirmation.
 - **Schedule Session Picker**: `CreateScheduleModal` now includes a session dropdown for creating schedules from the sidebar without a pre-selected session.
 

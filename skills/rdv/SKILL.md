@@ -160,9 +160,9 @@ Commands designed for Claude Code hook integration:
 # Stop hook: report idle, check tasks, notify (used by Stop hook)
 rdv hook stop --agent claude --reason "task complete"
 
-# Notify about a lifecycle event (used by Stop/PostToolUse hooks)
+# Notify about a lifecycle event
 rdv hook notify task_complete
-rdv hook notify error --message "Build failed"
+rdv hook notify error --body "Build failed"
 
 # Session end: report ended status, optionally skip learning (used by SessionEnd hook)
 rdv hook session-end

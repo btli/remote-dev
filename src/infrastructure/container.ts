@@ -71,6 +71,25 @@ import {
 // Agent Use Cases
 import { RestartAgentUseCase } from "@/application/use-cases/session/RestartAgentUseCase";
 
+// Update System
+import { DrizzleReleaseRepository } from "./persistence/repositories/DrizzleReleaseRepository";
+import { GitHubReleaseGatewayImpl } from "./external/update/GitHubReleaseGateway";
+import { ProcessServiceRestarter } from "./external/update/ProcessServiceRestarter";
+import { TarballInstallerImpl } from "./external/update/TarballInstallerImpl";
+import type { ReleaseRepository } from "@/application/ports/ReleaseRepository";
+import type { ReleaseGateway } from "@/application/ports/ReleaseGateway";
+import type { ServiceRestarter } from "@/application/ports/ServiceRestarter";
+import type { TarballInstaller } from "@/application/ports/TarballInstaller";
+import {
+  CheckForUpdatesUseCase,
+  ApplyUpdateUseCase,
+  GetUpdateStatusUseCase,
+} from "@/application/use-cases/update";
+import { AppVersion } from "@/domain/value-objects/AppVersion";
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,6 +330,63 @@ export const listGitHubAccountsUseCase = new ListGitHubAccountsUseCase(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Update System
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read the application version from package.json.
+ * Tries the working directory first, then relative to this file's location.
+ * Falls back to 0.0.0 if neither path resolves.
+ */
+function readAppVersion(): AppVersion {
+  const possiblePaths = [
+    resolve(process.cwd(), "package.json"),
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../package.json"),
+  ];
+
+  for (const pkgPath of possiblePaths) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      if (pkg.version) {
+        return AppVersion.fromString(pkg.version);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return AppVersion.fromString("0.0.0");
+}
+
+export const currentAppVersion: AppVersion = readAppVersion();
+
+export const releaseRepository: ReleaseRepository = new DrizzleReleaseRepository();
+
+export const releaseGateway: ReleaseGateway = new GitHubReleaseGatewayImpl();
+
+export const serviceRestarter: ServiceRestarter = new ProcessServiceRestarter();
+
+export const tarballInstaller: TarballInstaller = new TarballInstallerImpl();
+
+export const checkForUpdatesUseCase = new CheckForUpdatesUseCase(
+  releaseGateway,
+  releaseRepository,
+  currentAppVersion
+);
+
+export const applyUpdateUseCase = new ApplyUpdateUseCase(
+  releaseGateway,
+  releaseRepository,
+  tarballInstaller,
+  serviceRestarter
+);
+
+export const getUpdateStatusUseCase = new GetUpdateStatusUseCase(
+  releaseRepository,
+  currentAppVersion
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -328,6 +404,10 @@ export interface Container {
   githubIssueGateway: GitHubIssueGateway;
   ghCliConfigGateway: GhCliConfigGateway;
   environmentGateway: EnvironmentGateway;
+  releaseRepository: ReleaseRepository;
+  releaseGateway: ReleaseGateway;
+  serviceRestarter: ServiceRestarter;
+  tarballInstaller: TarballInstaller;
 }
 
 /**
@@ -343,6 +423,10 @@ export const defaultContainer: Container = {
   githubIssueGateway,
   ghCliConfigGateway,
   environmentGateway,
+  releaseRepository,
+  releaseGateway,
+  serviceRestarter,
+  tarballInstaller,
 };
 
 /**

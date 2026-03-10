@@ -26,7 +26,7 @@ enum HookCommand {
         event: String,
         /// Optional message body
         #[arg(long)]
-        message: Option<String>,
+        body: Option<String>,
     },
     /// Handle SessionEnd hook: report session ended, optionally trigger learning
     SessionEnd {
@@ -55,16 +55,13 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 eprintln!("warning: failed to report idle status: {e}");
             }
 
-            // Output task check message (blocks stop if tasks remain)
-            let stop_blocked = match check_result {
+            // Output task check message first (blocks stop if tasks remain)
+            let stop_blocked = match &check_result {
                 Ok(val) => {
-                    if let Some(msg) = val.get("message").and_then(|v| v.as_str()) {
-                        if !msg.is_empty() {
-                            println!("{msg}");
-                            true
-                        } else {
-                            false
-                        }
+                    let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                    if !msg.is_empty() {
+                        println!("{msg}");
+                        true
                     } else {
                         false
                     }
@@ -76,34 +73,34 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 }
             };
 
-            // Only send notification if the stop is actually proceeding
+            // Only send "Agent stopped" notification if the stop is actually proceeding
             if !stop_blocked {
                 let title = match &agent {
                     Some(a) => format!("Agent stopped: {a}"),
                     None => "Agent stopped".to_string(),
                 };
-                let body = json!({
+                let payload = json!({
                     "sessionId": sid,
-                    "type": "agent_exited",
+                    "type": "agent_complete",
                     "title": title,
                     "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
                 });
-                let _ = client.post_json("/internal/notify", &body).await;
+                let _ = client.post_json("/internal/notify", &payload).await;
             }
         }
-        HookCommand::Notify { event, message } => {
+        HookCommand::Notify { event, body } => {
             let sid = match client.session_id() {
                 Some(s) => s,
                 None => return Ok(()),
             };
 
-            let body = json!({
+            let payload = json!({
                 "sessionId": sid,
                 "type": "info",
                 "title": event,
-                "body": message.unwrap_or_default(),
+                "body": body.unwrap_or_default(),
             });
-            let _ = client.post_json("/internal/notify", &body).await;
+            let _ = client.post_json("/internal/notify", &payload).await;
         }
         HookCommand::SessionEnd { skip_learn } => {
             let sid = match client.session_id() {
@@ -118,14 +115,13 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             }
 
             if !skip_learn {
-                // Create a notification suggesting learning extraction
-                let body = json!({
+                let payload = json!({
                     "sessionId": sid,
-                    "type": "session_closed",
+                    "type": "info",
                     "title": "Session ended",
                     "body": "Consider running `rdv learn analyze` to extract learnings.",
                 });
-                let _ = client.post_json("/internal/notify", &body).await;
+                let _ = client.post_json("/internal/notify", &payload).await;
             }
         }
     }
