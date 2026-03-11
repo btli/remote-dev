@@ -9,6 +9,9 @@ import * as ScheduleService from "@/services/schedule-service";
 import { notifySessionJobsRemoved } from "@/lib/scheduler-client";
 import { getFolderPreferences } from "@/services/preferences-service";
 import type { UpdateSessionInput, SessionStatus } from "@/types/session";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * GET /api/sessions/:id - Get a single session
@@ -132,20 +135,14 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
             true // force removal
           );
           if (result.alreadyRemoved) {
-            console.log(
-              `Worktree at ${terminalSession.projectPath} was already removed`
-            );
+            log.info("Worktree was already removed", { projectPath: terminalSession.projectPath });
           } else if (result.hadUncommittedChanges || result.hadUnpushedCommits) {
-            console.warn(
-              `Removed worktree at ${terminalSession.projectPath} with data loss: ${result.message}`
-            );
+            log.warn("Removed worktree with data loss", { projectPath: terminalSession.projectPath, message: result.message });
           } else {
-            console.log(
-              `Removed worktree at ${terminalSession.projectPath} for session ${id}`
-            );
+            log.info("Removed worktree for session", { projectPath: terminalSession.projectPath, sessionId: id });
           }
         } catch (worktreeError) {
-          console.error("Failed to remove worktree:", worktreeError);
+          log.error("Failed to remove worktree", { error: String(worktreeError) });
           // Continue with session closure even if worktree removal fails
         }
       }
@@ -157,12 +154,12 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
       if (disabledCount > 0) {
         // Notify terminal server's scheduler to remove the jobs
         notifySessionJobsRemoved(id).catch((err) =>
-          console.warn("[API] Failed to notify scheduler of session job removal:", err)
+          log.warn("Failed to notify scheduler of session job removal", { error: String(err) })
         );
-        console.log(`Disabled ${disabledCount} schedules for session ${id}`);
+        log.info("Disabled schedules for session", { disabledCount, sessionId: id });
       }
     } catch (scheduleError) {
-      console.error("Failed to disable schedules:", scheduleError);
+      log.error("Failed to disable schedules", { error: String(scheduleError) });
       // Continue with session closure even if schedule cleanup fails
     }
 

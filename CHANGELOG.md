@@ -7,10 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Structured Logging System**: Complete logging overhaul replacing all `console.*` calls with structured, leveled logging
+  - 5 log levels: error, warn, info, debug, trace (controlled via `LOG_LEVEL` env var)
+  - Separate SQLite database at `~/.remote-dev/logs/logs.db` for log persistence
+  - Clean architecture: `LogLevel` value object, `LogRepository` port, `BetterSqliteLogRepository`, `QueryLogsUseCase`, `PruneLogsUseCase`
+  - `createLogger(namespace)` factory for namespaced loggers with structured data support
+  - Both Next.js and terminal server write to the same log database via WAL mode
+  - 7-day automatic log retention
+- **Log Viewer UI**: New "Logs" tab in Settings modal
+  - Filter by level, source (Next.js/terminal), namespace, and free-text search
+  - Auto-refresh mode (3s polling) for live log monitoring
+  - Expandable JSON data viewer for structured log data
+  - Pagination with "Load more" for historical browsing
+  - Clear all logs with confirmation dialog
+  - Color-coded level badges and source indicators
+- **API endpoints**: `GET /api/system/logs` (query with filters), `DELETE /api/system/logs` (clear), `GET /api/system/logs/namespaces` (distinct namespaces)
+- **CLAUDE.md**: Added logging as a non-negotiable convention
+
 ### Changed
+
 - Consolidated all lifecycle hook commands under `rdv hook` namespace (`pre-tool-use`, `post-tool-use`, `pre-compact`, `notification`, `validate`)
 - Updated `ClaudeCodeHooks` type to include all hook event types (PreCompact, Notification, Stop, SessionStart, SessionEnd)
 - Hook editor UI now supports all Claude Code hook types
+- **Full console.* migration**: All ~236 `console.log/error/warn` calls across 76 server-side files migrated to structured logger with appropriate levels and namespaces
+  - Noisy connection lifecycle logs downgraded from stdout to `debug` level
+  - Plugin init/registration messages corrected from `console.error` to `log.info`/`log.debug`
+  - Error objects consistently passed as structured data instead of string interpolation
 
 ### Fixed
 

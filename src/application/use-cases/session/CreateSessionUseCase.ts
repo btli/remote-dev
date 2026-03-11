@@ -14,6 +14,9 @@ import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import type { WorktreeGateway } from "@/application/ports/WorktreeGateway";
 import type { AgentProviderType } from "@/types/session";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("CreateSession");
 
 export interface CreateSessionInput {
   userId: string;
@@ -120,7 +123,7 @@ export class CreateSessionUseCase {
         await this.worktreeGateway
           .removeWorktree(input.projectPath, workingPath, true)
           .catch(() => {
-            console.error(`Failed to cleanup orphaned worktree: ${workingPath}`);
+            log.error("Failed to cleanup orphaned worktree", { path: workingPath });
           });
       }
       throw new CreateSessionError(
@@ -141,9 +144,7 @@ export class CreateSessionUseCase {
       await this.tmuxGateway
         .killSession(session.tmuxSessionName.toString())
         .catch(() => {
-          console.error(
-            `Failed to cleanup orphaned tmux: ${session.tmuxSessionName.toString()}`
-          );
+          log.error("Failed to cleanup orphaned tmux", { tmuxName: session.tmuxSessionName.toString() });
         });
 
       // Cleanup worktree if we created one
@@ -151,7 +152,7 @@ export class CreateSessionUseCase {
         await this.worktreeGateway
           .removeWorktree(input.projectPath, workingPath, true)
           .catch(() => {
-            console.error(`Failed to cleanup orphaned worktree: ${workingPath}`);
+            log.error("Failed to cleanup orphaned worktree", { path: workingPath });
           });
       }
 

@@ -10,6 +10,9 @@ import { folderSecretsConfig, sessionFolders } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { SecretsServiceError } from "@/lib/errors";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Secrets");
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import type {
   FolderSecretsConfig,
@@ -312,7 +315,7 @@ function mapDbSecretsConfig(
     providerConfig = JSON.parse(decryptedConfig ?? "{}");
   } catch {
     // If JSON parsing fails after decryption, config may be corrupted
-    console.error("Failed to parse provider config for folder:", dbRecord.folderId);
+    log.error("Failed to parse provider config for folder", { folderId: dbRecord.folderId });
     providerConfig = {};
   }
 

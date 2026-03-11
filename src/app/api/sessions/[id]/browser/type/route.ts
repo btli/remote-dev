@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
 import * as SessionService from "@/services/session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * POST /api/sessions/:id/browser/type - Type text or fill a form field
@@ -36,7 +39,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Browser type error:", error);
+    log.error("Browser type error", { error: String(error) });
     return errorResponse("Type failed", 500);
   }
 });

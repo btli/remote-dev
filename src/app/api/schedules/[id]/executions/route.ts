@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as ScheduleService from "@/services/schedule-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/schedules");
 
 /**
  * GET /api/schedules/:id/executions - Get execution history
@@ -23,7 +26,7 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
 
     return NextResponse.json({ executions });
   } catch (error) {
-    console.error("Error getting execution history:", error);
+    log.error("Error getting execution history", { error: String(error) });
     if (error instanceof ScheduleService.ScheduleServiceError) {
       const status = error.code === "SCHEDULE_NOT_FOUND" ? 404 : 400;
       return errorResponse(error.message, status, error.code);

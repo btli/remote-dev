@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
 import type { SplitDirection } from "@/types/split";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/splits");
 
 /**
  * GET /api/splits/:id - Get a specific split group
@@ -21,7 +24,7 @@ export const GET = withAuth(async (_request, { userId, params }) => {
 
     return NextResponse.json(split);
   } catch (error) {
-    console.error("Error fetching split:", error);
+    log.error("Error fetching split", { error: String(error) });
     return errorResponse("Failed to fetch split", 500);
   }
 });
@@ -51,7 +54,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 
     return errorResponse("No updates provided", 400, "NO_UPDATES");
   } catch (error) {
-    console.error("Error updating split:", error);
+    log.error("Error updating split", { error: String(error) });
     if (error instanceof SplitService.SplitServiceError) {
       return errorResponse(error.message, 404, error.code);
     }
@@ -73,7 +76,7 @@ export const DELETE = withAuth(async (_request, { userId, params }) => {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error dissolving split:", error);
+    log.error("Error dissolving split", { error: String(error) });
     return errorResponse("Failed to dissolve split", 500);
   }
 });

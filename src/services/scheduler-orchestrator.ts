@@ -17,6 +17,9 @@ import { terminalSessions } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import * as ScheduleService from "./schedule-service";
 import type { SessionScheduleWithCommands } from "@/types/schedule";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Scheduler");
 
 interface ActiveJob {
   scheduleId: string;
@@ -34,11 +37,11 @@ class SchedulerOrchestrator {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      console.warn("[Scheduler] SchedulerOrchestrator already running");
+      log.warn("SchedulerOrchestrator already running");
       return;
     }
 
-    console.log("[Scheduler] Starting SchedulerOrchestrator...");
+    log.info("Starting SchedulerOrchestrator...");
     this.isRunning = true;
 
     try {
@@ -49,19 +52,14 @@ class SchedulerOrchestrator {
         try {
           await this.registerSchedule(schedule);
         } catch (error) {
-          console.error(
-            `[Scheduler] Failed to register schedule ${schedule.id}:`,
-            error
-          );
+          log.error("Failed to register schedule", { scheduleId: schedule.id, error: String(error) });
         }
       }
 
       this.startupComplete = true;
-      console.log(
-        `[Scheduler] SchedulerOrchestrator started with ${this.jobs.size} active jobs`
-      );
+      log.info("SchedulerOrchestrator started", { activeJobs: this.jobs.size });
     } catch (error) {
-      console.error("[Scheduler] Failed to start SchedulerOrchestrator:", error);
+      log.error("Failed to start SchedulerOrchestrator", { error: String(error) });
       this.isRunning = false;
       throw error;
     }
@@ -73,16 +71,13 @@ class SchedulerOrchestrator {
   async stop(): Promise<void> {
     if (!this.isRunning) return;
 
-    console.log("[Scheduler] Stopping SchedulerOrchestrator...");
+    log.info("Stopping SchedulerOrchestrator...");
 
     for (const job of this.jobs.values()) {
       try {
         job.cronJob.stop();
       } catch (error) {
-        console.error(
-          `[Scheduler] Error stopping job ${job.scheduleId}:`,
-          error
-        );
+        log.error("Error stopping job", { scheduleId: job.scheduleId, error: String(error) });
       }
     }
 
@@ -90,7 +85,7 @@ class SchedulerOrchestrator {
     this.isRunning = false;
     this.startupComplete = false;
 
-    console.log("[Scheduler] SchedulerOrchestrator stopped");
+    log.info("SchedulerOrchestrator stopped");
   }
 
   /**
@@ -118,9 +113,7 @@ class SchedulerOrchestrator {
     });
 
     if (!session || session.status === "closed") {
-      console.warn(
-        `[Scheduler] Session ${schedule.sessionId} not found or closed for schedule ${schedule.id}`
-      );
+      log.warn("Session not found or closed for schedule", { sessionId: schedule.sessionId, scheduleId: schedule.id });
       return;
     }
 
@@ -134,16 +127,12 @@ class SchedulerOrchestrator {
       if (schedule.scheduleType === "one-time") {
         // For one-time schedules, use the scheduledAt timestamp
         if (!schedule.scheduledAt) {
-          console.error(
-            `[Scheduler] One-time schedule ${schedule.id} has no scheduledAt`
-          );
+          log.error("One-time schedule has no scheduledAt", { scheduleId: schedule.id });
           return;
         }
         // Check if the scheduled time is in the past
         if (schedule.scheduledAt <= new Date()) {
-          console.warn(
-            `[Scheduler] One-time schedule ${schedule.id} scheduled time is in the past`
-          );
+          log.warn("One-time schedule scheduled time is in the past", { scheduleId: schedule.id });
           return;
         }
         // Croner accepts Date objects for one-time scheduling
@@ -152,9 +141,7 @@ class SchedulerOrchestrator {
       } else {
         // For recurring schedules, use the cron expression
         if (!schedule.cronExpression) {
-          console.error(
-            `[Scheduler] Recurring schedule ${schedule.id} has no cronExpression`
-          );
+          log.error("Recurring schedule has no cronExpression", { scheduleId: schedule.id });
           return;
         }
         cronPattern = schedule.cronExpression;
@@ -167,10 +154,7 @@ class SchedulerOrchestrator {
         {
           timezone: schedule.timezone,
           catch: (error: unknown) => {
-            console.error(
-              `[Scheduler] Schedule ${schedule.id} cron error:`,
-              error
-            );
+            log.error("Schedule cron error", { scheduleId: schedule.id, error: String(error) });
           },
         },
         async () => {
@@ -185,16 +169,9 @@ class SchedulerOrchestrator {
       });
 
       const nextRun = cronJob.nextRun();
-      console.log(
-        `[Scheduler] Registered: ${schedule.name} (${schedule.id}) - ` +
-          `${scheduleTypeLabel} ${schedule.timezone} - ` +
-          `Next run: ${nextRun?.toISOString() ?? "never"}`
-      );
+      log.info("Registered schedule", { name: schedule.name, scheduleId: schedule.id, type: scheduleTypeLabel, timezone: schedule.timezone, nextRun: nextRun?.toISOString() ?? "never" });
     } catch (error) {
-      console.error(
-        `[Scheduler] Failed to create cron job for schedule ${schedule.id}:`,
-        error
-      );
+      log.error("Failed to create cron job", { scheduleId: schedule.id, error: String(error) });
     }
   }
 
@@ -206,11 +183,11 @@ class SchedulerOrchestrator {
     tmuxSessionName: string,
     isOneTime = false
   ): Promise<void> {
-    console.log(`[Scheduler] Executing ${isOneTime ? "one-time " : ""}schedule ${scheduleId}...`);
+    log.info("Executing schedule", { scheduleId, isOneTime });
 
     const job = this.jobs.get(scheduleId);
     if (!job) {
-      console.warn(`[Scheduler] Job ${scheduleId} not found in active jobs`);
+      log.warn("Job not found in active jobs", { scheduleId });
       return;
     }
 
@@ -222,7 +199,7 @@ class SchedulerOrchestrator {
       );
 
       if (!schedule || !schedule.enabled) {
-        console.log(`[Scheduler] Schedule ${scheduleId} is disabled or removed`);
+        log.debug("Schedule is disabled or removed", { scheduleId });
         this.removeJobInternal(scheduleId);
         return;
       }
@@ -233,28 +210,25 @@ class SchedulerOrchestrator {
         tmuxSessionName
       );
 
-      console.log(
-        `[Scheduler] Schedule ${scheduleId} completed: ${execution.status} ` +
-          `(${execution.successCount}/${execution.commandCount} commands succeeded)`
-      );
+      log.info("Schedule completed", { scheduleId, status: execution.status, successCount: execution.successCount, commandCount: execution.commandCount });
 
       // For one-time schedules, remove the job after execution
       // (The schedule service already marked it as completed and disabled)
       if (isOneTime) {
         this.removeJobInternal(scheduleId);
-        console.log(`[Scheduler] One-time schedule ${scheduleId} removed after execution`);
+        log.info("One-time schedule removed after execution", { scheduleId });
       }
 
       // Note: We intentionally do NOT update the cached scheduleData here.
       // The database is the source of truth - next execution will reload fresh data.
       // This avoids race conditions with concurrent API updates.
     } catch (error) {
-      console.error(`[Scheduler] Failed to execute schedule ${scheduleId}:`, error);
+      log.error("Failed to execute schedule", { scheduleId, error: String(error) });
 
       // Still remove one-time jobs even if they failed
       if (isOneTime) {
         this.removeJobInternal(scheduleId);
-        console.log(`[Scheduler] One-time schedule ${scheduleId} removed after failed execution`);
+        log.info("One-time schedule removed after failed execution", { scheduleId });
       }
     }
   }
@@ -264,10 +238,7 @@ class SchedulerOrchestrator {
    */
   async addJob(scheduleId: string): Promise<void> {
     if (!this.isRunning) {
-      console.warn(
-        "[Scheduler] Orchestrator not running, skipping addJob for",
-        scheduleId
-      );
+      log.warn("Orchestrator not running, skipping addJob", { scheduleId });
       return;
     }
 
@@ -283,7 +254,7 @@ class SchedulerOrchestrator {
         await this.registerSchedule(schedule);
       }
     } catch (error) {
-      console.error(`[Scheduler] Failed to add job ${scheduleId}:`, error);
+      log.error("Failed to add job", { scheduleId, error: String(error) });
     }
   }
 
@@ -292,7 +263,7 @@ class SchedulerOrchestrator {
    */
   removeJob(scheduleId: string): void {
     this.removeJobInternal(scheduleId);
-    console.log(`[Scheduler] Removed job: ${scheduleId}`);
+    log.debug("Removed job", { scheduleId });
   }
 
   /**
@@ -305,7 +276,7 @@ class SchedulerOrchestrator {
         job.cronJob.stop();
       } catch (error) {
         // Log but don't propagate - we still want to clean up
-        console.warn(`[Scheduler] Error stopping cron job ${scheduleId}:`, error);
+        log.warn("Error stopping cron job", { scheduleId, error: String(error) });
       }
       this.jobs.delete(scheduleId);
     }
@@ -334,7 +305,7 @@ class SchedulerOrchestrator {
     const job = this.jobs.get(scheduleId);
     if (job) {
       job.cronJob.pause();
-      console.log(`[Scheduler] Paused job: ${scheduleId}`);
+      log.debug("Paused job", { scheduleId });
     }
   }
 
@@ -348,7 +319,7 @@ class SchedulerOrchestrator {
     const job = this.jobs.get(scheduleId);
     if (job) {
       job.cronJob.resume();
-      console.log(`[Scheduler] Resumed job: ${scheduleId}`);
+      log.debug("Resumed job", { scheduleId });
     }
   }
 
@@ -373,9 +344,7 @@ class SchedulerOrchestrator {
     }
 
     if (toRemove.length > 0) {
-      console.log(
-        `[Scheduler] Removed ${toRemove.length} jobs for session ${sessionId}`
-      );
+      log.info("Removed jobs for session", { count: toRemove.length, sessionId });
     }
   }
 

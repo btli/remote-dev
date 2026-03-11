@@ -3,6 +3,9 @@ import { db } from "@/db";
 import { setupConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { existsSync } from "node:fs";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/setup");
 
 interface SetupConfiguration {
   workingDirectory: string;
@@ -98,7 +101,7 @@ export async function POST(request: NextRequest) {
       message: "Setup completed successfully",
     });
   } catch (error) {
-    console.error("Setup completion failed:", error);
+    log.error("Setup completion failed", { error: String(error) });
     return NextResponse.json(
       { error: "Failed to save setup configuration" },
       { status: 500 }
@@ -132,7 +135,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("Setup status check failed:", error);
+    log.error("Setup status check failed", { error: String(error) });
     return NextResponse.json(
       { error: "Failed to check setup status" },
       { status: 500 }

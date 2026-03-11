@@ -22,6 +22,9 @@ import * as TmuxService from "./tmux-service";
 import { sanitizeBranchName, getRepoRoot } from "./worktree-service";
 import { execFileNoThrow } from "@/lib/exec";
 import { WorktreeTrashServiceError } from "@/lib/errors";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("WorktreeTrash");
 
 // Re-export for backwards compatibility
 export { WorktreeTrashServiceError };
@@ -351,9 +354,7 @@ export async function restoreWorktreeFromTrash(
       "worktree", "repair", targetPath,
     ]);
     if (repairResult.exitCode !== 0) {
-      console.warn(
-        `git worktree repair failed (non-fatal): ${repairResult.stderr}`
-      );
+      log.warn("git worktree repair failed (non-fatal)", { error: repairResult.stderr });
     }
   }
 
@@ -432,7 +433,7 @@ export async function permanentlyDeleteWorktree(
       rmSync(metadata.worktreeTrashPath, { recursive: true, force: true });
     } catch (error) {
       const err = error as Error;
-      console.error(`Failed to delete trash directory: ${err.message}`);
+      log.error("Failed to delete trash directory", { error: err.message });
       // Continue with database cleanup even if filesystem delete fails
     }
   }

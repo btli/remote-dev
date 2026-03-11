@@ -3,6 +3,9 @@ import { withApiAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
 import { fetchIssuesForRepositoryUseCase } from "@/infrastructure/container";
 import { GitHubIssueMapper } from "@/infrastructure/persistence/mappers/GitHubIssueMapper";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * GET /api/github/repositories/:id/issues - List issues for a repository
@@ -92,7 +95,7 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
       },
     });
   } catch (error) {
-    console.error("Error listing issues:", error);
+    log.error("Error listing issues", { error: String(error) });
 
     if (error instanceof GitHubService.GitHubServiceError) {
       return errorResponse(error.message, error.statusCode ?? 400, error.code);

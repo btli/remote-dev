@@ -79,6 +79,14 @@ export function getLogsDir(): string {
 }
 
 /**
+ * Get the logs database file path.
+ * Stored separately from the main application database.
+ */
+export function getLogsDatabasePath(): string {
+  return join(getLogsDir(), "logs.db");
+}
+
+/**
  * Get the agent profiles directory path.
  */
 export function getProfilesDir(): string {
@@ -209,6 +217,9 @@ export const AppPaths = {
   },
   get logsDir() {
     return getLogsDir();
+  },
+  get logsDatabasePath() {
+    return getLogsDatabasePath();
   },
   get profilesDir() {
     return getProfilesDir();

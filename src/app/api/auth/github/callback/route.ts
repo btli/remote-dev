@@ -5,6 +5,9 @@ import { and, eq } from "drizzle-orm";
 import { validateSignedState } from "@/lib/oauth-state";
 import { encrypt } from "@/lib/encryption";
 import { linkGitHubAccountUseCase } from "@/infrastructure/container";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/auth");
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -18,7 +21,7 @@ export async function GET(request: NextRequest) {
   // Validate HMAC-signed state to prevent CSRF attacks
   const stateResult = validateSignedState(state);
   if (!stateResult.valid) {
-    console.warn("OAuth state validation failed:", stateResult.error);
+    log.warn("OAuth state validation failed", { error: stateResult.error });
     return NextResponse.redirect(new URL(`/?error=${encodeURIComponent(stateResult.error)}`, request.url));
   }
 
@@ -45,7 +48,7 @@ export async function GET(request: NextRequest) {
   const tokenData = await tokenResponse.json();
 
   if (tokenData.error) {
-    console.error("GitHub token error:", tokenData);
+    log.error("GitHub token error", { error: String(tokenData.error) });
     return NextResponse.redirect(new URL("/?error=github_auth_failed", request.url));
   }
 
@@ -123,7 +126,7 @@ export async function GET(request: NextRequest) {
       accessToken: access_token,
     });
   } catch (error) {
-    console.error("Failed to link GitHub account metadata:", error);
+    log.error("Failed to link GitHub account metadata", { error: String(error) });
     // Non-fatal: the OAuth account was already saved above
   }
 

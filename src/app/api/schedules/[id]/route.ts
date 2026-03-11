@@ -3,6 +3,9 @@ import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as ScheduleService from "@/services/schedule-service";
 import { notifyScheduleUpdated, notifyScheduleDeleted } from "@/lib/scheduler-client";
 import type { UpdateScheduleInput, ScheduleCommandInput } from "@/types/schedule";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/schedules");
 
 /**
  * GET /api/schedules/:id - Get schedule details with commands
@@ -25,7 +28,7 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
 
     return NextResponse.json(schedule);
   } catch (error) {
-    console.error("Error getting schedule:", error);
+    log.error("Error getting schedule", { error: String(error) });
     return errorResponse("Failed to get schedule", 500);
   }
 });
@@ -65,14 +68,14 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     // Notify terminal server's scheduler of changes
     // Fire-and-forget - schedule is already saved in database
     notifyScheduleUpdated(scheduleId).catch((err) =>
-      console.warn("[API] Failed to notify scheduler of schedule update:", err)
+      log.warn("Failed to notify scheduler of schedule update", { error: String(err) })
     );
 
     // Return updated schedule with commands
     const updated = await ScheduleService.getScheduleWithCommands(scheduleId, userId);
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Error updating schedule:", error);
+    log.error("Error updating schedule", { error: String(error) });
     if (error instanceof ScheduleService.ScheduleServiceError) {
       const status = error.code === "SCHEDULE_NOT_FOUND" ? 404 : 400;
       return errorResponse(error.message, status, error.code);
@@ -97,12 +100,12 @@ export const DELETE = withApiAuth(async (request, { userId, params }) => {
     // Notify terminal server's scheduler to remove the job
     // Fire-and-forget - if it fails, the job will be orphaned but harmless
     notifyScheduleDeleted(scheduleId).catch((err) =>
-      console.warn("[API] Failed to notify scheduler of schedule deletion:", err)
+      log.warn("Failed to notify scheduler of schedule deletion", { error: String(err) })
     );
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error deleting schedule:", error);
+    log.error("Error deleting schedule", { error: String(error) });
     if (error instanceof ScheduleService.ScheduleServiceError) {
       const status = error.code === "SCHEDULE_NOT_FOUND" ? 404 : 400;
       return errorResponse(error.message, status, error.code);

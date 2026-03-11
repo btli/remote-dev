@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
 import * as SessionService from "@/services/session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * POST /api/sessions/:id/browser/navigate - Navigate browser to URL
@@ -33,7 +36,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
     const currentUrl = await BrowserService.getCurrentUrl(params.id);
     return NextResponse.json({ url: currentUrl });
   } catch (error) {
-    console.error("Browser navigate error:", error);
+    log.error("Browser navigate error", { error: String(error) });
     return errorResponse("Navigation failed", 500);
   }
 });

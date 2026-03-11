@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
 import * as SessionService from "@/services/session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * POST /api/sessions/:id/browser/click - Click at coordinates
@@ -30,7 +33,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
     await BrowserService.click(params.id, x, y);
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Browser click error:", error);
+    log.error("Browser click error", { error: String(error) });
     return errorResponse("Click failed", 500);
   }
 });

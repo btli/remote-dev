@@ -19,6 +19,9 @@ import { db } from "@/db";
 import { apiKeys, users } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createApiKey, validateApiKey } from "@/services/api-key-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("LocalAPIKey");
 
 const KEY_FILENAME = ".local-key";
 const KEY_NAME = "rdv-local-access";
@@ -52,7 +55,7 @@ export async function ensureLocalApiKey(): Promise<void> {
     orderBy: (au, { asc }) => [asc(au.createdAt)],
   });
   if (!authorized) {
-    console.log("Local API key: skipped (no authorized users seeded yet — run db:seed first)");
+    log.info("Skipped - no authorized users seeded yet (run db:seed first)");
     return;
   }
 
@@ -60,7 +63,7 @@ export async function ensureLocalApiKey(): Promise<void> {
     where: eq(users.email, authorized.email),
   });
   if (!user) {
-    console.log(`Local API key: skipped (${authorized.email} hasn't logged in yet)`);
+    log.info("Skipped - user hasn't logged in yet", { email: authorized.email });
     return;
   }
 
@@ -73,5 +76,5 @@ export async function ensureLocalApiKey(): Promise<void> {
   const { key } = await createApiKey(user.id, KEY_NAME);
   writeFileSync(keyFile, key + "\n", { mode: 0o600 });
   chmodSync(keyFile, 0o600); // Ensure permissions even if umask interfered
-  console.log(`Local API key written to ${keyFile}`);
+  log.info("Local API key written", { path: keyFile });
 }

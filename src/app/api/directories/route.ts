@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import { resolve, sep } from "node:path";
 import { getFsPromises, getFs } from "@/lib/dynamic-fs";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/directories");
 
 interface DirectoryEntry {
   name: string;
@@ -158,7 +161,7 @@ export const GET = withAuth(async (request) => {
       entries,
     });
   } catch (error) {
-    console.error("Error reading directory:", error);
+    log.error("Error reading directory", { error: String(error) });
     return errorResponse("Failed to read directory", 500);
   }
 });

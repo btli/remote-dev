@@ -6,6 +6,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import * as GitHubStatsService from "@/services/github-stats-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 interface RouteParams {
   params: Promise<{ repoId: string }>;
@@ -38,7 +41,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
 
     return NextResponse.json({ repository });
   } catch (error) {
-    console.error("Error fetching repository stats:", error);
+    log.error("Error fetching repository stats", { error: String(error) });
     const err = error as Error;
     return NextResponse.json(
       { error: err.message, code: "FETCH_ERROR" },
@@ -73,7 +76,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
       refreshedAt: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("Error refreshing repository stats:", error);
+    log.error("Error refreshing repository stats", { error: String(error) });
     const err = error as Error;
     return NextResponse.json(
       { error: err.message, code: "REFRESH_ERROR" },

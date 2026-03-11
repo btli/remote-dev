@@ -7,6 +7,9 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import * as GitHubStatsService from "@/services/github-stats-service";
 import * as CacheService from "@/services/cache-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 export const GET = withAuth(async (_request, { userId }) => {
   try {
@@ -22,7 +25,7 @@ export const GET = withAuth(async (_request, { userId }) => {
     const staleRepoIds = await CacheService.getStaleRepositoryIds(userId, repoIds);
     const hasStaleData = staleRepoIds.length > 0;
 
-    console.log(`[GitHubStats] GET: ${repositories.length} repos, ${staleRepoIds.length} stale, hasStaleData=${hasStaleData}`);
+    log.debug("GET stats", { repoCount: repositories.length, staleCount: staleRepoIds.length, hasStaleData });
 
     return NextResponse.json({
       repositories,
@@ -36,17 +39,17 @@ export const GET = withAuth(async (_request, { userId }) => {
       fetchedAt: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("Error fetching GitHub stats:", error);
+    log.error("Error fetching GitHub stats", { error: String(error) });
     const err = error as Error;
     return errorResponse(err.message, 500, "FETCH_ERROR");
   }
 });
 
 export const POST = withAuth(async (_request, { userId }) => {
-  console.log("[GitHubStats] POST: Starting refresh...");
+  log.info("POST: Starting refresh...");
   try {
     const result = await GitHubStatsService.refreshAllStats(userId);
-    console.log(`[GitHubStats] POST: Refresh complete - ${result.updatedRepos.length} updated, ${result.errors.length} errors`);
+    log.info("POST: Refresh complete", { updatedCount: result.updatedRepos.length, errorCount: result.errors.length });
 
     // Get updated repositories after refresh
     const repositories = await GitHubStatsService.getEnrichedRepositories(
@@ -66,7 +69,7 @@ export const POST = withAuth(async (_request, { userId }) => {
       },
     });
   } catch (error) {
-    console.error("Error refreshing GitHub stats:", error);
+    log.error("Error refreshing GitHub stats", { error: String(error) });
     const err = error as Error;
     return errorResponse(err.message, 500, "REFRESH_ERROR");
   }
