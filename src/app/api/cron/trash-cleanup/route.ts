@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     log.info("Running scheduled trash cleanup...");
     const result = await TrashService.cleanupExpiredItems();
 
-    log.info(`Cleanup complete: ${result.deletedCount} items deleted`);
+    log.info("Cleanup complete", { deletedCount: result.deletedCount });
 
     return NextResponse.json({
       success: true,

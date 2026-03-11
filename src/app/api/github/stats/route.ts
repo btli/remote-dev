@@ -25,7 +25,7 @@ export const GET = withAuth(async (_request, { userId }) => {
     const staleRepoIds = await CacheService.getStaleRepositoryIds(userId, repoIds);
     const hasStaleData = staleRepoIds.length > 0;
 
-    log.debug(`GET: ${repositories.length} repos, ${staleRepoIds.length} stale, hasStaleData=${hasStaleData}`);
+    log.debug("GET stats", { repoCount: repositories.length, staleCount: staleRepoIds.length, hasStaleData });
 
     return NextResponse.json({
       repositories,
@@ -49,7 +49,7 @@ export const POST = withAuth(async (_request, { userId }) => {
   log.info("POST: Starting refresh...");
   try {
     const result = await GitHubStatsService.refreshAllStats(userId);
-    log.info(`POST: Refresh complete - ${result.updatedRepos.length} updated, ${result.errors.length} errors`);
+    log.info("POST: Refresh complete", { updatedCount: result.updatedRepos.length, errorCount: result.errors.length });
 
     // Get updated repositories after refresh
     const repositories = await GitHubStatsService.getEnrichedRepositories(

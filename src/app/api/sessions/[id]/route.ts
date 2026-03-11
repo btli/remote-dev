@@ -135,11 +135,11 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
             true // force removal
           );
           if (result.alreadyRemoved) {
-            log.info(`Worktree at ${terminalSession.projectPath} was already removed`);
+            log.info("Worktree was already removed", { projectPath: terminalSession.projectPath });
           } else if (result.hadUncommittedChanges || result.hadUnpushedCommits) {
-            log.warn(`Removed worktree at ${terminalSession.projectPath} with data loss: ${result.message}`);
+            log.warn("Removed worktree with data loss", { projectPath: terminalSession.projectPath, message: result.message });
           } else {
-            log.info(`Removed worktree at ${terminalSession.projectPath} for session ${id}`);
+            log.info("Removed worktree for session", { projectPath: terminalSession.projectPath, sessionId: id });
           }
         } catch (worktreeError) {
           log.error("Failed to remove worktree", { error: String(worktreeError) });
@@ -156,7 +156,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
         notifySessionJobsRemoved(id).catch((err) =>
           log.warn("Failed to notify scheduler of session job removal", { error: String(err) })
         );
-        log.info(`Disabled ${disabledCount} schedules for session ${id}`);
+        log.info("Disabled schedules for session", { disabledCount, sessionId: id });
       }
     } catch (scheduleError) {
       log.error("Failed to disable schedules", { error: String(scheduleError) });

@@ -15,7 +15,7 @@ export async function register() {
       const { pruneLogsUseCase } = await import("@/infrastructure/container");
       const pruned = pruneLogsUseCase.execute();
       if (pruned > 0) {
-        log.info(`Pruned ${pruned} expired log entries`);
+        log.info("Pruned expired log entries", { count: pruned });
       }
     } catch (error) {
       log.error("Log pruning failed", { error: String(error) });
@@ -27,7 +27,7 @@ export async function register() {
       const { cleanupExpiredItems } = await import("@/services/trash-service");
       const result = await cleanupExpiredItems();
       if (result.deletedCount > 0) {
-        log.info(`Cleaned up ${result.deletedCount} expired trash items`);
+        log.info("Cleaned up expired trash items", { deletedCount: result.deletedCount });
       } else {
         log.debug("No expired trash items to clean up");
       }

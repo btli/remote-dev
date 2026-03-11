@@ -27,7 +27,7 @@ class UpdateScheduler {
     );
     const intervalMs = intervalHours * 60 * 60 * 1000;
 
-    log.info(`Checking for updates every ${intervalHours} hours`);
+    log.info("Update check interval configured", { intervalHours });
 
     // Perform initial check after 30 seconds (let server fully start)
     this.initialCheckHandle = setTimeout(() => {

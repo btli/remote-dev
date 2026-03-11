@@ -720,14 +720,14 @@ export async function copyEnvFilesToWorktree(
 
       // Check if target already exists (don't overwrite)
       if (fs.existsSync(targetPath)) {
-        log.debug(`Skipping ${envFile}: already exists in worktree`);
+        log.debug("Skipping env file: already exists in worktree", { envFile });
         result.skipped.push(envFile);
         continue;
       }
 
       // Copy the file
       fs.copyFileSync(sourcePath, targetPath);
-      log.debug(`Copied ${envFile} to worktree`);
+      log.debug("Copied env file to worktree", { envFile });
       result.copied.push(envFile);
     } catch {
       // File doesn't exist or isn't readable - skip silently

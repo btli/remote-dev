@@ -675,7 +675,7 @@ export async function fetchPRDetails(
       author: pr.author?.login ?? "unknown",
     };
   } catch (error) {
-    log.error(`Error fetching PR #${prNumber}`, { error: String(error) });
+    log.error("Error fetching PR", { prNumber, error: String(error) });
     return null;
   }
 }

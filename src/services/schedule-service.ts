@@ -751,7 +751,7 @@ export async function executeSchedule(
 
           // Retry if we have attempts left
           if (attempt < maxAttempts) {
-            log.warn(`Command attempt ${attempt}/${maxAttempts} failed, retrying in ${schedule.retryDelaySeconds || 1}s...`, { scheduleId: schedule.id });
+            log.warn("Command attempt failed, retrying", { attempt, maxAttempts, retryDelay: schedule.retryDelaySeconds || 1, scheduleId: schedule.id });
             await new Promise((resolve) =>
               setTimeout(resolve, (schedule.retryDelaySeconds || 1) * 1000)
             );

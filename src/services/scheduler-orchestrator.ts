@@ -52,12 +52,12 @@ class SchedulerOrchestrator {
         try {
           await this.registerSchedule(schedule);
         } catch (error) {
-          log.error(`Failed to register schedule ${schedule.id}`, { error: String(error) });
+          log.error("Failed to register schedule", { scheduleId: schedule.id, error: String(error) });
         }
       }
 
       this.startupComplete = true;
-      log.info(`SchedulerOrchestrator started with ${this.jobs.size} active jobs`);
+      log.info("SchedulerOrchestrator started", { activeJobs: this.jobs.size });
     } catch (error) {
       log.error("Failed to start SchedulerOrchestrator", { error: String(error) });
       this.isRunning = false;
@@ -77,7 +77,7 @@ class SchedulerOrchestrator {
       try {
         job.cronJob.stop();
       } catch (error) {
-        log.error(`Error stopping job ${job.scheduleId}`, { error: String(error) });
+        log.error("Error stopping job", { scheduleId: job.scheduleId, error: String(error) });
       }
     }
 
@@ -154,7 +154,7 @@ class SchedulerOrchestrator {
         {
           timezone: schedule.timezone,
           catch: (error: unknown) => {
-            log.error(`Schedule ${schedule.id} cron error`, { error: String(error) });
+            log.error("Schedule cron error", { scheduleId: schedule.id, error: String(error) });
           },
         },
         async () => {
@@ -169,9 +169,9 @@ class SchedulerOrchestrator {
       });
 
       const nextRun = cronJob.nextRun();
-      log.info(`Registered: ${schedule.name} (${schedule.id}) - ${scheduleTypeLabel} ${schedule.timezone} - Next run: ${nextRun?.toISOString() ?? "never"}`);
+      log.info("Registered schedule", { name: schedule.name, scheduleId: schedule.id, type: scheduleTypeLabel, timezone: schedule.timezone, nextRun: nextRun?.toISOString() ?? "never" });
     } catch (error) {
-      log.error(`Failed to create cron job for schedule ${schedule.id}`, { error: String(error) });
+      log.error("Failed to create cron job", { scheduleId: schedule.id, error: String(error) });
     }
   }
 
@@ -183,7 +183,7 @@ class SchedulerOrchestrator {
     tmuxSessionName: string,
     isOneTime = false
   ): Promise<void> {
-    log.info(`Executing ${isOneTime ? "one-time " : ""}schedule`, { scheduleId });
+    log.info("Executing schedule", { scheduleId, isOneTime });
 
     const job = this.jobs.get(scheduleId);
     if (!job) {
@@ -210,7 +210,7 @@ class SchedulerOrchestrator {
         tmuxSessionName
       );
 
-      log.info(`Schedule ${scheduleId} completed: ${execution.status} (${execution.successCount}/${execution.commandCount} commands succeeded)`);
+      log.info("Schedule completed", { scheduleId, status: execution.status, successCount: execution.successCount, commandCount: execution.commandCount });
 
       // For one-time schedules, remove the job after execution
       // (The schedule service already marked it as completed and disabled)
@@ -223,7 +223,7 @@ class SchedulerOrchestrator {
       // The database is the source of truth - next execution will reload fresh data.
       // This avoids race conditions with concurrent API updates.
     } catch (error) {
-      log.error(`Failed to execute schedule ${scheduleId}`, { error: String(error) });
+      log.error("Failed to execute schedule", { scheduleId, error: String(error) });
 
       // Still remove one-time jobs even if they failed
       if (isOneTime) {
@@ -254,7 +254,7 @@ class SchedulerOrchestrator {
         await this.registerSchedule(schedule);
       }
     } catch (error) {
-      log.error(`Failed to add job ${scheduleId}`, { error: String(error) });
+      log.error("Failed to add job", { scheduleId, error: String(error) });
     }
   }
 
@@ -344,7 +344,7 @@ class SchedulerOrchestrator {
     }
 
     if (toRemove.length > 0) {
-      log.info(`Removed ${toRemove.length} jobs for session`, { sessionId });
+      log.info("Removed jobs for session", { count: toRemove.length, sessionId });
     }
   }
 

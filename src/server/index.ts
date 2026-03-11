@@ -29,7 +29,7 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."
 async function ensureRdvCli(): Promise<void> {
   try {
     const { stdout } = await execFile("rdv", ["--version"]);
-    log.info(`rdv CLI: ${stdout.trim()}`);
+    log.info("rdv CLI found", { version: stdout.trim() });
   } catch {
     // rdv not found, try to install from local crate
     const cratePath = resolve(PROJECT_ROOT, "crates", "rdv");
@@ -37,7 +37,7 @@ async function ensureRdvCli(): Promise<void> {
       log.info("rdv CLI not found, installing from crates/rdv/...");
       await execFile("cargo", ["install", "--path", cratePath], { timeout: 300_000 });
       const { stdout } = await execFile("rdv", ["--version"]);
-      log.info(`rdv CLI installed: ${stdout.trim()}`);
+      log.info("rdv CLI installed", { version: stdout.trim() });
     } catch {
       log.warn("rdv CLI not available (cargo not found or build failed), hooks will use curl fallback");
     }
@@ -52,7 +52,7 @@ async function startServer(): Promise<void> {
 
   try {
     await schedulerOrchestrator.start();
-    log.info(`Scheduler started with ${schedulerOrchestrator.getJobCount()} jobs`);
+    log.info("Scheduler started", { jobCount: schedulerOrchestrator.getJobCount() });
   } catch (error) {
     log.error("Failed to start scheduler", { error: String(error) });
   }
@@ -66,7 +66,7 @@ async function startServer(): Promise<void> {
   }
 
   async function shutdown(signal: string): Promise<void> {
-    log.info(`${signal} received, shutting down gracefully...`);
+    log.info("Shutdown signal received", { signal });
 
     updateScheduler.stop();
 
