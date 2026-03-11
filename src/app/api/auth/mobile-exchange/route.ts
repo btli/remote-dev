@@ -8,11 +8,14 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import { NextResponse } from "next/server";
+import { createLogger } from "@/lib/logger";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db";
 import { users, apiKeys } from "@/db/schema";
 import { validateAccessJWT } from "@/lib/cloudflare-access";
+
+const log = createLogger("api/auth");
 
 export async function POST(request: Request) {
   try {
@@ -82,7 +85,7 @@ export async function POST(request: Request) {
       email: user.email,
     });
   } catch (error) {
-    console.error("Mobile exchange error:", error);
+    log.error("Mobile exchange error", { error: String(error) });
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

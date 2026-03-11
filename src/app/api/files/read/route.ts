@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
 import { readFile, stat } from "node:fs/promises";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/files");
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -56,7 +59,7 @@ export const GET = withApiAuth(async (request) => {
     if (err.code === "EACCES") {
       return errorResponse("Permission denied", 403, "PERMISSION_DENIED");
     }
-    console.error("Error reading file:", error);
+    log.error("Error reading file", { error: String(error) });
     return errorResponse("Failed to read file", 500);
   }
 });

@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
 import * as SessionService from "@/services/session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * GET /api/sessions/:id/browser/snapshot - Get accessibility tree snapshot
@@ -27,7 +30,7 @@ export const GET = withApiAuth(async (_request, { userId, params }) => {
       },
     });
   } catch (error) {
-    console.error("Browser snapshot error:", error);
+    log.error("Browser snapshot error", { error: String(error) });
     return errorResponse("Snapshot failed", 500);
   }
 });

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * POST /api/github/issues - Create a new issue
@@ -78,7 +81,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       },
     });
   } catch (error) {
-    console.error("Error creating issue:", error);
+    log.error("Error creating issue", { error: String(error) });
     return errorResponse("Failed to create issue", 500);
   }
 });

@@ -86,7 +86,13 @@ import {
   GetUpdateStatusUseCase,
 } from "@/application/use-cases/update";
 import { AppVersion } from "@/domain/value-objects/AppVersion";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+// Logs
+import { getLogRepositoryInstance } from "./persistence/repositories/BetterSqliteLogRepository";
+import { QueryLogsUseCase, PruneLogsUseCase } from "@/application/use-cases/logs";
+import type { LogRepository } from "@/application/ports/LogRepository";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
@@ -328,6 +334,16 @@ export const listGitHubAccountsUseCase = new ListGitHubAccountsUseCase(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Log System
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const logRepository: LogRepository = getLogRepositoryInstance();
+
+export const queryLogsUseCase = new QueryLogsUseCase(logRepository);
+
+export const pruneLogsUseCase = new PruneLogsUseCase(logRepository);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Update System
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -338,9 +354,8 @@ export const listGitHubAccountsUseCase = new ListGitHubAccountsUseCase(
  */
 function readAppVersion(): AppVersion {
   try {
-    const fs = require("node:fs");
     const pkgPath = resolve(process.cwd(), "package.json");
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     if (pkg.version) {
       return AppVersion.fromString(pkg.version);
     }
@@ -396,6 +411,7 @@ export interface Container {
   githubIssueGateway: GitHubIssueGateway;
   ghCliConfigGateway: GhCliConfigGateway;
   environmentGateway: EnvironmentGateway;
+  logRepository: LogRepository;
   releaseRepository: ReleaseRepository;
   releaseGateway: ReleaseGateway;
   serviceRestarter: ServiceRestarter;
@@ -415,6 +431,7 @@ export const defaultContainer: Container = {
   githubIssueGateway,
   ghCliConfigGateway,
   environmentGateway,
+  logRepository,
   releaseRepository,
   releaseGateway,
   serviceRestarter,

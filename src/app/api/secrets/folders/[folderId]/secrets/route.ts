@@ -4,6 +4,9 @@ import {
   fetchSecretsForFolder,
   SecretsServiceError,
 } from "@/services/secrets-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/secrets");
 
 /**
  * GET /api/secrets/folders/[folderId]/secrets
@@ -41,7 +44,7 @@ export const GET = withAuth(async (_request, { userId, params }) => {
       return errorResponse(error.message, 500, error.code);
     }
 
-    console.error("Error fetching secrets:", error);
+    log.error("Error fetching secrets", { error: String(error) });
     return errorResponse("Failed to fetch secrets", 500);
   }
 });

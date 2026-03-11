@@ -4,7 +4,6 @@
  * Detects frameworks and runtimes from project configuration files.
  * Used by Port Manager to suggest appropriate ports.
  */
-import path from "node:path";
 import { getFsPromises, runtimeJoin } from "@/lib/dynamic-fs";
 import type {
   RuntimeId,

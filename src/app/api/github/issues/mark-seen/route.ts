@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { markIssuesSeenUseCase } from "@/infrastructure/container";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * POST /api/github/issues/mark-seen - Mark issues as seen
@@ -30,7 +33,7 @@ export const POST = withApiAuth(async (request) => {
       markedCount: result.markedCount,
     });
   } catch (error) {
-    console.error("Error marking issues as seen:", error);
+    log.error("Error marking issues as seen", { error: String(error) });
     return errorResponse("Failed to mark issues as seen", 500);
   }
 });

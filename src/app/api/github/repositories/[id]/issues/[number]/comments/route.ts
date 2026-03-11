@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as GitHubService from "@/services/github-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * GET /api/github/repositories/:id/issues/:number/comments
@@ -47,7 +50,7 @@ export const GET = withApiAuth(async (request, { userId, params }) => {
 
     return NextResponse.json({ comments });
   } catch (error) {
-    console.error("Failed to fetch issue comments:", error);
+    log.error("Failed to fetch issue comments", { error: String(error) });
     return errorResponse(
       error instanceof Error ? error.message : "Failed to fetch comments",
       500,

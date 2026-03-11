@@ -6,6 +6,9 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("OAuthState");
 
 const STATE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -19,7 +22,7 @@ function getSecret(): string {
     if (process.env.NODE_ENV === "production") {
       throw new Error("AUTH_SECRET is required in production");
     }
-    console.warn("AUTH_SECRET not set - using development secret for OAuth state");
+    log.warn("AUTH_SECRET not set - using development secret for OAuth state");
     return "development-oauth-state-secret";
   }
   return secret;

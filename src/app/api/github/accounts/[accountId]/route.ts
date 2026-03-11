@@ -7,6 +7,9 @@ import {
   unbindFolderFromGitHubAccountUseCase,
 } from "@/infrastructure/container";
 import { EntityNotFoundError } from "@/domain/errors/DomainError";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 /**
  * PATCH /api/github/accounts/:accountId
@@ -59,7 +62,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
     if (error instanceof EntityNotFoundError) {
       return errorResponse(error.message, 404, error.code);
     }
-    console.error("[api/github/accounts] PATCH error:", error);
+    log.error("PATCH error", { error: String(error) });
     return errorResponse("Failed to update account", 500);
   }
 });
@@ -84,7 +87,7 @@ export const DELETE = withAuth(async (_request, { userId, params }) => {
     if (error instanceof EntityNotFoundError) {
       return errorResponse(error.message, 404, error.code);
     }
-    console.error("[api/github/accounts] DELETE error:", error);
+    log.error("DELETE error", { error: String(error) });
     return errorResponse("Failed to unlink account", 500);
   }
 });

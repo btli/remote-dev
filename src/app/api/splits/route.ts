@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as SplitService from "@/services/split-service";
 import type { SplitDirection } from "@/types/split";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/splits");
 
 /**
  * GET /api/splits - Get all split groups for the current user
@@ -11,7 +14,7 @@ export const GET = withAuth(async (_request, { userId }) => {
     const splits = await SplitService.listSplitGroups(userId);
     return NextResponse.json({ splits });
   } catch (error) {
-    console.error("Error fetching splits:", error);
+    log.error("Error fetching splits", { error: String(error) });
     return errorResponse("Failed to fetch splits", 500);
   }
 });
@@ -46,7 +49,7 @@ export const POST = withAuth(async (request, { userId }) => {
 
     return NextResponse.json(split, { status: 201 });
   } catch (error) {
-    console.error("Error creating split:", error);
+    log.error("Error creating split", { error: String(error) });
     if (error instanceof SplitService.SplitServiceError) {
       return errorResponse(error.message, 400, error.code);
     }

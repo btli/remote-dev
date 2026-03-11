@@ -14,6 +14,9 @@ import type {
   PluginMetadata,
   TerminalTypeOption,
 } from "@/types/terminal-type";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("PluginRegistry");
 
 /**
  * Registration options for plugins
@@ -85,9 +88,7 @@ class TerminalTypeRegistryImpl {
       registeredAt: new Date(),
     });
 
-    console.error(
-      `[PluginRegistry] Registered terminal type: ${plugin.type} (${plugin.displayName})`
-    );
+    log.debug("Registered terminal type", { type: plugin.type, displayName: plugin.displayName });
   }
 
   /**
@@ -116,7 +117,7 @@ class TerminalTypeRegistryImpl {
     this.plugins.delete(type);
     this.metadata.delete(type);
 
-    console.error(`[PluginRegistry] Unregistered terminal type: ${type}`);
+    log.info("Unregistered terminal type", { type });
   }
 
   /**
@@ -147,9 +148,7 @@ class TerminalTypeRegistryImpl {
       );
     }
 
-    console.warn(
-      `[PluginRegistry] No plugin for "${type}", using default "${this.defaultType}"`
-    );
+    log.warn("No plugin found, using default", { requestedType: type, defaultType: this.defaultType });
     return defaultPlugin;
   }
 

@@ -7,6 +7,9 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import { killOrphanedSessionsUseCase } from "@/infrastructure/container";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/tmux");
 
 /**
  * DELETE /api/tmux/sessions/orphaned
@@ -25,7 +28,7 @@ export const DELETE = withAuth(async (_request, { userId }) => {
       errors: result.errors,
     });
   } catch (error) {
-    console.error("Failed to clean up orphaned sessions:", error);
+    log.error("Failed to clean up orphaned sessions", { error: String(error) });
     return errorResponse("Failed to clean up orphaned sessions", 500);
   }
 });

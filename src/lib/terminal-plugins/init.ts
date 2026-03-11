@@ -10,6 +10,9 @@ import { ShellPlugin } from "./plugins/shell-plugin";
 import { AgentPlugin } from "./plugins/agent-plugin";
 import { FileViewerPlugin } from "./plugins/file-viewer-plugin";
 import { BrowserPlugin } from "./plugins/browser-plugin";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("PluginInit");
 
 let initialized = false;
 
@@ -21,11 +24,11 @@ let initialized = false;
  */
 export function initializeBuiltInPlugins(): void {
   if (initialized) {
-    console.error("[TerminalPlugins] Already initialized, skipping");
+    log.debug("Already initialized, skipping");
     return;
   }
 
-  console.error("[TerminalPlugins] Initializing built-in plugins...");
+  log.info("Initializing built-in plugins...");
 
   // Register built-in plugins
   // Order matters for UI display - higher priority first
@@ -40,10 +43,11 @@ export function initializeBuiltInPlugins(): void {
   initialized = true;
 
   const stats = TerminalTypeRegistry.getStats();
-  console.error(
-    `[TerminalPlugins] Initialized ${stats.totalPlugins} plugins ` +
-      `(${stats.builtInPlugins} built-in, default: ${stats.defaultType})`
-  );
+  log.info("Plugins initialized", {
+    totalPlugins: stats.totalPlugins,
+    builtInPlugins: stats.builtInPlugins,
+    defaultType: stats.defaultType,
+  });
 }
 
 /**

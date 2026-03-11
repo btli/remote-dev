@@ -5,6 +5,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import * as CacheService from "@/services/cache-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/github");
 
 interface MarkSeenRequest {
   repositoryId?: string; // Optional: specific repo, or all if omitted
@@ -38,7 +41,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error marking changes as seen:", error);
+    log.error("Error marking changes as seen", { error: String(error) });
     const err = error as Error;
     return NextResponse.json(
       { error: err.message, code: "MARK_SEEN_ERROR" },

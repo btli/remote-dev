@@ -8,6 +8,9 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Encryption");
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96 bits for GCM
@@ -23,7 +26,7 @@ function getEncryptionKey(): Buffer {
     if (process.env.NODE_ENV === "production") {
       throw new Error("AUTH_SECRET is required in production for encryption");
     }
-    console.warn("AUTH_SECRET not set - using development key for encryption");
+    log.warn("AUTH_SECRET not set - using development key for encryption");
     return createHash("sha256").update("development-encryption-key").digest();
   }
   return createHash("sha256").update(secret).digest();

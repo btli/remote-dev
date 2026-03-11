@@ -27,6 +27,9 @@ import { githubAccountRepository } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 import { archiveSessionTodos } from "./agent-todo-sync";
 import { createApiKey } from "@/services/api-key-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SessionService");
 
 // Initialize plugins on module load
 initializeBuiltInPlugins();
@@ -225,7 +228,7 @@ export async function createSession(
   // RDV env vars for agent hook callbacks (session ID + terminal server address)
   // Socket mode (prod): uses TERMINAL_SOCKET; Port mode (dev): uses TERMINAL_PORT
   const terminalSocket = process.env.TERMINAL_SOCKET;
-  console.log(`[session:${sessionId}] isAgentSession=${!!isAgentSession} provider=${effectiveAgentProvider} terminalType=${input.terminalType} TERMINAL_PORT=${process.env.TERMINAL_PORT}`);
+  log.debug("Session creation details", { sessionId, isAgentSession: !!isAgentSession, provider: effectiveAgentProvider, terminalType: input.terminalType });
   // Auto-create API key for agent sessions so they can make authenticated API calls
   let agentApiKey: string | undefined;
   if (isAgentSession) {
@@ -236,7 +239,7 @@ export async function createSession(
       const keyResult = await createApiKey(userId, keyName);
       agentApiKey = keyResult.key;
     } catch (error) {
-      console.error(`[session:${sessionId}] Failed to create API key for agent session:`, error);
+      log.error("Failed to create API key for agent session", { sessionId, error: String(error) });
       // Non-fatal: agent can still work without API key
     }
   }
@@ -289,7 +292,7 @@ export async function createSession(
       }
     }
   } catch (error) {
-    console.error(`[session:${sessionId}] Failed to resolve GitHub account env:`, error);
+    log.error("Failed to resolve GitHub account env", { sessionId, error: String(error) });
   }
 
   // File and browser sessions don't need tmux — they're pure UI
@@ -305,7 +308,7 @@ export async function createSession(
       ...(ghAccountEnv ?? {}),
       ...rdvEnv,
     };
-    console.log(`[session:${sessionId}] initialEnv keys: [${Object.keys(initialEnv).join(', ')}]`);
+    log.debug("Session initial env keys", { sessionId, keys: Object.keys(initialEnv) });
 
     // Create the tmux session with initial environment for PTY spawn
     try {
@@ -332,10 +335,7 @@ export async function createSession(
       try {
         await TmuxService.setSessionEnvironment(tmuxSessionName, initialEnv);
       } catch (error) {
-        console.error(
-          `Failed to set session environment for ${tmuxSessionName}:`,
-          error
-        );
+        log.error("Failed to set session environment", { tmuxSessionName, error: String(error) });
       }
     }
 
@@ -354,10 +354,7 @@ export async function createSession(
         );
       } catch (error) {
         // Log but don't fail session creation - the session is already running
-        console.error(
-          `Failed to set agent exit hook for ${tmuxSessionName}:`,
-          error
-        );
+        log.error("Failed to set agent exit hook", { tmuxSessionName, error: String(error) });
       }
     }
   }
@@ -427,7 +424,7 @@ export async function createSession(
     const cleanupPromises: Promise<void>[] = [
       // Clean up orphaned tmux session
       TmuxService.killSession(tmuxSessionName).catch(() => {
-        console.error(`Failed to clean up orphaned tmux session: ${tmuxSessionName}`);
+        log.error("Failed to clean up orphaned tmux session", { tmuxSessionName });
       }),
     ];
 
@@ -437,7 +434,7 @@ export async function createSession(
         WorktreeService.removeWorktree(repoPath, workingPath, true)
           .then(() => {}) // Discard result to match Promise<void> type
           .catch(() => {
-            console.error(`Failed to clean up orphaned worktree: ${workingPath}`);
+            log.error("Failed to clean up orphaned worktree", { worktreePath: workingPath });
           })
       );
     }
@@ -544,7 +541,7 @@ export async function updateSession(
   // If status is being changed to closed, kill the tmux session
   if (updates.status === "closed" && existing.status !== "closed") {
     await TmuxService.killSession(existing.tmuxSessionName).catch((err) => {
-      console.error(`Failed to kill tmux session during status update: ${err.message}`);
+      log.error("Failed to kill tmux session during status update", { error: err.message });
     });
   }
 
@@ -806,7 +803,7 @@ export async function resumeSession(
         const keyResult = await createApiKey(userId, keyName);
         agentApiKey = keyResult.key;
       } catch (error) {
-        console.error(`[session:${sessionId}] Failed to create API key on resume:`, error);
+        log.error("Failed to create API key on resume", { sessionId, error: String(error) });
       }
 
       const terminalSocket = process.env.TERMINAL_SOCKET;
@@ -839,12 +836,12 @@ export async function resumeSession(
           }
         }
       } catch (error) {
-        console.error(`[session:${sessionId}] Failed to resolve GitHub account env on resume:`, error);
+        log.error("Failed to resolve GitHub account env on resume", { sessionId, error: String(error) });
       }
 
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, { ...ghAccountEnv, ...rdvEnv });
     } catch (error) {
-      console.error(`[session:${sessionId}] Failed to set env on resume:`, error);
+      log.error("Failed to set env on resume", { sessionId, error: String(error) });
     }
   }
 
@@ -904,14 +901,14 @@ export async function closeSession(
       and(eq(apiKeys.userId, userId), eq(apiKeys.name, `agent-session-${sessionId}`))
     );
   } catch (error) {
-    console.error(`[Session:${sessionId}] Failed to revoke API key:`, error);
+    log.error("Failed to revoke API key", { sessionId, error: String(error) });
   }
 
   // Auto-archive completed agent tasks for this session
   try {
     await archiveSessionTodos(sessionId, userId);
   } catch (error) {
-    console.error(`[Session:${sessionId}] Failed to archive agent tasks:`, error);
+    log.error("Failed to archive agent tasks", { sessionId, error: String(error) });
   }
 }
 
@@ -1021,11 +1018,11 @@ async function resolveAgentConfigDirs(
   try {
     const effectiveHome = await AgentProfileService.resolveEffectiveHome(startupCommand);
     if (effectiveHome) {
-      console.log(`[session:${sessionId}] Detected HOME override: ${effectiveHome} (configDir: ${configDir})`);
+      log.debug("Detected HOME override", { sessionId, effectiveHome, configDir });
       dirs.add(effectiveHome);
     }
   } catch (error) {
-    console.warn(`[session:${sessionId}] Failed to resolve effective HOME:`, error);
+    log.warn("Failed to resolve effective HOME", { sessionId, error: String(error) });
   }
 
   return dirs;
@@ -1048,7 +1045,7 @@ async function ensureAgentConfig(
   await Promise.all(
     [...configDirs].map((dir) =>
       AgentProfileService.installAgentHooks(dir, provider)
-        .catch((e) => console.error(`[session:${sessionId}] Failed to install agent hooks at ${dir}:`, e))
+        .catch((e) => log.error("Failed to install agent hooks", { sessionId, dir, error: String(e) }))
     )
   );
 
@@ -1059,12 +1056,12 @@ async function ensureAgentConfig(
       AgentProfileService.validateAgentHooks(primaryDir, provider, sessionId, rdvEnv)
         .then((result) => {
           if (!result.valid) {
-            console.error(`[session:${sessionId}] Hook validation failed: ${result.error}`);
+            log.error("Hook validation failed", { sessionId, error: result.error });
           } else if (result.repaired) {
-            console.log(`[session:${sessionId}] Hooks were auto-repaired`);
+            log.info("Hooks were auto-repaired", { sessionId });
           }
         })
-        .catch((e) => console.error(`[session:${sessionId}] Hook validation error:`, e));
+        .catch((e) => log.error("Hook validation error", { sessionId, error: String(e) }));
     }
   }
 }

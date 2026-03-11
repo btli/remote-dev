@@ -11,6 +11,9 @@ import { Release } from "@/domain/entities/Release";
 import { AppVersion } from "@/domain/value-objects/AppVersion";
 import type { ReleaseRepository } from "@/application/ports/ReleaseRepository";
 import type { ReleasePlatform } from "@/domain/entities/Release";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("DrizzleReleaseRepository");
 
 const SINGLETON_ID = "singleton";
 
@@ -69,7 +72,7 @@ export class DrizzleReleaseRepository implements ReleaseRepository {
         platform: json.platform,
       });
     } catch (error) {
-      console.error("[DrizzleReleaseRepository] Failed to parse cached release:", error);
+      log.error("Failed to parse cached release", { error: String(error) });
       return null;
     }
   }

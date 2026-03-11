@@ -14,6 +14,9 @@ import type {
   BranchProtection,
 } from "@/types/github-stats";
 import { GitHubGraphQLError } from "@/lib/errors";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("GitHubGraphQL");
 
 // Re-export for backwards compatibility
 export { GitHubGraphQLError };
@@ -549,9 +552,7 @@ export async function fetchBatchedStats(
         // The error object contains partial data for repos that succeeded.
         const gqlError = error as { data?: Record<string, GraphQLRepositoryStats | null> };
         if (gqlError.data) {
-          console.warn(
-            `Partial GraphQL failure in batch starting at ${i} (some repos not found), processing available data`
-          );
+          log.warn("Partial GraphQL failure in batch (some repos not found), processing available data", { batchStart: i });
           response = gqlError.data;
         } else {
           throw error;
@@ -608,7 +609,7 @@ export async function fetchBatchedStats(
     } catch (error) {
       // Track errors for each repo in the failed batch
       const errorObj = error instanceof Error ? error : new Error(String(error));
-      console.error(`Error fetching batch starting at ${i}:`, error);
+      log.error("Error fetching batch", { batchStart: i, error: String(error) });
 
       // Record error for each repository in the failed batch
       for (const repo of batch) {
@@ -674,7 +675,7 @@ export async function fetchPRDetails(
       author: pr.author?.login ?? "unknown",
     };
   } catch (error) {
-    console.error(`Error fetching PR #${prNumber}:`, error);
+    log.error("Error fetching PR", { prNumber, error: String(error) });
     return null;
   }
 }

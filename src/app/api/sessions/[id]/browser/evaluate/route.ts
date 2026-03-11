@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as BrowserService from "@/services/browser-service";
 import * as SessionService from "@/services/session-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/sessions");
 
 /**
  * POST /api/sessions/:id/browser/evaluate - Evaluate JavaScript in browser context
@@ -30,7 +33,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
     const evalResult = await BrowserService.evaluate(params.id, expression);
     return NextResponse.json({ result: evalResult });
   } catch (error) {
-    console.error("Browser evaluate error:", error);
+    log.error("Browser evaluate error", { error: String(error) });
     return errorResponse("Evaluation failed", 500);
   }
 });

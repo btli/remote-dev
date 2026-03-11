@@ -13,6 +13,9 @@ import {
 } from "@/infrastructure/container";
 import { TmuxSessionPresenter } from "@/interface/presenters/TmuxSessionPresenter";
 import { InvalidValueError } from "@/domain/errors/DomainError";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/tmux");
 
 /**
  * GET /api/tmux/sessions
@@ -32,7 +35,7 @@ export const GET = withAuth(async (_request, { userId }) => {
       })
     );
   } catch (error) {
-    console.error("Failed to list tmux sessions:", error);
+    log.error("Failed to list tmux sessions", { error: String(error) });
     return errorResponse("Failed to list tmux sessions", 500);
   }
 });
@@ -62,7 +65,7 @@ export const DELETE = withAuth(async (request, { userId }) => {
     if (error instanceof InvalidValueError) {
       return errorResponse(error.message, 400, "INVALID_VALUE");
     }
-    console.error("Failed to terminate tmux session:", error);
+    log.error("Failed to terminate tmux session", { error: String(error) });
     return errorResponse("Failed to terminate session", 500);
   }
 });

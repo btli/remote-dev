@@ -12,6 +12,9 @@ import { NetworkError } from "@/domain/errors/UpdateError";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "stream/promises";
 import { Readable } from "node:stream";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("GitHubReleaseGateway");
 
 const GITHUB_API_HEADERS = {
   Accept: "application/vnd.github.v3+json",
@@ -58,7 +61,7 @@ export class GitHubReleaseGatewayImpl implements ReleaseGateway {
     const asset = data.assets.find((a) => a.name.endsWith(assetSuffix));
 
     if (!asset) {
-      console.log(`[GitHubReleaseGateway] No asset found for platform ${platform} in release ${data.tag_name}`);
+      log.info("No asset found for platform in release", { platform, tag: data.tag_name });
       return null;
     }
 

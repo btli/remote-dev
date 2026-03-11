@@ -7,7 +7,10 @@ import { headers } from "next/headers";
 import { db } from "@/db";
 import { users, accounts, sessions, verificationTokens, authorizedUsers } from "@/db/schema";
 import { encrypt, decryptSafe } from "@/lib/encryption";
+import { createLogger } from "@/lib/logger";
 import type { Adapter, AdapterAccount } from "next-auth/adapters";
+
+const log = createLogger("Auth");
 
 /**
  * Check if the request is from localhost (127.0.0.1 or ::1)
@@ -99,7 +102,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // Remote access must use Cloudflare Access (JWT validated in getAuthSession)
         const isLocalhost = await isLocalhostRequest();
         if (!isLocalhost) {
-          console.warn("Credentials auth attempted from non-localhost, rejecting");
+          log.warn("Credentials auth attempted from non-localhost, rejecting");
           return null;
         }
 

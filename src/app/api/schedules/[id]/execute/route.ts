@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as ScheduleService from "@/services/schedule-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/schedules");
 
 /**
  * POST /api/schedules/:id/execute - Trigger manual execution
@@ -22,7 +25,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
       execution,
     });
   } catch (error) {
-    console.error("Error executing schedule:", error);
+    log.error("Error executing schedule", { error: String(error) });
     if (error instanceof ScheduleService.ScheduleServiceError) {
       let status: number;
       switch (error.code) {

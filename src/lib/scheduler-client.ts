@@ -8,6 +8,9 @@
  */
 
 import http from "node:http";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("SchedulerClient");
 
 /**
  * Get the terminal server socket path if using Unix socket mode
@@ -79,7 +82,7 @@ function socketRequest(
     });
 
     req.on("error", (error) => {
-      console.warn(`[SchedulerClient] Socket request failed:`, error.message);
+      log.warn("Socket request failed", { error: error.message });
       resolve({ success: false, error: "Terminal server unavailable" });
     });
 
@@ -122,7 +125,7 @@ async function schedulerRequest(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      console.error(`[SchedulerClient] ${action} failed:`, response.status, errorData);
+      log.error("Scheduler action failed", { action, status: response.status, errorData });
       return { success: false, error: errorData.error || `HTTP ${response.status}` };
     }
 
@@ -131,7 +134,7 @@ async function schedulerRequest(
   } catch (error) {
     // Connection errors are expected if terminal server isn't running
     // Log but don't throw - the schedule is still saved in the database
-    console.warn(`[SchedulerClient] Failed to notify terminal server (${action}):`, error);
+    log.warn("Failed to notify terminal server", { action, error: String(error) });
     return { success: false, error: "Terminal server unavailable" };
   }
 }

@@ -3,6 +3,9 @@ import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { validateProjectPath } from "@/lib/api-validation";
 import { writeFile, rename, unlink, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/files");
 
 const MAX_CONTENT_SIZE = 10 * 1024 * 1024; // 10MB
 
@@ -61,7 +64,7 @@ export const POST = withApiAuth(async (request) => {
     if (err.code === "EACCES") {
       return errorResponse("Permission denied", 403, "PERMISSION_DENIED");
     }
-    console.error("Error writing file:", error);
+    log.error("Error writing file", { error: String(error) });
     return errorResponse("Failed to write file", 500);
   }
 });

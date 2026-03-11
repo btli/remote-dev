@@ -4,6 +4,9 @@ import { authorizedUsers, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { validateAccessJWT } from "./cloudflare-access";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("Auth");
 
 /**
  * Session-like object compatible with existing code that uses `await auth()`.
@@ -67,7 +70,7 @@ export async function getAuthSession(): Promise<AuthSession | null> {
       });
 
       if (!authorized) {
-        console.warn(`Unauthorized CF Access user: ${cfUser.email}`);
+        log.warn("Unauthorized CF Access user", { email: cfUser.email });
         return null;
       }
 
@@ -125,7 +128,7 @@ export async function getAuthSession(): Promise<AuthSession | null> {
     }
 
     if (!dbUser) {
-      console.warn(`User ${session.user.id} from JWT not found in database and email not authorized`);
+      log.warn("User from JWT not found in database and email not authorized", { userId: session.user.id });
       return null;
     }
 

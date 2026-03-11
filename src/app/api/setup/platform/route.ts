@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { platform, arch, homedir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/setup");
 
 const execFileAsync = promisify(execFile);
 
@@ -113,7 +116,7 @@ export async function GET() {
       homeDirectory: home,
     });
   } catch (error) {
-    console.error("Platform detection failed:", error);
+    log.error("Platform detection failed", { error: String(error) });
     return NextResponse.json(
       { error: "Failed to detect platform" },
       { status: 500 }
