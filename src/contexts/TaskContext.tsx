@@ -102,9 +102,20 @@ export function TaskProvider({ children }: TaskProviderProps) {
     }
   }, [activeFolderId]);
 
-  // Reload when active folder changes
+  // Fetch tasks when active folder changes and refresh on visibility restore
   useEffect(() => {
     refreshTasks();
+
+    function handleVisibilityChange(): void {
+      if (!document.hidden) {
+        refreshTasks();
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [refreshTasks]);
 
   const createTask = useCallback(
