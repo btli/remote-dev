@@ -6,6 +6,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useRef,
   useMemo,
   type ReactNode,
 } from "react";
@@ -78,17 +79,25 @@ export function TaskProvider({ children }: TaskProviderProps) {
   const activeFolderId = activeProject.folderId;
   const { activeSessionId } = useSessionContext();
 
+  const abortRef = useRef<AbortController | null>(null);
+
   const refreshTasks = useCallback(async () => {
+    abortRef.current?.abort();
+
     if (!activeFolderId) {
       setAllTasks([]);
       return;
     }
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       setLoading(true);
       setError(null);
       const response = await fetch(
-        `/api/tasks?folderId=${encodeURIComponent(activeFolderId)}`
+        `/api/tasks?folderId=${encodeURIComponent(activeFolderId)}`,
+        { signal: controller.signal }
       );
       if (!response.ok) {
         throw new Error("Failed to fetch tasks");
@@ -96,19 +105,26 @@ export function TaskProvider({ children }: TaskProviderProps) {
       const data = await response.json();
       setAllTasks(data.map(hydrateTask));
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
   }, [activeFolderId]);
 
-  // Fetch tasks when active folder changes and refresh on visibility restore
+  // Reload when active folder changes
   useEffect(() => {
     refreshTasks();
+  }, [refreshTasks]);
 
+  // Refresh tasks when page becomes visible again (e.g. after sleep, tab switch)
+  const refreshRef = useRef(refreshTasks);
+  refreshRef.current = refreshTasks;
+
+  useEffect(() => {
     function handleVisibilityChange(): void {
       if (!document.hidden) {
-        refreshTasks();
+        refreshRef.current();
       }
     }
 
@@ -116,7 +132,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [refreshTasks]);
+  }, []);
 
   const createTask = useCallback(
     async (input: CreateTaskInput): Promise<ProjectTask | null> => {
