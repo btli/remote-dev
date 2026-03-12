@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Task list stale after sleep/tab switch**: Task list now automatically refreshes when the page regains visibility (e.g. returning from sleep, switching tabs) instead of requiring a manual reload. Also added fetch cancellation via AbortController to prevent race conditions from concurrent refreshes.
 - **Task session scoping**: Tasks sidebar now shows only the active session's tasks instead of all folder tasks, matching the schedule scoping pattern. New tasks and linked GitHub issues are automatically associated with the active session.
 - **Schedule session scoping**: Schedules sidebar now shows only the active session's schedules instead of all schedules, and schedule creation auto-detects the active session instead of showing a session picker
 
