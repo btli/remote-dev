@@ -64,6 +64,7 @@ import type { AgentActivityStatus } from "@/types/terminal-type";
 import { useAgentNotifications } from "@/hooks/useAgentNotifications";
 import { NotificationPanel } from "@/components/notifications/NotificationPanel";
 import { useNotificationContext, hydrateNotification } from "@/contexts/NotificationContext";
+import { dismissToastsForSession } from "@/lib/notification-toast";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -345,7 +346,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const { getRepositoryById } = useGitHubStats();
 
   const { refreshTasks } = useTaskContext();
-  const { addNotification, registerJumpHandler } = useNotificationContext();
+  const { addNotification, registerJumpHandler, notifications, markRead } = useNotificationContext();
 
   // Notification panel state
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -1388,6 +1389,22 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     registerJumpHandler(setActiveSession);
     return () => registerJumpHandler(null);
   }, [registerJumpHandler, setActiveSession]);
+
+  // Dismiss toasts and mark notifications read when a session is selected
+  const markSessionNotificationsRead = useEffectEvent((sessionId: string) => {
+    dismissToastsForSession(sessionId);
+    const unreadIds = notifications
+      .filter((n) => !n.readAt && n.sessionId === sessionId)
+      .map((n) => n.id);
+    if (unreadIds.length > 0) {
+      markRead(unreadIds);
+    }
+  });
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    markSessionNotificationsRead(activeSessionId);
+  }, [activeSessionId]);
 
   /** Close a session in a split pane */
   const handlePaneSessionExit = useCallback(async (sessionId: string) => {
