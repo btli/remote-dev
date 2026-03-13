@@ -12,11 +12,15 @@ const log = createLogger("api/sessions");
  * GET /api/sessions - List user's terminal sessions
  *
  * Supports both session auth and API key auth for agent access.
+ * Query params:
+ *   - status: comma-separated list of statuses to filter by
+ *   - parentSessionId: filter sessions by parent session ID (for team orchestration)
  */
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
     const { searchParams } = new URL(request.url);
     const statusParam = searchParams.get("status");
+    const parentSessionId = searchParams.get("parentSessionId");
     const statuses = statusParam
       ? statusParam
           .split(",")
@@ -29,7 +33,8 @@ export const GET = withApiAuth(async (request, { userId }) => {
 
     const sessions = await SessionService.listSessions(
       userId,
-      status ?? undefined
+      status ?? undefined,
+      parentSessionId ?? undefined
     );
 
     return NextResponse.json({ sessions });
@@ -64,6 +69,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       agentProvider?: string;
       autoLaunchAgent?: boolean;
       agentFlags?: string[];
+      parentSessionId?: string;
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -98,6 +104,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
       agentProvider: body.agentProvider as CreateSessionInput["agentProvider"],
       autoLaunchAgent: body.autoLaunchAgent,
       agentFlags: body.agentFlags,
+      // Parent session for team orchestration
+      parentSessionId: body.parentSessionId,
       // Feature session fields
       startupCommand: body.startupCommand,
       featureDescription: body.featureDescription,

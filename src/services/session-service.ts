@@ -402,6 +402,7 @@ export async function createSession(
         worktreeType: input.worktreeType ?? null,
         folderId: input.folderId ?? null,
         profileId: input.profileId ?? null,
+        parentSessionId: input.parentSessionId ?? null,
         terminalType,
         typeMetadata,
         agentProvider: input.agentProvider ?? "claude",
@@ -505,16 +506,22 @@ export async function getSessionWithMetadata(
  */
 export async function listSessions(
   userId: string,
-  status?: SessionStatus | SessionStatus[]
+  status?: SessionStatus | SessionStatus[],
+  parentSessionId?: string
 ): Promise<TerminalSession[]> {
   const statusFilter = Array.isArray(status) ? status : status ? [status] : null;
+  const conditions = [eq(terminalSessions.userId, userId)];
+
+  if (statusFilter && statusFilter.length > 0) {
+    conditions.push(inArray(terminalSessions.status, statusFilter));
+  }
+
+  if (parentSessionId) {
+    conditions.push(eq(terminalSessions.parentSessionId, parentSessionId));
+  }
+
   const sessions = await db.query.terminalSessions.findMany({
-    where: statusFilter && statusFilter.length > 0
-      ? and(
-          eq(terminalSessions.userId, userId),
-          inArray(terminalSessions.status, statusFilter)
-        )
-      : eq(terminalSessions.userId, userId),
+    where: conditions.length > 1 ? and(...conditions) : conditions[0],
     orderBy: [asc(terminalSessions.tabOrder)],
   });
 
@@ -960,6 +967,7 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
     agentRestartCount: dbSession.agentRestartCount ?? 0,
     agentActivityStatus: dbSession.agentActivityStatus ?? null,
     typeMetadata: dbSession.typeMetadata ? JSON.parse(dbSession.typeMetadata) : null,
+    parentSessionId: dbSession.parentSessionId ?? null,
     splitGroupId: dbSession.splitGroupId,
     splitOrder: dbSession.splitOrder,
     splitSize: dbSession.splitSize ?? 0.5,

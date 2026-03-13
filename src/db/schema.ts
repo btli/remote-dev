@@ -487,8 +487,9 @@ export const terminalSessions = sqliteTable(
     }),
     splitOrder: integer("split_order").notNull().default(0),
     splitSize: real("split_size").default(0.5),
-    parentSessionId: text("parent_session_id"),  // deprecated, unused
-    orchestratorRole: text("orchestrator_role").$type<"parent" | "child">(),  // deprecated, unused
+    // Parent session for team orchestration (child sessions spawned by a parent)
+    parentSessionId: text("parent_session_id"),
+    orchestratorRole: text("orchestrator_role").$type<"parent" | "child">(),
     status: text("status").$type<SessionStatus>().notNull().default("active"),
     pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     tabOrder: integer("tab_order").notNull().default(0),

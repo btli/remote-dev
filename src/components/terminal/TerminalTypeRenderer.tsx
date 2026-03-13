@@ -18,7 +18,8 @@ import { VoiceMicButton } from "./VoiceMicButton";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { BrowserPane } from "./BrowserPane";
 import type { ConnectionStatus } from "@/types/terminal";
-import type { FileViewerMetadata } from "@/types/terminal-type";
+import type { FileViewerMetadata, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
+import { useSessionContext } from "@/contexts/SessionContext";
 
 interface TerminalTypeRendererProps {
   session: TerminalSession;
@@ -46,6 +47,10 @@ interface TerminalTypeRendererProps {
   onAgentTodosUpdated?: (sessionId: string) => void;
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
+  /** Called when a session status indicator is set or cleared */
+  onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
+  /** Called when session progress is updated or cleared */
+  onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
 }
 
 export function TerminalTypeRenderer({
@@ -69,7 +74,12 @@ export function TerminalTypeRenderer({
   onAgentActivityStatus,
   onAgentTodosUpdated,
   onNotification,
+  onSessionStatus,
+  onSessionProgress,
 }: TerminalTypeRendererProps) {
+  const { getAgentActivityStatus } = useSessionContext();
+  const activityStatus = getAgentActivityStatus(session.id);
+  const needsAttention = activityStatus === "waiting" || activityStatus === "error";
   const terminalRef = useRef<TerminalRef>(null);
   const [agentExitInfo, setAgentExitInfo] = useState<{
     exitCode: number | null;
@@ -111,7 +121,7 @@ export function TerminalTypeRenderer({
   }, [session.id, onAgentStateChange, onSessionClose]);
 
   const renderAgentTerminal = (terminalType: "agent") => (
-    <div className="relative w-full h-full">
+    <div className={`relative w-full h-full${needsAttention ? " notification-ring" : ""}`}>
       <Terminal
         ref={terminalRef}
         sessionId={session.id}
@@ -136,6 +146,8 @@ export function TerminalTypeRenderer({
         onAgentActivityStatus={onAgentActivityStatus}
         onAgentTodosUpdated={onAgentTodosUpdated}
         onNotification={onNotification}
+        onSessionStatus={onSessionStatus}
+        onSessionProgress={onSessionProgress}
         onOutput={onOutput}
         onDimensionsChange={onDimensionsChange}
       />
@@ -207,6 +219,8 @@ export function TerminalTypeRenderer({
           onStatusChange={onStatusChange}
           onWebSocketReady={onWebSocketReady}
           onSessionExit={onSessionExit}
+          onSessionStatus={onSessionStatus}
+          onSessionProgress={onSessionProgress}
           onOutput={onOutput}
           onDimensionsChange={onDimensionsChange}
         />
