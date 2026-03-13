@@ -157,6 +157,19 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
         message: cleanupResult.message,
       });
 
+      // Disable any scheduled commands for this session
+      try {
+        const disabledCount = await ScheduleService.disableSessionSchedules(id);
+        if (disabledCount > 0) {
+          notifySessionJobsRemoved(id).catch((err) =>
+            log.warn("Failed to notify scheduler of session job removal", { error: String(err) })
+          );
+          log.info("Disabled schedules for session", { disabledCount, sessionId: id });
+        }
+      } catch (scheduleError) {
+        log.error("Failed to disable schedules", { error: String(scheduleError) });
+      }
+
       // Close the session after successful cleanup.
       // If this fails, the worktree/branches are already cleaned up
       // but the session record remains — acceptable since a stale session
