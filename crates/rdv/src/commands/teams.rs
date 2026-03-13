@@ -1,7 +1,13 @@
 use clap::{Args, Subcommand};
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::client::Client;
+
+#[derive(Debug, Deserialize)]
+struct SessionsResponse {
+    sessions: Vec<serde_json::Value>,
+}
 
 #[derive(Args)]
 pub struct TeamsArgs {
@@ -107,25 +113,24 @@ pub async fn run(args: TeamsArgs, client: &Client, human: bool) -> Result<(), Bo
                 "/api/sessions".to_string()
             };
 
-            let sessions: serde_json::Value = client.get(&path).await?;
+            let resp: SessionsResponse = client.get(&path).await?;
+            let arr = &resp.sessions;
 
             if human {
-                if let Some(arr) = sessions.as_array() {
-                    if arr.is_empty() {
-                        println!("No sessions found");
-                    } else {
-                        for s in arr {
-                            let id = s["id"].as_str().unwrap_or("?");
-                            let name = s["name"].as_str().unwrap_or("unnamed");
-                            let status = s["status"].as_str().unwrap_or("unknown");
-                            let agent_status = s["agentActivityStatus"].as_str().unwrap_or("-");
-                            let parent = s["parentSessionId"].as_str().unwrap_or("-");
-                            println!("{id}  {name:<20} status={status:<10} agent={agent_status:<10} parent={parent}");
-                        }
+                if arr.is_empty() {
+                    println!("No sessions found");
+                } else {
+                    for s in arr {
+                        let id = s["id"].as_str().unwrap_or("?");
+                        let name = s["name"].as_str().unwrap_or("unnamed");
+                        let status = s["status"].as_str().unwrap_or("unknown");
+                        let agent_status = s["agentActivityStatus"].as_str().unwrap_or("-");
+                        let parent = s["parentSessionId"].as_str().unwrap_or("-");
+                        println!("{id}  {name:<20} status={status:<10} agent={agent_status:<10} parent={parent}");
                     }
                 }
             } else {
-                println!("{}", serde_json::to_string_pretty(&sessions)?);
+                println!("{}", serde_json::to_string_pretty(&arr)?);
             }
         }
         TeamsCommand::Wait { parent_id, timeout } => {
@@ -138,29 +143,35 @@ pub async fn run(args: TeamsArgs, client: &Client, human: bool) -> Result<(), Bo
                 }
 
                 let path = format!("/api/sessions?parentSessionId={parent_id}");
-                let sessions: serde_json::Value = client.get(&path).await?;
+                let resp: SessionsResponse = client.get(&path).await?;
+                let arr = &resp.sessions;
 
-                if let Some(arr) = sessions.as_array() {
-                    let all_done = arr.iter().all(|s| {
-                        let exit_state = s["agentExitState"].as_str().unwrap_or("");
-                        let status = s["status"].as_str().unwrap_or("");
-                        exit_state == "exited" || exit_state == "closed" || status == "closed"
-                    });
-
-                    if all_done {
-                        if human {
-                            println!("All {} child sessions completed", arr.len());
-                        }
-                        break;
-                    }
-
+                if arr.is_empty() {
                     if human {
-                        let active = arr.iter().filter(|s| {
-                            let exit_state = s["agentExitState"].as_str().unwrap_or("");
-                            exit_state != "exited" && exit_state != "closed"
-                        }).count();
-                        eprint!("\rWaiting... {active}/{} sessions still active", arr.len());
+                        eprintln!("No child sessions found for parent {parent_id}");
                     }
+                    std::process::exit(1);
+                }
+
+                let all_done = arr.iter().all(|s| {
+                    let exit_state = s["agentExitState"].as_str().unwrap_or("");
+                    let status = s["status"].as_str().unwrap_or("");
+                    exit_state == "exited" || exit_state == "closed" || status == "closed"
+                });
+
+                if all_done {
+                    if human {
+                        println!("All {} child sessions completed", arr.len());
+                    }
+                    break;
+                }
+
+                if human {
+                    let active = arr.iter().filter(|s| {
+                        let exit_state = s["agentExitState"].as_str().unwrap_or("");
+                        exit_state != "exited" && exit_state != "closed"
+                    }).count();
+                    eprint!("\rWaiting... {active}/{} sessions still active", arr.len());
                 }
 
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -169,28 +180,27 @@ pub async fn run(args: TeamsArgs, client: &Client, human: bool) -> Result<(), Bo
         TeamsCommand::Broadcast { parent_id, text } => {
             let message = text.join(" ");
             let path = format!("/api/sessions?parentSessionId={parent_id}");
-            let sessions: serde_json::Value = client.get(&path).await?;
+            let resp: SessionsResponse = client.get(&path).await?;
+            let arr = &resp.sessions;
 
-            if let Some(arr) = sessions.as_array() {
-                let mut sent = 0;
-                for s in arr {
-                    let sid = match s["id"].as_str() {
-                        Some(id) => id,
-                        None => continue,
-                    };
-                    let status = s["status"].as_str().unwrap_or("");
-                    if status == "closed" { continue; }
+            let mut sent = 0;
+            for s in arr {
+                let sid = match s["id"].as_str() {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let status = s["status"].as_str().unwrap_or("");
+                if status == "closed" { continue; }
 
-                    let body = json!({ "sessionId": sid, "text": format!("{message}\n") });
-                    if let Err(e) = client.post_json("/internal/pty-write", &body).await {
-                        eprintln!("Warning: failed to send to {sid}: {e}");
-                    } else {
-                        sent += 1;
-                    }
+                let body = json!({ "sessionId": sid, "text": format!("{message}\n") });
+                if let Err(e) = client.post_json("/internal/pty-write", &body).await {
+                    eprintln!("Warning: failed to send to {sid}: {e}");
+                } else {
+                    sent += 1;
                 }
-                if human {
-                    println!("Sent to {sent}/{} sessions", arr.len());
-                }
+            }
+            if human {
+                println!("Sent to {sent}/{} sessions", arr.len());
             }
         }
     }
