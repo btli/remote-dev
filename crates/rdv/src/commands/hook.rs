@@ -46,6 +46,17 @@ enum HookCommand {
     },
     /// Validate that all hooks can reach the server and are functional
     Validate,
+    /// Unified handler for Claude Code lifecycle hooks (cmux-compatible)
+    Claude {
+        /// Hook event: session-start, stop, notification, compacting, prompt-submit, post-tool-use, session-end
+        event: String,
+        /// Agent provider name
+        #[arg(long)]
+        agent: Option<String>,
+        /// Reason for stop
+        #[arg(long)]
+        reason: Option<String>,
+    },
 }
 
 /// Report an agent activity status to the terminal server.
@@ -61,27 +72,86 @@ async fn report_status(client: &Client, status: &str) {
     }
 }
 
+/// Handle agent stop: report idle, check incomplete tasks, notify if proceeding.
+/// Returns Ok(()) early if no session ID is available.
+async fn handle_stop(client: &Client, agent: Option<String>, reason: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let sid = match client.session_id() {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+
+    let idle_query = [("sessionId", sid), ("status", "idle")];
+    let check_query = [("sessionId", sid)];
+    let (idle_result, check_result) = tokio::join!(
+        client.post_empty_with_query("/internal/agent-status", &idle_query),
+        client.post_empty_with_query("/internal/agent-stop-check", &check_query)
+    );
+    if let Err(e) = idle_result {
+        eprintln!("warning: failed to report idle status: {e}");
+    }
+
+    let stop_blocked = match &check_result {
+        Ok(val) => {
+            let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            if !msg.is_empty() {
+                println!("{msg}");
+                true
+            } else {
+                false
+            }
+        }
+        Err(e) => {
+            eprintln!("warning: failed to check tasks: {e}");
+            println!("Unable to verify task completion — please check your rdv task list before stopping.");
+            true
+        }
+    };
+
+    if !stop_blocked {
+        let title = match &agent {
+            Some(a) => format!("Agent stopped: {a}"),
+            None => "Agent stopped".to_string(),
+        };
+        let payload = json!({
+            "sessionId": sid,
+            "type": "agent_exited",
+            "title": title,
+            "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
+        });
+        let _ = client.post_json("/internal/notify", &payload).await;
+    }
+
+    Ok(())
+}
+
+/// Sync task/todo data from stdin to the terminal server.
+/// Drains stdin even if no session ID is available to prevent blocking the caller.
+async fn sync_todos_from_stdin(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    let sid = match client.session_id() {
+        Some(s) => s,
+        None => {
+            let _ = std::io::stdin().read_to_end(&mut Vec::new());
+            return Ok(());
+        }
+    };
+    let mut buf = Vec::new();
+    std::io::stdin().read_to_end(&mut buf)?;
+    if let Err(e) = client
+        .post_raw_bytes(&format!("/internal/agent-todos?sessionId={sid}"), buf)
+        .await
+    {
+        eprintln!("warning: failed to sync tasks: {e}");
+    }
+    Ok(())
+}
+
 pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         HookCommand::PreToolUse => {
             report_status(client, "running").await;
         }
         HookCommand::PostToolUse => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => {
-                    let _ = std::io::stdin().read_to_end(&mut Vec::new());
-                    return Ok(());
-                }
-            };
-            let mut buf = Vec::new();
-            std::io::stdin().read_to_end(&mut buf)?;
-            if let Err(e) = client
-                .post_raw_bytes(&format!("/internal/agent-todos?sessionId={sid}"), buf)
-                .await
-            {
-                eprintln!("warning: failed to sync tasks: {e}");
-            }
+            sync_todos_from_stdin(client).await?;
         }
         HookCommand::PreCompact => {
             report_status(client, "compacting").await;
@@ -90,54 +160,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             report_status(client, "waiting").await;
         }
         HookCommand::Stop { agent, reason } => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => return Ok(()),
-            };
-
-            // Report idle status and check tasks concurrently
-            let idle_query = [("sessionId", sid), ("status", "idle")];
-            let check_query = [("sessionId", sid)];
-            let (idle_result, check_result) = tokio::join!(
-                client.post_empty_with_query("/internal/agent-status", &idle_query),
-                client.post_empty_with_query("/internal/agent-stop-check", &check_query)
-            );
-            if let Err(e) = idle_result {
-                eprintln!("warning: failed to report idle status: {e}");
-            }
-
-            // Output task check message (blocks stop if tasks remain)
-            let stop_blocked = match &check_result {
-                Ok(val) => {
-                    let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                    if !msg.is_empty() {
-                        println!("{msg}");
-                        true
-                    } else {
-                        false
-                    }
-                }
-                Err(e) => {
-                    eprintln!("warning: failed to check tasks: {e}");
-                    println!("Unable to verify task completion — please check your rdv task list before stopping.");
-                    true
-                }
-            };
-
-            // Only send "Agent stopped" notification if the stop is actually proceeding
-            if !stop_blocked {
-                let title = match &agent {
-                    Some(a) => format!("Agent stopped: {a}"),
-                    None => "Agent stopped".to_string(),
-                };
-                let payload = json!({
-                    "sessionId": sid,
-                    "type": "agent_exited",
-                    "title": title,
-                    "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
-                });
-                let _ = client.post_json("/internal/notify", &payload).await;
-            }
+            handle_stop(client, agent, reason).await?;
         }
         HookCommand::Notify { event, body } => {
             let sid = match client.session_id() {
@@ -221,6 +244,32 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
 
             if !all_ok {
                 std::process::exit(1);
+            }
+        }
+        HookCommand::Claude { event, agent, reason } => {
+            match event.as_str() {
+                "session-start" | "active" | "prompt-submit" => {
+                    report_status(client, "running").await;
+                }
+                "stop" | "idle" => {
+                    handle_stop(client, agent, reason).await?;
+                }
+                "notification" | "notify" => {
+                    report_status(client, "waiting").await;
+                }
+                "compacting" => {
+                    report_status(client, "compacting").await;
+                }
+                "post-tool-use" | "task-sync" => {
+                    sync_todos_from_stdin(client).await?;
+                }
+                "session-end" => {
+                    report_status(client, "ended").await;
+                }
+                unknown => {
+                    eprintln!("error: unknown claude hook event: {unknown}");
+                    std::process::exit(1);
+                }
             }
         }
     }

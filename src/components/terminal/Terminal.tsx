@@ -54,6 +54,10 @@ interface TerminalProps {
   onAgentTodosUpdated?: (sessionId: string) => void;
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
+  /** Called when a session status indicator is set or cleared */
+  onSessionStatus?: (sessionId: string, key: string, indicator: import("@/types/terminal-type").SessionStatusIndicator | null) => void;
+  /** Called when session progress is updated or cleared */
+  onSessionProgress?: (sessionId: string, progress: import("@/types/terminal-type").SessionProgress | null) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
 }
@@ -81,6 +85,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onAgentActivityStatus,
   onAgentTodosUpdated,
   onNotification,
+  onSessionStatus,
+  onSessionProgress,
   onOutput,
   onDimensionsChange,
 }, ref) {
@@ -135,6 +141,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onAgentActivityStatusRef = useRef(onAgentActivityStatus);
   const onAgentTodosUpdatedRef = useRef(onAgentTodosUpdated);
   const onNotificationRef = useRef(onNotification);
+  const onSessionStatusRef = useRef(onSessionStatus);
+  const onSessionProgressRef = useRef(onSessionProgress);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const recordActivityRef = useRef(recordActivity);
@@ -168,6 +176,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onAgentActivityStatusRef.current = onAgentActivityStatus;
     onAgentTodosUpdatedRef.current = onAgentTodosUpdated;
     onNotificationRef.current = onNotification;
+    onSessionStatusRef.current = onSessionStatus;
+    onSessionProgressRef.current = onSessionProgress;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     recordActivityRef.current = recordActivity;
@@ -181,7 +191,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -579,6 +589,22 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 if (msg.notification) {
                   onNotificationRef.current?.(msg.notification as Record<string, unknown>);
                 }
+                break;
+              case "session_status_update":
+                // Per-session custom status indicator from agent hooks
+                onSessionStatusRef.current?.(msg.sessionId, msg.key, msg.indicator);
+                break;
+              case "session_status_cleared":
+                // Clear a session status indicator
+                onSessionStatusRef.current?.(msg.sessionId, msg.key, null);
+                break;
+              case "session_progress_update":
+                // Per-session progress bar update from agent hooks
+                onSessionProgressRef.current?.(msg.sessionId, { value: msg.value, label: msg.label, updatedAt: msg.updatedAt || new Date().toISOString() });
+                break;
+              case "session_progress_cleared":
+                // Clear session progress bar
+                onSessionProgressRef.current?.(msg.sessionId, null);
                 break;
               case "voice_ready":
                 console.log(`[Voice] Ready for session ${msg.sessionId}`);

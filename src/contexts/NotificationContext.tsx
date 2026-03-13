@@ -33,6 +33,8 @@ interface NotificationContextValue {
   deleteNotification: (id: string) => Promise<void>;
   deleteAllNotifications: () => Promise<void>;
   registerJumpHandler: (fn: ((sessionId: string) => void) | null) => void;
+  /** Session ID with the most recent unread notification, or null */
+  latestUnreadSessionId: string | null;
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
@@ -187,6 +189,13 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
     }
   }, [refresh]);
 
+  const latestUnreadSessionId = useMemo(() => {
+    const unread = notifications
+      .filter(n => n.sessionId && !n.readAt)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return unread[0]?.sessionId ?? null;
+  }, [notifications]);
+
   const value = useMemo(
     () => ({
       notifications,
@@ -199,8 +208,9 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
       deleteNotification,
       deleteAllNotifications,
       registerJumpHandler,
+      latestUnreadSessionId,
     }),
-    [notifications, unreadCount, loading, markRead, markAllRead, refresh, addNotification, deleteNotification, deleteAllNotifications, registerJumpHandler]
+    [notifications, unreadCount, loading, markRead, markAllRead, refresh, addNotification, deleteNotification, deleteAllNotifications, registerJumpHandler, latestUnreadSessionId]
   );
 
   return (

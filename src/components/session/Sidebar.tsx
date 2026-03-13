@@ -47,7 +47,10 @@ import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPConte
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
 import { SessionMetadataBar } from "./SessionMetadataBar";
+import { SessionStatusBadge } from "./SessionStatusBadge";
+import { SessionProgressBar } from "./SessionProgressBar";
 import { useSessionContext } from "@/contexts/SessionContext";
+import { useNotificationContext } from "@/contexts/NotificationContext";
 
 export interface SessionFolder {
   id: string;
@@ -238,6 +241,18 @@ export function Sidebar({
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
   const { getAgentActivityStatus } = useSessionContext();
+  const { notifications } = useNotificationContext();
+
+  // Compute per-session unread notification counts
+  const sessionUnreadMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const n of notifications) {
+      if (n.sessionId && !n.readAt) {
+        map[n.sessionId] = (map[n.sessionId] ?? 0) + 1;
+      }
+    }
+    return map;
+  }, [notifications]);
 
   // Mobile detection and swipe-to-close state
   const isMobile = useMobile();
@@ -1303,24 +1318,35 @@ export function Sidebar({
                 />
               ) : (
                 <>
-                  <span
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      handleStartEdit(session.id, "session", session.name, e);
-                    }}
-                    className={cn(
-                      "block truncate text-xs",
-                      isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+                  <div className="flex items-center gap-1">
+                    <span
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        handleStartEdit(session.id, "session", session.name, e);
+                      }}
+                      className={cn(
+                        "block truncate text-xs",
+                        isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+                      )}
+                      title="Double-click to rename"
+                    >
+                      {session.name}
+                    </span>
+                    {/* Unread notification dot */}
+                    {sessionUnreadMap[session.id] > 0 && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
                     )}
-                    title="Double-click to rename"
-                  >
-                    {session.name}
-                  </span>
+                  </div>
                   {/* Git status metadata (branch, ahead/behind, PR, ports) */}
                   <SessionMetadataBar session={session} isCollapsed={collapsed} />
+                  {/* Per-session progress bar */}
+                  <SessionProgressBar sessionId={session.id} />
                 </>
               )}
             </div>
+
+            {/* Per-session status badge */}
+            <SessionStatusBadge sessionId={session.id} />
 
             {/* Schedule count indicator */}
             {(() => {

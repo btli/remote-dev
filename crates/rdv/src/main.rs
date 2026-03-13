@@ -3,7 +3,7 @@ mod commands;
 mod config;
 
 use clap::Parser;
-use commands::{agent, browser, context, folder, hook, notification, session, status, system, task, worktree};
+use commands::{agent, browser, context, folder, hook, indicator, notification, screen, send, session, status, system, task, teams, tmux_compat, worktree};
 
 #[derive(Parser)]
 #[command(name = "rdv", version, about = "CLI for Remote Dev terminal server")]
@@ -40,6 +40,24 @@ enum Command {
     Notification(notification::NotificationArgs),
     /// Browser automation commands
     Browser(browser::BrowserArgs),
+    /// Send text or keystrokes to a terminal session
+    Send(send::SendArgs),
+    /// Capture terminal screen content
+    Screen(screen::ScreenArgs),
+    /// Set a per-session status indicator
+    SetStatus(indicator::SetStatusArgs),
+    /// Clear a per-session status indicator
+    ClearStatus(indicator::ClearStatusArgs),
+    /// Set session progress bar
+    SetProgress(indicator::SetProgressArgs),
+    /// Clear session progress bar
+    ClearProgress(indicator::ClearProgressArgs),
+    /// Write a per-session structured log entry
+    Log(indicator::LogArgs),
+    /// Multi-agent team orchestration
+    Teams(teams::TeamsArgs),
+    /// tmux compatibility layer
+    Tmux(tmux_compat::TmuxCompatArgs),
 }
 
 #[tokio::main]
@@ -60,6 +78,15 @@ async fn main() {
         Command::Context => context::run(&client, cli.human).await,
         Command::Notification(args) => notification::run(args, &client, cli.human).await,
         Command::Browser(args) => browser::run(args, &client, cli.human).await,
+        Command::Send(args) => send::run(args, &client).await,
+        Command::Screen(args) => screen::run(args, &client, cli.human).await,
+        Command::SetStatus(args) => indicator::run_set_status(args, &client).await,
+        Command::ClearStatus(args) => indicator::run_clear_status(args, &client).await,
+        Command::SetProgress(args) => indicator::run_set_progress(args, &client).await,
+        Command::ClearProgress(args) => indicator::run_clear_progress(args, &client).await,
+        Command::Log(args) => indicator::run_log(args, &client).await,
+        Command::Teams(args) => teams::run(args, &client, cli.human).await,
+        Command::Tmux(args) => tmux_compat::run(args, &client, cli.human).await,
     };
 
     if let Err(e) = result {

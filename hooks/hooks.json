@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rdv hook pre-tool-use",
+            "command": "rdv hook claude session-start",
             "timeout": 5
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rdv hook pre-compact",
+            "command": "rdv hook claude compacting",
             "timeout": 5
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rdv hook notification",
+            "command": "rdv hook claude notification",
             "timeout": 5
           }
         ]
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rdv hook post-tool-use",
+            "command": "rdv hook claude post-tool-use",
             "timeout": 10
           }
         ]
@@ -54,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rdv hook stop",
+            "command": "rdv hook claude stop",
             "timeout": 15
           }
         ]

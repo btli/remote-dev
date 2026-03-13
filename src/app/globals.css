@@ -708,6 +708,25 @@
   animation: agent-breathing 2s ease-in-out infinite;
 }
 
+/* Terminal pane notification ring (blue glow for agents needing attention) */
+@keyframes notification-ring-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px oklch(0.6 0.2 250 / 0.8),
+      0 0 12px 4px oklch(0.6 0.2 250 / 0.4);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px oklch(0.6 0.2 250 / 0.9),
+      0 0 20px 8px oklch(0.6 0.2 250 / 0.6);
+  }
+}
+
+.notification-ring {
+  animation: notification-ring-pulse 2s ease-in-out infinite;
+  border-radius: inherit;
+}
+
 /* ============================================================================
    Safe Area Inset Utilities - iOS/Android notch and home indicator support
    Requires viewportFit: "cover" (set in src/app/layout.tsx)
