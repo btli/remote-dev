@@ -27,14 +27,24 @@ enum WorktreeCommand {
         #[arg(long)]
         repo: String,
     },
-    /// Remove a worktree
+    /// Remove a worktree (directory only, no branch cleanup)
     Remove {
-        /// Repository path
+        /// Path to the worktree directory to remove
         #[arg(long)]
-        repo: String,
-        /// Branch name of the worktree to remove
+        worktree_path: String,
+        /// Path to the main repository (or any path within it)
         #[arg(long)]
-        branch: String,
+        project_path: String,
+        /// Force removal even with uncommitted changes
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// Full cleanup: verify merge, remove worktree, delete branches, close session.
+    /// Uses RDV_SESSION_ID from environment to identify the session.
+    Cleanup {
+        /// Force cleanup even if branch is not merged
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 }
 
@@ -76,12 +86,29 @@ pub async fn run(args: WorktreeArgs, client: &Client, human: bool) -> Result<(),
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         }
-        WorktreeCommand::Remove { repo, branch } => {
+        WorktreeCommand::Remove { worktree_path, project_path, force } => {
             let body = json!({
-                "repoPath": repo,
-                "branch": branch,
+                "projectPath": project_path,
+                "worktreePath": worktree_path,
+                "force": force,
             });
             let result = client.delete_with_body("/api/github/worktrees", &body).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        WorktreeCommand::Cleanup { force } => {
+            let session_id = client.session_id()
+                .ok_or("RDV_SESSION_ID is not set. This command must be run from within an agent session.")?;
+            // Validate session ID format (UUID) to prevent path injection
+            if session_id.len() != 36
+                || !session_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+            {
+                return Err("RDV_SESSION_ID is not a valid session ID".into());
+            }
+            let path = format!(
+                "/api/sessions/{}?cleanup=true&force={}",
+                session_id, force
+            );
+            let result: serde_json::Value = client.delete(&path).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
     }

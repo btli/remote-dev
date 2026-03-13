@@ -76,17 +76,42 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 });
 
 /**
+ * Resolve the main repository path for a worktree session.
+ * Tries GitHub repo record first, then folder preferences.
+ */
+async function resolveMainRepoPath(
+  session: { githubRepoId?: string | null; folderId?: string | null },
+  userId: string
+): Promise<string | null> {
+  if (session.githubRepoId) {
+    const repo = await GitHubService.getRepository(session.githubRepoId, userId);
+    if (repo?.localPath) return repo.localPath;
+  }
+
+  if (session.folderId) {
+    const folderPrefs = await getFolderPreferences(session.folderId, userId);
+    if (folderPrefs?.localRepoPath) return folderPrefs.localRepoPath;
+  }
+
+  return null;
+}
+
+/**
  * DELETE /api/sessions/:id - Close a session
  *
  * Query params:
  * - deleteWorktree=true: Also delete the git worktree from disk
  * - trash=true: Move worktree to trash instead of permanent close
+ * - cleanup=true: Full worktree cleanup (merge check, remove worktree, delete branches, close session)
+ * - force=true: Skip merge verification when using cleanup mode
  */
 export const DELETE = withAuth(async (request, { userId, params }) => {
   const id = params!.id;
   const { searchParams } = new URL(request.url);
   const deleteWorktree = searchParams.get("deleteWorktree") === "true";
   const shouldTrash = searchParams.get("trash") === "true";
+  const shouldCleanup = searchParams.get("cleanup") === "true";
+  const force = searchParams.get("force") === "true";
 
   try {
     // Get session details for worktree operations
@@ -105,27 +130,44 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
       return NextResponse.json({ success: true, trashItemId: trashItem.id });
     }
 
+    // Handle full worktree cleanup (merge check + remove worktree + delete branches + close)
+    if (shouldCleanup && terminalSession?.worktreeBranch && terminalSession?.projectPath) {
+      const mainRepoPath = await resolveMainRepoPath(terminalSession, userId);
+      if (!mainRepoPath) {
+        return errorResponse(
+          "Cannot resolve main repository path for cleanup",
+          400,
+          "NO_REPO_PATH"
+        );
+      }
+
+      // cleanupWorktree may throw BRANCH_NOT_MERGED (should not close session)
+      // or REMOVE_FAILED. For other partial failures (e.g., worktree removed
+      // but branch delete failed), cleanupWorktree handles them internally
+      // and returns a result. We always close the session after a successful cleanup.
+      const cleanupResult = await WorktreeService.cleanupWorktree(
+        mainRepoPath,
+        terminalSession.projectPath,
+        terminalSession.worktreeBranch,
+        force
+      );
+      log.info("Worktree cleanup completed", {
+        sessionId: id,
+        branch: terminalSession.worktreeBranch,
+        message: cleanupResult.message,
+      });
+
+      // Close the session after successful cleanup.
+      // If this fails, the worktree/branches are already cleaned up
+      // but the session record remains — acceptable since a stale session
+      // can be manually closed later.
+      await SessionService.closeSession(id, userId);
+      return NextResponse.json({ success: true, cleanup: cleanupResult });
+    }
+
     // If deleteWorktree is requested, handle worktree cleanup first
     if (deleteWorktree && terminalSession?.worktreeBranch && terminalSession?.projectPath) {
-      let mainRepoPath: string | null = null;
-
-      // Try to get the main repo path from GitHub repository
-      if (terminalSession.githubRepoId) {
-        const repo = await GitHubService.getRepository(
-          terminalSession.githubRepoId,
-          userId
-        );
-        mainRepoPath = repo?.localPath ?? null;
-      }
-
-      // Fall back to folder preferences for local repo path
-      if (!mainRepoPath && terminalSession.folderId) {
-        const folderPrefs = await getFolderPreferences(
-          terminalSession.folderId,
-          userId
-        );
-        mainRepoPath = folderPrefs?.localRepoPath ?? null;
-      }
+      const mainRepoPath = await resolveMainRepoPath(terminalSession, userId);
 
       if (mainRepoPath) {
         try {
@@ -173,6 +215,14 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
 
     if (error instanceof TrashService.TrashServiceError) {
       return errorResponse(error.message, 400, error.code);
+    }
+
+    if (error instanceof WorktreeService.WorktreeServiceError) {
+      const status = error.code === "BRANCH_NOT_MERGED" ? 409 : 400;
+      return NextResponse.json(
+        { error: error.message, code: error.code, details: error.details },
+        { status }
+      );
     }
 
     throw error;

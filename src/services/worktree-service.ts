@@ -678,6 +678,226 @@ export async function getWorktreeStatus(
 }
 
 /**
+ * Result of a merge verification check
+ */
+export interface MergeVerificationResult {
+  isMerged: boolean;
+  targetBranch: string;
+  branchExists: boolean;
+}
+
+/**
+ * Result of a branch deletion operation
+ */
+export interface DeleteBranchResult {
+  deletedLocal: boolean;
+  deletedRemote: boolean;
+}
+
+/**
+ * Result of a full worktree cleanup operation
+ */
+export interface CleanupWorktreeResult {
+  worktreeRemoved: boolean;
+  localBranchDeleted: boolean;
+  remoteBranchDeleted: boolean;
+  mergeVerification: MergeVerificationResult;
+  message: string;
+}
+
+/**
+ * Detect the default branch (main/master) of a repository.
+ * Tries origin/HEAD first, then falls back to checking main/master locally.
+ */
+export async function getDefaultBranch(repoPath: string): Promise<string> {
+  // Strategy 1: Check origin/HEAD symbolic ref
+  const originHead = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "symbolic-ref", "--short", "refs/remotes/origin/HEAD",
+  ]);
+  if (originHead.exitCode === 0 && originHead.stdout) {
+    return originHead.stdout.replace("origin/", "");
+  }
+
+  // Strategy 2: Check if 'main' exists locally or on remote
+  const mainCheck = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "rev-parse", "--verify", "refs/heads/main",
+  ]);
+  if (mainCheck.exitCode === 0) return "main";
+
+  const mainRemote = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "rev-parse", "--verify", "refs/remotes/origin/main",
+  ]);
+  if (mainRemote.exitCode === 0) return "main";
+
+  // Strategy 3: Check if 'master' exists locally or on remote
+  const masterCheck = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "rev-parse", "--verify", "refs/heads/master",
+  ]);
+  if (masterCheck.exitCode === 0) return "master";
+
+  const masterRemote = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "rev-parse", "--verify", "refs/remotes/origin/master",
+  ]);
+  if (masterRemote.exitCode === 0) return "master";
+
+  // Last resort: assume 'main' (most common modern default)
+  return "main";
+}
+
+/**
+ * Check if a branch has been merged into a target branch.
+ * Fetches remote first to ensure up-to-date state.
+ *
+ * Uses `git merge-base --is-ancestor` which checks if the branch tip
+ * is reachable from the target branch.
+ */
+export async function isBranchMerged(
+  repoPath: string,
+  branch: string,
+  targetBranch?: string
+): Promise<MergeVerificationResult> {
+  // Fetch latest state (non-fatal if offline)
+  await fetchRemoteRefs(repoPath);
+
+  const target = targetBranch ?? await getDefaultBranch(repoPath);
+
+  // Check if branch exists
+  const branchCheck = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "rev-parse", "--verify", `refs/heads/${branch}`,
+  ]);
+  if (branchCheck.exitCode !== 0) {
+    // Branch doesn't exist locally — check if it was already deleted
+    return { isMerged: true, targetBranch: target, branchExists: false };
+  }
+
+  // Check if branch is an ancestor of the target branch.
+  // Use origin/<target> to compare against the up-to-date remote ref,
+  // since the local ref may be stale or non-existent.
+  const remoteTarget = `origin/${target}`;
+  const hasRemoteTarget = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "rev-parse", "--verify", remoteTarget,
+  ]);
+  const mergeTarget = hasRemoteTarget.exitCode === 0 ? remoteTarget : target;
+
+  const mergeCheck = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "merge-base", "--is-ancestor", branch, mergeTarget,
+  ]);
+
+  return {
+    isMerged: mergeCheck.exitCode === 0,
+    targetBranch: target,
+    branchExists: true,
+  };
+}
+
+/**
+ * Delete a git branch, optionally also deleting the remote tracking branch.
+ * Remote deletion is best-effort (logged but not fatal).
+ *
+ * @param repoPath - Path to the main repository
+ * @param branch - Branch name to delete
+ * @param options - deleteRemote: also delete on origin; force: use -D instead of -d
+ */
+export async function deleteBranch(
+  repoPath: string,
+  branch: string,
+  options: { deleteRemote?: boolean; force?: boolean } = {}
+): Promise<DeleteBranchResult> {
+  const { deleteRemote = true, force = false } = options;
+
+  // Delete local branch
+  const localResult = await execFileNoThrow("git", [
+    "-C", repoPath,
+    "branch", force ? "-D" : "-d", branch,
+  ]);
+  const deletedLocal = localResult.exitCode === 0;
+  if (!deletedLocal) {
+    log.warn("Failed to delete local branch", { branch, error: localResult.stderr });
+  }
+
+  // Delete remote branch (best-effort)
+  let deletedRemote = false;
+  if (deleteRemote) {
+    const remoteResult = await execFileNoThrow("git", [
+      "-C", repoPath,
+      "push", "origin", "--delete", branch,
+    ]);
+    deletedRemote = remoteResult.exitCode === 0;
+    if (!deletedRemote) {
+      log.warn("Failed to delete remote branch (non-fatal)", { branch, error: remoteResult.stderr });
+    }
+  }
+
+  return { deletedLocal, deletedRemote };
+}
+
+/**
+ * Full worktree cleanup: verify merge, remove worktree, delete branches.
+ *
+ * This is the orchestrator for the complete cleanup flow. It runs all
+ * git commands using `-C repoPath` so the caller's CWD is irrelevant,
+ * solving the problem of agents running inside the worktree they want removed.
+ *
+ * @param repoPath - Path to the main repository (NOT the worktree)
+ * @param worktreePath - Path to the worktree directory
+ * @param branch - Branch name checked out in the worktree
+ * @param force - Skip merge verification and force all deletions
+ * @throws WorktreeServiceError with code BRANCH_NOT_MERGED if not merged and not forced
+ */
+export async function cleanupWorktree(
+  repoPath: string,
+  worktreePath: string,
+  branch: string,
+  force = false
+): Promise<CleanupWorktreeResult> {
+  // Step 1: Verify branch is merged (unless forced)
+  const mergeResult = await isBranchMerged(repoPath, branch);
+
+  if (!force && !mergeResult.isMerged) {
+    throw new WorktreeServiceError(
+      `Branch '${branch}' has not been merged into '${mergeResult.targetBranch}'`,
+      "BRANCH_NOT_MERGED",
+      `Merge or push your changes first, or use --force to proceed anyway`
+    );
+  }
+
+  // Step 2: Remove the worktree directory
+  const removeResult = await removeWorktree(repoPath, worktreePath, true);
+
+  // Step 3: Delete local and remote branches
+  // Use -D (force) since we already verified merge status above
+  const branchResult = await deleteBranch(repoPath, branch, {
+    deleteRemote: true,
+    force: true,
+  });
+
+  const messages: string[] = [];
+  if (removeResult.alreadyRemoved) {
+    messages.push("worktree was already removed");
+  } else {
+    messages.push("worktree removed");
+  }
+  if (branchResult.deletedLocal) messages.push("local branch deleted");
+  if (branchResult.deletedRemote) messages.push("remote branch deleted");
+
+  return {
+    worktreeRemoved: !removeResult.alreadyRemoved,
+    localBranchDeleted: branchResult.deletedLocal,
+    remoteBranchDeleted: branchResult.deletedRemote,
+    mergeVerification: mergeResult,
+    message: messages.join(", "),
+  };
+}
+
+/**
  * Result of copying env files to a worktree
  */
 export interface CopyEnvFilesResult {
