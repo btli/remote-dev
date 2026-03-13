@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Worktree cleanup**: New `rdv worktree cleanup` command for agents to trigger full worktree lifecycle cleanup from inside a worktree
+  - Merge verification: requires branch is merged into main/master before removal (use `--force` to skip)
+  - Removes worktree directory via server-side git commands (solves the CWD-inside-worktree problem)
+  - Deletes local and remote branches after merge verification
+  - Closes the session automatically
+- **Worktree service functions**: `getDefaultBranch()`, `isBranchMerged()`, `deleteBranch()`, `cleanupWorktree()` for reusable git branch lifecycle operations
+- **Session cleanup mode**: `DELETE /api/sessions/:id?cleanup=true&force=false` for full worktree cleanup via API
+
+### Fixed
+
+- **rdv worktree remove**: Fixed broken field names (`repoPath`/`branch` → `projectPath`/`worktreePath`) that caused 400 errors when calling the API
 - **Structured Logging System**: Complete logging overhaul replacing all `console.*` calls with structured, leveled logging
   - 5 log levels: error, warn, info, debug, trace (controlled via `LOG_LEVEL` env var)
   - Separate SQLite database at `~/.remote-dev/logs/logs.db` for log persistence

@@ -59,9 +59,33 @@ rdv worktree create --repo /path/to/repo --branch feature/my-branch
 # List worktrees
 rdv worktree list --repo /path/to/repo
 
-# Remove a worktree
-rdv worktree remove --repo /path/to/repo --branch feature/my-branch
+# Remove a worktree (directory only, no branch cleanup)
+rdv worktree remove --worktree-path /path/to/worktree --project-path /path/to/repo [--force]
+
+# Full cleanup: verify merge, remove worktree, delete branches, close session
+# This is the preferred way to clean up when you're done with a worktree.
+# It works even when your CWD is inside the worktree being removed.
+rdv worktree cleanup [--force]
 ```
+
+### Worktree Cleanup Flow
+
+When you finish work in a worktree (commits pushed, PR merged), use `rdv worktree cleanup`:
+
+1. **Merge verification**: Checks that your branch is merged into main/master. Returns an error if not merged (use `--force` to skip).
+2. **Worktree removal**: Removes the worktree directory via server-side git commands (CWD-safe).
+3. **Branch deletion**: Deletes both the local and remote branch.
+4. **Session close**: Kills the tmux session and marks the session as closed.
+
+```bash
+# After your PR is merged, clean up everything:
+rdv worktree cleanup
+
+# If you want to discard unmerged work:
+rdv worktree cleanup --force
+```
+
+**Note**: `rdv worktree cleanup` requires `RDV_SESSION_ID` to be set (automatically set in agent sessions). It uses the session's metadata to find the worktree path and branch.
 
 ## Task Management
 
@@ -212,7 +236,18 @@ rdv worktree create --repo . --branch feature/experiment
 rdv session create --name "experiment" --working-dir /path/to/worktree
 ```
 
-### 4. Orchestrate parallel agents with children
+### 4. Complete work in a worktree and clean up
+```bash
+# Do your work, commit, push, create/merge PR
+git add . && git commit -m "feat: my changes"
+git push origin feature/my-branch
+gh pr create --fill && gh pr merge --auto
+
+# Clean up worktree, branches, and session
+rdv worktree cleanup
+```
+
+### 5. Orchestrate parallel agents with children
 ```bash
 rdv session spawn <my-session-id> --agent-provider claude --name "backend-work"
 rdv session spawn <my-session-id> --agent-provider claude --name "frontend-work"
