@@ -32,15 +32,27 @@ fn passthrough_tmux(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Resolve a tmux target to an rdv session ID if it matches rdv patterns.
+/// Matches `rdv-<uuid>` prefixed names or bare UUIDs (8-4-4-4-12 hex format).
 fn resolve_session_id(target: &str) -> Option<String> {
     if let Some(uuid) = target.strip_prefix("rdv-") {
         Some(uuid.to_string())
-    } else if target.len() > 8 && target.chars().all(|c| c.is_alphanumeric() || c == '-') {
-        // Looks like a bare UUID
+    } else if is_uuid(target) {
         Some(target.to_string())
     } else {
         None
     }
+}
+
+/// Check if a string is a valid UUID v4 format (8-4-4-4-12 hex digits).
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts[0].len() == 8
+        && parts[1].len() == 4
+        && parts[2].len() == 4
+        && parts[3].len() == 4
+        && parts[4].len() == 12
+        && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Find the value of `-t <target>` in a slice of args.
