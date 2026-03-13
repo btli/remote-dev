@@ -50,6 +50,8 @@ export interface TerminalSession {
   agentActivityStatus: string | null;
   // Plugin-specific metadata (parsed from JSON)
   typeMetadata: Record<string, unknown> | null;
+  // Parent session for team orchestration
+  parentSessionId: string | null;
   // Split group membership (independent from folder)
   splitGroupId: string | null;
   splitOrder: number;
@@ -78,6 +80,8 @@ export interface CreateSessionInput {
   agentFlags?: string[];              // Additional flags for the agent CLI
   // For file terminal type
   filePath?: string;                  // Path to file being edited
+  // Parent session for team orchestration
+  parentSessionId?: string;
   // Feature session fields
   startupCommand?: string;      // Override resolved preferences
   featureDescription?: string;  // Original feature description

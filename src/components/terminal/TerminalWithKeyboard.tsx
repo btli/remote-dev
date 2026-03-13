@@ -45,6 +45,10 @@ interface TerminalWithKeyboardProps {
   onAgentTodosUpdated?: (sessionId: string) => void;
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
+  /** Called when a session status indicator is set or cleared */
+  onSessionStatus?: (sessionId: string, key: string, indicator: import("@/types/terminal-type").SessionStatusIndicator | null) => void;
+  /** Called when session progress is updated or cleared */
+  onSessionProgress?: (sessionId: string, progress: import("@/types/terminal-type").SessionProgress | null) => void;
 }
 
 export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
@@ -71,6 +75,8 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onAgentActivityStatus,
   onAgentTodosUpdated,
   onNotification,
+  onSessionStatus,
+  onSessionProgress,
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
@@ -171,6 +177,8 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
             onAgentActivityStatus={onAgentActivityStatus}
             onAgentTodosUpdated={onAgentTodosUpdated}
             onNotification={onNotification}
+            onSessionStatus={onSessionStatus}
+            onSessionProgress={onSessionProgress}
           />
         </ErrorBoundary>
         {session?.terminalType === "agent" && (

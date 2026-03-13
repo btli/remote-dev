@@ -18,7 +18,7 @@ import type {
   CreateSessionInput,
   SessionStatus,
 } from "@/types/session";
-import type { AgentActivityStatus } from "@/types/terminal-type";
+import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting"]);
@@ -69,6 +69,12 @@ interface SessionContextValue extends SessionState {
   agentActivityStatuses: Record<string, AgentActivityStatus>;
   setAgentActivityStatus: (sessionId: string, status: AgentActivityStatus) => void;
   getAgentActivityStatus: (sessionId: string) => AgentActivityStatus;
+  /** Per-session custom status indicators (e.g. agent-reported status text) */
+  sessionStatusIndicators: Record<string, Record<string, SessionStatusIndicator>>;
+  setSessionStatusIndicator: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
+  /** Per-session progress bars */
+  sessionProgress: Record<string, SessionProgress>;
+  setSessionProgress: (sessionId: string, progress: SessionProgress | null) => void;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -217,6 +223,46 @@ export function SessionProvider({
 
     return "idle";
   }, [agentActivityStatuses, state.sessions]);
+
+  // Per-session status indicators (client-side only, not persisted)
+  const [sessionStatusIndicators, setSessionStatusIndicatorsState] = useState<Record<string, Record<string, SessionStatusIndicator>>>({});
+  const [sessionProgress, setSessionProgressState] = useState<Record<string, SessionProgress>>({});
+
+  const setSessionStatusIndicator = useCallback((sessionId: string, key: string, indicator: SessionStatusIndicator | null) => {
+    setSessionStatusIndicatorsState(prev => {
+      if (indicator === null) {
+        if (!prev[sessionId]?.[key]) return prev;
+        const next = { ...prev };
+        const sessionIndicators = { ...next[sessionId] };
+        delete sessionIndicators[key];
+        if (Object.keys(sessionIndicators).length === 0) {
+          delete next[sessionId];
+        } else {
+          next[sessionId] = sessionIndicators;
+        }
+        return next;
+      }
+      const existing = prev[sessionId]?.[key];
+      const isUnchanged = existing?.value === indicator.value
+        && existing?.icon === indicator.icon
+        && existing?.color === indicator.color;
+      if (isUnchanged) return prev;
+      return { ...prev, [sessionId]: { ...(prev[sessionId] || {}), [key]: indicator } };
+    });
+  }, []);
+
+  const setSessionProgress = useCallback((sessionId: string, progress: SessionProgress | null) => {
+    setSessionProgressState(prev => {
+      if (progress === null) {
+        if (!prev[sessionId]) return prev;
+        const next = { ...prev };
+        delete next[sessionId];
+        return next;
+      }
+      if (prev[sessionId]?.value === progress.value && prev[sessionId]?.label === progress.label) return prev;
+      return { ...prev, [sessionId]: progress };
+    });
+  }, []);
 
   // Track initialization state with refs
   const hasRestoredSessionRef = useRef(false);
@@ -441,6 +487,10 @@ export function SessionProvider({
       agentActivityStatuses,
       setAgentActivityStatus,
       getAgentActivityStatus,
+      sessionStatusIndicators,
+      setSessionStatusIndicator,
+      sessionProgress,
+      setSessionProgress,
     }),
     [
       state,
@@ -455,6 +505,10 @@ export function SessionProvider({
       agentActivityStatuses,
       setAgentActivityStatus,
       getAgentActivityStatus,
+      sessionStatusIndicators,
+      setSessionStatusIndicator,
+      sessionProgress,
+      setSessionProgress,
     ]
   );
 
