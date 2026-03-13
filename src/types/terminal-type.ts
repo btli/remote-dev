@@ -361,3 +361,18 @@ export interface BrowserSessionMetadata {
   lastScreenshotAt: Date | null;
 }
 
+/** Custom status text reported by an agent, shown in sidebar */
+export interface SessionStatusIndicator {
+  value: string;
+  icon?: string;
+  color?: string;
+  updatedAt: string;
+}
+
+/** Per-session progress state */
+export interface SessionProgress {
+  value: number;
+  label?: string;
+  updatedAt: string;
+}
+

@@ -7,6 +7,7 @@ import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as pathResolve } from "node:path";
+import { promisify } from "node:util";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { validateWsToken, getAuthSecret } from "../lib/ws-token.js";
 import { createLogger } from "../lib/logger.js";
@@ -17,6 +18,7 @@ const agentStatusLog = createLogger("AgentStatus");
 const notifyLog = createLogger("Notify");
 const voiceLog = createLogger("Voice");
 const internalLog = createLogger("InternalAPI");
+const ptyLog = createLogger("PtyControl");
 
 // Re-export for backwards compatibility with API routes
 export { generateWsToken } from "../lib/ws-token.js";
@@ -95,6 +97,47 @@ interface TerminalSession {
 
 const sessions = new Map<string, TerminalSession>();
 
+// Per-session status indicators (key -> StatusIndicator)
+type StatusIndicator = { value: string; icon?: string; color?: string; updatedAt: string };
+const sessionStatusIndicators = new Map<string, Map<string, StatusIndicator>>();
+
+// Per-session progress bars
+type SessionProgress = { value: number; label?: string; updatedAt: string };
+const sessionProgressBars = new Map<string, SessionProgress>();
+
+// Claude Code session ID -> rdv session ID mapping
+const claudeSessionMap = new Map<string, string>();
+
+// Promisified execFile for async tmux commands
+const execFileAsync = promisify(execFile);
+
+/** Map of human-readable key names to tmux key names */
+const TMUX_KEY_MAP: Record<string, string> = {
+  "Enter": "Enter",
+  "Return": "Enter",
+  "C-c": "C-c",
+  "Ctrl-C": "C-c",
+  "C-d": "C-d",
+  "Ctrl-D": "C-d",
+  "C-z": "C-z",
+  "Ctrl-Z": "C-z",
+  "C-l": "C-l",
+  "Ctrl-L": "C-l",
+  "Tab": "Tab",
+  "Escape": "Escape",
+  "Esc": "Escape",
+  "Up": "Up",
+  "Down": "Down",
+  "Left": "Left",
+  "Right": "Right",
+  "PageUp": "PPage",
+  "PageDown": "NPage",
+  "Home": "Home",
+  "End": "End",
+  "Backspace": "BSpace",
+  "Space": "Space",
+};
+
 /** Broadcast a JSON message to all connected WebSocket clients */
 function broadcastToClients(data: Record<string, unknown>): void {
   const message = JSON.stringify(data);
@@ -155,6 +198,16 @@ function cleanupSession(sessionId: string): void {
     session.voiceSpaceInterval = null;
   }
   cleanupVoiceFifo(session);
+
+  // Clean up per-session state maps
+  sessionStatusIndicators.delete(sessionId);
+  sessionProgressBars.delete(sessionId);
+  // Clean up any Claude session mappings pointing to this session
+  for (const [claudeId, rdvId] of claudeSessionMap) {
+    if (rdvId === sessionId) {
+      claudeSessionMap.delete(claudeId);
+    }
+  }
 
   try {
     destroyPty(session.pty);
@@ -692,6 +745,344 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     }
     return true;
   }
+
+  // --- cmux parity: PTY control, screen capture, session metadata endpoints ---
+
+  // POST /internal/pty-write — write text directly to a session's PTY
+  if (pathname === "/internal/pty-write" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId, text } = payload as { sessionId: string; text: string };
+      if (!sessionId || text == null) {
+        sendJson(res, 400, { error: "Missing sessionId or text" });
+        return true;
+      }
+      const session = sessions.get(sessionId);
+      if (!session) {
+        sendJson(res, 404, { error: "No active PTY session found" });
+        return true;
+      }
+      session.pty.write(text);
+      ptyLog.debug("PTY write", { sessionId, length: text.length });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("PTY write error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to write to PTY" });
+    }
+    return true;
+  }
+
+  // POST /internal/pty-key — send a named keystroke to a session via tmux send-keys
+  if (pathname === "/internal/pty-key" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId, key } = payload as { sessionId: string; key: string };
+      if (!sessionId || !key) {
+        sendJson(res, 400, { error: "Missing sessionId or key" });
+        return true;
+      }
+      const session = sessions.get(sessionId);
+      if (!session) {
+        sendJson(res, 404, { error: "No active PTY session found" });
+        return true;
+      }
+      const tmuxName = session.tmuxSessionName;
+      const mappedKey = TMUX_KEY_MAP[key];
+
+      if (mappedKey) {
+        await execFileAsync("tmux", ["send-keys", "-t", tmuxName, mappedKey]);
+      } else if (key.length === 1) {
+        await execFileAsync("tmux", ["send-keys", "-t", tmuxName, "-l", key]);
+      } else {
+        sendJson(res, 400, { error: `Unknown key: ${key}` });
+        return true;
+      }
+
+      ptyLog.debug("PTY key sent", { sessionId, key, mappedKey: mappedKey || key });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("PTY key error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to send key" });
+    }
+    return true;
+  }
+
+  // GET /internal/screen?sessionId=xxx — capture terminal screen content
+  if (pathname === "/internal/screen" && req.method === "GET") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const sessionId = query.sessionId as string;
+      if (!sessionId) {
+        sendJson(res, 400, { error: "Missing sessionId" });
+        return true;
+      }
+      const session = sessions.get(sessionId);
+      if (!session) {
+        sendJson(res, 404, { error: "Session not found" });
+        return true;
+      }
+      const { stdout } = await execFileAsync("tmux", [
+        "capture-pane", "-t", session.tmuxSessionName, "-p", "-J",
+      ]);
+      sendJson(res, 200, {
+        sessionId,
+        content: stdout,
+        capturedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      ptyLog.error("Screen capture error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to capture screen" });
+    }
+    return true;
+  }
+
+  // POST /internal/session-status — set a per-session status indicator
+  if (pathname === "/internal/session-status" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId, key: statusKey, value, icon, color } = payload as {
+        sessionId: string; key: string; value: string; icon?: string; color?: string;
+      };
+      if (!sessionId || !statusKey || value === undefined) {
+        sendJson(res, 400, { error: "Missing sessionId, key, or value" });
+        return true;
+      }
+      const indicator: StatusIndicator = {
+        value,
+        icon,
+        color,
+        updatedAt: new Date().toISOString(),
+      };
+      let indicators = sessionStatusIndicators.get(sessionId);
+      if (!indicators) {
+        indicators = new Map<string, StatusIndicator>();
+        sessionStatusIndicators.set(sessionId, indicators);
+      }
+      indicators.set(statusKey, indicator);
+      broadcastToClients({
+        type: "session_status_update",
+        sessionId,
+        key: statusKey,
+        indicator,
+      });
+      ptyLog.debug("Session status set", { sessionId, key: statusKey, value });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("Session status error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to set session status" });
+    }
+    return true;
+  }
+
+  // DELETE /internal/session-status — clear a per-session status indicator
+  if (pathname === "/internal/session-status" && req.method === "DELETE") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId, key: statusKey } = payload as { sessionId: string; key: string };
+      if (!sessionId || !statusKey) {
+        sendJson(res, 400, { error: "Missing sessionId or key" });
+        return true;
+      }
+      const indicators = sessionStatusIndicators.get(sessionId);
+      if (indicators) {
+        indicators.delete(statusKey);
+        if (indicators.size === 0) {
+          sessionStatusIndicators.delete(sessionId);
+        }
+      }
+      broadcastToClients({
+        type: "session_status_cleared",
+        sessionId,
+        key: statusKey,
+      });
+      ptyLog.debug("Session status cleared", { sessionId, key: statusKey });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("Session status clear error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to clear session status" });
+    }
+    return true;
+  }
+
+  // POST /internal/session-progress — set per-session progress
+  if (pathname === "/internal/session-progress" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId, value, label } = payload as {
+        sessionId: string; value: number; label?: string;
+      };
+      if (!sessionId || value === undefined) {
+        sendJson(res, 400, { error: "Missing sessionId or value" });
+        return true;
+      }
+      const clampedValue = Math.max(0.0, Math.min(1.0, Number(value)));
+      const progress: SessionProgress = {
+        value: clampedValue,
+        label,
+        updatedAt: new Date().toISOString(),
+      };
+      sessionProgressBars.set(sessionId, progress);
+      broadcastToClients({
+        type: "session_progress_update",
+        sessionId,
+        value: clampedValue,
+        label,
+      });
+      ptyLog.debug("Session progress set", { sessionId, value: clampedValue, label });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("Session progress error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to set session progress" });
+    }
+    return true;
+  }
+
+  // DELETE /internal/session-progress — clear per-session progress
+  if (pathname === "/internal/session-progress" && req.method === "DELETE") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId } = payload as { sessionId: string };
+      if (!sessionId) {
+        sendJson(res, 400, { error: "Missing sessionId" });
+        return true;
+      }
+      sessionProgressBars.delete(sessionId);
+      broadcastToClients({
+        type: "session_progress_cleared",
+        sessionId,
+      });
+      ptyLog.debug("Session progress cleared", { sessionId });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("Session progress clear error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to clear session progress" });
+    }
+    return true;
+  }
+
+  // POST /internal/session-log — structured per-session log entry
+  if (pathname === "/internal/session-log" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { sessionId, message, level, source } = payload as {
+        sessionId: string; message: string; level?: string; source?: string;
+      };
+      if (!sessionId || !message) {
+        sendJson(res, 400, { error: "Missing sessionId or message" });
+        return true;
+      }
+      const sessionLog = createLogger(source || "SessionLog");
+      const logData = { sessionId };
+      switch (level) {
+        case "error":
+          sessionLog.error(message, logData);
+          break;
+        case "warn":
+          sessionLog.warn(message, logData);
+          break;
+        case "debug":
+          sessionLog.debug(message, logData);
+          break;
+        case "trace":
+          sessionLog.trace(message, logData);
+          break;
+        default:
+          sessionLog.info(message, logData);
+          break;
+      }
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("Session log error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to write session log" });
+    }
+    return true;
+  }
+
+  // POST /internal/claude-session-map — map Claude Code session ID to rdv session ID
+  if (pathname === "/internal/claude-session-map" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const { claudeSessionId, rdvSessionId } = payload as {
+        claudeSessionId: string; rdvSessionId: string;
+      };
+      if (!claudeSessionId || !rdvSessionId) {
+        sendJson(res, 400, { error: "Missing claudeSessionId or rdvSessionId" });
+        return true;
+      }
+      claudeSessionMap.set(claudeSessionId, rdvSessionId);
+      ptyLog.debug("Claude session mapped", { claudeSessionId, rdvSessionId });
+      sendJson(res, 200, { success: true });
+    } catch (error) {
+      ptyLog.error("Claude session map error", { error: String(error) });
+      sendJson(res, 500, { error: "Failed to map Claude session" });
+    }
+    return true;
+  }
+
+  // GET /internal/claude-session-map?claudeSessionId=xxx — look up rdv session ID
+  if (pathname === "/internal/claude-session-map" && req.method === "GET") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    const claudeSessionId = query.claudeSessionId as string;
+    if (!claudeSessionId) {
+      sendJson(res, 400, { error: "Missing claudeSessionId" });
+      return true;
+    }
+    const rdvSessionId = claudeSessionMap.get(claudeSessionId);
+    if (!rdvSessionId) {
+      sendJson(res, 404, { error: "Claude session mapping not found" });
+      return true;
+    }
+    sendJson(res, 200, { rdvSessionId });
+    return true;
+  }
+
+  // --- end cmux parity endpoints ---
 
   if (!pathname?.startsWith("/internal/scheduler/")) {
     return false;

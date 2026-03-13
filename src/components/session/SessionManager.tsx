@@ -162,6 +162,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     refreshSessions,
     setAgentActivityStatus,
     agentActivityStatuses,
+    setSessionStatusIndicator,
+    setSessionProgress,
   } = useSessionContext();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -346,7 +348,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const { getRepositoryById } = useGitHubStats();
 
   const { refreshTasks } = useTaskContext();
-  const { addNotification, registerJumpHandler, notifications, markRead } = useNotificationContext();
+  const { addNotification, registerJumpHandler, notifications, markRead, latestUnreadSessionId } = useNotificationContext();
 
   // Notification panel state
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -1343,6 +1345,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         }
       }
     }
+    // Cmd+Shift+J or Ctrl+Shift+J to jump to latest unread notification session
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "j" || e.key === "J")) {
+      if (latestUnreadSessionId) {
+        e.preventDefault();
+        setActiveSession(latestUnreadSessionId);
+      }
+    }
   });
 
   // Keyboard shortcuts effect - empty deps since onKeyDown is an effect event
@@ -1760,6 +1769,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             onNotification={(notification) => {
                               addNotification(hydrateNotification(notification));
                             }}
+                            onSessionStatus={setSessionStatusIndicator}
+                            onSessionProgress={setSessionProgress}
                           />
                         </div>
                       );
@@ -1799,6 +1810,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onNotification={(notification) => {
                             addNotification(hydrateNotification(notification));
                           }}
+                          onSessionStatus={setSessionStatusIndicator}
+                          onSessionProgress={setSessionProgress}
                         />
                       </div>
                     );
