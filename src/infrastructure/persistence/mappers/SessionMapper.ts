@@ -36,6 +36,7 @@ export interface SessionDbRecord {
   agentRestartCount: number | null;
   agentActivityStatus: string | null;
   typeMetadata: string | null;
+  parentSessionId: string | null;
   splitGroupId: string | null;
   splitOrder: number | null;
   splitSize: number | null;
@@ -71,6 +72,7 @@ export interface SessionDbInsert {
   agentRestartCount: number;
   agentActivityStatus: string | null;
   typeMetadata: string | null;
+  parentSessionId: string | null;
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
@@ -107,6 +109,7 @@ export class SessionMapper {
       agentRestartCount: record.agentRestartCount ?? 0,
       agentActivityStatus: record.agentActivityStatus ?? null,
       typeMetadata: record.typeMetadata ? JSON.parse(record.typeMetadata) : null,
+      parentSessionId: record.parentSessionId ?? null,
       splitGroupId: record.splitGroupId,
       splitOrder: record.splitOrder ?? 0,
       splitSize: record.splitSize ?? 100,
@@ -151,6 +154,7 @@ export class SessionMapper {
       agentRestartCount: session.agentRestartCount,
       agentActivityStatus: session.agentActivityStatus,
       typeMetadata: session.typeMetadata ? JSON.stringify(session.typeMetadata) : null,
+      parentSessionId: session.parentSessionId,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,
@@ -187,6 +191,7 @@ export class SessionMapper {
     agentRestartCount: number;
     agentActivityStatus: string | null;
     typeMetadata: Record<string, unknown> | null;
+    parentSessionId: string | null;
     splitGroupId: string | null;
     splitOrder: number;
     splitSize: number;
@@ -216,6 +221,7 @@ export class SessionMapper {
       agentRestartCount: session.agentRestartCount,
       agentActivityStatus: session.agentActivityStatus,
       typeMetadata: session.typeMetadata,
+      parentSessionId: session.parentSessionId,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,

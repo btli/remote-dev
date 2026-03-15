@@ -100,6 +100,7 @@ export default async function Home() {
     agentActivityStatus: s.agentActivityStatus ?? null,
     typeMetadata: s.typeMetadata ? JSON.parse(s.typeMetadata) : null,
     splitGroupId: s.splitGroupId,
+    parentSessionId: s.parentSessionId ?? null,
     splitOrder: s.splitOrder,
     splitSize: s.splitSize ?? 0.5,
     status: s.status as "active" | "suspended" | "closed" | "trashed",
