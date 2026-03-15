@@ -1,6 +1,8 @@
 import { jwtVerify, createRemoteJWKSet } from "jose";
 
 // Cloudflare Access configuration
+// Note: This module uses console.warn/error directly because it runs in Edge
+// runtime (via proxy.ts) where the structured logger is not available.
 const CF_ACCESS_TEAM = process.env.CF_ACCESS_TEAM || "joyfulhouse";
 const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD;
 

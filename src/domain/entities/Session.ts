@@ -499,6 +499,7 @@ export class Session {
       this.agentExitState === other.agentExitState &&
       this.agentExitCode === other.agentExitCode &&
       this.agentRestartCount === other.agentRestartCount &&
+      this.parentSessionId === other.parentSessionId &&
       this.splitGroupId === other.splitGroupId &&
       this.splitOrder === other.splitOrder &&
       this.splitSize === other.splitSize &&
