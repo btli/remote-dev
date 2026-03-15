@@ -28,6 +28,7 @@ import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEn
 import { archiveSessionTodos } from "./agent-todo-sync";
 import { createApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
+import { ensureSoxShim } from "@/services/voice-shim-service";
 
 const log = createLogger("SessionService");
 
@@ -244,6 +245,18 @@ export async function createSession(
     }
   }
 
+  // Install sox shim for voice mode support in agent sessions.
+  // Must happen before tmux session creation so the shim PATH is in the
+  // initial environment when the agent process starts.
+  let voiceShimDir: string | undefined;
+  if (isAgentSession) {
+    try {
+      voiceShimDir = ensureSoxShim();
+    } catch (error) {
+      log.warn("Failed to install voice sox shim", { sessionId, error: String(error) });
+    }
+  }
+
   const rdvEnv: Record<string, string> = isAgentSession
     ? {
         RDV_SESSION_ID: sessionId,
@@ -254,6 +267,9 @@ export async function createSession(
           ? { RDV_API_SOCKET: process.env.SOCKET_PATH }
           : { RDV_API_PORT: process.env.PORT ?? "6001" }),
         ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
+        // Prepend sox shim directory to PATH so Claude Code's voice mode
+        // uses our shim (reads from FIFO) instead of the real sox (CoreAudio)
+        ...(voiceShimDir ? { PATH: `${voiceShimDir}:${process.env.PATH ?? ""}` } : {}),
       }
     : {};
 
