@@ -32,6 +32,7 @@ export class SessionPresenter {
       agentRestartCount: session.agentRestartCount,
       agentActivityStatus: session.agentActivityStatus ?? null,
       typeMetadata: session.typeMetadata,
+      parentSessionId: session.parentSessionId,
       splitGroupId: session.splitGroupId,
       splitOrder: session.splitOrder,
       splitSize: session.splitSize,

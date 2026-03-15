@@ -40,6 +40,7 @@ export interface SessionProps {
   agentActivityStatus: string | null;
   // Plugin-specific metadata
   typeMetadata: Record<string, unknown> | null;
+  parentSessionId: string | null;
   splitGroupId: string | null;
   splitOrder: number;
   splitSize: number;
@@ -114,6 +115,7 @@ export class Session {
       agentRestartCount: 0,
       agentActivityStatus: null,
       typeMetadata: props.typeMetadata ?? null,
+      parentSessionId: null,
       splitGroupId: null,
       splitOrder: 0,
       splitSize: 100,
@@ -211,6 +213,10 @@ export class Session {
 
   get typeMetadata(): Record<string, unknown> | null {
     return this.props.typeMetadata;
+  }
+
+  get parentSessionId(): string | null {
+    return this.props.parentSessionId;
   }
 
   get splitGroupId(): string | null {
