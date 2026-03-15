@@ -1256,18 +1256,6 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         log.debug("Creating new tmux session", { tmuxSessionName, historyLimit: tmuxHistoryLimit });
         createTmuxSession(tmuxSessionName, cols, rows, cwd, tmuxHistoryLimit);
 
-        // Set up voice mode environment for agent sessions
-        if (terminalType === "agent") {
-          try {
-            const { ensureSoxShim } = await import("@/services/voice-shim-service.js");
-            const shimDir = ensureSoxShim();
-            execFileSync("tmux", ["set-environment", "-t", tmuxSessionName, "PATH", `${shimDir}:${process.env.PATH || ""}`]);
-          } catch (error) {
-            voiceLog.warn("Failed to install sox shim", { sessionId, error: String(error) });
-            // Non-fatal — voice just won't work for this session
-          }
-        }
-
         ptyProcess = attachToTmuxSession(tmuxSessionName, cols, rows);
 
         ws.send(JSON.stringify({

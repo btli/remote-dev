@@ -1,7 +1,4 @@
 import { jwtVerify, createRemoteJWKSet } from "jose";
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("CloudflareAccess");
 
 // Cloudflare Access configuration
 const CF_ACCESS_TEAM = process.env.CF_ACCESS_TEAM || "joyfulhouse";
@@ -38,7 +35,7 @@ export async function validateAccessJWT(
 
   // In development without CF_ACCESS_AUD, skip validation but still decode
   if (!CF_ACCESS_AUD) {
-    log.warn("CF_ACCESS_AUD not set - skipping JWT signature validation");
+    console.warn("[CloudflareAccess] CF_ACCESS_AUD not set - skipping JWT signature validation");
     try {
       // Decode without verification for local development (Edge-compatible)
       const [, payloadBase64] = token.split(".");
@@ -65,7 +62,7 @@ export async function validateAccessJWT(
       country: payload.country as string | undefined,
     };
   } catch (error) {
-    log.error("CF Access JWT validation failed", { error: String(error) });
+    console.error("[CloudflareAccess] CF Access JWT validation failed", { error: String(error) });
     return null;
   }
 }

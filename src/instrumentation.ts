@@ -3,13 +3,12 @@
  * @see https://nextjs.org/docs/app/building-your-application/optimizing/instrumentation
  */
 
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("Startup");
-
 export async function register() {
   // Only run on server (not edge runtime)
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { createLogger } = await import("@/lib/logger");
+    const log = createLogger("Startup");
+
     // Prune old log entries (7-day retention)
     try {
       const { pruneLogsUseCase } = await import("@/infrastructure/container");
