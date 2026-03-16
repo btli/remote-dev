@@ -340,20 +340,12 @@ function attachToTmuxSession(
 ): IPty {
   // SECURITY: Spawn tmux directly with array arguments - no shell interpolation
   // Use clean environment to prevent framework internal vars from leaking
-  //
-  // encoding: null returns raw Buffers instead of using Node.js StringDecoder.
-  // This prevents a corruption bug where StringDecoder's internal state gets
-  // desynchronized after hours of operation (PTY resize events or burst flushes
-  // split multi-byte UTF-8 sequences at read boundaries, causing all subsequent
-  // multi-byte characters to render as '_'). We handle UTF-8 decoding ourselves
-  // with TextDecoder({ stream: true }) per WebSocket connection.
   const ptyProcess = pty.spawn("tmux", ["attach-session", "-t", sessionName], {
     name: "xterm-256color",
     cols,
     rows,
     cwd: process.env.HOME || process.cwd(),
     env: getCleanEnvironment(),
-    encoding: null,
   });
 
   return ptyProcess;
@@ -1321,16 +1313,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // The WebSocket environmentVars parameter is kept for potential future use
     // but is no longer used for injection here.
 
-    // Use TextDecoder with stream mode for proper UTF-8 handling across
-    // chunk boundaries. With encoding: null on node-pty, data arrives as
-    // raw Buffers. TextDecoder({ stream: true }) correctly buffers incomplete
-    // multi-byte sequences between chunks, preventing the corruption bug
-    // where characters render as '_' after hours of operation.
-    const decoder = new TextDecoder("utf-8", { fatal: false });
     ptyProcess.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
-        const text = typeof data === "string" ? data : decoder.decode(data as Buffer, { stream: true });
-        ws.send(JSON.stringify({ type: "output", data: text }));
+        ws.send(JSON.stringify({ type: "output", data }));
       }
     });
 
@@ -1468,11 +1453,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               // Re-add session to map (cleanupSession removed it on agent exit)
               sessions.set(sessionId, session);
 
-              const restartDecoder = new TextDecoder("utf-8", { fatal: false });
               newPty.onData((data) => {
                 if (ws.readyState === WebSocket.OPEN) {
-                  const text = typeof data === "string" ? data : restartDecoder.decode(data as Buffer, { stream: true });
-                  ws.send(JSON.stringify({ type: "output", data: text }));
+                  ws.send(JSON.stringify({ type: "output", data }));
                 }
               });
 
