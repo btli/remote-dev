@@ -16,6 +16,8 @@ jobs:
         env:
           DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           if [ -z "$DEPLOY_WEBHOOK_SECRET" ]; then
             echo "::error::DEPLOY_WEBHOOK_SECRET not set"
@@ -44,6 +46,8 @@ jobs:
             -H "Content-Type: application/json" \
             -H "X-Hub-Signature-256: $SIGNATURE" \
             -H "X-GitHub-Event: push" \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
             -d "$PAYLOAD")
 
           RESPONSE=$(cat /tmp/deploy_response.txt)
