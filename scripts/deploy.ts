@@ -391,10 +391,23 @@ function runCommand(
   const result = spawnSync(cmd, {
     cwd,
     env: process.env,
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  // Log stdout/stderr to deploy log for debugging when spawned detached
+  const stdout = result.stdout?.toString().trim();
+  const stderr = result.stderr?.toString().trim();
+  if (stdout) {
+    for (const line of stdout.split("\n").slice(-20)) {
+      logDeploy(`  ${line}`);
+    }
+  }
   if (result.exitCode !== 0) {
+    if (stderr) {
+      for (const line of stderr.split("\n").slice(-20)) {
+        logError(`  ${line}`);
+      }
+    }
     logError(`${description} failed with exit code ${result.exitCode}`);
     return false;
   }
@@ -494,20 +507,11 @@ function buildSlot(slot: Slot): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function runMigration(): boolean {
-  logDeploy("Running database migration...");
-  const prodDatabaseUrl = `file:${join(DATA_DIR, "sqlite.db")}`;
-  const result = spawnSync(["bun", "run", "db:push"], {
-    cwd: PROJECT_ROOT,
-    env: { ...process.env, DATABASE_URL: prodDatabaseUrl },
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (result.exitCode !== 0) {
-    logError("Database migration failed");
-    return false;
-  }
-  logDeploy("Database migration completed");
-  return true;
+  return runCommand(
+    ["bun", "run", "db:push"],
+    PROJECT_ROOT,
+    "database migration"
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
