@@ -305,6 +305,27 @@ async function startServers(slot: Slot): Promise<boolean> {
 
   logDeploy(`Starting servers from ${slot} slot...`);
 
+  // Clear tsx cache to ensure the terminal server picks up fresh source code.
+  // tsx caches compiled TypeScript in /tmp/tsx-* directories; stale cache
+  // can cause the server to run outdated code after a deploy.
+  try {
+    const { readdirSync } = require("fs");
+    const tmpDir = "/tmp";
+    for (const entry of readdirSync(tmpDir)) {
+      if (entry.startsWith("tsx-") || entry.startsWith("tsx")) {
+        const fullPath = join(tmpDir, entry);
+        try {
+          rmSync(fullPath, { recursive: true, force: true });
+        } catch {
+          // May not have permission for other users' caches
+        }
+      }
+    }
+    logDeploy("Cleared tsx cache");
+  } catch {
+    // /tmp read failed, continue anyway
+  }
+
   // Ensure stale sockets are cleaned up before starting new servers.
   // The previous stopCurrentServers() should have done this, but there can be
   // a race if the old process took time to release the socket file.
