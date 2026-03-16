@@ -125,16 +125,32 @@ export async function POST(request: Request) {
   });
 
   try {
+    // Use a clean environment for the deploy script. The Next.js server
+    // process has internal __NEXT_* vars and NODE_ENV=production that
+    // interfere with `next build` (causes "generate is not a function").
+    const cleanEnv: NodeJS.ProcessEnv = {
+      NODE_ENV: "development", // next build sets this itself; must not be "production"
+      HOME: process.env.HOME ?? "",
+      PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+      SHELL: process.env.SHELL ?? "/bin/zsh",
+      USER: process.env.USER ?? "",
+      LANG: process.env.LANG ?? "en_US.UTF-8",
+      TERM: process.env.TERM ?? "xterm-256color",
+      // App-specific
+      DEPLOY_EXTERNAL_URL:
+        process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net",
+      DEPLOY_WEBHOOK_SECRET: process.env.DEPLOY_WEBHOOK_SECRET ?? "",
+    };
+    // Forward RDV_DATA_DIR if set
+    if (process.env.RDV_DATA_DIR) {
+      cleanEnv.RDV_DATA_DIR = process.env.RDV_DATA_DIR;
+    }
+
     const child = spawn("bun", ["run", scriptPath], {
       cwd: projectRoot,
       detached: true,
       stdio: "ignore",
-      env: {
-        ...process.env,
-        // Ensure the deploy script knows the project root
-        DEPLOY_EXTERNAL_URL:
-          process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net",
-      },
+      env: cleanEnv,
     });
     child.unref();
 
