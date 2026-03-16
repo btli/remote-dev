@@ -128,8 +128,9 @@ export async function POST(request: Request) {
     // Use a clean environment for the deploy script. The Next.js server
     // process has internal __NEXT_* vars and NODE_ENV=production that
     // interfere with `next build` (causes "generate is not a function").
-    const cleanEnv: NodeJS.ProcessEnv = {
-      NODE_ENV: "development", // next build sets this itself; must not be "production"
+    // Omit NODE_ENV — next build controls this internally.
+    // Pre-setting it to "development" or "production" breaks the build.
+    const cleanEnv: Record<string, string> = {
       HOME: process.env.HOME ?? "",
       PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
       SHELL: process.env.SHELL ?? "/bin/zsh",
@@ -150,7 +151,7 @@ export async function POST(request: Request) {
       cwd: projectRoot,
       detached: true,
       stdio: "ignore",
-      env: cleanEnv,
+      env: cleanEnv as unknown as NodeJS.ProcessEnv,
     });
     child.unref();
 
