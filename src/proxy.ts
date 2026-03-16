@@ -34,6 +34,11 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow deploy webhook (uses its own HMAC-SHA256 auth)
+  if (pathname === "/api/deploy") {
+    return NextResponse.next();
+  }
+
   // Check for Cloudflare Access JWT first
   const cfToken = getAccessToken(request);
   if (cfToken) {

@@ -17,8 +17,8 @@ const net = require("net");
 // Set production mode
 process.env.NODE_ENV = "production";
 
-// Determine the standalone directory
-const standaloneDir = path.join(__dirname, "..", ".next", "standalone");
+// Determine the standalone directory (overridable for blue-green deploys)
+const standaloneDir = process.env.STANDALONE_DIR || path.join(__dirname, "..", ".next", "standalone");
 process.chdir(standaloneDir);
 
 // Load Next.js config
