@@ -1294,14 +1294,6 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       voiceSpaceInterval: null,
     };
 
-    // Destroy the previous PTY if this is a reconnection — the old WebSocket
-    // close event may not have fired yet, so the old session entry can still
-    // be in the map with a stale PTY whose ReadStream leaks error listeners.
-    const previousSession = sessions.get(sessionId);
-    if (previousSession) {
-      try { destroyPty(previousSession.pty); } catch { /* old PTY may be dead */ }
-    }
-
     sessions.set(sessionId, session);
     // Connection established, allow future reconnection attempts
     connectingSessionIds.delete(sessionId);
@@ -1448,10 +1440,6 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
               const newPty = attachToTmuxSession(tmuxSessionName, session.lastCols, session.lastRows);
               session.pty = newPty;
-              // Update closure variable so input/voice handlers use the new PTY
-              ptyProcess = newPty;
-              // Re-add session to map (cleanupSession removed it on agent exit)
-              sessions.set(sessionId, session);
 
               newPty.onData((data) => {
                 if (ws.readyState === WebSocket.OPEN) {
@@ -1489,15 +1477,13 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           }
 
           case "voice_start": {
-            voiceLog.info("Voice start requested", { sessionId, terminalType: session.terminalType, inSessionMap: sessions.has(sessionId) });
             if (session.terminalType !== "agent") {
-              voiceLog.warn("Voice rejected: not an agent session", { sessionId, terminalType: session.terminalType });
               ws.send(JSON.stringify({ type: "voice_error", message: "Voice mode is only available for agent sessions" }));
               break;
             }
             try {
               const fifoPath = createVoiceFifo(session);
-              voiceLog.info("Created FIFO, starting PTT space simulation", { sessionId, fifoPath });
+              voiceLog.debug("Created FIFO", { sessionId, fifoPath });
               // Simulate holding SPACE to trigger Claude Code voice recording.
               // Send initial space immediately, then repeat at 50ms to mimic key-hold.
               // Server-side avoids round-trip latency from browser → WS → server.
@@ -1506,7 +1492,6 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                 if (sessions.has(sessionId)) {
                   ptyProcess.write(" ");
                 } else {
-                  voiceLog.warn("Session no longer in map, stopping space interval", { sessionId });
                   clearInterval(session.voiceSpaceInterval!);
                   session.voiceSpaceInterval = null;
                 }
