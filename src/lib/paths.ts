@@ -160,6 +160,22 @@ export function getCurrentReleaseDir(): string {
 }
 
 /**
+ * Get the deploy state directory path.
+ * Stores deploy lock, state JSON, and deploy log.
+ */
+export function getDeployDir(): string {
+  return join(getDataDir(), "deploy");
+}
+
+/**
+ * Get the builds directory path.
+ * Stores blue/green build slots for blue-green deploys.
+ */
+export function getBuildsDir(): string {
+  return join(getDataDir(), "builds");
+}
+
+/**
  * Get the update staging directory path.
  * Used as a temporary directory during the update process.
  */
@@ -192,6 +208,8 @@ export function ensureDataDirectories(): void {
     getServerDir(),
     getRdvDir(),
     getReleasesDir(),
+    getDeployDir(),
+    getBuildsDir(),
   ];
 
   for (const dir of dirs) {
@@ -247,6 +265,12 @@ export const AppPaths = {
   },
   get currentReleaseDir() {
     return getCurrentReleaseDir();
+  },
+  get deployDir() {
+    return getDeployDir();
+  },
+  get buildsDir() {
+    return getBuildsDir();
   },
   get updateStagingDir() {
     return getUpdateStagingDir();

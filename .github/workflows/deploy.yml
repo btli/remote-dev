@@ -1,0 +1,59 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  trigger-deploy:
+    name: Trigger Production Deploy
+    runs-on: ubuntu-latest
+    # Skip deploy for tag pushes (handled by release.yml)
+    if: "!startsWith(github.ref, 'refs/tags/')"
+    timeout-minutes: 5
+    steps:
+      - name: Send deploy webhook
+        env:
+          DEPLOY_WEBHOOK_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+        run: |
+          if [ -z "$DEPLOY_WEBHOOK_SECRET" ]; then
+            echo "::error::DEPLOY_WEBHOOK_SECRET not set"
+            exit 1
+          fi
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "::error::DEPLOY_URL not set (add as repository variable)"
+            exit 1
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg ref "$GITHUB_REF" \
+            --arg sha "$GITHUB_SHA" \
+            --arg pusher "$GITHUB_ACTOR" \
+            '{ref: $ref, after: $sha, pusher: {name: $pusher}}')
+
+          SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$DEPLOY_WEBHOOK_SECRET" | awk '{print $NF}')"
+
+          echo "Sending deploy webhook to $DEPLOY_URL/api/deploy"
+          echo "Commit: ${GITHUB_SHA:0:7}"
+          echo "Pusher: $GITHUB_ACTOR"
+
+          HTTP_CODE=$(curl -s -o /tmp/deploy_response.txt -w "%{http_code}" \
+            --connect-timeout 30 --max-time 60 \
+            -X POST "$DEPLOY_URL/api/deploy" \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: $SIGNATURE" \
+            -H "X-GitHub-Event: push" \
+            -d "$PAYLOAD")
+
+          RESPONSE=$(cat /tmp/deploy_response.txt)
+          echo "Response ($HTTP_CODE): $RESPONSE"
+
+          if [ "$HTTP_CODE" = "202" ]; then
+            echo "Deploy triggered successfully"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "::warning::Deploy already in progress"
+          else
+            echo "::error::Unexpected response: $HTTP_CODE"
+            exit 1
+          fi

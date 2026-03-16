@@ -30,6 +30,34 @@ export function useVoiceCapture({
   const streamRef = useRef<MediaStream | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
+  const voiceListenerRef = useRef<((event: MessageEvent) => void) | null>(null);
+
+  /** Release browser audio resources (mic, worklet, audio context). */
+  const cleanupAudio = useCallback(() => {
+    if (workletRef.current) {
+      workletRef.current.port.onmessage = null;
+      workletRef.current.disconnect();
+      workletRef.current = null;
+    }
+    if (sourceRef.current) {
+      sourceRef.current.disconnect();
+      sourceRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    // Remove any pending voice response listener
+    if (voiceListenerRef.current) {
+      const ws = getWebSocket();
+      ws?.removeEventListener("message", voiceListenerRef.current);
+      voiceListenerRef.current = null;
+    }
+  }, [getWebSocket]);
 
   const start = useCallback(async () => {
     const ws = getWebSocket();
@@ -80,6 +108,30 @@ export function useVoiceCapture({
       source.connect(worklet);
       // Don't connect worklet to destination — no playback
 
+      // Listen for voice_error from server to revert recording state
+      const voiceResponseHandler = (event: MessageEvent) => {
+        try {
+          const data = typeof event.data === "string" ? JSON.parse(event.data) : null;
+          if (!data) return;
+          if (data.type === "voice_error") {
+            ws.removeEventListener("message", voiceResponseHandler);
+            voiceListenerRef.current = null;
+            const msg = data.message || "Voice mode failed on server";
+            setError(msg);
+            setState("error");
+            onError?.(msg);
+            cleanupAudio();
+          } else if (data.type === "voice_ready") {
+            ws.removeEventListener("message", voiceResponseHandler);
+            voiceListenerRef.current = null;
+          }
+        } catch {
+          // Non-JSON message, ignore
+        }
+      };
+      voiceListenerRef.current = voiceResponseHandler;
+      ws.addEventListener("message", voiceResponseHandler);
+
       ws.send(JSON.stringify({ type: "voice_start" }));
 
       setState("recording");
@@ -91,26 +143,10 @@ export function useVoiceCapture({
       setState("error");
       onError?.(message);
     }
-  }, [getWebSocket, onStart, onError]);
+  }, [getWebSocket, onStart, onError, cleanupAudio]);
 
   const stop = useCallback(() => {
-    if (workletRef.current) {
-      workletRef.current.port.onmessage = null;
-      workletRef.current.disconnect();
-      workletRef.current = null;
-    }
-    if (sourceRef.current) {
-      sourceRef.current.disconnect();
-      sourceRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
+    cleanupAudio();
 
     const ws = getWebSocket();
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -120,7 +156,7 @@ export function useVoiceCapture({
     setState("idle");
     setError(null);
     onStop?.();
-  }, [getWebSocket, onStop]);
+  }, [getWebSocket, onStop, cleanupAudio]);
 
   return { state, error, start, stop };
 }
