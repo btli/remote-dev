@@ -332,8 +332,8 @@ async function startServers(slot: Slot): Promise<boolean> {
       TERMINAL_SOCKET: TERMINAL_SOCKET,
       DATABASE_URL: prodDatabaseUrl,
     },
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
   });
 
   if (terminalProc.pid) {
@@ -360,8 +360,8 @@ async function startServers(slot: Slot): Promise<boolean> {
       AUTH_URL: EXTERNAL_URL,
       STANDALONE_DIR: standaloneDir,
     },
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
   });
 
   if (nextProc.pid) {
