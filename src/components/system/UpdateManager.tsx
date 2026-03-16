@@ -179,6 +179,26 @@ export function UpdateManager() {
                   </span>
                 </div>
               )}
+              {status.deploy && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">
+                      Build
+                    </span>
+                    <span className="text-sm font-mono text-muted-foreground">
+                      {status.deploy.activeCommit.slice(0, 7)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">
+                      Deployed
+                    </span>
+                    <span className="text-sm text-muted-foreground">
+                      {formatRelativeTime(status.deploy.deployedAt)}
+                    </span>
+                  </div>
+                </>
+              )}
               {status.lastChecked && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
