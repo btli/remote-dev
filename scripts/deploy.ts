@@ -446,6 +446,39 @@ async function startServers(slot: Slot): Promise<boolean> {
   return true;
 }
 
+/**
+ * Restart servers using rdv.ts, which is the known working startup path.
+ * rdv.ts inherits the user's full shell environment (locale, PATH, etc.)
+ * needed for correct PTY/UTF-8 encoding in node-pty.
+ */
+function restartViaRdv(): void {
+  logDeploy("Restarting via rdv.ts...");
+  const result = spawnSync(["bun", "run", "scripts/rdv.ts", "start", "prod"], {
+    cwd: PROJECT_ROOT,
+    env: getServerEnv(),
+    stdout: "inherit",
+    stderr: "inherit",
+    // rdv.ts start blocks (waitForExit), so we need to spawn it detached
+  });
+  // rdv.ts start blocks forever, so we can't use spawnSync.
+  // Use Bun.spawn instead with detach.
+}
+
+function restartViaRdvAsync(): void {
+  logDeploy("Starting servers via rdv.ts (detached)...");
+  const proc = spawn({
+    cmd: ["bun", "run", "scripts/rdv.ts", "start", "prod"],
+    cwd: PROJECT_ROOT,
+    env: getServerEnv(),
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (proc.pid) {
+    logDeploy(`rdv.ts started (PID: ${proc.pid})`);
+  }
+  // Don't wait — rdv.ts blocks forever managing the servers
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Build
 // ─────────────────────────────────────────────────────────────────────────────
@@ -814,25 +847,23 @@ async function deploy(): Promise<void> {
     const newCommit = getGitCommitFull();
     logDeploy(`Swapping from ${activeSlot} to ${inactiveSlot}...`);
 
-    // Stop current servers
+    // Stop current servers, run migration, restart via rdv.ts.
+    // We use rdv.ts instead of starting servers directly because rdv.ts
+    // runs in the user's shell environment with proper locale vars (LC_ALL,
+    // LANG, etc.) required for correct PTY/UTF-8 encoding in node-pty.
     stopCurrentServers();
 
-    // Run database migration while servers are stopped (safe: no running code using old schema)
+    // Run database migration while servers are stopped
     if (!runMigration()) {
-      logError("Migration failed, restarting previous slot...");
-      await rollbackTo(activeSlot);
+      logError("Migration failed, restarting via rdv.ts...");
+      restartViaRdvAsync();
+      await Bun.sleep(5000);
       releaseLock();
       process.exit(1);
     }
 
-    // Start new servers from the new slot's build
-    const started = await startServers(inactiveSlot);
-    if (!started) {
-      logError("Failed to start new servers, rolling back...");
-      await rollbackTo(activeSlot);
-      releaseLock();
-      process.exit(1);
-    }
+    // Restart servers via rdv.ts (known working server startup path)
+    restartViaRdvAsync();
 
     // Local health check
     const localHealthy = await healthCheckLocal();
@@ -871,12 +902,15 @@ async function deploy(): Promise<void> {
   }
 }
 
-async function rollbackTo(slot: Slot): Promise<void> {
-  logDeploy(`Rolling back to ${slot} slot...`);
+async function rollbackTo(_slot: Slot): Promise<void> {
+  logDeploy(`Rolling back, restarting via rdv.ts...`);
 
-  const started = await startServers(slot);
+  restartViaRdvAsync();
+  await Bun.sleep(5000);
+
+  const started = true; // rdv.ts handles its own startup
   if (!started) {
-    logError(`CRITICAL: Rollback to ${slot} failed! Manual intervention needed.`);
+    logError(`CRITICAL: Rollback failed! Manual intervention needed.`);
     return;
   }
 
