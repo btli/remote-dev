@@ -305,6 +305,20 @@ async function startServers(slot: Slot): Promise<boolean> {
 
   logDeploy(`Starting servers from ${slot} slot...`);
 
+  // Ensure stale sockets are cleaned up before starting new servers.
+  // The previous stopCurrentServers() should have done this, but there can be
+  // a race if the old process took time to release the socket file.
+  for (const sock of [NEXTJS_SOCKET, TERMINAL_SOCKET]) {
+    if (existsSync(sock)) {
+      try {
+        unlinkSync(sock);
+        logDeploy(`Cleaned up stale socket: ${sock}`);
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
   // Start terminal server from source (not from slot build).
   // The terminal server uses tsx + node-pty native bindings and doesn't have
   // a standalone build. This means rollback doesn't cover the terminal server.
