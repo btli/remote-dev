@@ -465,18 +465,20 @@ function restartViaRdv(): void {
 }
 
 function restartViaRdvAsync(): void {
-  logDeploy("Starting servers via rdv.ts (detached)...");
+  logDeploy("Starting servers via login shell...");
+  // Use a login shell to get the user's full environment (locale, PATH,
+  // shell config, etc.) — this is the only way to exactly replicate the
+  // environment that `nohup bun run rdv:prod` gets when run manually.
+  const shell = process.env.SHELL || "/bin/zsh";
   const proc = spawn({
-    cmd: ["bun", "run", "scripts/rdv.ts", "start", "prod"],
+    cmd: [shell, "-l", "-c", `cd ${PROJECT_ROOT} && exec bun run scripts/rdv.ts start prod`],
     cwd: PROJECT_ROOT,
-    env: getServerEnv(),
     stdout: "inherit",
     stderr: "inherit",
   });
   if (proc.pid) {
-    logDeploy(`rdv.ts started (PID: ${proc.pid})`);
+    logDeploy(`rdv.ts started via login shell (PID: ${proc.pid})`);
   }
-  // Don't wait — rdv.ts blocks forever managing the servers
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
