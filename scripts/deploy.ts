@@ -62,6 +62,54 @@ const EXTERNAL_URL =
   process.env.DEPLOY_EXTERNAL_URL || "https://dev.bryanli.net";
 const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 const HEALTH_CHECK_INTERVAL_MS = 3_000;
+
+// When spawned from the webhook, process.env is a minimal clean env missing
+// locale vars, PATH entries, etc. Build a full server environment by reading
+// the user's default shell environment + .env.local.
+function getServerEnv(extra: Record<string, string> = {}): Record<string, string> {
+  // Start with current process env (may be minimal if from webhook)
+  const env: Record<string, string> = { ...process.env as Record<string, string> };
+
+  // Ensure critical locale vars are set (affects PTY/tty encoding)
+  if (!env.LANG) env.LANG = "en_US.UTF-8";
+  if (!env.LC_ALL) env.LC_ALL = "en_US.UTF-8";
+  if (!env.LC_CTYPE) env.LC_CTYPE = "en_US.UTF-8";
+
+  // Ensure PATH includes common binary locations
+  const defaultPath = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin";
+  const homeBun = join(homedir(), ".bun", "bin");
+  const homeLocal = join(homedir(), ".local", "bin");
+  const pathParts = (env.PATH || defaultPath).split(":");
+  for (const p of [homeBun, homeLocal, "/opt/homebrew/bin", "/usr/local/bin"]) {
+    if (!pathParts.includes(p)) pathParts.unshift(p);
+  }
+  env.PATH = pathParts.join(":");
+
+  // Load .env.local if it exists (for AUTH_SECRET, etc.)
+  const envLocalPath = join(PROJECT_ROOT, ".env.local");
+  if (existsSync(envLocalPath)) {
+    const lines = readFileSync(envLocalPath, "utf-8").split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = trimmed.slice(0, eqIdx);
+      let value = trimmed.slice(eqIdx + 1);
+      // Strip surrounding quotes
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      // Don't override explicitly set vars
+      if (!(key in env)) {
+        env[key] = value;
+      }
+    }
+  }
+
+  return { ...env, ...extra };
+}
 const PROCESS_STOP_TIMEOUT_MS = 10_000;
 
 type Slot = "blue" | "green";
@@ -345,14 +393,14 @@ async function startServers(slot: Slot): Promise<boolean> {
   // a standalone build. This means rollback doesn't cover the terminal server.
   // In practice this is acceptable: the terminal server rarely has breaking
   // protocol changes, and tmux sessions survive server restarts.
+  const serverEnv = getServerEnv({
+    TERMINAL_SOCKET: TERMINAL_SOCKET,
+    DATABASE_URL: prodDatabaseUrl,
+  });
   const terminalProc = spawn({
     cmd: ["bun", "run", "tsx", "src/server/index.ts"],
     cwd: PROJECT_ROOT,
-    env: {
-      ...process.env,
-      TERMINAL_SOCKET: TERMINAL_SOCKET,
-      DATABASE_URL: prodDatabaseUrl,
-    },
+    env: serverEnv,
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -372,15 +420,14 @@ async function startServers(slot: Slot): Promise<boolean> {
   const nextProc = spawn({
     cmd: ["node", join(PROJECT_ROOT, "scripts", "standalone-server.js")],
     cwd: PROJECT_ROOT,
-    env: {
-      ...process.env,
+    env: getServerEnv({
       SOCKET_PATH: NEXTJS_SOCKET,
       TERMINAL_SOCKET: TERMINAL_SOCKET,
       DATABASE_URL: prodDatabaseUrl,
       NEXTAUTH_URL: EXTERNAL_URL,
       AUTH_URL: EXTERNAL_URL,
       STANDALONE_DIR: standaloneDir,
-    },
+    }),
     stdout: "inherit",
     stderr: "inherit",
   });
