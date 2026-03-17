@@ -39,6 +39,12 @@ function getCleanEnvironment(): Record<string, string> {
     if (key.startsWith("__TURBOPACK_")) continue;
     env[key] = value;
   }
+  // Ensure locale vars are always present for proper UTF-8 handling in PTY.
+  // Without these, node-pty uses the C locale and multi-byte characters
+  // (Nerd Font glyphs, Unicode) render as '_'.
+  if (!env.LANG) env.LANG = "en_US.UTF-8";
+  if (!env.LC_CTYPE) env.LC_CTYPE = "en_US.UTF-8";
+  if (!env.TERM) env.TERM = "xterm-256color";
   return env;
 }
 

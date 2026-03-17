@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "remote-dev",
-      "source": ".",
+      "source": "./",
       "description": "CLI tools for Remote Dev - manage terminal sessions, worktrees, and AI agents",
       "version": "1.0.0"
     }

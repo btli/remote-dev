@@ -1,6 +1,16 @@
 // Mark this process as the terminal server for log source detection
 process.env.RDV_SERVER_SOURCE = "terminal";
 
+// Ensure locale environment variables are set BEFORE any PTY operations.
+// When the server is started via the deploy webhook chain (GitHub Actions →
+// /api/deploy → deploy.ts → login shell → rdv.ts), locale vars like LANG
+// can get lost despite being set in the initial clean env. Without UTF-8
+// locale, node-pty defaults to the C/ASCII locale and multi-byte characters
+// (Nerd Font glyphs, Unicode symbols) render as '_' in terminal sessions.
+if (!process.env.LANG) process.env.LANG = "en_US.UTF-8";
+if (!process.env.LC_CTYPE) process.env.LC_CTYPE = "en_US.UTF-8";
+if (!process.env.TERM) process.env.TERM = "xterm-256color";
+
 import { config } from "dotenv";
 import { createTerminalServer } from "./terminal.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
