@@ -107,9 +107,38 @@ class _SessionTile extends StatelessWidget {
       ? Icons.smart_toy_outlined
       : Icons.terminal;
 
+  /// Build subtitle showing project name, branch, and agent provider.
+  String? _subtitle() {
+    final parts = <String>[];
+
+    // Project folder name (last segment of projectPath)
+    if (session.projectPath != null && session.projectPath!.isNotEmpty) {
+      final segments = session.projectPath!.split('/');
+      final projectName = segments.lastWhere(
+        (s) => s.isNotEmpty,
+        orElse: () => '',
+      );
+      if (projectName.isNotEmpty) parts.add(projectName);
+    }
+
+    // Worktree branch
+    if (session.worktreeBranch != null &&
+        session.worktreeBranch!.isNotEmpty) {
+      parts.add(session.worktreeBranch!);
+    }
+
+    // Agent provider
+    if (session.isAgent && session.agentProvider.isAgent) {
+      parts.add(session.agentProvider.displayName);
+    }
+
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final subtitle = _subtitle();
 
     return Material(
       color: isActive
@@ -134,9 +163,13 @@ class _SessionTile extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               // Type icon
-              Icon(_typeIcon(), size: 16, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+              Icon(
+                _typeIcon(),
+                size: 16,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+              ),
               const SizedBox(width: 8),
-              // Session name
+              // Session name + subtitle
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -144,18 +177,22 @@ class _SessionTile extends StatelessWidget {
                     Text(
                       session.name,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                        fontWeight:
+                            isActive ? FontWeight.w600 : FontWeight.normal,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (session.isAgent && session.agentProvider.isAgent)
+                    if (subtitle != null)
                       Text(
-                        session.agentProvider.displayName,
+                        subtitle,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                          color: theme.colorScheme.onSurface
+                              .withValues(alpha: 0.5),
                           fontSize: 11,
                         ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                   ],
                 ),

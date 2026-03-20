@@ -97,6 +97,8 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     final session = ref.watch(activeSessionProvider);
     final manager = ref.watch(terminalManagerProvider(widget.sessionId));
     final palette = ref.watch(terminalPaletteProvider);
+    final fontFamily = ref.watch(terminalFontProvider);
+    final fontSize = ref.watch(terminalFontSizeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -143,6 +145,8 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
                 TerminalWidget(
                   gateway: manager,
                   palette: palette,
+                  fontFamily: fontFamily,
+                  fontSize: fontSize,
                   onAgentExited: _onAgentExited,
                 ),
                 if (_agentExited)

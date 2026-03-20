@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/presentation/providers/providers.dart';
-import 'package:remote_dev/presentation/theme/app_theme.dart';
 
 /// Available terminal fonts (those we have TTF assets for).
 const _availableFonts = [
@@ -12,18 +11,10 @@ const _availableFonts = [
 ];
 
 /// Settings screen with server info, font picker, and sign out.
-class SettingsScreen extends ConsumerStatefulWidget {
+class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
-  @override
-  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  String _selectedFont = NerdFonts.defaultFont;
-  double _fontSize = 14.0;
-
-  Future<void> _signOut() async {
+  Future<void> _signOut(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -48,9 +39,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final config = ref.watch(serverConfigProvider).valueOrNull;
+    final selectedFont = ref.watch(terminalFontProvider);
+    final fontSize = ref.watch(terminalFontSizeProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -101,11 +94,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             leading: const Icon(Icons.font_download_outlined),
             title: const Text('Font'),
             trailing: DropdownButton<String>(
-              value: _selectedFont,
+              value: selectedFont,
               underline: const SizedBox.shrink(),
               onChanged: (value) {
                 if (value != null) {
-                  setState(() => _selectedFont = value);
+                  ref.read(terminalFontProvider.notifier).state = value;
                 }
               },
               items: _availableFonts
@@ -127,17 +120,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             leading: const Icon(Icons.format_size),
             title: const Text('Font Size'),
             subtitle: Slider(
-              value: _fontSize,
+              value: fontSize,
               min: 10,
               max: 24,
               divisions: 14,
-              label: _fontSize.round().toString(),
+              label: fontSize.round().toString(),
               onChanged: (value) {
-                setState(() => _fontSize = value);
+                ref.read(terminalFontSizeProvider.notifier).state = value;
               },
             ),
             trailing: Text(
-              '${_fontSize.round()}',
+              '${fontSize.round()}',
               style: theme.textTheme.bodyMedium,
             ),
           ),
@@ -146,7 +139,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
           // Sign out
           FilledButton.icon(
-            onPressed: _signOut,
+            onPressed: () => _signOut(context, ref),
             icon: const Icon(Icons.logout),
             label: const Text('Sign Out'),
             style: FilledButton.styleFrom(
