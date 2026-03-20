@@ -7,7 +7,10 @@ import 'package:remote_dev/domain/value_objects/terminal_type.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
 
 class CreateSessionSheet extends ConsumerStatefulWidget {
-  const CreateSessionSheet({super.key});
+  const CreateSessionSheet({super.key, this.folderId});
+
+  /// Optional folder ID to create the session in.
+  final String? folderId;
 
   @override
   ConsumerState<CreateSessionSheet> createState() =>
@@ -37,6 +40,7 @@ class _CreateSessionSheetState extends ConsumerState<CreateSessionSheet> {
           await ref.read(sessionListProvider.notifier).createSession(
                 CreateSessionInput(
                   name: name,
+                  folderId: widget.folderId,
                   terminalType: _terminalType.value,
                   agentProvider: _terminalType == TerminalType.agent
                       ? _agentProvider.value
@@ -50,6 +54,8 @@ class _CreateSessionSheetState extends ConsumerState<CreateSessionSheet> {
 
       if (session != null) {
         ref.read(activeSessionIdProvider.notifier).state = session.id;
+        // Refresh folders to update session counts
+        ref.read(folderListProvider.notifier).refresh();
       }
     } finally {
       if (mounted) setState(() => _isCreating = false);

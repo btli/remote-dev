@@ -20,11 +20,12 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _onCreateSession() {
+    final folderId = ref.read(activeFolderIdProvider);
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (context) => const CreateSessionSheet(),
+      builder: (context) => CreateSessionSheet(folderId: folderId),
     );
   }
 
@@ -35,11 +36,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final isTablet =
         MediaQuery.of(context).size.width >= kTabletBreakpoint;
 
-    final sessions = sessionsAsync.valueOrNull ?? [];
+    // Use filtered sessions for display
+    final sessions = ref.watch(filteredSessionsProvider);
 
     final sidebar = SessionSidebar(
       sessions: sessions,
-      folders: const [],
       activeSessionId: activeSessionId,
       onSessionTap: (session) {
         ref.read(activeSessionIdProvider.notifier).state = session.id;
@@ -50,8 +51,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         }
       },
       onCreateSession: _onCreateSession,
-      onRefresh: () =>
-          ref.read(sessionListProvider.notifier).refresh(),
+      onRefresh: () async {
+        await ref.read(sessionListProvider.notifier).refresh();
+        await ref.read(folderListProvider.notifier).refresh();
+      },
       isLoading: sessionsAsync.isLoading,
     );
 

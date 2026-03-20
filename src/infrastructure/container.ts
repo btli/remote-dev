@@ -254,7 +254,7 @@ export const reorderFoldersUseCase = new ReorderFoldersUseCase(folderRepository)
  */
 export const listFoldersUseCase = new ListFoldersUseCase(
   folderRepository,
-  sessionRepository
+  sessionRepository as import("@/application/use-cases/folder/ListFoldersUseCase").SessionFolderQueryPort
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

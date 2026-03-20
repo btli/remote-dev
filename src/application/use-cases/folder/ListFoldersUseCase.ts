@@ -7,10 +7,14 @@
 
 import type { Folder } from "@/domain/entities/Folder";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
-import type { SessionRepository } from "@/application/ports/SessionRepository";
 
 export interface ListFoldersInput {
   userId: string;
+}
+
+export interface SessionFolderMapping {
+  sessionId: string;
+  folderId: string;
 }
 
 export interface ListFoldersResult {
@@ -18,27 +22,29 @@ export interface ListFoldersResult {
   sessionFolders: Record<string, string>; // sessionId -> folderId
 }
 
+export interface SessionFolderQueryPort {
+  findSessionFolderMappings(
+    userId: string
+  ): Promise<SessionFolderMapping[]>;
+}
+
 export class ListFoldersUseCase {
   constructor(
     private readonly folderRepository: FolderRepository,
-    private readonly sessionRepository: SessionRepository
+    private readonly sessionFolderQuery: SessionFolderQueryPort
   ) {}
 
   async execute(input: ListFoldersInput): Promise<ListFoldersResult> {
-    // Fetch folders and sessions in parallel
-    const [folders, sessions] = await Promise.all([
+    const [folders, mappings] = await Promise.all([
       this.folderRepository.findByUser(input.userId, {
         orderBy: { field: "sortOrder", direction: "asc" },
       }),
-      this.sessionRepository.findByUser(input.userId),
+      this.sessionFolderQuery.findSessionFolderMappings(input.userId),
     ]);
 
-    // Build session-to-folder mapping
     const sessionFolders: Record<string, string> = {};
-    for (const session of sessions) {
-      if (session.folderId) {
-        sessionFolders[session.id] = session.folderId;
-      }
+    for (const mapping of mappings) {
+      sessionFolders[mapping.sessionId] = mapping.folderId;
     }
 
     return {

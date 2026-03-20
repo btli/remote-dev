@@ -9,10 +9,15 @@ class ApiFolderRepository implements FolderRepository {
   final RemoteDevClient _client;
 
   @override
-  Future<Result<List<Folder>>> findAll() async {
+  Future<Result<FolderListResult>> findAll() async {
     try {
-      final data = await _client.listFolders();
-      return Success(data.map(_mapFolder).toList());
+      final response = await _client.listFolders();
+      return Success(
+        FolderListResult(
+          folders: response.folders.map(_mapFolder).toList(),
+          sessionFolders: response.sessionFolders,
+        ),
+      );
     } on AppError catch (e) {
       return Failure(e);
     } on Object catch (e) {

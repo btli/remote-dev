@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import 'package:remote_dev/domain/entities/folder.dart';
 import 'package:remote_dev/domain/entities/session.dart';
 import 'package:remote_dev/presentation/screens/session/session_list_screen.dart';
+import 'package:remote_dev/presentation/widgets/sidebar/folder_tree.dart';
 
 class SessionSidebar extends StatelessWidget {
   const SessionSidebar({
     super.key,
     required this.sessions,
-    required this.folders,
     required this.activeSessionId,
     required this.onSessionTap,
     required this.onCreateSession,
@@ -18,7 +17,6 @@ class SessionSidebar extends StatelessWidget {
   });
 
   final List<Session> sessions;
-  final List<Folder> folders;
   final String? activeSessionId;
   final void Function(Session session) onSessionTap;
   final VoidCallback onCreateSession;
@@ -35,6 +33,7 @@ class SessionSidebar extends StatelessWidget {
       child: SafeArea(
         child: Column(
           children: [
+            // Branding
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Row(
@@ -61,6 +60,20 @@ class SessionSidebar extends StatelessWidget {
               color: colorScheme.outlineVariant,
             ),
 
+            // Folder tree (scrollable, takes available space)
+            const Flexible(
+              flex: 0,
+              child: SingleChildScrollView(
+                child: FolderTree(),
+              ),
+            ),
+
+            Divider(
+              height: 1,
+              color: colorScheme.outlineVariant,
+            ),
+
+            // Session list (takes remaining space)
             Expanded(
               child: SessionListScreen(
                 sessions: sessions,
@@ -76,6 +89,8 @@ class SessionSidebar extends StatelessWidget {
               height: 1,
               color: colorScheme.outlineVariant,
             ),
+
+            // Bottom bar
             Padding(
               padding: const EdgeInsets.all(8),
               child: Row(

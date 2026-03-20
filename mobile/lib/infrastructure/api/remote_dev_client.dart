@@ -3,6 +3,21 @@ import 'package:dio/dio.dart';
 import 'package:remote_dev/domain/errors/app_error.dart';
 import 'package:remote_dev/infrastructure/storage/secure_storage_service.dart';
 
+/// Response from the folders endpoint containing both folders and
+/// the session-to-folder mapping.
+class FoldersResponse {
+  const FoldersResponse({
+    required this.folders,
+    required this.sessionFolders,
+  });
+
+  /// List of raw folder JSON objects.
+  final List<Map<String, dynamic>> folders;
+
+  /// Mapping of session ID to folder ID.
+  final Map<String, String> sessionFolders;
+}
+
 /// HTTP client for the Remote Dev REST API.
 ///
 /// All methods return domain types. Auth is handled via a Bearer token
@@ -75,12 +90,20 @@ class RemoteDevClient {
 
   // ── Folders ───────────────────────────────────────────────────────────
 
-  Future<List<Map<String, dynamic>>> listFolders() async {
+  /// Returns both folders and the session-to-folder mapping.
+  Future<FoldersResponse> listFolders() async {
     final response = await _request(() => _dio.get('/api/folders'));
     final folders = response['folders'] as List? ??
         response['items'] as List? ??
         [];
-    return folders.cast<Map<String, dynamic>>();
+    final sessionFoldersRaw =
+        response['sessionFolders'] as Map<String, dynamic>? ?? {};
+    return FoldersResponse(
+      folders: folders.cast<Map<String, dynamic>>(),
+      sessionFolders: sessionFoldersRaw.map(
+        (key, value) => MapEntry(key, value as String),
+      ),
+    );
   }
 
   Future<Map<String, dynamic>> createFolder(
