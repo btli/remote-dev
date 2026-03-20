@@ -19,6 +19,7 @@ import {
   Loader2,
   ExternalLink,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -131,6 +132,11 @@ export function AccountSwitcher() {
                           Default
                         </Badge>
                       )}
+                      {account.needsReauth && (
+                        <Badge variant="outline" className="text-xs shrink-0 border-amber-500/50 text-amber-500">
+                          Missing scopes
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-sm text-muted-foreground truncate">
                       @{account.login}
@@ -139,6 +145,22 @@ export function AccountSwitcher() {
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
+                    {account.needsReauth && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-amber-500 hover:text-amber-400"
+                            onClick={addAccount}
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Re-authorize to grant missing scopes</TooltipContent>
+                      </Tooltip>
+                    )}
+
                     {!account.isDefault && (
                       <Tooltip>
                         <TooltipTrigger asChild>

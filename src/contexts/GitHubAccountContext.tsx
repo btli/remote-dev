@@ -28,6 +28,7 @@ export interface LinkedGitHubAccount {
   avatarUrl: string;
   email: string | null;
   isDefault: boolean;
+  needsReauth: boolean;
   createdAt: string;
   updatedAt: string;
 }
