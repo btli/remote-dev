@@ -70,101 +70,28 @@ flutter:
         - asset: assets/fonts/FiraCodeNerdFont-Regular.ttf
         - asset: assets/fonts/FiraCodeNerdFont-Bold.ttf
           weight: 700
-    - family: Hack Nerd Font
-      fonts:
-        - asset: assets/fonts/HackNerdFont-Regular.ttf
-        - asset: assets/fonts/HackNerdFont-Bold.ttf
-          weight: 700
-    - family: CaskaydiaCove Nerd Font
-      fonts:
-        - asset: assets/fonts/CaskaydiaCoveNerdFont-Regular.ttf
-        - asset: assets/fonts/CaskaydiaCoveNerdFont-Bold.ttf
-          weight: 700
+    # TODO: Download remaining Nerd Font families as needed
+    # - family: Hack Nerd Font
+    # - family: CaskaydiaCove Nerd Font
     - family: MesloLGS Nerd Font
       fonts:
         - asset: assets/fonts/MesloLGSNerdFont-Regular.ttf
         - asset: assets/fonts/MesloLGSNerdFont-Bold.ttf
           weight: 700
-    - family: SourceCodePro Nerd Font
-      fonts:
-        - asset: assets/fonts/SauceCodeProNerdFont-Regular.ttf
-        - asset: assets/fonts/SauceCodeProNerdFont-Bold.ttf
-          weight: 700
-    - family: UbuntuMono Nerd Font
-      fonts:
-        - asset: assets/fonts/UbuntuMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/UbuntuMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: RobotoMono Nerd Font
-      fonts:
-        - asset: assets/fonts/RobotoMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/RobotoMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: Inconsolata Nerd Font
-      fonts:
-        - asset: assets/fonts/InconsolataNerdFont-Regular.ttf
-        - asset: assets/fonts/InconsolataNerdFont-Bold.ttf
-          weight: 700
-    - family: DejaVuSansMono Nerd Font
-      fonts:
-        - asset: assets/fonts/DejaVuSansMNerdFont-Regular.ttf
-        - asset: assets/fonts/DejaVuSansMNerdFont-Bold.ttf
-          weight: 700
-    - family: DroidSansMono Nerd Font
-      fonts:
-        - asset: assets/fonts/DroidSansMNerdFont-Regular.ttf
-    - family: Noto Nerd Font
-      fonts:
-        - asset: assets/fonts/NotoSansMNerdFont-Regular.ttf
-        - asset: assets/fonts/NotoSansMNerdFont-Bold.ttf
-          weight: 700
-    - family: SpaceMono Nerd Font
-      fonts:
-        - asset: assets/fonts/SpaceMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/SpaceMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: IBMPlexMono Nerd Font
-      fonts:
-        - asset: assets/fonts/BlexMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/BlexMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: VictorMono Nerd Font
-      fonts:
-        - asset: assets/fonts/VictorMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/VictorMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: Iosevka Nerd Font
-      fonts:
-        - asset: assets/fonts/IosevkaNerdFont-Regular.ttf
-        - asset: assets/fonts/IosevkaNerdFont-Bold.ttf
-          weight: 700
-    - family: AnonymousPro Nerd Font
-      fonts:
-        - asset: assets/fonts/AnonymiceProNerdFont-Regular.ttf
-        - asset: assets/fonts/AnonymiceProNerdFont-Bold.ttf
-          weight: 700
-    - family: FiraMono Nerd Font
-      fonts:
-        - asset: assets/fonts/FiraMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/FiraMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: GeistMono Nerd Font
-      fonts:
-        - asset: assets/fonts/GeistMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/GeistMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: CommitMono Nerd Font
-      fonts:
-        - asset: assets/fonts/CommitMonoNerdFont-Regular.ttf
-        - asset: assets/fonts/CommitMonoNerdFont-Bold.ttf
-          weight: 700
-    - family: Monaspace Nerd Font
-      fonts:
-        - asset: assets/fonts/MonaspaceNeonNerdFont-Regular.ttf
-        - asset: assets/fonts/MonaspaceNeonNerdFont-Bold.ttf
-          weight: 700
-    - family: 0xProto Nerd Font
-      fonts:
-        - asset: assets/fonts/0xProtoNerdFont-Regular.ttf
-        - asset: assets/fonts/0xProtoNerdFont-Bold.ttf
-          weight: 700
+    # - family: SourceCodePro Nerd Font
+    # - family: UbuntuMono Nerd Font
+    # - family: RobotoMono Nerd Font
+    # - family: Inconsolata Nerd Font
+    # - family: DejaVuSansMono Nerd Font
+    # - family: DroidSansMono Nerd Font
+    # - family: Noto Nerd Font
+    # - family: SpaceMono Nerd Font
+    # - family: IBMPlexMono Nerd Font
+    # - family: VictorMono Nerd Font
+    # - family: Iosevka Nerd Font
+    # - family: AnonymousPro Nerd Font
+    # - family: FiraMono Nerd Font
+    # - family: GeistMono Nerd Font
+    # - family: CommitMono Nerd Font
+    # - family: Monaspace Nerd Font
+    # - family: 0xProto Nerd Font
