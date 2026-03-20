@@ -1,10 +1,17 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
+import 'package:remote_dev/infrastructure/storage/secure_storage_service.dart';
 
 /// Login screen with two auth paths:
 /// 1. Cloudflare Access (opens WebView for SSO)
 /// 2. Direct API Key (for LAN connections)
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, required this.onAuthenticated});
+
+  /// Called after successful authentication with any method.
+  final VoidCallback onAuthenticated;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -15,6 +22,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _terminalPortController = TextEditingController(text: '6002');
   final _apiKeyController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  final _storage = SecureStorageService();
   bool _isLoading = false;
   String? _error;
   bool _showApiKeyForm = false;
@@ -27,6 +35,14 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  String get _baseUrl {
+    var url = _serverUrlController.text.trim();
+    if (url.endsWith('/')) url = url.substring(0, url.length - 1);
+    return url;
+  }
+
+  String get _terminalPort => _terminalPortController.text.trim();
+
   Future<void> _loginWithCfAccess() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
@@ -34,14 +50,100 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
 
-    // TODO: Launch InAppWebView for CF Access flow
-    // 1. Open server URL in WebView
-    // 2. CF Access redirects for SSO login
-    // 3. Extract CF_Authorization cookie
-    // 4. POST /api/auth/mobile-exchange with token
-    // 5. Store returned API key
+    try {
+      // Launch WebView for CF Access authentication
+      final cfToken = await _showCfAccessWebView();
+      if (cfToken == null) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Authentication cancelled';
+        });
+        return;
+      }
 
-    setState(() => _isLoading = false);
+      // Exchange CF token for API key
+      final dio = Dio(BaseOptions(baseUrl: _baseUrl));
+      final response = await dio.post(
+        '/api/auth/mobile-exchange',
+        data: {'cfToken': cfToken},
+      );
+
+      final data = response.data as Map<String, dynamic>;
+      final apiKey = data['apiKey'] as String;
+      final userId = data['userId'] as String;
+      final email = data['email'] as String;
+
+      await _storage.storeCredentials(
+        serverUrl: _baseUrl,
+        terminalPort: _terminalPort,
+        apiKey: apiKey,
+        userId: userId,
+        email: email,
+      );
+
+      widget.onAuthenticated();
+    } on DioException catch (e) {
+      setState(() => _error = e.response?.data?['error'] as String? ??
+          'Authentication failed: ${e.message}');
+    } on Exception catch (e) {
+      setState(() => _error = 'Authentication failed: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Opens an InAppWebView to the server URL, waits for CF Access to
+  /// authenticate, then extracts the CF_Authorization cookie.
+  Future<String?> _showCfAccessWebView() async {
+    String? cfToken;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.9,
+        child: Column(
+          children: [
+            AppBar(
+              title: const Text('Sign in'),
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+            Expanded(
+              child: InAppWebView(
+                initialUrlRequest: URLRequest(url: WebUri(_baseUrl)),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  clearCache: true,
+                ),
+                onLoadStop: (controller, url) async {
+                  // Check if we've been redirected back to the server
+                  // (CF Access sets the cookie after successful auth)
+                  if (url != null && url.toString().startsWith(_baseUrl)) {
+                    final cookies = await CookieManager.instance().getCookies(
+                      url: WebUri(_baseUrl),
+                    );
+                    for (final cookie in cookies) {
+                      if (cookie.name == 'CF_Authorization') {
+                        cfToken = cookie.value;
+                        if (context.mounted) Navigator.of(context).pop();
+                        return;
+                      }
+                    }
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    // Clear WebView cookies after extracting the token
+    await CookieManager.instance().deleteAllCookies();
+    return cfToken;
   }
 
   Future<void> _loginWithApiKey() async {
@@ -56,10 +158,44 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
 
-    // TODO: Validate API key by calling GET /api/sessions
-    // On success: store credentials and navigate to sessions
+    try {
+      final apiKey = _apiKeyController.text.trim();
 
-    setState(() => _isLoading = false);
+      // Validate API key by calling GET /api/sessions
+      final dio = Dio(BaseOptions(
+        baseUrl: _baseUrl,
+        headers: {'Authorization': 'Bearer $apiKey'},
+      ));
+      final response = await dio.get('/api/sessions');
+      final data = response.data as Map<String, dynamic>;
+
+      // Key is valid — extract userId from any session or use a placeholder
+      final sessions = data['sessions'] as List? ?? [];
+      final userId = sessions.isNotEmpty
+          ? (sessions[0] as Map<String, dynamic>)['userId'] as String? ?? ''
+          : '';
+
+      await _storage.storeCredentials(
+        serverUrl: _baseUrl,
+        terminalPort: _terminalPort,
+        apiKey: apiKey,
+        userId: userId,
+        email: '',
+      );
+
+      widget.onAuthenticated();
+    } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      if (statusCode == 401 || statusCode == 403) {
+        setState(() => _error = 'Invalid API key');
+      } else {
+        setState(() => _error = 'Connection failed: ${e.message}');
+      }
+    } on Exception catch (e) {
+      setState(() => _error = 'Connection failed: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override

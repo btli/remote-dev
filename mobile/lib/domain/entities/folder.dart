@@ -25,9 +25,11 @@ class Folder {
 
   bool get isRoot => parentId == null;
 
+  /// Copy with updated fields. Use [clearParentId] to move folder to root.
   Folder copyWith({
     String? name,
     String? parentId,
+    bool clearParentId = false,
     String? icon,
     int? sortOrder,
   }) {
@@ -35,7 +37,7 @@ class Folder {
       id: id,
       userId: userId,
       name: name ?? this.name,
-      parentId: parentId ?? this.parentId,
+      parentId: clearParentId ? null : (parentId ?? this.parentId),
       icon: icon ?? this.icon,
       sortOrder: sortOrder ?? this.sortOrder,
       createdAt: createdAt,

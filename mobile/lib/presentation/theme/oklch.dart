@@ -63,15 +63,20 @@ double _toSrgb(double c) {
 }
 
 /// Parse a hex color string (#RRGGBB or #RRGGBBAA) to a Flutter Color.
+/// Returns opaque black on invalid input (never throws).
 Color hexToColor(String hex) {
-  final cleaned = hex.replaceFirst('#', '');
-  if (cleaned.length == 6) {
-    return Color(int.parse('FF$cleaned', radix: 16));
-  } else if (cleaned.length == 8) {
-    // CSS format is RRGGBBAA, Flutter expects AARRGGBB
-    final rgb = cleaned.substring(0, 6);
-    final alpha = cleaned.substring(6, 8);
-    return Color(int.parse('$alpha$rgb', radix: 16));
+  try {
+    final cleaned = hex.replaceFirst('#', '');
+    if (cleaned.length == 6) {
+      return Color(int.parse('FF$cleaned', radix: 16));
+    } else if (cleaned.length == 8) {
+      // CSS format is RRGGBBAA, Flutter expects AARRGGBB
+      final rgb = cleaned.substring(0, 6);
+      final alpha = cleaned.substring(6, 8);
+      return Color(int.parse('$alpha$rgb', radix: 16));
+    }
+  } on FormatException {
+    // Malformed hex string — fall through to default
   }
   return const Color(0xFF000000);
 }

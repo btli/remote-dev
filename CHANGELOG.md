@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Flutter mobile app foundation**: Native Android/iOS terminal client using Flutter + xterm.dart with Clean Architecture
+  - 4-layer architecture: Domain, Application, Infrastructure, Presentation
+  - WebSocket terminal protocol with typed Dart sealed classes, exponential backoff reconnection, and token refresh
+  - OKLCH color conversion ported from TypeScript for full theme parity (12 color schemes)
+  - 22 Nerd Fonts bundled as TTF assets for terminal rendering
+  - CF Access + API key dual authentication flow
+  - Adaptive phone/tablet layout with split pane support
+  - Mobile keyboard toolbar (ESC, CTRL, ALT, TAB, arrows, symbols)
 - **Worktree cleanup**: New `rdv worktree cleanup` command for agents to trigger full worktree lifecycle cleanup from inside a worktree
   - Merge verification: requires branch is merged into main/master before removal (use `--force` to skip)
   - Removes worktree directory via server-side git commands (solves the CWD-inside-worktree problem)

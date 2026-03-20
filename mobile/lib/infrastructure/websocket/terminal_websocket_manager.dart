@@ -106,6 +106,8 @@ class TerminalWebSocketManager implements TerminalGateway {
 
   TerminalEvent? _toDomainEvent(WsServerMessage message) => switch (message) {
         WsOutput(:final data) => TerminalOutput(data),
+        WsReady(:final sessionId) =>
+          TerminalReady(sessionId: sessionId),
         WsSessionCreated(:final sessionId) =>
           TerminalReady(sessionId: sessionId),
         WsSessionAttached(:final sessionId) =>

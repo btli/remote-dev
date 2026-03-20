@@ -50,6 +50,10 @@ sealed class WsServerMessage {
 
     return switch (type) {
       'output' => WsOutput(json['data'] as String? ?? ''),
+      'ready' => WsReady(
+          sessionId: json['sessionId'] as String? ?? '',
+          tmuxSessionName: json['tmuxSessionName'] as String? ?? '',
+        ),
       'session_created' => WsSessionCreated(
           sessionId: json['sessionId'] as String? ?? '',
           tmuxSessionName: json['tmuxSessionName'] as String? ?? '',
@@ -84,6 +88,16 @@ sealed class WsServerMessage {
 final class WsOutput extends WsServerMessage {
   const WsOutput(this.data);
   final String data;
+}
+
+/// Connection ready confirmation from server.
+final class WsReady extends WsServerMessage {
+  const WsReady({
+    required this.sessionId,
+    required this.tmuxSessionName,
+  });
+  final String sessionId;
+  final String tmuxSessionName;
 }
 
 /// New tmux session was created.
