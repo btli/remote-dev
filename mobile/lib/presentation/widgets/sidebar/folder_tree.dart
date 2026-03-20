@@ -20,18 +20,8 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
   /// Set of folder IDs that are currently expanded.
   final Set<String> _expandedIds = {};
 
-  @override
-  void initState() {
-    super.initState();
-    // Expand all root folders by default
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final folders = ref.read(foldersProvider);
-      final rootIds = folders.where((f) => f.isRoot).map((f) => f.id).toSet();
-      if (rootIds.isNotEmpty) {
-        setState(() => _expandedIds.addAll(rootIds));
-      }
-    });
-  }
+  /// Whether the entire folder section is collapsed.
+  bool _sectionCollapsed = false;
 
   /// Count sessions belonging to a folder (and its descendants).
   int _sessionCount(String folderId, List<Folder> allFolders) {
@@ -106,33 +96,52 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Text(
-            'Folders',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: colorScheme.onSurface.withValues(alpha: 0.5),
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
+        // Collapsible section header
+        InkWell(
+          onTap: () =>
+              setState(() => _sectionCollapsed = !_sectionCollapsed),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 4),
+            child: Row(
+              children: [
+                Text(
+                  'Folders',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: colorScheme.onSurface.withValues(alpha: 0.5),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const Spacer(),
+                Icon(
+                  _sectionCollapsed
+                      ? Icons.chevron_right
+                      : Icons.expand_more,
+                  size: 16,
+                  color: colorScheme.onSurface.withValues(alpha: 0.4),
+                ),
+              ],
             ),
           ),
         ),
 
-        // "All Sessions" item
-        _FolderItem(
-          label: 'All Sessions',
-          icon: Icons.folder_outlined,
-          isActive: activeFolderId == null,
-          sessionCount: allSessions.length,
-          depth: 0,
-          onTap: () {
-            ref.read(activeFolderIdProvider.notifier).state = null;
-          },
-        ),
+        if (!_sectionCollapsed) ...[
+          // "All Sessions" item
+          _FolderItem(
+            label: 'All Sessions',
+            icon: Icons.folder_outlined,
+            isActive: activeFolderId == null,
+            sessionCount: allSessions.length,
+            depth: 0,
+            onTap: () {
+              ref.read(activeFolderIdProvider.notifier).state = null;
+            },
+          ),
 
-        // Root folders and their children
-        for (final folder in rootFolders)
-          _buildFolderSubtree(folder, folders, activeFolderId, 0),
+          // Root folders and their children
+          for (final folder in rootFolders)
+            _buildFolderSubtree(folder, folders, activeFolderId, 0),
+        ],
       ],
     );
   }

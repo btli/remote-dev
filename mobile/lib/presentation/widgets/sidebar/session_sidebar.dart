@@ -60,9 +60,8 @@ class SessionSidebar extends StatelessWidget {
               color: colorScheme.outlineVariant,
             ),
 
-            // Folder tree (scrollable, takes available space)
+            // Folder tree (scrollable, shares space with session list)
             const Flexible(
-              flex: 0,
               child: SingleChildScrollView(
                 child: FolderTree(),
               ),
@@ -73,8 +72,9 @@ class SessionSidebar extends StatelessWidget {
               color: colorScheme.outlineVariant,
             ),
 
-            // Session list (takes remaining space)
-            Expanded(
+            // Session list (shares remaining space)
+            Flexible(
+              flex: 2,
               child: SessionListScreen(
                 sessions: sessions,
                 activeSessionId: activeSessionId,
