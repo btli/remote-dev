@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from "vitest";
 import { Session } from "./Session";
 import { InvalidValueError, InvalidStateTransitionError } from "../errors/DomainError";
