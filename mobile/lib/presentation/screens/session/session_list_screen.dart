@@ -3,10 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:remote_dev/domain/entities/session.dart';
 import 'package:remote_dev/domain/value_objects/agent_provider.dart';
 
-/// Session list screen showing all active/suspended sessions.
-///
-/// On phone: full-screen list with pull-to-refresh.
-/// On tablet: rendered as the sidebar panel in AdaptiveScaffold.
 class SessionListScreen extends StatelessWidget {
   const SessionListScreen({
     super.key,
@@ -31,7 +27,6 @@ class SessionListScreen extends StatelessWidget {
 
     return Column(
       children: [
-        // Header
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
           child: Row(
@@ -43,24 +38,30 @@ class SessionListScreen extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              IconButton(
+              IconButton.filledTonal(
                 icon: const Icon(Icons.add, size: 20),
                 onPressed: onCreateSession,
                 tooltip: 'New session',
+                style: IconButton.styleFrom(
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  minimumSize: const Size(36, 36),
+                ),
               ),
             ],
           ),
         ),
-
-        // Session list
         Expanded(
           child: sessions.isEmpty
               ? _EmptyState(onCreateSession: onCreateSession)
               : RefreshIndicator(
                   onRefresh: onRefresh,
-                  child: ListView.builder(
+                  child: ListView.separated(
                     itemCount: sessions.length,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    separatorBuilder: (_, __) => const SizedBox(height: 2),
                     itemBuilder: (context, index) {
                       final session = sessions[index];
                       final isActive = session.id == activeSessionId;
@@ -99,19 +100,18 @@ class _SessionTile extends StatelessWidget {
       AgentActivityStatus.idle => Colors.grey,
       AgentActivityStatus.error => Colors.red,
       AgentActivityStatus.compacting => Colors.blue,
-      null => session.isActive ? Colors.green.withValues(alpha: 0.5) : Colors.grey,
+      null => session.isActive
+          ? Colors.green.withValues(alpha: 0.5)
+          : Colors.grey,
     };
   }
 
-  IconData _typeIcon() => session.isAgent
-      ? Icons.smart_toy_outlined
-      : Icons.terminal;
+  IconData _typeIcon() =>
+      session.isAgent ? Icons.smart_toy_outlined : Icons.terminal;
 
-  /// Build subtitle showing project name, branch, and agent provider.
   String? _subtitle() {
     final parts = <String>[];
 
-    // Project folder name (last segment of projectPath)
     if (session.projectPath != null && session.projectPath!.isNotEmpty) {
       final segments = session.projectPath!.split('/');
       final projectName = segments.lastWhere(
@@ -121,38 +121,36 @@ class _SessionTile extends StatelessWidget {
       if (projectName.isNotEmpty) parts.add(projectName);
     }
 
-    // Worktree branch
     if (session.worktreeBranch != null &&
         session.worktreeBranch!.isNotEmpty) {
       parts.add(session.worktreeBranch!);
     }
 
-    // Agent provider
     if (session.isAgent && session.agentProvider.isAgent) {
       parts.add(session.agentProvider.displayName);
     }
 
-    return parts.isEmpty ? null : parts.join(' · ');
+    return parts.isEmpty ? null : parts.join(' \u00b7 ');
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final subtitle = _subtitle();
 
     return Material(
       color: isActive
-          ? theme.colorScheme.primary.withValues(alpha: 0.1)
+          ? colorScheme.surfaceContainerHigh
           : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           child: Row(
             children: [
-              // Status dot
               Container(
                 width: 8,
                 height: 8,
@@ -162,14 +160,14 @@ class _SessionTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              // Type icon
               Icon(
                 _typeIcon(),
-                size: 16,
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                size: 18,
+                color: isActive
+                    ? colorScheme.primary
+                    : colorScheme.onSurface.withValues(alpha: 0.6),
               ),
-              const SizedBox(width: 8),
-              // Session name + subtitle
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -184,25 +182,30 @@ class _SessionTile extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     if (subtitle != null)
-                      Text(
-                        subtitle,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.5),
-                          fontSize: 11,
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          subtitle,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurface
+                                .withValues(alpha: 0.5),
+                            fontSize: 11,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                   ],
                 ),
               ),
-              // Suspended indicator
               if (session.isSuspended)
-                Icon(
-                  Icons.pause_circle_outline,
-                  size: 16,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Icon(
+                    Icons.pause_circle_outline,
+                    size: 16,
+                    color: colorScheme.onSurface.withValues(alpha: 0.4),
+                  ),
                 ),
             ],
           ),
@@ -219,30 +222,50 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.terminal,
-            size: 48,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No sessions yet',
-            style: theme.textTheme.bodyLarge?.copyWith(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Icon(
+                Icons.terminal,
+                size: 40,
+                color: colorScheme.onSurface.withValues(alpha: 0.3),
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.icon(
-            onPressed: onCreateSession,
-            icon: const Icon(Icons.add),
-            label: const Text('Create session'),
-          ),
-        ],
+            const SizedBox(height: 20),
+            Text(
+              'No sessions yet',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: colorScheme.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Create a terminal or agent session to get started',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurface.withValues(alpha: 0.4),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onCreateSession,
+              icon: const Icon(Icons.add),
+              label: const Text('Create session'),
+            ),
+          ],
+        ),
       ),
     );
   }

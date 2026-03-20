@@ -5,9 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/presentation/providers/providers.dart';
 
-/// Login screen with two auth paths:
-/// 1. Cloudflare Access (opens WebView for SSO)
-/// 2. Direct API Key (for LAN connections)
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -66,7 +63,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final cfToken = await _showCfAccessWebView();
       if (cfToken == null) {
         setState(() => _error = 'Authentication cancelled');
-        return; // finally block handles _isLoading = false
+        return;
       }
 
       final dio = Dio(BaseOptions(baseUrl: _baseUrl));
@@ -98,8 +95,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
-  /// Opens an InAppWebView to the server URL, waits for CF Access to
-  /// authenticate, then extracts the CF_Authorization cookie.
   Future<String?> _showCfAccessWebView() async {
     String? cfToken;
     await showModalBottomSheet<void>(
@@ -125,8 +120,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   clearCache: true,
                 ),
                 onLoadStop: (controller, url) async {
-                  // Check if we've been redirected back to the server
-                  // (CF Access sets the cookie after successful auth)
                   if (url != null && url.toString().startsWith(_baseUrl)) {
                     final cookies = await CookieManager.instance().getCookies(
                       url: WebUri(_baseUrl),
@@ -147,7 +140,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       ),
     );
 
-    // Clear WebView cookies after extracting the token
     await CookieManager.instance().deleteAllCookies();
     return cfToken;
   }
@@ -166,7 +158,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      // Validate API key by calling GET /api/sessions
       final dio = Dio(
         BaseOptions(
           baseUrl: _baseUrl,
@@ -202,6 +193,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     return Scaffold(
       body: SafeArea(
@@ -216,12 +208,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Icon(
-                      Icons.terminal,
-                      size: 64,
-                      color: theme.colorScheme.primary,
+                    // App icon with container
+                    Center(
+                      child: Container(
+                        width: 88,
+                        height: 88,
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer
+                              .withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: Icon(
+                          Icons.terminal,
+                          size: 48,
+                          color: colorScheme.primary,
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 20),
                     Text(
                       'Remote Dev',
                       style: theme.textTheme.headlineMedium?.copyWith(
@@ -233,13 +237,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     Text(
                       'Connect to your terminal server',
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withValues(
-                          alpha: 0.6,
-                        ),
+                        color: colorScheme.onSurface.withValues(alpha: 0.6),
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 36),
 
                     // Server URL
                     TextFormField(
@@ -248,7 +250,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         labelText: 'Server URL',
                         hintText: 'https://dev.example.com',
                         prefixIcon: Icon(Icons.dns_outlined),
-                        border: OutlineInputBorder(),
                       ),
                       keyboardType: TextInputType.url,
                       autocorrect: false,
@@ -272,7 +273,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         labelText: 'Terminal Port',
                         hintText: '6002',
                         prefixIcon: Icon(Icons.settings_ethernet),
-                        border: OutlineInputBorder(),
                       ),
                       keyboardType: TextInputType.number,
                     ),
@@ -282,10 +282,35 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 16),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(color: theme.colorScheme.error),
-                          textAlign: TextAlign.center,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colorScheme.errorContainer
+                                .withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.error_outline,
+                                size: 20,
+                                color: colorScheme.error,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  _error!,
+                                  style: TextStyle(
+                                    color: colorScheme.error,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
 
@@ -295,40 +320,65 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       icon: const Icon(Icons.shield_outlined),
                       label: const Text('Sign in with Cloudflare Access'),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
 
-                    // Toggle API key form
-                    TextButton(
-                      onPressed: () =>
-                          setState(() => _showApiKeyForm = !_showApiKeyForm),
-                      child: Text(
-                        _showApiKeyForm
-                            ? 'Hide API key form'
-                            : 'Or enter API key directly',
+                    // API Key expandable section
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      alignment: Alignment.topCenter,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextButton(
+                            onPressed: () => setState(
+                              () => _showApiKeyForm = !_showApiKeyForm,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _showApiKeyForm
+                                      ? 'Hide API key form'
+                                      : 'Or enter API key directly',
+                                ),
+                                const SizedBox(width: 4),
+                                AnimatedRotation(
+                                  turns: _showApiKeyForm ? 0.5 : 0,
+                                  duration: const Duration(milliseconds: 250),
+                                  child: const Icon(
+                                    Icons.expand_more,
+                                    size: 20,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (_showApiKeyForm) ...[
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _apiKeyController,
+                              decoration: const InputDecoration(
+                                labelText: 'API Key',
+                                hintText: 'rdv_...',
+                                prefixIcon: Icon(Icons.key_outlined),
+                              ),
+                              obscureText: true,
+                              autocorrect: false,
+                            ),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed:
+                                  _isLoading ? null : _loginWithApiKey,
+                              icon: const Icon(Icons.login),
+                              label: const Text('Connect with API Key'),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
-
-                    // API Key form (expandable)
-                    if (_showApiKeyForm) ...[
-                      const SizedBox(height: 8),
-                      TextFormField(
-                        controller: _apiKeyController,
-                        decoration: const InputDecoration(
-                          labelText: 'API Key',
-                          hintText: 'rdv_...',
-                          prefixIcon: Icon(Icons.key_outlined),
-                          border: OutlineInputBorder(),
-                        ),
-                        obscureText: true,
-                        autocorrect: false,
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: _isLoading ? null : _loginWithApiKey,
-                        icon: const Icon(Icons.login),
-                        label: const Text('Connect with API Key'),
-                      ),
-                    ],
 
                     if (_isLoading)
                       const Padding(

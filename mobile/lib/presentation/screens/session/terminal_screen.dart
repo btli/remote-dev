@@ -6,7 +6,6 @@ import 'package:remote_dev/presentation/providers/providers.dart';
 import 'package:remote_dev/presentation/widgets/terminal/agent_exit_overlay.dart';
 import 'package:remote_dev/presentation/widgets/terminal/terminal_widget.dart';
 
-/// Full-screen terminal for a single session.
 class TerminalScreen extends ConsumerStatefulWidget {
   const TerminalScreen({super.key, required this.sessionId});
 
@@ -108,31 +107,28 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
         ),
         actions: [
           if (session != null && session.isActive)
-            PopupMenuButton<String>(
-              onSelected: (value) {
-                switch (value) {
-                  case 'suspend':
-                    _suspendSession();
-                  case 'close':
-                    _closeSession();
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'suspend',
-                  child: ListTile(
-                    leading: Icon(Icons.pause_circle_outline),
-                    title: Text('Suspend'),
-                    dense: true,
-                  ),
+            MenuAnchor(
+              builder: (context, controller, child) => IconButton(
+                icon: const Icon(Icons.more_vert),
+                onPressed: () {
+                  if (controller.isOpen) {
+                    controller.close();
+                  } else {
+                    controller.open();
+                  }
+                },
+                tooltip: 'Actions',
+              ),
+              menuChildren: [
+                MenuItemButton(
+                  leadingIcon: const Icon(Icons.pause_circle_outline),
+                  onPressed: _suspendSession,
+                  child: const Text('Suspend'),
                 ),
-                const PopupMenuItem(
-                  value: 'close',
-                  child: ListTile(
-                    leading: Icon(Icons.close),
-                    title: Text('Close'),
-                    dense: true,
-                  ),
+                MenuItemButton(
+                  leadingIcon: const Icon(Icons.close),
+                  onPressed: _closeSession,
+                  child: const Text('Close'),
                 ),
               ],
             ),

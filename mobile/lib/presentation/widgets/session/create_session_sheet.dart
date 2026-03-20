@@ -6,7 +6,6 @@ import 'package:remote_dev/domain/value_objects/agent_provider.dart';
 import 'package:remote_dev/domain/value_objects/terminal_type.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
 
-/// Bottom sheet for creating a new terminal session.
 class CreateSessionSheet extends ConsumerStatefulWidget {
   const CreateSessionSheet({super.key});
 
@@ -64,7 +63,7 @@ class _CreateSessionSheetState extends ConsumerState<CreateSessionSheet> {
     return Padding(
       padding: EdgeInsets.fromLTRB(
         24,
-        16,
+        0,
         24,
         MediaQuery.of(context).viewInsets.bottom + 24,
       ),
@@ -72,41 +71,25 @@ class _CreateSessionSheetState extends ConsumerState<CreateSessionSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Handle
-          Center(
-            child: Container(
-              width: 32,
-              height: 4,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
           Text(
             'New Session',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
 
-          // Name field
           TextField(
             controller: _nameController,
             decoration: const InputDecoration(
               labelText: 'Session Name',
-              border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.label_outline),
             ),
             autofocus: true,
             textCapitalization: TextCapitalization.words,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
 
-          // Terminal type
           SegmentedButton<TerminalType>(
             segments: const [
               ButtonSegment(
@@ -125,36 +108,39 @@ class _CreateSessionSheetState extends ConsumerState<CreateSessionSheet> {
               setState(() => _terminalType = selected.first);
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
 
-          // Agent provider (conditional)
-          if (_terminalType == TerminalType.agent) ...[
-            DropdownButtonFormField<AgentProvider>(
-              initialValue: _agentProvider,
-              decoration: const InputDecoration(
-                labelText: 'Agent Provider',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.smart_toy_outlined),
-              ),
-              items: AgentProvider.values
-                  .where((p) => p.isAgent)
-                  .map(
-                    (provider) => DropdownMenuItem(
-                      value: provider,
-                      child: Text(provider.displayName),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeInOut,
+            alignment: Alignment.topCenter,
+            child: _terminalType == TerminalType.agent
+                ? Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: DropdownMenu<AgentProvider>(
+                      initialSelection: _agentProvider,
+                      label: const Text('Agent Provider'),
+                      leadingIcon: const Icon(Icons.smart_toy_outlined),
+                      expandedInsets: EdgeInsets.zero,
+                      onSelected: (value) {
+                        if (value != null) {
+                          setState(() => _agentProvider = value);
+                        }
+                      },
+                      dropdownMenuEntries: AgentProvider.values
+                          .where((p) => p.isAgent)
+                          .map(
+                            (provider) => DropdownMenuEntry(
+                              value: provider,
+                              label: provider.displayName,
+                            ),
+                          )
+                          .toList(),
                     ),
                   )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  setState(() => _agentProvider = value);
-                }
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
+                : const SizedBox.shrink(),
+          ),
 
-          // Create button
           FilledButton(
             onPressed: _isCreating ? null : _create,
             child: _isCreating
@@ -165,6 +151,7 @@ class _CreateSessionSheetState extends ConsumerState<CreateSessionSheet> {
                   )
                 : const Text('Create Session'),
           ),
+          const SizedBox(height: 8),
         ],
       ),
     );

@@ -5,9 +5,6 @@ import 'package:remote_dev/domain/entities/folder.dart';
 import 'package:remote_dev/domain/entities/session.dart';
 import 'package:remote_dev/presentation/screens/session/session_list_screen.dart';
 
-/// Sidebar combining folder tree and session list.
-///
-/// Used as the persistent sidebar on tablets and as the drawer on phones.
 class SessionSidebar extends StatelessWidget {
   const SessionSidebar({
     super.key,
@@ -31,13 +28,13 @@ class SessionSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     return Container(
-      color: theme.scaffoldBackgroundColor,
+      color: colorScheme.surfaceContainerLow,
       child: SafeArea(
         child: Column(
           children: [
-            // App branding
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Row(
@@ -45,23 +42,25 @@ class SessionSidebar extends StatelessWidget {
                   Icon(
                     Icons.terminal,
                     size: 20,
-                    color: theme.colorScheme.primary,
+                    color: colorScheme.primary,
                   ),
                   const SizedBox(width: 8),
                   Text(
                     'Remote Dev',
                     style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: theme.colorScheme.primary,
+                      color: colorScheme.primary,
                     ),
                   ),
                 ],
               ),
             ),
 
-            const Divider(height: 1),
+            Divider(
+              height: 1,
+              color: colorScheme.outlineVariant,
+            ),
 
-            // Session list (reuses the session list screen)
             Expanded(
               child: SessionListScreen(
                 sessions: sessions,
@@ -73,22 +72,28 @@ class SessionSidebar extends StatelessWidget {
               ),
             ),
 
-            // Bottom actions
-            const Divider(height: 1),
+            Divider(
+              height: 1,
+              color: colorScheme.outlineVariant,
+            ),
             Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
                 children: [
-                  IconButton(
+                  IconButton.filledTonal(
                     icon: const Icon(Icons.settings_outlined, size: 20),
                     onPressed: () => context.push('/settings'),
                     tooltip: 'Settings',
+                    style: IconButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      minimumSize: const Size(36, 36),
+                    ),
                   ),
                   const Spacer(),
                   Text(
                     '${sessions.length} sessions',
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                      color: colorScheme.onSurface.withValues(alpha: 0.4),
                     ),
                   ),
                 ],
