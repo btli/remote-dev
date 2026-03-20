@@ -23,22 +23,26 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
   /// Whether the entire folder section is collapsed.
   bool _sectionCollapsed = false;
 
+  /// Collect a folder and all its descendant IDs.
+  Set<String> _folderSubtreeIds(String folderId, List<Folder> allFolders) {
+    final ids = <String>{folderId};
+    final queue = [folderId];
+    while (queue.isNotEmpty) {
+      final parentId = queue.removeLast();
+      for (final folder in allFolders) {
+        if (folder.parentId == parentId && ids.add(folder.id)) {
+          queue.add(folder.id);
+        }
+      }
+    }
+    return ids;
+  }
+
   /// Count sessions belonging to a folder (and its descendants).
   int _sessionCount(String folderId, List<Folder> allFolders) {
     final sessionFolders = ref.read(sessionFoldersProvider);
     final sessions = ref.read(sessionListProvider).valueOrNull ?? [];
-
-    // Collect this folder + all descendant folder IDs
-    final folderIds = <String>{folderId};
-    void collectChildren(String parentId) {
-      for (final folder in allFolders) {
-        if (folder.parentId == parentId && !folderIds.contains(folder.id)) {
-          folderIds.add(folder.id);
-          collectChildren(folder.id);
-        }
-      }
-    }
-    collectChildren(folderId);
+    final folderIds = _folderSubtreeIds(folderId, allFolders);
 
     var count = 0;
     for (final session in sessions) {

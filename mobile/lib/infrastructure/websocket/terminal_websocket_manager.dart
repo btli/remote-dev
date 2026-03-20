@@ -138,9 +138,10 @@ class TerminalWebSocketManager implements TerminalGateway {
     _handleClose(closeCode);
   }
 
+  static const _authFailureCodes = {4001, 4002, 4003};
+
   void _handleClose(int? closeCode) {
-    // Auth failures should not reconnect
-    if (closeCode == 4001 || closeCode == 4002 || closeCode == 4003) {
+    if (_authFailureCodes.contains(closeCode)) {
       _setStatus(ConnectionStatus.failed);
       return;
     }
@@ -168,19 +169,9 @@ class TerminalWebSocketManager implements TerminalGateway {
   Future<void> _reconnect() async {
     if (_params == null) return;
 
-    // Fetch a fresh token before reconnecting (tokens expire in 5 min)
     try {
       final freshToken = await _tokenFactory();
-      final updatedParams = TerminalConnectionParams(
-        wsUrl: _params!.wsUrl,
-        token: freshToken,
-        sessionId: _params!.sessionId,
-        tmuxSessionName: _params!.tmuxSessionName,
-        cols: _params!.cols,
-        rows: _params!.rows,
-        terminalType: _params!.terminalType,
-      );
-      await _doConnect(updatedParams);
+      await _doConnect(_params!.copyWith(token: freshToken));
     } on Exception {
       _scheduleReconnect();
     }
@@ -202,18 +193,7 @@ class TerminalWebSocketManager implements TerminalGateway {
   @override
   void sendResize(int cols, int rows) {
     _channel?.sink.add(WsResize(cols, rows).toJson());
-    // Update stored params so reconnect uses new dimensions
-    if (_params != null) {
-      _params = TerminalConnectionParams(
-        wsUrl: _params!.wsUrl,
-        token: _params!.token,
-        sessionId: _params!.sessionId,
-        tmuxSessionName: _params!.tmuxSessionName,
-        cols: cols,
-        rows: rows,
-        terminalType: _params!.terminalType,
-      );
-    }
+    _params = _params?.copyWith(cols: cols, rows: rows);
   }
 
   @override

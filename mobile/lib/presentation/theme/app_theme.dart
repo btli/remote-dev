@@ -78,7 +78,6 @@ class AppTheme {
     final fg = hexToColor(palette.foreground);
     final primary = hexToColor(palette.blue);
     final error = hexToColor(palette.red);
-    final surface = hexToColor(palette.background);
 
     final surfaceContainerLow = _mixColors(bg, fg, 0.04);
     final surfaceContainer = _mixColors(bg, fg, 0.07);
@@ -92,7 +91,7 @@ class AppTheme {
             onSecondary: bg,
             error: error,
             onError: bg,
-            surface: surface,
+            surface: bg,
             onSurface: fg,
             surfaceContainerLowest: bg,
             surfaceContainerLow: surfaceContainerLow,
@@ -109,7 +108,7 @@ class AppTheme {
             onSecondary: fg,
             error: error,
             onError: fg,
-            surface: surface,
+            surface: bg,
             onSurface: bg,
           );
 

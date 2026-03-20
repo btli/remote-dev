@@ -166,15 +166,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       );
       final response = await dio.get('/api/sessions');
       final data = response.data as Map<String, dynamic>;
-
       final sessions = data['sessions'] as List? ?? [];
-      final userId = sessions.isNotEmpty
-          ? (sessions[0] as Map<String, dynamic>)['userId'] as String? ?? ''
-          : '';
+      final firstSession =
+          sessions.isNotEmpty ? sessions[0] as Map<String, dynamic> : null;
 
       await _storeCredentialsAndLogin(
         apiKey: apiKey,
-        userId: userId,
+        userId: firstSession?['userId'] as String? ?? '',
       );
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;

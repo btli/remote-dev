@@ -20,6 +20,26 @@ class TerminalConnectionParams {
     this.rows = 24,
     this.terminalType = 'shell',
   });
+
+  TerminalConnectionParams copyWith({
+    String? wsUrl,
+    String? token,
+    String? sessionId,
+    String? tmuxSessionName,
+    int? cols,
+    int? rows,
+    String? terminalType,
+  }) {
+    return TerminalConnectionParams(
+      wsUrl: wsUrl ?? this.wsUrl,
+      token: token ?? this.token,
+      sessionId: sessionId ?? this.sessionId,
+      tmuxSessionName: tmuxSessionName ?? this.tmuxSessionName,
+      cols: cols ?? this.cols,
+      rows: rows ?? this.rows,
+      terminalType: terminalType ?? this.terminalType,
+    );
+  }
 }
 
 /// Abstract gateway for terminal WebSocket communication.

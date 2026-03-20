@@ -112,18 +112,18 @@ class _SessionTile extends StatelessWidget {
   String? _subtitle() {
     final parts = <String>[];
 
-    if (session.projectPath != null && session.projectPath!.isNotEmpty) {
-      final segments = session.projectPath!.split('/');
-      final projectName = segments.lastWhere(
+    final path = session.projectPath;
+    if (path != null && path.isNotEmpty) {
+      final projectName = path.split('/').lastWhere(
         (s) => s.isNotEmpty,
         orElse: () => '',
       );
       if (projectName.isNotEmpty) parts.add(projectName);
     }
 
-    if (session.worktreeBranch != null &&
-        session.worktreeBranch!.isNotEmpty) {
-      parts.add(session.worktreeBranch!);
+    final branch = session.worktreeBranch;
+    if (branch != null && branch.isNotEmpty) {
+      parts.add(branch);
     }
 
     if (session.isAgent && session.agentProvider.isAgent) {
