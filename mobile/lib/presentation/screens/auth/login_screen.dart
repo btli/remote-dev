@@ -84,11 +84,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         email: data['email'] as String? ?? '',
       );
     } on DioException catch (e) {
+      if (!mounted) return;
       setState(
         () => _error = e.response?.data?['error'] as String? ??
             'Authentication failed: ${e.message}',
       );
     } on Exception catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'Authentication failed: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -175,6 +177,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         userId: firstSession?['userId'] as String? ?? '',
       );
     } on DioException catch (e) {
+      if (!mounted) return;
       final statusCode = e.response?.statusCode;
       if (statusCode == 401 || statusCode == 403) {
         setState(() => _error = 'Invalid API key');
@@ -182,6 +185,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         setState(() => _error = 'Connection failed: ${e.message}');
       }
     } on Exception catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'Connection failed: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);

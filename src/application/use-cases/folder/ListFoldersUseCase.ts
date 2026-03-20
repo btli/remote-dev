@@ -7,25 +7,17 @@
 
 import type { Folder } from "@/domain/entities/Folder";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
+import type { SessionFolderQueryPort } from "@/application/ports/SessionFolderQueryPort";
+
+export type { SessionFolderQueryPort, SessionFolderMapping } from "@/application/ports/SessionFolderQueryPort";
 
 export interface ListFoldersInput {
   userId: string;
 }
 
-export interface SessionFolderMapping {
-  sessionId: string;
-  folderId: string;
-}
-
 export interface ListFoldersResult {
   folders: Folder[];
   sessionFolders: Record<string, string>; // sessionId -> folderId
-}
-
-export interface SessionFolderQueryPort {
-  findSessionFolderMappings(
-    userId: string
-  ): Promise<SessionFolderMapping[]>;
 }
 
 export class ListFoldersUseCase {

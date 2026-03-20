@@ -14,7 +14,7 @@ import type {
   SessionFilters,
   SessionOrderBy,
 } from "@/application/ports/SessionRepository";
-import type { SessionFolderQueryPort } from "@/application/use-cases/folder/ListFoldersUseCase";
+import type { SessionFolderQueryPort } from "@/application/ports/SessionFolderQueryPort";
 import { SessionMapper, type SessionDbRecord } from "../mappers/SessionMapper";
 
 export class DrizzleSessionRepository

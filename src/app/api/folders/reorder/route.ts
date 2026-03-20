@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withApiAuth, errorResponse } from "@/lib/api";
 import { reorderFoldersUseCase } from "@/infrastructure/container";
 import { BusinessRuleViolationError } from "@/domain/errors/DomainError";
 
 /**
  * POST /api/folders/reorder - Reorder folders (update sort order)
  */
-export const POST = withAuth(async (request, { userId }) => {
+export const POST = withApiAuth(async (request, { userId }) => {
   const body = await request.json();
   const { folderIds } = body;
 

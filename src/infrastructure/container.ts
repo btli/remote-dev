@@ -18,6 +18,7 @@ import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl
 import { GhCliConfigGatewayImpl } from "./external/github/GhCliConfigGatewayImpl";
 import { SystemEnvironmentGateway } from "./external/environment/SystemEnvironmentGateway";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
+import type { SessionFolderQueryPort } from "@/application/ports/SessionFolderQueryPort";
 import type { FolderRepository } from "@/application/ports/FolderRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import type { WorktreeGateway } from "@/application/ports/WorktreeGateway";
@@ -101,8 +102,11 @@ import type { LogRepository } from "@/application/ports/LogRepository";
 /**
  * Session repository instance.
  * Uses Drizzle ORM for SQLite persistence.
+ * DrizzleSessionRepository implements both SessionRepository and SessionFolderQueryPort.
  */
-export const sessionRepository: SessionRepository = new DrizzleSessionRepository();
+const drizzleSessionRepository = new DrizzleSessionRepository();
+export const sessionRepository: SessionRepository = drizzleSessionRepository;
+export const sessionFolderQueryPort: SessionFolderQueryPort = drizzleSessionRepository;
 
 /**
  * Folder repository instance.
@@ -254,7 +258,7 @@ export const reorderFoldersUseCase = new ReorderFoldersUseCase(folderRepository)
  */
 export const listFoldersUseCase = new ListFoldersUseCase(
   folderRepository,
-  sessionRepository as import("@/application/use-cases/folder/ListFoldersUseCase").SessionFolderQueryPort
+  sessionFolderQueryPort
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
