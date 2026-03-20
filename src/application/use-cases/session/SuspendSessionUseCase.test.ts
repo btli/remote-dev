@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { SuspendSessionUseCase, type SuspendSessionInput } from "./SuspendSessionUseCase";
 import type { SessionRepository } from "@/application/ports/SessionRepository";

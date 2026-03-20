@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect } from "vitest";
 import { ProfileIsolation } from "./ProfileIsolation";
 import { InvalidValueError } from "../errors/DomainError";
