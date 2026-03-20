@@ -347,7 +347,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // GitHub stats for repo badges on folders
   const { getRepositoryById } = useGitHubStats();
 
-  const { refreshTasks } = useTaskContext();
+  const { debouncedRefresh } = useTaskContext();
   const { addNotification, registerJumpHandler, notifications, markRead, latestUnreadSessionId } = useNotificationContext();
 
   // Notification panel state
@@ -1765,7 +1765,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
                             onNavigateToSession={(id) => setActiveSession(id)}
                             onAgentActivityStatus={handleAgentActivityStatus}
-                            onAgentTodosUpdated={() => refreshTasks()}
+                            onAgentTodosUpdated={() => debouncedRefresh()}
                             onNotification={(notification) => {
                               addNotification(hydrateNotification(notification));
                             }}
@@ -1806,7 +1806,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onSessionRestart={() => handleSessionRestart(session)}
                           onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
                           onAgentActivityStatus={handleAgentActivityStatus}
-                          onAgentTodosUpdated={() => refreshTasks()}
+                          onAgentTodosUpdated={() => debouncedRefresh()}
                           onNotification={(notification) => {
                             addNotification(hydrateNotification(notification));
                           }}

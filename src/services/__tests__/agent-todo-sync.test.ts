@@ -273,6 +273,67 @@ describe("parsePostToolUsePayload", () => {
   });
 });
 
+describe("TaskCreate/TaskUpdate key mismatch (position-based fallback)", () => {
+  it("TaskCreate generates hash-based agentTaskId, not numeric", () => {
+    const ops = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: { subject: "Step 1: Check PR eligibility" },
+    });
+
+    expect(ops).toHaveLength(1);
+    if (ops[0].type === "create") {
+      // agentTaskId is a hash (cc-XXXXX), NOT a numeric "1"
+      expect(ops[0].agentTaskId).toMatch(/^cc-[a-z0-9]+$/);
+      expect(ops[0].agentTaskId).not.toBe("1");
+    }
+  });
+
+  it("TaskUpdate uses Claude Code's numeric taskId directly", () => {
+    const ops = parsePostToolUsePayload({
+      tool_name: "TaskUpdate",
+      tool_input: { taskId: "3", status: "completed" },
+    });
+
+    expect(ops).toHaveLength(1);
+    if (ops[0].type === "update") {
+      // agentTaskId is the raw numeric ID from Claude Code
+      expect(ops[0].agentTaskId).toBe("3");
+    }
+  });
+
+  it("TaskCreate agentTaskId is deterministic for same subject", () => {
+    const ops1 = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: { subject: "Fix auth bug" },
+    });
+    const ops2 = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: { subject: "Fix auth bug" },
+    });
+
+    expect(ops1[0].type).toBe("create");
+    expect(ops2[0].type).toBe("create");
+    if (ops1[0].type === "create" && ops2[0].type === "create") {
+      expect(ops1[0].agentTaskId).toBe(ops2[0].agentTaskId);
+    }
+  });
+
+  it("different subjects produce different agentTaskIds", () => {
+    const ops1 = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: { subject: "Step 1: Check PR" },
+    });
+    const ops2 = parsePostToolUsePayload({
+      tool_name: "TaskCreate",
+      tool_input: { subject: "Step 2: Find files" },
+    });
+
+    if (ops1[0].type === "create" && ops2[0].type === "create") {
+      expect(ops1[0].agentTaskId).not.toBe(ops2[0].agentTaskId);
+    }
+  });
+});
+
 describe("classifyTask", () => {
   it("classifies a post-task via agentTaskKey", () => {
     const task = makeTask({
