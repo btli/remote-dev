@@ -1,0 +1,74 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+/// Secure storage wrapper for sensitive credentials.
+///
+/// Uses iOS Keychain and Android EncryptedSharedPreferences.
+class SecureStorageService {
+  SecureStorageService()
+      : _storage = const FlutterSecureStorage(
+          aOptions: AndroidOptions(encryptedSharedPreferences: true),
+          iOptions: IOSOptions(
+            accessibility: KeychainAccessibility.first_unlock,
+          ),
+        );
+
+  final FlutterSecureStorage _storage;
+
+  // Storage keys
+  static const _apiKeyKey = 'rdv_api_key';
+  static const _serverUrlKey = 'rdv_server_url';
+  static const _terminalPortKey = 'rdv_terminal_port';
+  static const _userIdKey = 'rdv_user_id';
+  static const _userEmailKey = 'rdv_user_email';
+
+  // API Key
+  Future<String?> getApiKey() => _storage.read(key: _apiKeyKey);
+  Future<void> setApiKey(String value) =>
+      _storage.write(key: _apiKeyKey, value: value);
+
+  // Server URL (base URL for REST API)
+  Future<String?> getServerUrl() => _storage.read(key: _serverUrlKey);
+  Future<void> setServerUrl(String value) =>
+      _storage.write(key: _serverUrlKey, value: value);
+
+  // Terminal port (WebSocket server)
+  Future<String?> getTerminalPort() => _storage.read(key: _terminalPortKey);
+  Future<void> setTerminalPort(String value) =>
+      _storage.write(key: _terminalPortKey, value: value);
+
+  // User identity
+  Future<String?> getUserId() => _storage.read(key: _userIdKey);
+  Future<void> setUserId(String value) =>
+      _storage.write(key: _userIdKey, value: value);
+
+  Future<String?> getUserEmail() => _storage.read(key: _userEmailKey);
+  Future<void> setUserEmail(String value) =>
+      _storage.write(key: _userEmailKey, value: value);
+
+  /// Store all auth credentials at once after successful login.
+  Future<void> storeCredentials({
+    required String serverUrl,
+    required String terminalPort,
+    required String apiKey,
+    required String userId,
+    required String email,
+  }) async {
+    await Future.wait([
+      setServerUrl(serverUrl),
+      setTerminalPort(terminalPort),
+      setApiKey(apiKey),
+      setUserId(userId),
+      setUserEmail(email),
+    ]);
+  }
+
+  /// Clear all stored credentials on sign-out.
+  Future<void> clearAll() => _storage.deleteAll();
+
+  /// Check if credentials exist (does not validate them).
+  Future<bool> hasCredentials() async {
+    final key = await getApiKey();
+    final url = await getServerUrl();
+    return key != null && url != null;
+  }
+}

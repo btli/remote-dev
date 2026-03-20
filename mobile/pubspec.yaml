@@ -1,0 +1,170 @@
+name: remote_dev
+description: Remote Dev mobile terminal client - native Android/iOS app for managing persistent tmux sessions
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Terminal emulator
+  xterm: ^4.0.0
+
+  # State management (Riverpod with code generation)
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Networking
+  dio: ^5.7.0
+  web_socket_channel: ^3.0.1
+
+  # Auth & secure storage
+  flutter_secure_storage: ^9.2.2
+  flutter_inappwebview: ^6.1.5
+
+  # Navigation
+  go_router: ^14.6.2
+
+  # Serialization
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Network awareness
+  connectivity_plus: ^6.1.0
+
+  # Local preferences (non-sensitive)
+  shared_preferences: ^2.3.2
+
+  # Utilities
+  collection: ^1.18.0
+  equatable: ^2.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.6.1
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  flutter_lints: ^4.0.0
+  mocktail: ^1.0.4
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/fonts/
+
+  fonts:
+    - family: JetBrainsMono Nerd Font
+      fonts:
+        - asset: assets/fonts/JetBrainsMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/JetBrainsMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: FiraCode Nerd Font
+      fonts:
+        - asset: assets/fonts/FiraCodeNerdFont-Regular.ttf
+        - asset: assets/fonts/FiraCodeNerdFont-Bold.ttf
+          weight: 700
+    - family: Hack Nerd Font
+      fonts:
+        - asset: assets/fonts/HackNerdFont-Regular.ttf
+        - asset: assets/fonts/HackNerdFont-Bold.ttf
+          weight: 700
+    - family: CaskaydiaCove Nerd Font
+      fonts:
+        - asset: assets/fonts/CaskaydiaCoveNerdFont-Regular.ttf
+        - asset: assets/fonts/CaskaydiaCoveNerdFont-Bold.ttf
+          weight: 700
+    - family: MesloLGS Nerd Font
+      fonts:
+        - asset: assets/fonts/MesloLGSNerdFont-Regular.ttf
+        - asset: assets/fonts/MesloLGSNerdFont-Bold.ttf
+          weight: 700
+    - family: SourceCodePro Nerd Font
+      fonts:
+        - asset: assets/fonts/SauceCodeProNerdFont-Regular.ttf
+        - asset: assets/fonts/SauceCodeProNerdFont-Bold.ttf
+          weight: 700
+    - family: UbuntuMono Nerd Font
+      fonts:
+        - asset: assets/fonts/UbuntuMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/UbuntuMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: RobotoMono Nerd Font
+      fonts:
+        - asset: assets/fonts/RobotoMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/RobotoMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: Inconsolata Nerd Font
+      fonts:
+        - asset: assets/fonts/InconsolataNerdFont-Regular.ttf
+        - asset: assets/fonts/InconsolataNerdFont-Bold.ttf
+          weight: 700
+    - family: DejaVuSansMono Nerd Font
+      fonts:
+        - asset: assets/fonts/DejaVuSansMNerdFont-Regular.ttf
+        - asset: assets/fonts/DejaVuSansMNerdFont-Bold.ttf
+          weight: 700
+    - family: DroidSansMono Nerd Font
+      fonts:
+        - asset: assets/fonts/DroidSansMNerdFont-Regular.ttf
+    - family: Noto Nerd Font
+      fonts:
+        - asset: assets/fonts/NotoSansMNerdFont-Regular.ttf
+        - asset: assets/fonts/NotoSansMNerdFont-Bold.ttf
+          weight: 700
+    - family: SpaceMono Nerd Font
+      fonts:
+        - asset: assets/fonts/SpaceMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/SpaceMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: IBMPlexMono Nerd Font
+      fonts:
+        - asset: assets/fonts/BlexMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/BlexMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: VictorMono Nerd Font
+      fonts:
+        - asset: assets/fonts/VictorMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/VictorMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: Iosevka Nerd Font
+      fonts:
+        - asset: assets/fonts/IosevkaNerdFont-Regular.ttf
+        - asset: assets/fonts/IosevkaNerdFont-Bold.ttf
+          weight: 700
+    - family: AnonymousPro Nerd Font
+      fonts:
+        - asset: assets/fonts/AnonymiceProNerdFont-Regular.ttf
+        - asset: assets/fonts/AnonymiceProNerdFont-Bold.ttf
+          weight: 700
+    - family: FiraMono Nerd Font
+      fonts:
+        - asset: assets/fonts/FiraMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/FiraMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: GeistMono Nerd Font
+      fonts:
+        - asset: assets/fonts/GeistMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/GeistMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: CommitMono Nerd Font
+      fonts:
+        - asset: assets/fonts/CommitMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/CommitMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: Monaspace Nerd Font
+      fonts:
+        - asset: assets/fonts/MonaspaceNeonNerdFont-Regular.ttf
+        - asset: assets/fonts/MonaspaceNeonNerdFont-Bold.ttf
+          weight: 700
+    - family: 0xProto Nerd Font
+      fonts:
+        - asset: assets/fonts/0xProtoNerdFont-Regular.ttf
+        - asset: assets/fonts/0xProtoNerdFont-Bold.ttf
+          weight: 700
