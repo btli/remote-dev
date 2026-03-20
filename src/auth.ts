@@ -9,7 +9,6 @@ import { users, accounts, sessions, verificationTokens, authorizedUsers } from "
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
 import { GITHUB_SCOPE_STRING } from "@/lib/github-scopes";
-import { linkGitHubAccountUseCase } from "@/infrastructure/container";
 import type { Adapter, AdapterAccount } from "next-auth/adapters";
 
 const log = createLogger("Auth");
@@ -169,36 +168,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         });
         if (!authorized) {
           return false; // Block unauthorized users
-        }
-
-        // Ensure github_account_metadata exists for multi-account support.
-        // The adapter creates the `account` row, but metadata + gh CLI config
-        // must be provisioned separately (same logic as the manual link flow).
-        if (user.id && account.access_token && account.providerAccountId) {
-          try {
-            // Fetch GitHub login since NextAuth profile() maps it to `name`
-            const ghRes = await fetch("https://api.github.com/user", {
-              headers: {
-                Authorization: `Bearer ${account.access_token}`,
-                Accept: "application/vnd.github.v3+json",
-              },
-            });
-            if (ghRes.ok) {
-              const ghUser = await ghRes.json();
-              await linkGitHubAccountUseCase.execute({
-                userId: user.id,
-                providerAccountId: account.providerAccountId,
-                login: ghUser.login,
-                displayName: ghUser.name ?? null,
-                avatarUrl: ghUser.avatar_url ?? user.image ?? "",
-                email: ghUser.email ?? user.email ?? null,
-                accessToken: account.access_token,
-              });
-            }
-          } catch (err) {
-            log.error("Failed to link GitHub account metadata during sign-in", { error: String(err) });
-            // Non-fatal: sign-in succeeds even if metadata provisioning fails
-          }
         }
       }
       return true;
