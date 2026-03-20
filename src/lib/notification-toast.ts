@@ -10,6 +10,8 @@ const TYPE_TO_VARIANT: Record<NotificationType, ToastVariant> = {
   agent_exited: "default",
   agent_waiting: "warning",
   session_closed: "default",
+  update_pending: "warning",
+  update_applied: "success",
   info: "default",
 };
 

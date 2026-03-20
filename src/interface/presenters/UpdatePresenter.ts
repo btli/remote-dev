@@ -9,11 +9,23 @@ import type { UpdateStatusOutput } from "@/application/use-cases/update/GetUpdat
 import type { CheckForUpdatesOutput } from "@/application/use-cases/update/CheckForUpdatesUseCase";
 import type { Release } from "@/domain/entities/Release";
 import type { UpdateState, UpdateStateTag } from "@/domain/value-objects/UpdateState";
+import type { DeploymentStageTag } from "@/domain/value-objects/DeploymentStage";
 
 export interface DeployInfo {
   activeSlot: string;
   activeCommit: string;
   deployedAt: string;
+}
+
+export interface DeploymentInfo {
+  stage: DeploymentStageTag;
+  version: string;
+  detectedAt: string;
+  scheduledFor: string | null;
+  drainStartedAt: string | null;
+  appliedAt: string | null;
+  failedAt: string | null;
+  failureReason: string | null;
 }
 
 export interface UpdateStatusResponse {
@@ -27,6 +39,7 @@ export interface UpdateStatusResponse {
   publishedAt: string | null;
   errorMessage: string | null;
   deploy: DeployInfo | null;
+  deployment?: DeploymentInfo | null;
 }
 
 function readDeployInfo(): DeployInfo | null {
@@ -83,4 +96,29 @@ export function toCheckResultResponse(output: CheckForUpdatesOutput): UpdateStat
     new Date().toISOString(),
     output.release,
   );
+}
+
+/**
+ * Transform an UpdateDeployment entity into a DeploymentInfo response shape.
+ */
+export function toDeploymentInfo(deployment: {
+  stageTag: DeploymentStageTag;
+  version: string;
+  detectedAt: Date;
+  scheduledFor: Date | null;
+  drainStartedAt: Date | null;
+  appliedAt: Date | null;
+  failedAt: Date | null;
+  failureReason: string | null;
+}): DeploymentInfo {
+  return {
+    stage: deployment.stageTag,
+    version: deployment.version,
+    detectedAt: deployment.detectedAt.toISOString(),
+    scheduledFor: deployment.scheduledFor?.toISOString() ?? null,
+    drainStartedAt: deployment.drainStartedAt?.toISOString() ?? null,
+    appliedAt: deployment.appliedAt?.toISOString() ?? null,
+    failedAt: deployment.failedAt?.toISOString() ?? null,
+    failureReason: deployment.failureReason,
+  };
 }

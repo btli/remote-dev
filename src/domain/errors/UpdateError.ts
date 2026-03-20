@@ -4,11 +4,7 @@
 
 import { DomainError } from "./DomainError";
 
-export class UpdateError extends DomainError {
-  constructor(message: string, code: string) {
-    super(message, code);
-  }
-}
+export class UpdateError extends DomainError {}
 
 export class NetworkError extends UpdateError {
   constructor(
@@ -66,6 +62,29 @@ export class NoUpdateAvailableError extends UpdateError {
     super(
       "No update is available to apply",
       "NO_UPDATE_AVAILABLE"
+    );
+  }
+}
+
+export class DrainTimeoutError extends UpdateError {
+  constructor(
+    public readonly remainingSessionCount: number,
+    public readonly timeoutSeconds: number
+  ) {
+    super(
+      `Session drain timed out after ${timeoutSeconds}s with ${remainingSessionCount} active sessions`,
+      "DRAIN_TIMEOUT"
+    );
+  }
+}
+
+export class DeploymentAlreadyActiveError extends UpdateError {
+  constructor(
+    public readonly currentStage: string
+  ) {
+    super(
+      `A deployment is already active in stage '${currentStage}'`,
+      "DEPLOYMENT_ALREADY_ACTIVE"
     );
   }
 }

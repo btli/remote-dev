@@ -15,6 +15,7 @@ import { config } from "dotenv";
 import { createTerminalServer } from "./terminal.js";
 import { schedulerOrchestrator } from "../services/scheduler-orchestrator.js";
 import { updateScheduler } from "../services/update-scheduler.js";
+import { autoUpdateOrchestrator } from "../infrastructure/container.js";
 import { execFile } from "../lib/exec.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,10 +76,19 @@ async function startServer(): Promise<void> {
     log.error("Failed to start update scheduler", { error: String(error) });
   }
 
+  // Start auto-update orchestrator (recovers pending deployments, handles scheduled updates)
+  try {
+    await autoUpdateOrchestrator.start();
+    log.info("Auto-update orchestrator started");
+  } catch (error) {
+    log.error("Failed to start auto-update orchestrator", { error: String(error) });
+  }
+
   async function shutdown(signal: string): Promise<void> {
     log.info("Shutdown signal received", { signal });
 
     updateScheduler.stop();
+    autoUpdateOrchestrator.stop();
 
     try {
       await schedulerOrchestrator.stop();
