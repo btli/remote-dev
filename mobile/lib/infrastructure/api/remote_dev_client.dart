@@ -89,6 +89,10 @@ class RemoteDevClient {
     return _request(() => _dio.post('/api/folders', data: data));
   }
 
+  Future<void> updateFolder(String id, Map<String, dynamic> data) async {
+    await _request(() => _dio.patch('/api/folders/$id', data: data));
+  }
+
   Future<void> deleteFolder(String id) async {
     await _request(() => _dio.delete('/api/folders/$id'));
   }
@@ -123,6 +127,18 @@ class RemoteDevClient {
   Future<void> markAllNotificationsRead() async {
     await _request(
       () => _dio.patch('/api/notifications', data: {'all': true}),
+    );
+  }
+
+  Future<void> deleteNotifications(List<String> ids) async {
+    await _request(
+      () => _dio.delete('/api/notifications', data: {'ids': ids}),
+    );
+  }
+
+  Future<void> deleteAllNotifications() async {
+    await _request(
+      () => _dio.delete('/api/notifications', data: {'all': true}),
     );
   }
 
