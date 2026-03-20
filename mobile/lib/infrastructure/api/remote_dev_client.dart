@@ -103,8 +103,10 @@ class RemoteDevClient {
     return _request(() => _dio.get('/api/preferences'));
   }
 
-  Future<Map<String, dynamic>> getAppearance() async {
-    return _request(() => _dio.get('/api/appearance'));
+  Future<Map<String, dynamic>> getProfileAppearance(String profileId) async {
+    return _request(
+      () => _dio.get('/api/profiles/$profileId/appearance'),
+    );
   }
 
   // ── Notifications ─────────────────────────────────────────────────────

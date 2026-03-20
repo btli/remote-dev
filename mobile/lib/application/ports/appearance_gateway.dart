@@ -38,6 +38,6 @@ class PreferencesData {
 
 /// Abstract gateway for appearance and preference operations.
 abstract interface class AppearanceGateway {
-  Future<Result<AppearanceData>> getAppearance();
+  Future<Result<AppearanceData>> getAppearance(String profileId);
   Future<Result<PreferencesData>> getPreferences();
 }
