@@ -34,4 +34,7 @@ export interface GitHubAccountRepository {
 
   /** Returns the userId that owns this account, or null. */
   findOwner(providerAccountId: string): Promise<string | null>;
+
+  /** Returns a map of providerAccountId -> scope string from the OAuth accounts table. */
+  getAccountScopes(userId: string): Promise<Map<string, string | null>>;
 }
