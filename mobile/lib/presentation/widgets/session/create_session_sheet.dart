@@ -33,22 +33,27 @@ class _CreateSessionSheetState extends ConsumerState<CreateSessionSheet> {
 
     setState(() => _isCreating = true);
 
-    final session = await ref.read(sessionListProvider.notifier).createSession(
-          CreateSessionInput(
-            name: name,
-            terminalType: _terminalType.value,
-            agentProvider: _terminalType == TerminalType.agent
-                ? _agentProvider.value
-                : null,
-            autoLaunchAgent: _terminalType == TerminalType.agent,
-          ),
-        );
+    try {
+      final session =
+          await ref.read(sessionListProvider.notifier).createSession(
+                CreateSessionInput(
+                  name: name,
+                  terminalType: _terminalType.value,
+                  agentProvider: _terminalType == TerminalType.agent
+                      ? _agentProvider.value
+                      : null,
+                  autoLaunchAgent: _terminalType == TerminalType.agent,
+                ),
+              );
 
-    if (!mounted) return;
-    Navigator.of(context).pop();
+      if (!mounted) return;
+      Navigator.of(context).pop();
 
-    if (session != null) {
-      ref.read(activeSessionIdProvider.notifier).state = session.id;
+      if (session != null) {
+        ref.read(activeSessionIdProvider.notifier).state = session.id;
+      }
+    } finally {
+      if (mounted) setState(() => _isCreating = false);
     }
   }
 

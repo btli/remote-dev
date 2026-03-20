@@ -235,6 +235,7 @@ class TerminalWebSocketManager implements TerminalGateway {
 
   @override
   void dispose() {
+    _params = null;
     _reconnectTimer?.cancel();
     _cleanupChannel();
     _messageController.close();

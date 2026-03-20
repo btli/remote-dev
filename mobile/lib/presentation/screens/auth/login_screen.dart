@@ -65,11 +65,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       final cfToken = await _showCfAccessWebView();
       if (cfToken == null) {
-        setState(() {
-          _isLoading = false;
-          _error = 'Authentication cancelled';
-        });
-        return;
+        setState(() => _error = 'Authentication cancelled');
+        return; // finally block handles _isLoading = false
       }
 
       final dio = Dio(BaseOptions(baseUrl: _baseUrl));
@@ -79,10 +76,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       );
 
       final data = response.data as Map<String, dynamic>;
+      final apiKey = data['apiKey'] as String?;
+      if (apiKey == null) {
+        setState(() => _error = 'Server did not return an API key');
+        return;
+      }
       await _storeCredentialsAndLogin(
-        apiKey: data['apiKey'] as String,
-        userId: data['userId'] as String,
-        email: data['email'] as String,
+        apiKey: apiKey,
+        userId: data['userId'] as String? ?? '',
+        email: data['email'] as String? ?? '',
       );
     } on DioException catch (e) {
       setState(
