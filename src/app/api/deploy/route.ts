@@ -55,6 +55,19 @@ function verifySignature(
 }
 
 export async function POST(request: Request) {
+  // Deprecation gate: when auto-update is enabled, the webhook deploy path
+  // is disabled in favor of poll-based auto-updates from GitHub Releases.
+  if (process.env.AUTO_UPDATE_ENABLED === "true") {
+    log.warn("Webhook deploy rejected: auto-update is enabled");
+    return NextResponse.json(
+      {
+        error: "Webhook deploy is deprecated when auto-update is enabled. Each server polls GitHub Releases for updates.",
+        code: "WEBHOOK_DEPRECATED",
+      },
+      { status: 410 }
+    );
+  }
+
   const webhookSecret = process.env.DEPLOY_WEBHOOK_SECRET;
   if (!webhookSecret) {
     log.error("DEPLOY_WEBHOOK_SECRET not configured");

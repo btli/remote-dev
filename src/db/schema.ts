@@ -1603,6 +1603,7 @@ export const systemUpdateCache = sqliteTable("system_update_cache", {
   id: text("id").primaryKey().default("singleton"),
   lastChecked: integer("last_checked", { mode: "timestamp_ms" }),
   cachedReleaseJson: text("cached_release_json"),
+  deploymentStateJson: text("deployment_state_json"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
