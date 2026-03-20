@@ -244,11 +244,14 @@ export class AutoUpdateOrchestrator {
       return;
     }
 
-    // Detected but not yet scheduled — schedule now
+    // Detected but not yet scheduled — clear stale record and re-schedule.
+    // Cannot call onUpdateDetected() because ScheduleAutoUpdateUseCase would
+    // see the existing non-terminal record and throw DeploymentAlreadyActiveError.
     if (stage === "detected") {
-      log.info("Recovering detected deployment, scheduling", {
+      log.info("Recovering detected deployment, clearing and re-scheduling", {
         version: deployment.version,
       });
+      await this.deploymentRepository.clear();
       await this.onUpdateDetected(deployment.version);
     }
   }

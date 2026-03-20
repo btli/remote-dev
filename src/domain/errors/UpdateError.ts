@@ -66,18 +66,6 @@ export class NoUpdateAvailableError extends UpdateError {
   }
 }
 
-export class DrainTimeoutError extends UpdateError {
-  constructor(
-    public readonly remainingSessionCount: number,
-    public readonly timeoutSeconds: number
-  ) {
-    super(
-      `Session drain timed out after ${timeoutSeconds}s with ${remainingSessionCount} active sessions`,
-      "DRAIN_TIMEOUT"
-    );
-  }
-}
-
 export class DeploymentAlreadyActiveError extends UpdateError {
   constructor(
     public readonly currentStage: string
