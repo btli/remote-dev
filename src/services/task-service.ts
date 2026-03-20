@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { projectTasks, taskDependencies, terminalSessions } from "@/db/schema";
-import { eq, and, desc, asc, isNull, inArray } from "drizzle-orm";
+import { eq, and, asc, isNull, inArray } from "drizzle-orm";
 import type {
   ProjectTask,
   CreateTaskInput,
@@ -113,7 +113,7 @@ export async function getTasks(
     .select()
     .from(projectTasks)
     .where(and(...conditions))
-    .orderBy(asc(projectTasks.sortOrder), desc(projectTasks.createdAt));
+    .orderBy(asc(projectTasks.sortOrder), asc(projectTasks.createdAt));
 
   const tasks = results.map(parseTaskRow);
   const depMap = await loadDependencyMap(tasks.map((t) => t.id));
@@ -284,7 +284,7 @@ export async function getAllTasksBySession(
         eq(projectTasks.userId, userId)
       )
     )
-    .orderBy(asc(projectTasks.sortOrder), desc(projectTasks.createdAt));
+    .orderBy(asc(projectTasks.sortOrder), asc(projectTasks.createdAt));
   return rows.map(parseTaskRow);
 }
 
