@@ -211,4 +211,18 @@ export class DrizzleGitHubAccountRepository implements GitHubAccountRepository {
     });
     return record?.userId ?? null;
   }
+
+  async getAccountScopes(userId: string): Promise<Map<string, string | null>> {
+    const rows = await db
+      .select({
+        providerAccountId: accounts.providerAccountId,
+        scope: accounts.scope,
+      })
+      .from(accounts)
+      .where(
+        and(eq(accounts.userId, userId), eq(accounts.provider, "github"))
+      );
+
+    return new Map(rows.map((r) => [r.providerAccountId, r.scope]));
+  }
 }

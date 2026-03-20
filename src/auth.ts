@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { users, accounts, sessions, verificationTokens, authorizedUsers } from "@/db/schema";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { createLogger } from "@/lib/logger";
+import { GITHUB_SCOPE_STRING } from "@/lib/github-scopes";
 import type { Adapter, AdapterAccount } from "next-auth/adapters";
 
 const log = createLogger("Auth");
@@ -87,8 +88,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       clientSecret: process.env.GITHUB_CLIENT_SECRET,
       authorization: {
         params: {
-          // Request full repo access for cloning private repos and managing worktrees
-          scope: "read:user user:email repo",
+          scope: GITHUB_SCOPE_STRING,
         },
       },
     }),
