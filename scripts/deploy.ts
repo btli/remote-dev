@@ -610,11 +610,22 @@ function buildSlot(slot: Slot): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function runMigration(): boolean {
-  return runCommand(
+  if (!runCommand(
     ["bun", "run", "db:push"],
     PROJECT_ROOT,
     "database migration"
+  )) {
+    return false;
+  }
+
+  // Backfill github_account_metadata for any OAuth accounts missing metadata
+  runCommand(
+    ["bun", "run", "db:migrate-github-accounts"],
+    PROJECT_ROOT,
+    "GitHub account metadata backfill"
   );
+
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
