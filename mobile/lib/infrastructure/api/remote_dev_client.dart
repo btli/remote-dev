@@ -12,12 +12,14 @@ class RemoteDevClient {
     required SecureStorageService storage,
     required String baseUrl,
   })  : _storage = storage,
-        _dio = Dio(BaseOptions(
-          baseUrl: baseUrl,
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 30),
-          headers: {'Content-Type': 'application/json'},
-        )) {
+        _dio = Dio(
+          BaseOptions(
+            baseUrl: baseUrl,
+            connectTimeout: const Duration(seconds: 10),
+            receiveTimeout: const Duration(seconds: 30),
+            headers: {'Content-Type': 'application/json'},
+          ),
+        ) {
     _dio.interceptors.add(_AuthInterceptor(_storage));
   }
 
@@ -75,8 +77,9 @@ class RemoteDevClient {
 
   Future<List<Map<String, dynamic>>> listFolders() async {
     final response = await _request(() => _dio.get('/api/folders'));
-    if (response is List) return response.cast<Map<String, dynamic>>();
-    final folders = response['folders'] as List? ?? [];
+    final folders = response['folders'] as List? ??
+        response['items'] as List? ??
+        [];
     return folders.cast<Map<String, dynamic>>();
   }
 
@@ -127,8 +130,9 @@ class RemoteDevClient {
 
   Future<List<Map<String, dynamic>>> listSplits() async {
     final response = await _request(() => _dio.get('/api/splits'));
-    if (response is List) return response.cast<Map<String, dynamic>>();
-    final splits = response['splits'] as List? ?? [];
+    final splits = response['splits'] as List? ??
+        response['items'] as List? ??
+        [];
     return splits.cast<Map<String, dynamic>>();
   }
 

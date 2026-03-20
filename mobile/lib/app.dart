@@ -31,7 +31,11 @@ final _router = GoRouter(
   routes: [
     GoRoute(
       path: '/login',
-      builder: (context, state) => const LoginScreen(),
+      builder: (context, state) => LoginScreen(
+        onAuthenticated: () {
+          // TODO: Navigate to sessions screen
+        },
+      ),
     ),
   ],
 );

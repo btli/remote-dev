@@ -67,6 +67,11 @@ class _TerminalWidgetState extends State<TerminalWidget>
     _terminal.onOutput = (data) {
       widget.gateway.sendInput(data);
     };
+
+    // Forward resize events to the gateway
+    _terminal.onResize = (cols, rows, _, __) {
+      _onResize(cols, rows);
+    };
   }
 
   @override
@@ -148,7 +153,6 @@ class _TerminalWidgetState extends State<TerminalWidget>
               fontSize: widget.fontSize,
               fontFamily: widget.fontFamily,
             ),
-            onResize: _onResize,
             autofocus: true,
           ),
         ),

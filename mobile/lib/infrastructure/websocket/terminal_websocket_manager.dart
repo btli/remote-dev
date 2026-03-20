@@ -187,6 +187,7 @@ class TerminalWebSocketManager implements TerminalGateway {
   }
 
   /// Force an immediate reconnection attempt (e.g., on network change).
+  @override
   Future<void> forceReconnect() async {
     _reconnectAttempt = 0;
     _reconnectTimer?.cancel();

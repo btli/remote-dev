@@ -83,8 +83,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
       widget.onAuthenticated();
     } on DioException catch (e) {
-      setState(() => _error = e.response?.data?['error'] as String? ??
-          'Authentication failed: ${e.message}');
+      setState(
+        () => _error = e.response?.data?['error'] as String? ??
+            'Authentication failed: ${e.message}',
+      );
     } on Exception catch (e) {
       setState(() => _error = 'Authentication failed: $e');
     } finally {
@@ -162,10 +164,12 @@ class _LoginScreenState extends State<LoginScreen> {
       final apiKey = _apiKeyController.text.trim();
 
       // Validate API key by calling GET /api/sessions
-      final dio = Dio(BaseOptions(
-        baseUrl: _baseUrl,
-        headers: {'Authorization': 'Bearer $apiKey'},
-      ));
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: _baseUrl,
+          headers: {'Authorization': 'Bearer $apiKey'},
+        ),
+      );
       final response = await dio.get('/api/sessions');
       final data = response.data as Map<String, dynamic>;
 
