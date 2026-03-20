@@ -92,8 +92,15 @@ export const POST = withApiAuth(async (request) => {
   }
 
   if (action === "cancel") {
-    await autoUpdateOrchestrator.cancelPendingUpdate();
-    return NextResponse.json({ status: "cancelled", message: "Pending auto-update cancelled." });
+    try {
+      await autoUpdateOrchestrator.cancelPendingUpdate();
+      return NextResponse.json({ status: "cancelled", message: "Pending auto-update cancelled." });
+    } catch (error) {
+      if (error instanceof DeploymentAlreadyActiveError) {
+        return errorResponse(error.message, 409, error.code);
+      }
+      throw error;
+    }
   }
 
   return errorResponse(

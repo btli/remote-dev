@@ -406,6 +406,14 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // --- Localhost restriction for drain endpoints ---
+  if (pathname === "/internal/drain" || pathname === "/internal/drain-status") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+  }
+
   // Session drain notification for auto-update system
   // Called by AutoUpdateOrchestrator: POST /internal/drain
   if (pathname === "/internal/drain" && req.method === "POST") {
