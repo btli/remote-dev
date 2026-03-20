@@ -9,6 +9,8 @@ export type NotificationType =
   | "agent_exited"
   | "build_fail"
   | "session_closed"
+  | "update_pending"
+  | "update_applied"
   | "info";
 
 export interface NotificationEvent {

@@ -154,6 +154,14 @@ function broadcastToClients(data: Record<string, unknown>): void {
   }
 }
 
+/** Get the current active and agent session counts for drain status reporting. */
+function getSessionCounts(): { activeSessions: number; activeAgentSessions: number } {
+  const activeAgentSessions = [...sessions.values()].filter(
+    (s) => s.terminalType === "agent"
+  ).length;
+  return { activeSessions: sessions.size, activeAgentSessions };
+}
+
 /** Broadcast a JSON message to clients connected to a specific session */
 function broadcastToSession(sessionId: string, data: Record<string, unknown>): void {
   const message = JSON.stringify(data);
@@ -395,6 +403,39 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   if (pathname === "/health" && req.method === "GET") {
     sendJson(res, 200, { status: "ok", scheduler: schedulerOrchestrator.isStarted() });
+    return true;
+  }
+
+  // --- Localhost restriction for drain endpoints ---
+  if (pathname === "/internal/drain" || pathname === "/internal/drain-status") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+  }
+
+  // Session drain notification for auto-update system
+  // Called by AutoUpdateOrchestrator: POST /internal/drain
+  if (pathname === "/internal/drain" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+    const { countdownSeconds, version } = payload;
+
+    internalLog.info("Drain notification received", { countdownSeconds, version });
+    broadcastToClients({
+      type: "update_pending",
+      countdownSeconds: countdownSeconds ?? 0,
+      version: version ?? "unknown",
+    });
+
+    sendJson(res, 200, getSessionCounts());
+    return true;
+  }
+
+  // Session drain status query (no broadcast)
+  // Called by AutoUpdateOrchestrator: POST /internal/drain-status
+  if (pathname === "/internal/drain-status" && req.method === "POST") {
+    sendJson(res, 200, getSessionCounts());
     return true;
   }
 
