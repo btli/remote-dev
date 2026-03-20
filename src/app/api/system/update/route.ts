@@ -2,7 +2,7 @@
  * System Update API
  *
  * GET  /api/system/update  - Get current update status
- * POST /api/system/update  - Perform update action (check or apply)
+ * POST /api/system/update  - Perform update action (check, apply, cancel)
  */
 
 import { NextResponse } from "next/server";
@@ -11,33 +11,49 @@ import {
   getUpdateStatusUseCase,
   checkForUpdatesUseCase,
   applyUpdateUseCase,
+  autoUpdateOrchestrator,
+  deploymentRepository,
 } from "@/infrastructure/container";
 import {
   toUpdateStatusResponse,
   toCheckResultResponse,
+  toDeploymentInfo,
 } from "@/interface/presenters/UpdatePresenter";
 import {
   UpdateInProgressError,
   NoUpdateAvailableError,
+  DeploymentAlreadyActiveError,
 } from "@/domain/errors/UpdateError";
 
 /**
  * GET /api/system/update
  *
- * Returns the current update status including version info and available updates.
+ * Returns the current update status including version info, available updates,
+ * and auto-update deployment lifecycle state.
  */
 export const GET = withApiAuth(async () => {
-  const status = await getUpdateStatusUseCase.execute();
-  return NextResponse.json(toUpdateStatusResponse(status));
+  const [status, deployment] = await Promise.all([
+    getUpdateStatusUseCase.execute(),
+    deploymentRepository.getCurrent(),
+  ]);
+
+  const response = toUpdateStatusResponse(status);
+
+  if (deployment) {
+    response.deployment = toDeploymentInfo(deployment);
+  }
+
+  return NextResponse.json(response);
 });
 
 /**
  * POST /api/system/update
  *
- * Body: { action: "check" | "apply" }
+ * Body: { action: "check" | "apply" | "cancel" }
  *
  * - "check": Force-check GitHub for new releases
  * - "apply": Download, install, and restart with the cached release
+ * - "cancel": Cancel a pending scheduled auto-update
  */
 export const POST = withApiAuth(async (request) => {
   const result = await parseJsonBody<{ action: string }>(request);
@@ -68,12 +84,20 @@ export const POST = withApiAuth(async (request) => {
       if (error instanceof NoUpdateAvailableError) {
         return errorResponse(error.message, 404, error.code);
       }
+      if (error instanceof DeploymentAlreadyActiveError) {
+        return errorResponse(error.message, 409, error.code);
+      }
       throw error;
     }
   }
 
+  if (action === "cancel") {
+    await autoUpdateOrchestrator.cancelPendingUpdate();
+    return NextResponse.json({ status: "cancelled", message: "Pending auto-update cancelled." });
+  }
+
   return errorResponse(
-    "Invalid action. Must be 'check' or 'apply'.",
+    "Invalid action. Must be 'check', 'apply', or 'cancel'.",
     400,
     "INVALID_ACTION"
   );
