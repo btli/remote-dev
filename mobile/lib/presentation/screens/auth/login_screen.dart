@@ -1,28 +1,25 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:remote_dev/infrastructure/storage/secure_storage_service.dart';
+import 'package:remote_dev/presentation/providers/providers.dart';
 
 /// Login screen with two auth paths:
 /// 1. Cloudflare Access (opens WebView for SSO)
 /// 2. Direct API Key (for LAN connections)
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, required this.onAuthenticated});
-
-  /// Called after successful authentication with any method.
-  final VoidCallback onAuthenticated;
+class LoginScreen extends ConsumerStatefulWidget {
+  const LoginScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _serverUrlController = TextEditingController();
   final _terminalPortController = TextEditingController(text: '6002');
   final _apiKeyController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
-  final _storage = SecureStorageService();
   bool _isLoading = false;
   String? _error;
   bool _showApiKeyForm = false;
@@ -73,7 +70,8 @@ class _LoginScreenState extends State<LoginScreen> {
       final userId = data['userId'] as String;
       final email = data['email'] as String;
 
-      await _storage.storeCredentials(
+      final storage = ref.read(secureStorageProvider);
+      await storage.storeCredentials(
         serverUrl: _baseUrl,
         terminalPort: _terminalPort,
         apiKey: apiKey,
@@ -81,7 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
         email: email,
       );
 
-      widget.onAuthenticated();
+      ref.read(authNotifierProvider.notifier).loginCompleted();
     } on DioException catch (e) {
       setState(
         () => _error = e.response?.data?['error'] as String? ??
@@ -179,7 +177,8 @@ class _LoginScreenState extends State<LoginScreen> {
           ? (sessions[0] as Map<String, dynamic>)['userId'] as String? ?? ''
           : '';
 
-      await _storage.storeCredentials(
+      final storage = ref.read(secureStorageProvider);
+      await storage.storeCredentials(
         serverUrl: _baseUrl,
         terminalPort: _terminalPort,
         apiKey: apiKey,
@@ -187,7 +186,7 @@ class _LoginScreenState extends State<LoginScreen> {
         email: '',
       );
 
-      widget.onAuthenticated();
+      ref.read(authNotifierProvider.notifier).loginCompleted();
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;
       if (statusCode == 401 || statusCode == 403) {

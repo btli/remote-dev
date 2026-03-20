@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:remote_dev/domain/entities/folder.dart';
 import 'package:remote_dev/domain/entities/session.dart';
@@ -80,9 +81,7 @@ class SessionSidebar extends StatelessWidget {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.settings_outlined, size: 20),
-                    onPressed: () {
-                      // TODO: Navigate to settings
-                    },
+                    onPressed: () => context.push('/settings'),
                     tooltip: 'Settings',
                   ),
                   const Spacer(),
