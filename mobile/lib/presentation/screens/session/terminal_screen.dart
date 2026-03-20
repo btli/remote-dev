@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/application/ports/terminal_gateway.dart';
-import 'package:remote_dev/domain/value_objects/connection_status.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
 import 'package:remote_dev/presentation/widgets/terminal/agent_exit_overlay.dart';
 import 'package:remote_dev/presentation/widgets/terminal/terminal_widget.dart';
@@ -25,7 +24,6 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
   @override
   void initState() {
     super.initState();
-    // Set active session
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(activeSessionIdProvider.notifier).state = widget.sessionId;
       _connectTerminal();
@@ -37,15 +35,12 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     if (manager == null || _connected) return;
 
     final config = ref.read(serverConfigProvider).valueOrNull;
-    if (config == null) return;
+    final client = ref.read(remoteDevClientProvider);
+    if (config == null || client == null) return;
 
     final session = ref.read(activeSessionProvider);
-    final tmuxName = session?.tmuxSessionName ?? '';
-    final terminalType = session?.terminalType.value ?? 'shell';
 
     try {
-      final client = ref.read(remoteDevClientProvider);
-      if (client == null) return;
       final tokenData = await client.getSessionToken(widget.sessionId);
       final token = tokenData['token'] as String;
 
@@ -54,8 +49,8 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
           wsUrl: config.wsUrl,
           token: token,
           sessionId: widget.sessionId,
-          tmuxSessionName: tmuxName,
-          terminalType: terminalType,
+          tmuxSessionName: session?.tmuxSessionName ?? '',
+          terminalType: session?.terminalType.value ?? 'shell',
         ),
       );
 
@@ -149,11 +144,6 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
                   gateway: manager,
                   palette: palette,
                   onAgentExited: _onAgentExited,
-                  onConnectionStatusChanged: (status) {
-                    if (status == ConnectionStatus.connected && !_connected) {
-                      setState(() => _connected = true);
-                    }
-                  },
                 ),
                 if (_agentExited)
                   AgentExitOverlay(

@@ -54,13 +54,11 @@ class RemoteDevApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = ref.watch(terminalPaletteProvider);
-    final theme = AppTheme.fromPalette(palette);
     final router = ref.watch(routerProvider);
 
     return MaterialApp.router(
       title: 'Remote Dev',
-      theme: theme,
-      darkTheme: theme,
+      darkTheme: AppTheme.fromPalette(palette),
       themeMode: ThemeMode.dark,
       debugShowCheckedModeBanner: false,
       routerConfig: router,

@@ -33,12 +33,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   String get _baseUrl {
-    var url = _serverUrlController.text.trim();
-    if (url.endsWith('/')) url = url.substring(0, url.length - 1);
-    return url;
+    final url = _serverUrlController.text.trim();
+    return url.endsWith('/') ? url.substring(0, url.length - 1) : url;
   }
 
   String get _terminalPort => _terminalPortController.text.trim();
+
+  Future<void> _storeCredentialsAndLogin({
+    required String apiKey,
+    String userId = '',
+    String email = '',
+  }) async {
+    final storage = ref.read(secureStorageProvider);
+    await storage.storeCredentials(
+      serverUrl: _baseUrl,
+      terminalPort: _terminalPort,
+      apiKey: apiKey,
+      userId: userId,
+      email: email,
+    );
+    ref.read(authNotifierProvider.notifier).loginCompleted();
+  }
 
   Future<void> _loginWithCfAccess() async {
     if (!_formKey.currentState!.validate()) return;
@@ -48,7 +63,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      // Launch WebView for CF Access authentication
       final cfToken = await _showCfAccessWebView();
       if (cfToken == null) {
         setState(() {
@@ -58,7 +72,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         return;
       }
 
-      // Exchange CF token for API key
       final dio = Dio(BaseOptions(baseUrl: _baseUrl));
       final response = await dio.post(
         '/api/auth/mobile-exchange',
@@ -66,20 +79,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       );
 
       final data = response.data as Map<String, dynamic>;
-      final apiKey = data['apiKey'] as String;
-      final userId = data['userId'] as String;
-      final email = data['email'] as String;
-
-      final storage = ref.read(secureStorageProvider);
-      await storage.storeCredentials(
-        serverUrl: _baseUrl,
-        terminalPort: _terminalPort,
-        apiKey: apiKey,
-        userId: userId,
-        email: email,
+      await _storeCredentialsAndLogin(
+        apiKey: data['apiKey'] as String,
+        userId: data['userId'] as String,
+        email: data['email'] as String,
       );
-
-      ref.read(authNotifierProvider.notifier).loginCompleted();
     } on DioException catch (e) {
       setState(
         () => _error = e.response?.data?['error'] as String? ??
@@ -148,7 +152,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _loginWithApiKey() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_apiKeyController.text.isEmpty) {
+    final apiKey = _apiKeyController.text.trim();
+    if (apiKey.isEmpty) {
       setState(() => _error = 'API key is required');
       return;
     }
@@ -159,8 +164,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      final apiKey = _apiKeyController.text.trim();
-
       // Validate API key by calling GET /api/sessions
       final dio = Dio(
         BaseOptions(
@@ -171,22 +174,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final response = await dio.get('/api/sessions');
       final data = response.data as Map<String, dynamic>;
 
-      // Key is valid — extract userId from any session or use a placeholder
       final sessions = data['sessions'] as List? ?? [];
       final userId = sessions.isNotEmpty
           ? (sessions[0] as Map<String, dynamic>)['userId'] as String? ?? ''
           : '';
 
-      final storage = ref.read(secureStorageProvider);
-      await storage.storeCredentials(
-        serverUrl: _baseUrl,
-        terminalPort: _terminalPort,
+      await _storeCredentialsAndLogin(
         apiKey: apiKey,
         userId: userId,
-        email: '',
       );
-
-      ref.read(authNotifierProvider.notifier).loginCompleted();
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode;
       if (statusCode == 401 || statusCode == 403) {

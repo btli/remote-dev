@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/domain/entities/session.dart';
@@ -77,10 +78,5 @@ final activeSessionProvider = Provider<Session?>((ref) {
   final activeId = ref.watch(activeSessionIdProvider);
   if (activeId == null) return null;
   final sessions = ref.watch(sessionListProvider).valueOrNull;
-  if (sessions == null) return null;
-  try {
-    return sessions.firstWhere((s) => s.id == activeId);
-  } on StateError {
-    return null;
-  }
+  return sessions?.firstWhereOrNull((s) => s.id == activeId);
 });

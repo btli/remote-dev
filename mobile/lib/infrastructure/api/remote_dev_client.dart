@@ -11,8 +11,7 @@ class RemoteDevClient {
   RemoteDevClient({
     required SecureStorageService storage,
     required String baseUrl,
-  })  : _storage = storage,
-        _dio = Dio(
+  }) : _dio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
             connectTimeout: const Duration(seconds: 10),
@@ -20,23 +19,24 @@ class RemoteDevClient {
             headers: {'Content-Type': 'application/json'},
           ),
         ) {
-    _dio.interceptors.add(_AuthInterceptor(_storage));
+    _dio.interceptors.add(_AuthInterceptor(storage));
   }
 
   final Dio _dio;
-  final SecureStorageService _storage;
 
   // ── Sessions ──────────────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> listSessions({
     String? status,
   }) async {
-    final queryParams = <String, dynamic>{};
-    if (status != null) queryParams['status'] = status;
     final response = await _request(
-      () => _dio.get('/api/sessions', queryParameters: queryParams),
+      () => _dio.get(
+        '/api/sessions',
+        queryParameters: {
+          if (status != null) 'status': status,
+        },
+      ),
     );
-    // Backend wraps sessions: { sessions: [...] }
     final sessions = response['sessions'] as List? ?? [];
     return sessions.cast<Map<String, dynamic>>();
   }
