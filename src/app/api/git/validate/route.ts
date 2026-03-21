@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse } from "@/lib/api";
+import { withApiAuth, errorResponse } from "@/lib/api";
 import { isGitRepo, getBranches } from "@/services/worktree-service";
 
 /**
@@ -10,7 +10,7 @@ import { isGitRepo, getBranches } from "@/services/worktree-service";
  *   - isGitRepo: boolean
  *   - branches: string[] (local branch names, if it's a git repo)
  */
-export const GET = withAuth(async (request) => {
+export const GET = withApiAuth(async (request) => {
   const { searchParams } = new URL(request.url);
   const path = searchParams.get("path");
 

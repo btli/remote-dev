@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile worktree creation**: Create git worktrees from the Flutter mobile app's session creation sheet
+  - Worktree type picker (feature/fix/chore/refactor/docs/release)
+  - Branch name auto-suggestion from session name
+  - Async base branch picker fetched from server
+  - New Clean Architecture ports: GitGateway, FolderPreferencesGateway
+
 ## [0.3.0] - 2026-03-20
 
 ### Added
