@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:remote_dev/infrastructure/api/remote_dev_client.dart';
@@ -121,6 +122,9 @@ class PushNotificationService {
     debugPrint('[Push] Foreground message: ${message.data}');
   }
 
+  static const _notificationChannel =
+      MethodChannel('com.remotedev.remote_dev/notifications');
+
   /// Called when notifications are dismissed on another client (via WebSocket).
   /// Clears matching OS tray notifications so they don't linger.
   Future<void> handleDismissed({
@@ -128,13 +132,15 @@ class PushNotificationService {
     bool all = false,
   }) async {
     if (!Platform.isAndroid) return;
-    // Android: cancel all notifications from the tray when "mark all read"
-    // For individual IDs, we can't cancel specific FCM-delivered notifications
-    // without flutter_local_notifications — clear all as a pragmatic fallback
-    // when the notification panel is explicitly cleared.
+    // Clear all notifications from the tray when "mark all read" or bulk dismiss.
+    // Uses a platform channel to call Android's NotificationManager.cancelAll().
     if (all || ids.length >= 3) {
-      await FirebaseMessaging.instance.android?.deleteAllNotifications();
-      debugPrint('[Push] Cleared all OS notifications');
+      try {
+        await _notificationChannel.invokeMethod('cancelAll');
+        debugPrint('[Push] Cleared all OS notifications');
+      } on MissingPluginException {
+        // Platform channel not implemented yet — silently ignore
+      }
     }
   }
 
