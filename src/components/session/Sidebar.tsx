@@ -1129,6 +1129,8 @@ export function Sidebar({
                 <GitBranch className="w-3 h-3" />
               ) : session.terminalType === "agent" ? (
                 <Sparkles className="w-3 h-3" />
+              ) : session.terminalType === "loop" ? (
+                <MessageCircle className="w-3 h-3" />
               ) : null}
               <span>{session.name}</span>
             </div>
@@ -1302,6 +1304,9 @@ export function Sidebar({
               }
               if (session.terminalType === "agent") {
                 return <Sparkles className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+              }
+              if (session.terminalType === "loop") {
+                return <MessageCircle className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
               }
               return <Terminal className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
             })()}
