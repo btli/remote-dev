@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android notification icon**: Added monochrome `ic_notification` drawable so push notifications show the `>_` prompt silhouette instead of a white square
+- **App icon redesign**: Replaced plain `>_` square icon with the full terminal window design matching `favicon.svg` (rounded corners, title bar with traffic lights, output lines)
+- **Android adaptive icon**: Added `ic_launcher_foreground` and adaptive icon XML so the launcher applies proper rounded/squircle masking
+- **PWA icons**: Regenerated all PWA icon sizes with the updated terminal window design
+
 ### Added
 
 - **FCM push notifications for mobile app**: End-to-end push notification delivery from agent hooks to the Flutter mobile app via Firebase Cloud Messaging

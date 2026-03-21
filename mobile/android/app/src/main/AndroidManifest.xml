@@ -34,6 +34,14 @@
                 <data android:scheme="remotedev" android:host="auth" android:pathPrefix="/callback"/>
             </intent-filter>
         </activity>
+        <!-- FCM: default notification icon (monochrome silhouette for status bar) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <!-- FCM: notification accent color (Tokyo Night blue) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_accent" />
         <!-- FCM: default notification channel for push notifications -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"

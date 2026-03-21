@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tokyo Night blue for notification accent -->
+    <color name="notification_accent">#7aa2f7</color>
+    <!-- Adaptive icon background (Tokyo Night dark) -->
+    <color name="ic_launcher_background">#1a1b26</color>
+</resources>
