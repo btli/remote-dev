@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <!-- Android notification icons must be monochrome white on transparent -->
+  <!-- Prompt symbol > -->
+  <path d="M16 24 L44 48 L16 72" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Underscore _ -->
+  <rect x="52" y="64" width="28" height="7" rx="2" fill="#FFFFFF"/>
+</svg>
