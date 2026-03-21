@@ -102,6 +102,7 @@
     "drizzle-orm": "^0.45.1",
     "electron-squirrel-startup": "^1.0.1",
     "electron-updater": "^6.6.2",
+    "google-auth-library": "^10.6.2",
     "jose": "^6.1.3",
     "lucide-react": "^0.562.0",
     "next": "16.1.0",
@@ -158,7 +159,7 @@
     "sharp",
     "unrs-resolver"
   ],
-  "_comment_overrides": "Deduplicate @codemirror transitive deps \u2014 legacy-modes and theme-one-dark pull older versions causing duplicate type declarations",
+  "_comment_overrides": "Deduplicate @codemirror transitive deps — legacy-modes and theme-one-dark pull older versions causing duplicate type declarations",
   "overrides": {
     "@codemirror/language": "6.12.2",
     "@codemirror/view": "6.39.16"
