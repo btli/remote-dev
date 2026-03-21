@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useCallback, forwardRef } from "react";
+import { useState, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
 import { Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface MobileInputBarProps {
   onSubmit: (text: string) => void;
+  onHeightChange?: () => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
@@ -18,7 +19,7 @@ interface MobileInputBarProps {
  * by using a standard HTML textarea instead of xterm.js's internal textarea
  * (which disables all of these to prevent duplication bugs).
  *
- * - Enter: submit text and clear
+ * - Enter / Send button: submit text and clear
  * - Shift+Enter: insert literal newline
  * - Auto-expands height with content (max 8rem)
  */
@@ -26,6 +27,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
   function MobileInputBar(
     {
       onSubmit,
+      onHeightChange,
       disabled = false,
       placeholder = "Type a message...",
       className,
@@ -33,17 +35,27 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
     ref
   ) {
     const [value, setValue] = useState("");
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    const handleSubmit = useCallback(() => {
-      // Trim prevents submitting whitespace-only input. Leading/trailing
-      // spaces are stripped intentionally — mobile text entry rarely needs
-      // them, and autocorrect often inserts trailing spaces.
+    useImperativeHandle(ref, () => textareaRef.current!, []);
+
+    const resetTextareaHeight = useCallback(() => {
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.style.height = "auto";
+      }
+      onHeightChange?.();
+    }, [onHeightChange]);
+
+    const handleSubmit = useCallback((e?: React.FormEvent) => {
+      e?.preventDefault();
       const trimmed = value.trim();
       if (!trimmed || disabled) return;
 
       onSubmit(trimmed + "\n");
       setValue("");
-    }, [value, disabled, onSubmit]);
+      resetTextareaHeight();
+    }, [value, disabled, onSubmit, resetTextareaHeight]);
 
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -59,18 +71,19 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       const textarea = e.currentTarget;
       textarea.style.height = "auto";
       textarea.style.height = `${textarea.scrollHeight}px`;
-    }, []);
+      onHeightChange?.();
+    }, [onHeightChange]);
 
     return (
-      <div
+      <form
+        onSubmit={handleSubmit}
         className={cn(
           "flex items-end gap-1.5 px-2 py-1.5 bg-popover/95 backdrop-blur-sm border-t border-border",
           className
         )}
       >
-        {/* Native text input with autocorrect/voice enabled */}
         <textarea
-          ref={ref}
+          ref={textareaRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -93,9 +106,8 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
           )}
         />
 
-        {/* Send button */}
         <button
-          onClick={handleSubmit}
+          type="submit"
           disabled={disabled || !value.trim()}
           className={cn(
             "p-2 rounded-md shrink-0 touch-manipulation",
@@ -108,7 +120,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
         >
           <Send className="w-4 h-4" />
         </button>
-      </div>
+      </form>
     );
   }
 );
