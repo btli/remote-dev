@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Loop agent session type**: Chat-first, mobile-first UI for long-running AI agent sessions with loop scheduling
+  - New `"loop"` terminal type plugin with conversational and monitoring modes
+  - Stream-JSON output parsing for Claude Code (`--output-format stream-json`) with ANSI text fallback
+  - `useLoopScheduler` hook for interval-based prompt re-fire in monitoring mode
+  - Chat components: `LoopChatPane`, `LoopMessageBubble`, `LoopChatInput`, `LoopStatusBar`
+  - `TerminalDrawer` for toggling raw terminal view (full-screen mobile, resizable desktop)
+  - Session wizard integration with loop config form (type, interval, prompt, agent, profile)
+  - Sidebar `MessageCircle` icon with activity status indicators
+  - 2000-message cap prevents unbounded memory growth in long-running sessions
 - **FCM push notifications for mobile app**: End-to-end push notification delivery from agent hooks to the Flutter mobile app via Firebase Cloud Messaging
   - Server: `PushNotificationGateway` port + `FcmPushGateway` (FCM HTTP v1 API) with `NullPushGateway` graceful degradation
   - New `push_token` DB table and `DrizzlePushTokenRepository` for device token storage
