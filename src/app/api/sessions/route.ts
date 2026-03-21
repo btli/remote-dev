@@ -63,13 +63,14 @@ export const POST = withApiAuth(async (request, { userId }) => {
       createWorktree?: boolean;
       baseBranch?: string;
       worktreeType?: string;
-      terminalType?: "shell" | "agent" | "file" | "browser";
+      terminalType?: "shell" | "agent" | "file" | "browser" | "loop";
       filePath?: string;
       profileId?: string;
       agentProvider?: string;
       autoLaunchAgent?: boolean;
       agentFlags?: string[];
       parentSessionId?: string;
+      loopConfig?: { loopType?: string; intervalSeconds?: number; promptTemplate?: string; maxIterations?: number; autoRestart?: boolean };
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -97,7 +98,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
       folderId: body.folderId,
-      // Terminal type (shell, agent, file, browser)
+      // Terminal type (shell, agent, file, browser, loop)
       terminalType: body.terminalType,
       filePath: validatedFilePath,
       profileId: body.profileId,
@@ -106,6 +107,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
       agentFlags: body.agentFlags,
       // Parent session for team orchestration
       parentSessionId: body.parentSessionId,
+      // Loop agent config
+      loopConfig: body.loopConfig as CreateSessionInput["loopConfig"],
       // Feature session fields
       startupCommand: body.startupCommand,
       featureDescription: body.featureDescription,

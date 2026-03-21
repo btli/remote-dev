@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   X, Plus, Terminal, Settings,
-  Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch,
+  Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch, MessageCircle,
   PanelLeftClose, PanelLeft,
   SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, KeyRound, Fingerprint, Network,
@@ -133,7 +133,7 @@ interface SidebarProps {
  * Whether a session type has agent-like behavior (activity status tracking, exit states).
  */
 function hasAgentBehavior(session: TerminalSession): boolean {
-  return session.terminalType === "agent";
+  return session.terminalType === "agent" || session.terminalType === "loop";
 }
 
 /**
@@ -1107,6 +1107,9 @@ export function Sidebar({
                 if (session.terminalType === "agent") {
                   return <Sparkles className={cn("w-3.5 h-3.5", iconColor)} />;
                 }
+                if (session.terminalType === "loop") {
+                  return <MessageCircle className={cn("w-3.5 h-3.5", iconColor)} />;
+                }
                 return (
                   <span className={cn(
                     "w-2 h-2 rounded-full",
@@ -1126,6 +1129,8 @@ export function Sidebar({
                 <GitBranch className="w-3 h-3" />
               ) : session.terminalType === "agent" ? (
                 <Sparkles className="w-3 h-3" />
+              ) : session.terminalType === "loop" ? (
+                <MessageCircle className="w-3 h-3" />
               ) : null}
               <span>{session.name}</span>
             </div>
@@ -1299,6 +1304,9 @@ export function Sidebar({
               }
               if (session.terminalType === "agent") {
                 return <Sparkles className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+              }
+              if (session.terminalType === "loop") {
+                return <MessageCircle className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
               }
               return <Terminal className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
             })()}

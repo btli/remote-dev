@@ -193,7 +193,12 @@ export async function createSession(
   // wrapper), otherwise fall back to the provider's default command (e.g., `claude`).
   // The agent command replaces any plain startup command to avoid duplication.
   if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
-    const agentCommand = buildAgentCommand(input.agentProvider, input.agentFlags, startupCommand);
+    // For loop sessions with Claude, add --output-format stream-json for structured output parsing
+    const agentFlags = [...(input.agentFlags ?? [])];
+    if (input.terminalType === "loop" && input.agentProvider === "claude" && !agentFlags.includes("--output-format")) {
+      agentFlags.push("--output-format", "stream-json");
+    }
+    const agentCommand = buildAgentCommand(input.agentProvider, agentFlags, startupCommand);
     if (agentCommand) {
       startupCommand = agentCommand;
     }
@@ -221,7 +226,8 @@ export async function createSession(
   // but may not send agentProvider/autoLaunchAgent separately)
   const isAgentSession =
     (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) ||
-    input.terminalType === "agent";
+    input.terminalType === "agent" ||
+    input.terminalType === "loop";
   const effectiveAgentProvider = input.agentProvider && input.agentProvider !== "none"
     ? input.agentProvider
     : "claude"; // Default matches DB default on line ~350
@@ -400,6 +406,15 @@ export async function createSession(
   if (terminalType === "file" && input.filePath) {
     const fileName = input.filePath.split("/").pop() ?? input.filePath;
     typeMetadata = JSON.stringify({ filePath: input.filePath, fileName });
+  } else if (terminalType === "loop") {
+    // Loop sessions store their config in typeMetadata
+    const loopConfig = input.loopConfig ?? { loopType: "conversational" };
+    typeMetadata = JSON.stringify({
+      agentProvider: input.agentProvider ?? "claude",
+      loopConfig,
+      currentIteration: 0,
+      terminalVisible: false,
+    });
   }
 
   // Insert the database record - clean up tmux session and worktree if this fails
@@ -422,8 +437,8 @@ export async function createSession(
         terminalType,
         typeMetadata,
         agentProvider: input.agentProvider ?? "claude",
-        // Set agent state for agent terminal type
-        agentExitState: terminalType === "agent" ? "running" : null,
+        // Set agent state for agent/loop terminal types
+        agentExitState: (terminalType === "agent" || terminalType === "loop") ? "running" : null,
         agentExitCode: null,
         agentExitedAt: null,
         agentRestartCount: 0,

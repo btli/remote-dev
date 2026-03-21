@@ -21,7 +21,7 @@ export type TerminalType = "shell" | "agent" | "file" | "browser" | string;
 /**
  * Built-in terminal types (cannot be unregistered)
  */
-export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser"];
+export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "loop"];
 
 /**
  * Session exit behavior determines what happens when the main process exits
@@ -52,7 +52,7 @@ export interface SessionConfig {
   /** Whether to create a tmux session (false for file viewer) */
   useTmux: boolean;
   /** Additional metadata stored with session */
-  metadata?: AgentSessionMetadata | FileViewerMetadata | BrowserSessionMetadata | Record<string, unknown>;
+  metadata?: AgentSessionMetadata | FileViewerMetadata | BrowserSessionMetadata | import("./loop-agent").LoopAgentMetadata | Record<string, unknown>;
 }
 
 /**
