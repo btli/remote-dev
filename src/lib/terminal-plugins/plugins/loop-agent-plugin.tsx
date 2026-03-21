@@ -54,13 +54,10 @@ export function createLoopAgentPlugin(): TerminalTypePlugin {
       const agentCommand = buildAgentCommand(provider, flags, false);
 
       // Parse loop config from input metadata or defaults
-      const inputLoopConfig = input.loopConfig;
       const loopConfig: LoopConfig = {
-        loopType: inputLoopConfig?.loopType ?? "conversational",
-        intervalSeconds: inputLoopConfig?.intervalSeconds,
-        promptTemplate: inputLoopConfig?.promptTemplate,
-        maxIterations: inputLoopConfig?.maxIterations,
-        autoRestart: inputLoopConfig?.autoRestart ?? false,
+        loopType: "conversational",
+        autoRestart: false,
+        ...input.loopConfig,
       };
 
       const metadata: LoopAgentMetadata = {
