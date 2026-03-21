@@ -1,7 +1,10 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:remote_dev/presentation/providers/providers.dart';
 
@@ -52,6 +55,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ref.read(authNotifierProvider.notifier).loginCompleted();
   }
 
+  /// Opens Chrome Custom Tabs for CF Access auth, then receives
+  /// credentials back via a `remotedev://auth/callback` deep link.
   Future<void> _loginWithCfAccess() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
@@ -59,91 +64,64 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
 
+    StreamSubscription<Uri>? sub;
     try {
-      final cfToken = await _showCfAccessWebView();
-      if (cfToken == null) {
-        setState(() => _error = 'Authentication cancelled');
-        return;
-      }
+      // Listen for the deep link callback from the server
+      final appLinks = AppLinks();
+      final completer = Completer<Uri>();
+      sub = appLinks.uriLinkStream.listen((uri) {
+        if (uri.scheme == 'remotedev' &&
+            uri.host == 'auth' &&
+            !completer.isCompleted) {
+          completer.complete(uri);
+        }
+      });
 
-      final dio = Dio(BaseOptions(baseUrl: _baseUrl));
-      final response = await dio.post(
-        '/api/auth/mobile-exchange',
-        data: {'cfToken': cfToken},
+      // Open Chrome Custom Tabs to the server's mobile callback page.
+      // CF Access will intercept → authenticate → redirect to callback
+      // → server exchanges token → redirects to remotedev://auth/callback
+      final callbackUrl = Uri.parse('$_baseUrl/auth/mobile-callback');
+      final launched = await launchUrl(
+        callbackUrl,
+        mode: LaunchMode.externalApplication,
       );
 
-      final data = response.data as Map<String, dynamic>;
-      final apiKey = data['apiKey'] as String?;
-      if (apiKey == null) {
-        setState(() => _error = 'Server did not return an API key');
+      if (!launched) {
+        if (!mounted) return;
+        setState(() => _error = 'Could not open browser');
         return;
       }
+
+      // Wait for the deep link callback (timeout after 2 minutes)
+      final callbackUri = await completer.future.timeout(
+        const Duration(minutes: 2),
+      );
+
+      final apiKey = callbackUri.queryParameters['apiKey'];
+      final userId = callbackUri.queryParameters['userId'] ?? '';
+      final email = callbackUri.queryParameters['email'] ?? '';
+
+      if (apiKey == null || apiKey.isEmpty) {
+        if (!mounted) return;
+        setState(() => _error = 'Authentication failed: no API key received');
+        return;
+      }
+
       await _storeCredentialsAndLogin(
         apiKey: apiKey,
-        userId: data['userId'] as String? ?? '',
-        email: data['email'] as String? ?? '',
+        userId: userId,
+        email: email,
       );
-    } on DioException catch (e) {
+    } on TimeoutException {
       if (!mounted) return;
-      setState(
-        () => _error = e.response?.data?['error'] as String? ??
-            'Authentication failed: ${e.message}',
-      );
+      setState(() => _error = 'Authentication timed out');
     } on Exception catch (e) {
       if (!mounted) return;
       setState(() => _error = 'Authentication failed: $e');
     } finally {
+      await sub?.cancel();
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  Future<String?> _showCfAccessWebView() async {
-    String? cfToken;
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => SizedBox(
-        height: MediaQuery.of(context).size.height * 0.9,
-        child: Column(
-          children: [
-            AppBar(
-              title: const Text('Sign in'),
-              leading: IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ),
-            Expanded(
-              child: InAppWebView(
-                initialUrlRequest: URLRequest(url: WebUri(_baseUrl)),
-                initialSettings: InAppWebViewSettings(
-                  javaScriptEnabled: true,
-                  clearCache: true,
-                ),
-                onLoadStop: (controller, url) async {
-                  if (url != null && url.toString().startsWith(_baseUrl)) {
-                    final cookies = await CookieManager.instance().getCookies(
-                      url: WebUri(_baseUrl),
-                    );
-                    for (final cookie in cookies) {
-                      if (cookie.name == 'CF_Authorization') {
-                        cfToken = cookie.value;
-                        if (context.mounted) Navigator.of(context).pop();
-                        return;
-                      }
-                    }
-                  }
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    await CookieManager.instance().deleteAllCookies();
-    return cfToken;
   }
 
   Future<void> _loginWithApiKey() async {
@@ -160,6 +138,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
+      // Validate API key by calling GET /api/sessions
       final dio = Dio(
         BaseOptions(
           baseUrl: _baseUrl,
@@ -168,13 +147,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       );
       final response = await dio.get('/api/sessions');
       final data = response.data as Map<String, dynamic>;
+
       final sessions = data['sessions'] as List? ?? [];
       final firstSession =
-          sessions.isNotEmpty ? sessions[0] as Map<String, dynamic> : null;
+          sessions.isNotEmpty ? sessions[0] as Map<String, dynamic>? : null;
+      final userId = firstSession?['userId'] as String? ?? '';
 
       await _storeCredentialsAndLogin(
         apiKey: apiKey,
-        userId: firstSession?['userId'] as String? ?? '',
+        userId: userId,
       );
     } on DioException catch (e) {
       if (!mounted) return;
