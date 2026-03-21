@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 432 432">
+  <!-- Adaptive icon foreground: 108dp with 72dp safe zone centered (18dp inset each side) -->
+  <!-- Content scaled to fit within the 72dp safe zone (center 66.7% of canvas) -->
+  <defs>
+    <linearGradient id="termBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1b26"/>
+      <stop offset="100%" stop-color="#24283b"/>
+    </linearGradient>
+    <linearGradient id="promptGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7aa2f7"/>
+      <stop offset="100%" stop-color="#bb9af7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Terminal window background with rounded corners - centered in safe zone -->
+  <rect x="54" y="54" width="324" height="324" rx="40" ry="40" fill="url(#termBg)" stroke="#414868" stroke-width="3"/>
+
+  <!-- Title bar -->
+  <rect x="54" y="54" width="324" height="42" rx="40" ry="40" fill="#16161e"/>
+  <rect x="54" y="74" width="324" height="22" fill="#16161e"/>
+
+  <!-- Window controls -->
+  <circle cx="90" cy="75" r="9" fill="#f7768e"/>
+  <circle cx="120" cy="75" r="9" fill="#e0af68"/>
+  <circle cx="150" cy="75" r="9" fill="#9ece6a"/>
+
+  <!-- Prompt symbol > -->
+  <path d="M108 175 L168 215 L108 255" stroke="url(#promptGlow)" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Underscore _ -->
+  <rect x="192" y="250" width="100" height="15" rx="3" fill="#7aa2f7" opacity="0.9"/>
+
+  <!-- Output lines -->
+  <rect x="108" y="290" width="200" height="10" rx="3" fill="#565f89"/>
+  <rect x="108" y="316" width="145" height="10" rx="3" fill="#565f89"/>
+</svg>

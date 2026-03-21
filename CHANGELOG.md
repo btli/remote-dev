@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-21
+
 ### Added
 
 - **FCM push notifications for mobile app**: End-to-end push notification delivery from agent hooks to the Flutter mobile app via Firebase Cloud Messaging
@@ -22,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Branch name auto-suggestion from session name
   - Async base branch picker fetched from server
   - New Clean Architecture ports: GitGateway, FolderPreferencesGateway
+
+### Fixed
+
+- **Android notification icon**: Added monochrome `ic_notification` drawable so push notifications show the `>_` prompt silhouette instead of a white square
+- **App icon redesign**: Replaced plain `>_` square icon with the full terminal window design matching `favicon.svg` (rounded corners, title bar with traffic lights, output lines)
+- **Android adaptive icon**: Added `ic_launcher_foreground` and adaptive icon XML so the launcher applies proper rounded/squircle masking
+- **PWA icons**: Regenerated all PWA icon sizes with the updated terminal window design
 
 ## [0.3.0] - 2026-03-20
 
