@@ -64,27 +64,30 @@ const MOBILE_ROWS = 24;
  */
 class AnsiStripper {
   private pending = "";
+  private static readonly MAX_PENDING = 64;
+
+  reset(): void {
+    this.pending = "";
+  }
 
   process(data: string): string {
-    // Prepend any buffered partial sequence from previous chunk
     let input = this.pending + data;
     this.pending = "";
 
-    // If input ends with an incomplete escape, buffer it for next chunk
+    // Buffer incomplete escape sequence at end of chunk for next call.
+    // Only buffer from the last \x1b if it's incomplete — complete
+    // sequences before it are kept for regex processing below.
     const lastEsc = input.lastIndexOf("\x1b");
     if (lastEsc !== -1) {
       const tail = input.slice(lastEsc);
-      // Check if tail is a complete sequence or still accumulating
-      // A complete CSI ends with a letter; a complete OSC ends with BEL or ST
-      const isCompleteCsi = /^\x1b\[[0-9;?]*[A-Za-z]/.test(tail);
-      const isCompleteSgr = /^\x1b\[[0-9;]*m/.test(tail);
-      const isCompleteOsc = /^\x1b\].*(?:\x07|\x1b\\)/.test(tail);
-      const isSingleChar = /^\x1b[^[\]()]/.test(tail) && tail.length >= 2;
-      const isCharSet = /^\x1b[()]./.test(tail);
+      const isComplete =
+        /^\x1b\[[0-9;?]*[A-Za-z]/.test(tail) ||  // CSI (including SGR)
+        /^\x1b\].*(?:\x07|\x1b\\)/.test(tail) ||  // OSC
+        (/^\x1b[^[\]()]/.test(tail) && tail.length >= 2) ||  // Single-char
+        /^\x1b[()]./.test(tail);  // Character set
 
-      if (!isCompleteCsi && !isCompleteSgr && !isCompleteOsc && !isSingleChar && !isCharSet) {
-        // Incomplete sequence — buffer it
-        this.pending = tail;
+      if (!isComplete) {
+        this.pending = tail.length <= AnsiStripper.MAX_PENDING ? tail : "";
         input = input.slice(0, lastEsc);
       }
     }
@@ -99,11 +102,11 @@ class AnsiStripper {
       // Remove character set selection: \x1b(B, \x1b)0, etc.
       .replace(/\x1b[()][A-Z0-9]/g, "")
       // Remove single-character escapes (\x1b=, \x1b>, \x1bM, etc.)
-      .replace(/\x1b[^\[(\])]/g, "")
+      .replace(/\x1b(?![\[(\])])[^\x1b]/g, "")
       // Remove \r not followed by \n (in-line overwrites from progress bars)
       .replace(/\r(?!\n)/g, "")
       // Remove stray lone \x1b that might remain
-      .replace(/\x1b(?![[\](])/g, "");
+      .replace(/\x1b(?![\[(\]()])/g, "");
   }
 }
 
@@ -257,6 +260,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
       setOutputEntries([]);
       lineIdRef.current = 0;
       converterRef.current = createAnsiConverter(terminalTheme);
+      stripperRef.current.reset();
     }, [terminalTheme]);
 
     // ── WebSocket connection ─────────────────────────────────────────────────
@@ -315,11 +319,6 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
       const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
       userScrolledUpRef.current = !isAtBottom;
     }, []);
-
-    // Re-scroll when input bar height changes (textarea expand/collapse)
-    const handleInputHeightChange = useCallback(() => {
-      scrollToBottom();
-    }, [scrollToBottom]);
 
     // ── Input handlers ───────────────────────────────────────────────────────
     const handleMobileKeyPress = useCallback(
@@ -416,7 +415,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
         <MobileInputBar
           ref={inputBarRef}
           onSubmit={sendInput}
-          onHeightChange={handleInputHeightChange}
+          onHeightChange={scrollToBottom}
           disabled={status !== "connected"}
           placeholder={session?.terminalType === "agent" ? "Ask the agent..." : "Type a command..."}
         />
