@@ -164,10 +164,15 @@ function broadcastToUser(userId: string, data: Record<string, unknown>): void {
   }
 }
 
+/** Whether a terminal type has agent-like behavior (exit handling, restart, voice). */
+function isAgentTerminalType(type: string): boolean {
+  return type === "agent" || type === "loop";
+}
+
 /** Get the current active and agent session counts for drain status reporting. */
 function getSessionCounts(): { activeSessions: number; activeAgentSessions: number } {
   const activeAgentSessions = [...sessions.values()].filter(
-    (s) => s.terminalType === "agent" || s.terminalType === "loop"
+    (s) => isAgentTerminalType(s.terminalType)
   ).length;
   return { activeSessions: sessions.size, activeAgentSessions };
 }
@@ -1396,7 +1401,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       if (ws.readyState === WebSocket.OPEN) {
         // For agent/loop terminals, send a special agent_exited message
         // The frontend will show an exit screen with restart/close options
-        if (terminalType === "agent" || terminalType === "loop") {
+        if (isAgentTerminalType(terminalType)) {
           agentLog.info("Agent session exited - sending agent_exited event", { sessionId });
           ws.send(JSON.stringify({
             type: "agent_exited",
@@ -1502,7 +1507,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             break;
 
           case "restart_agent": {
-            if (terminalType !== "agent" && terminalType !== "loop") {
+            if (!isAgentTerminalType(terminalType)) {
               ws.send(JSON.stringify({
                 type: "error",
                 message: "restart_agent is only valid for agent sessions",
@@ -1556,7 +1561,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           }
 
           case "voice_start": {
-            if (session.terminalType !== "agent" && session.terminalType !== "loop") {
+            if (!isAgentTerminalType(session.terminalType)) {
               ws.send(JSON.stringify({ type: "voice_error", message: "Voice mode is only available for agent sessions" }));
               break;
             }
