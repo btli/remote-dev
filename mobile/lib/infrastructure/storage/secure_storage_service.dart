@@ -20,6 +20,7 @@ class SecureStorageService {
   static const _terminalPortKey = 'rdv_terminal_port';
   static const _userIdKey = 'rdv_user_id';
   static const _userEmailKey = 'rdv_user_email';
+  static const _cfTokenKey = 'rdv_cf_token';
 
   // API Key
   Future<String?> getApiKey() => _storage.read(key: _apiKeyKey);
@@ -45,6 +46,11 @@ class SecureStorageService {
   Future<void> setUserEmail(String value) =>
       _storage.write(key: _userEmailKey, value: value);
 
+  // CF Access token (for passing through Cloudflare Access)
+  Future<String?> getCfToken() => _storage.read(key: _cfTokenKey);
+  Future<void> setCfToken(String value) =>
+      _storage.write(key: _cfTokenKey, value: value);
+
   /// Store all auth credentials at once after successful login.
   Future<void> storeCredentials({
     required String serverUrl,
@@ -52,6 +58,7 @@ class SecureStorageService {
     required String apiKey,
     required String userId,
     required String email,
+    String? cfToken,
   }) async {
     await Future.wait([
       setServerUrl(serverUrl),
@@ -59,6 +66,7 @@ class SecureStorageService {
       setApiKey(apiKey),
       setUserId(userId),
       setUserEmail(email),
+      if (cfToken != null) setCfToken(cfToken),
     ]);
   }
 

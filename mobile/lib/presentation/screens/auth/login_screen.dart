@@ -43,6 +43,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required String apiKey,
     String userId = '',
     String email = '',
+    String? cfToken,
   }) async {
     final storage = ref.read(secureStorageProvider);
     await storage.storeCredentials(
@@ -51,6 +52,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       apiKey: apiKey,
       userId: userId,
       email: email,
+      cfToken: cfToken,
     );
     ref.read(authNotifierProvider.notifier).loginCompleted();
   }
@@ -100,6 +102,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final apiKey = callbackUri.queryParameters['apiKey'];
       final userId = callbackUri.queryParameters['userId'] ?? '';
       final email = callbackUri.queryParameters['email'] ?? '';
+      final cfToken = callbackUri.queryParameters['cfToken'];
 
       if (apiKey == null || apiKey.isEmpty) {
         if (!mounted) return;
@@ -111,6 +114,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         apiKey: apiKey,
         userId: userId,
         email: email,
+        cfToken: cfToken,
       );
     } on TimeoutException {
       if (!mounted) return;

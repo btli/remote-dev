@@ -32,6 +32,8 @@ class RemoteDevClient {
             connectTimeout: const Duration(seconds: 10),
             receiveTimeout: const Duration(seconds: 30),
             headers: {'Content-Type': 'application/json'},
+            followRedirects: false,
+            validateStatus: (status) => status != null && status < 400,
           ),
         ) {
     _dio.interceptors.add(_AuthInterceptor(storage));
@@ -220,6 +222,14 @@ class RemoteDevClient {
       );
     }
 
+    // CF Access redirects (302/303) indicate expired CF token
+    if (statusCode == 302 || statusCode == 303) {
+      return const AuthError(
+        'Session expired. Please sign in again.',
+        code: 'CF_TOKEN_EXPIRED',
+      );
+    }
+
     if (statusCode == 401 || statusCode == 403) {
       return AuthError(
         message ?? 'Authentication required',
@@ -242,7 +252,7 @@ class RemoteDevClient {
   }
 }
 
-/// Dio interceptor that injects the Bearer API key on every request.
+/// Dio interceptor that injects the Bearer API key and CF Access cookie.
 class _AuthInterceptor extends Interceptor {
   _AuthInterceptor(this._storage);
   final SecureStorageService _storage;
@@ -255,6 +265,11 @@ class _AuthInterceptor extends Interceptor {
     final apiKey = await _storage.getApiKey();
     if (apiKey != null) {
       options.headers['Authorization'] = 'Bearer $apiKey';
+    }
+    // Send CF Access cookie so requests pass through Cloudflare Access
+    final cfToken = await _storage.getCfToken();
+    if (cfToken != null) {
+      options.headers['Cookie'] = 'CF_Authorization=$cfToken';
     }
     handler.next(options);
   }
