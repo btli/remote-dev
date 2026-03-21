@@ -23,6 +23,8 @@ class PushNotificationService {
   final SecureStorageService _storage;
   final GoRouter _router;
   StreamSubscription<String>? _tokenRefreshSub;
+  StreamSubscription<RemoteMessage>? _foregroundMessageSub;
+  StreamSubscription<RemoteMessage>? _messageOpenedSub;
 
   /// Initialize push notifications: request permission, get token, register,
   /// and set up tap handlers for deep linking to sessions.
@@ -56,11 +58,15 @@ class PushNotificationService {
       await _tokenRefreshSub?.cancel();
       _tokenRefreshSub = messaging.onTokenRefresh.listen(_registerToken);
 
-      // Set up foreground message handler
-      FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+      // Set up foreground message handler (cancel previous if re-initialized)
+      await _foregroundMessageSub?.cancel();
+      _foregroundMessageSub =
+          FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
       // Handle notification taps when app is in background
-      FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+      await _messageOpenedSub?.cancel();
+      _messageOpenedSub =
+          FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
 
       // Handle notification tap that launched the app from killed state
       final initialMessage = await messaging.getInitialMessage();
@@ -81,6 +87,10 @@ class PushNotificationService {
     try {
       await _tokenRefreshSub?.cancel();
       _tokenRefreshSub = null;
+      await _foregroundMessageSub?.cancel();
+      _foregroundMessageSub = null;
+      await _messageOpenedSub?.cancel();
+      _messageOpenedSub = null;
       final token = await FirebaseMessaging.instance.getToken();
       if (token != null) {
         await _client.unregisterPushToken(token);

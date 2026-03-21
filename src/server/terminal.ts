@@ -154,6 +154,16 @@ function broadcastToClients(data: Record<string, unknown>): void {
   }
 }
 
+/** Broadcast a JSON message only to WebSocket clients belonging to a specific user */
+function broadcastToUser(userId: string, data: Record<string, unknown>): void {
+  const message = JSON.stringify(data);
+  for (const [, s] of sessions) {
+    if (s.userId === userId && s.ws.readyState === WebSocket.OPEN) {
+      s.ws.send(message);
+    }
+  }
+}
+
 /** Get the current active and agent session counts for drain status reporting. */
 function getSessionCounts(): { activeSessions: number; activeAgentSessions: number } {
   const activeAgentSessions = [...sessions.values()].filter(
@@ -582,8 +592,12 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     }
     const payload = await parseRequestJson(req, res);
     if (!payload) return true;
-    const { ids, all } = payload;
-    broadcastToClients({
+    const { ids, all, userId } = payload;
+    if (!userId) {
+      sendJson(res, 400, { error: "Missing userId" });
+      return true;
+    }
+    broadcastToUser(userId as string, {
       type: "notification_dismissed",
       ids: ids ?? [],
       all: all ?? false,
