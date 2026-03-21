@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FCM push notifications for mobile app**: End-to-end push notification delivery from agent hooks to the Flutter mobile app via Firebase Cloud Messaging
+  - Server: `PushNotificationGateway` port + `FcmPushGateway` (FCM HTTP v1 API) with `NullPushGateway` graceful degradation
+  - New `push_token` DB table and `DrizzlePushTokenRepository` for device token storage
+  - `POST/DELETE /api/notifications/push-token` endpoints for token registration
+  - Push dispatch integrated into `NotificationService.createNotification()` (fire-and-forget)
+  - Cross-channel notification sync: `/internal/notification-dismissed` WebSocket broadcast
+  - Flutter: `PushNotificationService` with FCM lifecycle, token refresh, and deep link to session on tap
+  - Android notification channel via `AndroidManifest.xml` metadata
 - **Mobile worktree creation**: Create git worktrees from the Flutter mobile app's session creation sheet
   - Worktree type picker (feature/fix/chore/refactor/docs/release)
   - Branch name auto-suggestion from session name
