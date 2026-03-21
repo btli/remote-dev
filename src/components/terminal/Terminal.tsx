@@ -19,6 +19,8 @@ export interface TerminalRef {
   restartAgent: () => void;
   /** Get the WebSocket instance (for advanced use) */
   getWebSocket: () => WebSocket | null;
+  /** Send text input to the terminal via WebSocket (for external input sources) */
+  sendInput: (data: string) => void;
 }
 
 interface TerminalProps {
@@ -40,6 +42,8 @@ interface TerminalProps {
   environmentVars?: Record<string, string> | null;
   /** Terminal type for agent exit detection */
   terminalType?: "shell" | "agent" | "file" | string;
+  /** When true, disables xterm.js internal textarea so external input can be used */
+  mobileMode?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
@@ -77,6 +81,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   isActive = false,
   environmentVars,
   terminalType = "shell",
+  mobileMode = false,
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
@@ -205,6 +210,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
     },
     getWebSocket: () => wsRef.current,
+    sendInput: (data: string) => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "input", data }));
+      }
+    },
   }), []);
 
   const updateStatus = useCallback(
@@ -293,6 +304,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         allowProposedApi: true,
         allowTransparency: true, // Required for opacity/glass effect
         scrollback: scrollbackRef.current,
+        // Mobile mode: disable internal textarea so external MobileInputBar handles input
+        disableStdin: mobileMode,
         // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
         // Shift+click also works by default to bypass mouse mode
         macOptionClickForcesSelection: true,
@@ -872,7 +885,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       webglAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, mobileMode]);
 
   // Update terminal options when font preferences change
   useEffect(() => {
