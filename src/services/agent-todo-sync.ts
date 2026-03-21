@@ -11,10 +11,18 @@
 import * as TaskService from "./task-service";
 import { parsePostToolUsePayload, type PostToolUsePayload } from "./agent-todo-sync-pure";
 import { buildStopMessage, POST_TASK_MARKER_PREFIX, POST_TASK_CONFIG } from "./agent-stop-message";
+import { createLogger } from "@/lib/logger";
 import type { UpdateTaskInput, ProjectTask } from "@/types/task";
+
+const log = createLogger("AgentTodoSync");
 
 /** Legacy marker prefix for backward-compatible dedup (pre-agentTaskKey migration) */
 const LEGACY_MARKER_PREFIX = "agent-task:";
+
+/** Find the maximum sortOrder across a set of tasks (-1 if empty). */
+function maxSortOrder(tasks: ProjectTask[]): number {
+  return tasks.reduce((max, t) => Math.max(max, t.sortOrder), -1);
+}
 
 /**
  * Extract agentTaskKey from a task, with fallback to legacy description marker.
@@ -68,6 +76,10 @@ export async function syncAgentTodos(
     }
   }
 
+  // Use max(sortOrder)+1 to avoid collisions from concurrent PostToolUse hooks
+  // (allSessionTasks.length is racy — concurrent hooks may read the same value)
+  const nextSort = maxSortOrder(allSessionTasks) + 1;
+
   let created = 0;
   let updated = 0;
 
@@ -110,7 +122,7 @@ export async function syncAgentTodos(
         agentTaskKey: op.agentTaskId,
         metadata: op.metadata,
         owner: op.owner,
-        sortOrder: allSessionTasks.length + created,
+        sortOrder: nextSort + created,
       });
 
       // Handle blockedBy — resolve agent task IDs to DB task IDs
@@ -158,6 +170,13 @@ export async function syncAgentTodos(
             await TaskService.setDependencies(target.id, blockerDbIds);
           }
         }
+      } else {
+        log.warn("TaskUpdate target not found — update silently dropped", {
+          agentTaskId: op.agentTaskId,
+          existingKeys: [...existingByKey.keys()],
+          agentTaskCount: agentTasks.length,
+          sessionId,
+        });
       }
     }
   }
@@ -217,6 +236,8 @@ export async function checkTasksOnStop(
 
   // Append post-tasks if they don't already exist
   // Uses agentTaskKey-based dedup to prevent duplicates from concurrent stop hook invocations
+  const nextSort = maxSortOrder(tasks) + 1;
+  let postTasksCreated = 0;
   let created = false;
   for (let i = 0; i < POST_TASKS.length; i++) {
     const postTaskTitle = POST_TASKS[i];
@@ -236,8 +257,9 @@ export async function checkTasksOnStop(
         priority: "low",
         source: "agent",
         agentTaskKey: postTaskKey,
-        sortOrder: tasks.length + i,
+        sortOrder: nextSort + postTasksCreated,
       });
+      postTasksCreated++;
       created = true;
     }
   }

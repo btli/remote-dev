@@ -74,18 +74,25 @@ import { RestartAgentUseCase } from "@/application/use-cases/session/RestartAgen
 
 // Update System
 import { DrizzleReleaseRepository } from "./persistence/repositories/DrizzleReleaseRepository";
+import { DrizzleDeploymentRepository } from "./persistence/repositories/DrizzleDeploymentRepository";
 import { GitHubReleaseGatewayImpl } from "./external/update/GitHubReleaseGateway";
+import { TerminalServerDrainGateway } from "./external/update/TerminalServerDrainGateway";
 import { ProcessServiceRestarter } from "./external/update/ProcessServiceRestarter";
 import { TarballInstallerImpl } from "./external/update/TarballInstallerImpl";
 import type { ReleaseRepository } from "@/application/ports/ReleaseRepository";
 import type { ReleaseGateway } from "@/application/ports/ReleaseGateway";
 import type { ServiceRestarter } from "@/application/ports/ServiceRestarter";
 import type { TarballInstaller } from "@/application/ports/TarballInstaller";
+import type { DeploymentRepository } from "@/application/ports/DeploymentRepository";
+import type { SessionDrainGateway } from "@/application/ports/SessionDrainGateway";
 import {
   CheckForUpdatesUseCase,
   ApplyUpdateUseCase,
   GetUpdateStatusUseCase,
+  ScheduleAutoUpdateUseCase,
+  DrainSessionsUseCase,
 } from "@/application/use-cases/update";
+import { AutoUpdateOrchestrator } from "@/services/auto-update-orchestrator";
 import { AppVersion } from "@/domain/value-objects/AppVersion";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -397,6 +404,27 @@ export const getUpdateStatusUseCase = new GetUpdateStatusUseCase(
   currentAppVersion
 );
 
+// Auto-Update System
+export const deploymentRepository: DeploymentRepository = new DrizzleDeploymentRepository();
+
+export const sessionDrainGateway: SessionDrainGateway = new TerminalServerDrainGateway();
+
+export const scheduleAutoUpdateUseCase = new ScheduleAutoUpdateUseCase(
+  deploymentRepository
+);
+
+export const drainSessionsUseCase = new DrainSessionsUseCase(
+  sessionDrainGateway,
+  deploymentRepository
+);
+
+export const autoUpdateOrchestrator = new AutoUpdateOrchestrator(
+  scheduleAutoUpdateUseCase,
+  drainSessionsUseCase,
+  applyUpdateUseCase,
+  deploymentRepository
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -420,6 +448,8 @@ export interface Container {
   releaseGateway: ReleaseGateway;
   serviceRestarter: ServiceRestarter;
   tarballInstaller: TarballInstaller;
+  deploymentRepository: DeploymentRepository;
+  sessionDrainGateway: SessionDrainGateway;
 }
 
 /**
@@ -440,6 +470,8 @@ export const defaultContainer: Container = {
   releaseGateway,
   serviceRestarter,
   tarballInstaller,
+  deploymentRepository,
+  sessionDrainGateway,
 };
 
 /**

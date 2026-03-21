@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CF Access + API key dual authentication flow
   - Adaptive phone/tablet layout with split pane support
   - Mobile keyboard toolbar (ESC, CTRL, ALT, TAB, arrows, symbols)
+- **Poll-based auto-update system**: Multi-server deployment support replacing GitHub webhook dependency
+  - Each server independently polls GitHub Releases for pre-built artifacts
+  - AutoUpdateOrchestrator coordinates lifecycle: detect → schedule → drain → apply → restart
+  - Graceful session draining with configurable timeout (broadcasts `update_pending` to connected clients)
+  - Durable deployment state persisted to SQLite, recovers pending timers on restart
+  - New domain objects: `DeploymentStage`, `UpdatePolicy`, `UpdateDeployment` entity
+  - New use cases: `ScheduleAutoUpdateUseCase`, `DrainSessionsUseCase`
+  - New API actions: `POST /api/system/update { action: "cancel" }` to cancel pending updates
+  - `GET /api/system/update` now includes deployment lifecycle stage info
+  - Configurable via `AUTO_UPDATE_ENABLED`, `AUTO_UPDATE_DELAY_MINUTES`, `AUTO_UPDATE_DRAIN_TIMEOUT_SECONDS`
+
+### Deprecated
+
+- **Webhook deploy endpoint**: `POST /api/deploy` returns 410 when `AUTO_UPDATE_ENABLED=true`, guiding migration to poll-based updates
 - **Worktree cleanup**: New `rdv worktree cleanup` command for agents to trigger full worktree lifecycle cleanup from inside a worktree
   - Merge verification: requires branch is merged into main/master before removal (use `--force` to skip)
   - Removes worktree directory via server-side git commands (solves the CWD-inside-worktree problem)

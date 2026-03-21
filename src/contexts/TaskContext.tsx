@@ -45,6 +45,8 @@ interface TaskContextValue {
   error: string | null;
   activeFolderId: string | null;
   refreshTasks: () => Promise<void>;
+  /** Debounced refresh for event-driven updates (WebSocket broadcasts). */
+  debouncedRefresh: () => void;
   createTask: (input: CreateTaskInput) => Promise<ProjectTask | null>;
   updateTask: (
     id: string,
@@ -111,6 +113,24 @@ export function TaskProvider({ children }: TaskProviderProps) {
       setLoading(false);
     }
   }, [activeFolderId]);
+
+  // Debounced refresh for coalescing rapid WebSocket events (e.g. multiple
+  // agent_todos_updated broadcasts in quick succession from concurrent hooks).
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debouncedRefresh = useCallback(() => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null;
+      refreshTasks();
+    }, 150);
+  }, [refreshTasks]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, []);
 
   // Reload when active folder changes
   useEffect(() => {
@@ -255,6 +275,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
       error,
       activeFolderId,
       refreshTasks,
+      debouncedRefresh,
       createTask,
       updateTask,
       deleteTask,
@@ -266,6 +287,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
       error,
       activeFolderId,
       refreshTasks,
+      debouncedRefresh,
       createTask,
       updateTask,
       deleteTask,
