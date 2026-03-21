@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle } from "lucide-react";
 import { PathInput } from "@/components/common";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { useProfileContext } from "@/contexts/ProfileContext";
@@ -45,12 +45,14 @@ interface NewSessionWizardProps {
     baseBranch?: string;
     profileId?: string;
     // Terminal type for plugin-based rendering
-    terminalType?: "shell" | "agent" | "file";
+    terminalType?: "shell" | "agent" | "file" | "loop";
     // Agent-aware session fields
     agentProvider?: "claude" | "codex" | "gemini" | "opencode" | "none";
     autoLaunchAgent?: boolean;
     agentFlags?: string[];
     worktreeType?: WorktreeType;
+    // Loop agent session fields
+    loopConfig?: import("@/types/loop-agent").LoopConfig;
   }) => Promise<void>;
   isGitHubConnected: boolean;
 }
@@ -64,8 +66,9 @@ type WizardStep =
   | "feature-form"
   | "feature-confirm"
   | "template-list"
-  | "save-template";
-type SessionType = "simple" | "github" | "folder" | "feature" | "template";
+  | "save-template"
+  | "loop-form";
+type SessionType = "simple" | "github" | "folder" | "feature" | "template" | "loop";
 
 export function NewSessionWizard({
   open,
@@ -106,6 +109,14 @@ export function NewSessionWizard({
   const [featureBaseBranch, setFeatureBaseBranch] = useState("main");
   const [isGitRepoValid, setIsGitRepoValid] = useState<boolean | null>(null);
   const [availableBranches, setAvailableBranches] = useState<string[]>([]);
+
+  // Loop session state
+  const [loopName, setLoopName] = useState("");
+  const [loopProjectPath, setLoopProjectPath] = useState("");
+  const [loopType, setLoopType] = useState<"conversational" | "monitoring">("conversational");
+  const [loopAgent, setLoopAgent] = useState<"claude" | "codex" | "gemini" | "opencode">("claude");
+  const [loopIntervalMinutes, setLoopIntervalMinutes] = useState(5);
+  const [loopPromptTemplate, setLoopPromptTemplate] = useState("");
 
   // Auto-generate branch name from feature description
   useEffect(() => {
@@ -177,6 +188,13 @@ export function NewSessionWizard({
     setIsGitRepoValid(null);
     setAvailableBranches([]);
     setWorktreeType("feature");
+    // Loop session reset
+    setLoopName("");
+    setLoopProjectPath("");
+    setLoopType("conversational");
+    setLoopAgent("claude");
+    setLoopIntervalMinutes(5);
+    setLoopPromptTemplate("");
   };
 
   const handleClose = () => {
@@ -190,6 +208,8 @@ export function NewSessionWizard({
       setStep("simple-form");
     } else if (type === "feature") {
       setStep("feature-form");
+    } else if (type === "loop") {
+      setStep("loop-form");
     } else if (type === "template") {
       setStep("template-list");
     } else {
@@ -384,6 +404,7 @@ export function NewSessionWizard({
             {step === "github-branch" && `Choose a branch for ${selectedRepo?.name}`}
             {step === "github-confirm" && "Review and create your session"}
             {step === "feature-form" && "Configure your feature session"}
+            {step === "loop-form" && "Configure your loop agent session"}
             {step === "feature-confirm" && "Review and create your session"}
             {step === "template-list" && "Select a saved template to use"}
           </DialogDescription>
@@ -418,6 +439,12 @@ export function NewSessionWizard({
                 title="Feature Session"
                 description="Start an AI agent session for a new feature"
                 onClick={() => handleTypeSelect("feature")}
+              />
+              <SessionTypeCard
+                icon={<MessageCircle className="w-5 h-5" />}
+                title="Loop Agent"
+                description="Chat-first agent session with loop scheduling"
+                onClick={() => handleTypeSelect("loop")}
               />
               {templates.length > 0 && (
                 <SessionTypeCard
@@ -866,6 +893,186 @@ export function NewSessionWizard({
                 >
                   Review
                   <ChevronRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Loop Agent Form */}
+          {step === "loop-form" && (
+            <div className="space-y-4">
+              {/* Session Name */}
+              <div className="space-y-2">
+                <Label htmlFor="loop-name" className="text-sm font-medium">Session Name</Label>
+                <Input
+                  id="loop-name"
+                  value={loopName}
+                  onChange={(e) => setLoopName(e.target.value)}
+                  placeholder="My Loop Agent"
+                  className="bg-card/50"
+                />
+              </div>
+
+              {/* Project Path */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Project Directory</Label>
+                <PathInput
+                  value={loopProjectPath}
+                  onChange={setLoopProjectPath}
+                  placeholder="~/projects/my-app"
+                />
+              </div>
+
+              {/* Loop Type */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Loop Type</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLoopType("conversational")}
+                    className={cn(
+                      "p-3 rounded-lg border text-left text-sm transition-all",
+                      loopType === "conversational"
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border bg-card/50 text-muted-foreground hover:border-primary/50"
+                    )}
+                  >
+                    <div className="font-medium">Conversational</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Long-running chat with the agent
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoopType("monitoring")}
+                    className={cn(
+                      "p-3 rounded-lg border text-left text-sm transition-all",
+                      loopType === "monitoring"
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border bg-card/50 text-muted-foreground hover:border-primary/50"
+                    )}
+                  >
+                    <div className="font-medium">Monitoring</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Re-fire a prompt on an interval
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Monitoring config (only shown for monitoring type) */}
+              {loopType === "monitoring" && (
+                <div className="space-y-3 p-3 rounded-lg bg-card/30 border border-border/50">
+                  <div className="space-y-2">
+                    <Label htmlFor="loop-interval" className="text-sm font-medium">
+                      Interval (minutes)
+                    </Label>
+                    <Input
+                      id="loop-interval"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={loopIntervalMinutes}
+                      onChange={(e) => setLoopIntervalMinutes(Number(e.target.value) || 5)}
+                      className="bg-card/50 w-24"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="loop-prompt" className="text-sm font-medium">
+                      Prompt Template
+                    </Label>
+                    <textarea
+                      id="loop-prompt"
+                      value={loopPromptTemplate}
+                      onChange={(e) => setLoopPromptTemplate(e.target.value)}
+                      placeholder="Check for failing tests and fix them..."
+                      rows={3}
+                      className="w-full rounded-md border border-border bg-card/50 px-3 py-2 text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 resize-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Agent provider */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Agent</Label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(["claude", "codex", "gemini", "opencode"] as const).map((agent) => (
+                    <button
+                      key={agent}
+                      type="button"
+                      onClick={() => setLoopAgent(agent)}
+                      className={cn(
+                        "px-3 py-2 rounded-lg border text-sm font-medium capitalize transition-all",
+                        loopAgent === agent
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "border-border bg-card/50 text-muted-foreground hover:border-primary/50"
+                      )}
+                    >
+                      {agent}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Profile selector */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium flex items-center gap-2">
+                  <Fingerprint className="w-4 h-4 text-primary" />
+                  Profile
+                </Label>
+                <ProfileSelector
+                  value={selectedProfileId}
+                  onChange={setSelectedProfileId}
+                  placeholder="Select a profile (optional)"
+                  showProviderBadge={true}
+                />
+              </div>
+
+              {error && (
+                <p className="text-sm text-red-400">{error}</p>
+              )}
+
+              <div className="flex gap-2 pt-2">
+                <Button variant="outline" onClick={() => setStep("choose-type")} className="flex-1">
+                  Back
+                </Button>
+                <Button
+                  className="flex-1"
+                  disabled={isCreating || !loopName.trim()}
+                  onClick={async () => {
+                    setIsCreating(true);
+                    setError(null);
+                    try {
+                      await onCreate({
+                        name: loopName.trim(),
+                        projectPath: loopProjectPath || undefined,
+                        profileId: selectedProfileId || undefined,
+                        terminalType: "loop",
+                        agentProvider: loopAgent,
+                        autoLaunchAgent: true,
+                        loopConfig: {
+                          loopType,
+                          intervalSeconds: loopType === "monitoring" ? loopIntervalMinutes * 60 : undefined,
+                          promptTemplate: loopType === "monitoring" ? loopPromptTemplate : undefined,
+                        },
+                      });
+                      handleClose();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Failed to create session");
+                    } finally {
+                      setIsCreating(false);
+                    }
+                  }}
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    "Create Loop Session"
+                  )}
                 </Button>
               </div>
             </div>

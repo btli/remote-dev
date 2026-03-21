@@ -93,6 +93,15 @@ const CodeMirrorEditor = dynamic(
   { ssr: false }
 );
 
+// Dynamically import LoopChatPane for loop-type sessions
+const LoopChatPane = dynamic(
+  () =>
+    import("@/components/loop/LoopChatPane").then(
+      (mod) => mod.LoopChatPane
+    ),
+  { ssr: false }
+);
+
 // Stable subscription functions for useSyncExternalStore (must be outside component)
 // These listen for both cross-tab storage events and same-tab custom events
 function subscribeToSidebarCollapsed(callback: () => void) {
@@ -1739,6 +1748,33 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             fileName={String(metadata?.fileName ?? session.name)}
                             fontSize={prefs.fontSize}
                             fontFamily={prefs.fontFamily}
+                          />
+                        </div>
+                      );
+                    }
+
+                    // Loop type uses LoopChatPane for chat-first UI
+                    if (session.terminalType === "loop") {
+                      return (
+                        <div className="absolute inset-0 z-10">
+                          <LoopChatPane
+                            key={session.id}
+                            session={session}
+                            wsUrl={wsUrl}
+                            fontSize={prefs.fontSize}
+                            fontFamily={prefs.fontFamily}
+                            scrollback={userSettings?.xtermScrollback ?? 10000}
+                            tmuxHistoryLimit={userSettings?.tmuxHistoryLimit ?? 50000}
+                            isActive={session.id === activeSessionId}
+                            environmentVars={getEnvironmentWithSecrets(folderId)}
+                            onAgentActivityStatus={handleAgentActivityStatus}
+                            onAgentTodosUpdated={() => debouncedRefresh()}
+                            onNotification={(notification) => {
+                              addNotification(hydrateNotification(notification));
+                            }}
+                            onSessionStatus={setSessionStatusIndicator}
+                            onSessionProgress={setSessionProgress}
+                            onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
                           />
                         </div>
                       );

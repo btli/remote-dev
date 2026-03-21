@@ -88,6 +88,8 @@ export interface CreateSessionInput {
   createWorktree?: boolean;     // Whether to create worktree
   baseBranch?: string;          // Base branch for new worktree
   worktreeType?: WorktreeType;  // Branch prefix type (feature, fix, etc.)
+  // Loop agent session fields
+  loopConfig?: import("./loop-agent").LoopConfig;
 }
 
 /**

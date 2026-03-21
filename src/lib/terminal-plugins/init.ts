@@ -10,6 +10,7 @@ import { ShellPlugin } from "./plugins/shell-plugin";
 import { AgentPlugin } from "./plugins/agent-plugin";
 import { FileViewerPlugin } from "./plugins/file-viewer-plugin";
 import { BrowserPlugin } from "./plugins/browser-plugin";
+import { LoopAgentPlugin } from "./plugins/loop-agent-plugin";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PluginInit");
@@ -36,6 +37,7 @@ export function initializeBuiltInPlugins(): void {
   TerminalTypeRegistry.register(AgentPlugin, { builtIn: true });
   TerminalTypeRegistry.register(FileViewerPlugin, { builtIn: true });
   TerminalTypeRegistry.register(BrowserPlugin, { builtIn: true });
+  TerminalTypeRegistry.register(LoopAgentPlugin, { builtIn: true });
 
   // Set default type to shell
   TerminalTypeRegistry.setDefaultType("shell");

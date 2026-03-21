@@ -8,6 +8,7 @@
  * - agent: Terminal with agent exit screen overlay
  * - file: CodeMirrorEditor for file viewing/editing
  * - browser: BrowserPane with screenshot streaming
+ * - loop: LoopChatPane with chat-first UI
  */
 
 import { useState, useRef, useCallback } from "react";
@@ -17,6 +18,7 @@ import { AgentExitScreen } from "./AgentExitScreen";
 import { VoiceMicButton } from "./VoiceMicButton";
 import { CodeMirrorEditor } from "./CodeMirrorEditor";
 import { BrowserPane } from "./BrowserPane";
+import { LoopChatPane } from "@/components/loop/LoopChatPane";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { FileViewerMetadata, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -193,6 +195,27 @@ export function TerminalTypeRenderer({
 
     case "agent":
       return renderAgentTerminal("agent");
+
+    case "loop":
+      return (
+        <LoopChatPane
+          session={session}
+          wsUrl={wsUrl}
+          fontSize={fontSize}
+          fontFamily={fontFamily}
+          scrollback={scrollback}
+          tmuxHistoryLimit={tmuxHistoryLimit}
+          isActive={isActive}
+          environmentVars={environmentVars}
+          onAgentActivityStatus={onAgentActivityStatus}
+          onAgentTodosUpdated={onAgentTodosUpdated}
+          onNotification={onNotification}
+          onSessionStatus={onSessionStatus}
+          onSessionProgress={onSessionProgress}
+          onSessionClose={onSessionClose}
+          onAgentStateChange={onAgentStateChange}
+        />
+      );
 
     case "browser":
       return <BrowserPane session={session} />;
