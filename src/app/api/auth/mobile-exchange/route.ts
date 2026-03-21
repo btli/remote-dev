@@ -5,15 +5,14 @@
  * Used by the mobile app after CF Access browser authentication.
  */
 
-import { createHash, randomBytes } from "node:crypto";
-
 import { NextResponse } from "next/server";
 import { createLogger } from "@/lib/logger";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { users, apiKeys } from "@/db/schema";
+import { users } from "@/db/schema";
 import { validateAccessJWT } from "@/lib/cloudflare-access";
+import { createApiKey } from "@/services/api-key-service";
 
 const log = createLogger("api/auth");
 
@@ -55,32 +54,11 @@ export async function POST(request: Request) {
       user = newUser;
     }
 
-    // Generate API key for mobile app
-    const keyPrefix = "rdv_mobile_";
-    const keyValue = randomBytes(32).toString("base64url");
-    const fullKey = `${keyPrefix}${keyValue}`;
-
-    const keyHash = hashApiKey(fullKey);
-
-    // Revoke existing mobile keys so each login gets a fresh key
-    await db.delete(apiKeys).where(
-      and(eq(apiKeys.userId, user.id), eq(apiKeys.keyPrefix, keyPrefix))
-    );
-
-    // Store the new API key
-    await db.insert(apiKeys).values({
-      id: crypto.randomUUID(),
-      userId: user.id,
-      name: "Mobile App",
-      keyHash,
-      keyPrefix,
-      expiresAt: null, // Mobile keys don't expire
-      createdAt: new Date(),
-      lastUsedAt: null,
-    });
+    // Use the standard createApiKey service (handles prefix + hash correctly)
+    const result = await createApiKey(user.id, "Mobile App");
 
     return NextResponse.json({
-      apiKey: fullKey,
+      apiKey: result.key,
       userId: user.id,
       email: user.email,
     });
@@ -91,8 +69,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-}
-
-function hashApiKey(key: string): string {
-  return createHash("sha256").update(key).digest("hex");
 }
