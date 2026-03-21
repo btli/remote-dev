@@ -42,3 +42,14 @@ export type {
   FetchIssuesParams,
   FetchIssueParams,
 } from "./GitHubIssueGateway";
+
+export type {
+  PushNotificationGateway,
+  PushPayload,
+  PushSendResult,
+} from "./PushNotificationGateway";
+
+export type {
+  PushTokenRepository,
+  PushTokenRecord,
+} from "./PushTokenRepository";

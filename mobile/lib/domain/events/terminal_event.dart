@@ -46,6 +46,13 @@ final class NotificationReceived extends TerminalEvent {
   final Map<String, dynamic> data;
 }
 
+/// Notifications were dismissed/read on another client.
+final class NotificationDismissed extends TerminalEvent {
+  const NotificationDismissed({required this.ids, required this.all});
+  final List<String> ids;
+  final bool all;
+}
+
 /// Terminal session ended.
 final class TerminalExited extends TerminalEvent {
   const TerminalExited(this.code);

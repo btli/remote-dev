@@ -169,10 +169,33 @@ class RemoteDevClient {
     );
   }
 
+  // ── Push Tokens ──────────────────────────────────────────────────────
+
+  Future<void> registerPushToken(
+    String token,
+    String platform,
+    String? deviceId,
+  ) async {
+    await _request(
+      () => _dio.post('/api/notifications/push-token', data: {
+        'token': token,
+        'platform': platform,
+        if (deviceId != null) 'deviceId': deviceId,
+      }),
+    );
+  }
+
+  Future<void> unregisterPushToken(String token) async {
+    await _request(
+      () => _dio.delete('/api/notifications/push-token', data: {
+        'token': token,
+      }),
+    );
+  }
+
   // ── Git ──────────────────────────────────────────────────────────────
 
   /// Validates a filesystem path as a git repository and returns local branches.
-  /// Returns { isGitRepo: bool, branches: List<String> }.
   Future<Map<String, dynamic>> validateGitPath(String path) async {
     return _request(
       () => _dio.get(

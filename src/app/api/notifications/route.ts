@@ -67,6 +67,8 @@ export const PATCH = withApiAuth(async (request, { userId }) => {
     } else {
       return errorResponse("Must provide ids or all=true", 400);
     }
+    // Broadcast to all WebSocket clients so mobile/web can sync
+    NotificationService.broadcastDismissed({ ids, all }).catch(() => {});
     return NextResponse.json({ success: true });
   } catch (error) {
     log.error("Error marking notifications read", { error: String(error) });
@@ -88,6 +90,8 @@ export const DELETE = withApiAuth(async (request, { userId }) => {
     } else {
       return errorResponse("Must provide ids or all=true", 400);
     }
+    // Broadcast to all WebSocket clients so mobile/web can sync
+    NotificationService.broadcastDismissed({ ids, all }).catch(() => {});
     return NextResponse.json({ success: true });
   } catch (error) {
     log.error("Error deleting notifications", { error: String(error) });

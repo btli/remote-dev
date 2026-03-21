@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:remote_dev/presentation/providers/push_notification_providers.dart';
 import 'package:remote_dev/presentation/providers/server_config_providers.dart';
 
 /// Authentication state machine.
@@ -48,14 +49,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   /// Called after successful login to transition to authenticated state.
-  void loginCompleted() {
+  Future<void> loginCompleted() async {
     // Invalidate server config so it re-reads from storage
     _ref.invalidate(serverConfigProvider);
-    checkStoredCredentials();
+    await checkStoredCredentials();
+    // Trigger push notification registration after credentials are available
+    _ref.invalidate(pushRegistrationProvider);
   }
 
   /// Sign out: clear storage and transition to unauthenticated.
   Future<void> signOut() async {
+    // Unregister push token before clearing credentials
+    final pushService = _ref.read(pushNotificationServiceProvider);
+    await pushService?.unregister();
+
     final storage = _ref.read(secureStorageProvider);
     await storage.clearAll();
     _ref.invalidate(serverConfigProvider);

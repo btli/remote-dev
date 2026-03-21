@@ -574,6 +574,24 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // POST /internal/notification-dismissed — broadcast that notifications were read/deleted
+  if (pathname === "/internal/notification-dismissed" && req.method === "POST") {
+    if (!isLocalhostRequest(req)) {
+      sendJson(res, 403, { error: "Forbidden: localhost only" });
+      return true;
+    }
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+    const { ids, all } = payload;
+    broadcastToClients({
+      type: "notification_dismissed",
+      ids: ids ?? [],
+      all: all ?? false,
+    });
+    sendJson(res, 200, { success: true });
+    return true;
+  }
+
   // --- Localhost restriction for internal task endpoints ---
   const isInternalTaskEndpoint =
     pathname === "/internal/agent-stop-check" ||

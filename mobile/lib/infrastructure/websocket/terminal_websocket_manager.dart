@@ -126,6 +126,8 @@ class TerminalWebSocketManager implements TerminalGateway {
         WsAgentActivityStatus(:final sessionId, :final status) =>
           AgentStatusChanged(sessionId: sessionId, status: status),
         WsNotification(:final data) => NotificationReceived(data),
+        WsNotificationDismissed(:final ids, :final all) =>
+          NotificationDismissed(ids: ids, all: all),
         WsExit(:final code) => TerminalExited(code),
         WsError(:final message) => TerminalError(message),
         WsAgentRestarted() => null,
