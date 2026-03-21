@@ -20,10 +20,22 @@ class ServerConfig {
   });
 
   /// WebSocket URL derived from the server URL.
+  /// Local dev: ws://localhost:6002 (direct to terminal server port).
+  /// Remote/tunnel: wss://hostname/ws (cloudflared routes to terminal server).
   String get wsUrl {
     final uri = Uri.parse(serverUrl);
     final wsScheme = uri.scheme == 'https' ? 'wss' : 'ws';
-    return '$wsScheme://${uri.host}:$terminalPort';
+    final isLocal = uri.host == 'localhost' ||
+        uri.host == '127.0.0.1' ||
+        uri.host == '10.0.2.2';
+    if (isLocal) {
+      return '$wsScheme://${uri.host}:$terminalPort';
+    }
+    // Remote: use /ws path (cloudflared routes to terminal server)
+    final port = uri.port != 0 && uri.port != 443 && uri.port != 80
+        ? ':${uri.port}'
+        : '';
+    return '$wsScheme://${uri.host}$port/ws';
   }
 }
 
