@@ -16,7 +16,7 @@ import type { TerminalSession } from "@/types/session";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
+// ─── Types & Constants ──────────────────────────────────────────────────────────
 
 export interface MobileTerminalViewRef {
   focus: () => void;
@@ -44,8 +44,6 @@ interface MobileTerminalViewProps {
   onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
   onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
 }
-
-// ─── Types & Constants ──────────────────────────────────────────────────────────
 
 interface OutputEntry {
   id: number;
