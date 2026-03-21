@@ -1596,6 +1596,35 @@ export const notificationEvents = sqliteTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Push Notification Tokens (FCM)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const pushTokens = sqliteTable(
+  "push_token",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    fcmToken: text("fcm_token").notNull(),
+    platform: text("platform").$type<"android" | "ios">().notNull(),
+    deviceId: text("device_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("push_token_user_idx").on(table.userId),
+    uniqueIndex("push_token_fcm_token_idx").on(table.fcmToken),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // System Update Cache
 // ═══════════════════════════════════════════════════════════════════════════════
 

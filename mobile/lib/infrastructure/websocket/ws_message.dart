@@ -77,6 +77,10 @@ sealed class WsServerMessage {
       'notification' => WsNotification(
           json['notification'] as Map<String, dynamic>? ?? {},
         ),
+      'notification_dismissed' => WsNotificationDismissed(
+          ids: (json['ids'] as List?)?.cast<String>() ?? [],
+          all: json['all'] as bool? ?? false,
+        ),
       'exit' => WsExit(json['code'] as int?),
       'error' => WsError(json['message'] as String? ?? 'Unknown error'),
       _ => WsUnknown(type ?? 'null', json),
@@ -152,6 +156,13 @@ final class WsAgentActivityStatus extends WsServerMessage {
 final class WsNotification extends WsServerMessage {
   const WsNotification(this.data);
   final Map<String, dynamic> data;
+}
+
+/// Notifications were dismissed/read on another client.
+final class WsNotificationDismissed extends WsServerMessage {
+  const WsNotificationDismissed({required this.ids, required this.all});
+  final List<String> ids;
+  final bool all;
 }
 
 /// Terminal session ended.

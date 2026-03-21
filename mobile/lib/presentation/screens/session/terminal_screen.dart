@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/application/ports/terminal_gateway.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
+import 'package:remote_dev/presentation/providers/push_notification_providers.dart';
 import 'package:remote_dev/presentation/widgets/terminal/agent_exit_overlay.dart';
 import 'package:remote_dev/presentation/widgets/terminal/terminal_widget.dart';
 
@@ -80,6 +81,11 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     });
   }
 
+  void _onNotificationDismissed(List<String> ids, bool all) {
+    final pushService = ref.read(pushNotificationServiceProvider);
+    pushService?.handleDismissed(ids: ids, all: all);
+  }
+
   Future<void> _suspendSession() async {
     await ref
         .read(sessionListProvider.notifier)
@@ -147,6 +153,7 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
                   fontFamily: fontFamily,
                   fontSize: fontSize,
                   onAgentExited: _onAgentExited,
+                  onNotificationDismissed: _onNotificationDismissed,
                 ),
                 if (_agentExited)
                   AgentExitOverlay(

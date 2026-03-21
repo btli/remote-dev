@@ -24,6 +24,7 @@ class TerminalWidget extends StatefulWidget {
     this.showKeyboardToolbar = true,
     this.onAgentExited,
     this.onConnectionStatusChanged,
+    this.onNotificationDismissed,
   });
 
   final TerminalGateway gateway;
@@ -33,6 +34,7 @@ class TerminalWidget extends StatefulWidget {
   final bool showKeyboardToolbar;
   final void Function(int? exitCode)? onAgentExited;
   final void Function(ConnectionStatus status)? onConnectionStatusChanged;
+  final void Function(List<String> ids, bool all)? onNotificationDismissed;
 
   @override
   State<TerminalWidget> createState() => _TerminalWidgetState();
@@ -98,6 +100,8 @@ class _TerminalWidgetState extends State<TerminalWidget>
       case AgentStatusChanged():
       case NotificationReceived():
         break;
+      case NotificationDismissed(:final ids, :final all):
+        widget.onNotificationDismissed?.call(ids, all);
     }
   }
 

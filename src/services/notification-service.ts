@@ -2,6 +2,25 @@ import { db } from "@/db";
 import { notificationEvents } from "@/db/schema";
 import { eq, and, desc, isNull, inArray, count } from "drizzle-orm";
 import type { NotificationEvent, CreateNotificationInput } from "@/types/notification";
+import type { PushNotificationGateway } from "@/application/ports/PushNotificationGateway";
+import type { PushTokenRepository } from "@/application/ports/PushTokenRepository";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("NotificationService");
+
+// Push notification gateway and token repository — set via DI from container.ts
+let pushGateway: PushNotificationGateway | null = null;
+let pushTokenRepo: PushTokenRepository | null = null;
+
+/** Set the push notification gateway (called from container.ts). */
+export function setPushGateway(gateway: PushNotificationGateway): void {
+  pushGateway = gateway;
+}
+
+/** Set the push token repository (called from container.ts). */
+export function setPushTokenRepository(repo: PushTokenRepository): void {
+  pushTokenRepo = repo;
+}
 
 // Debounce: prevent duplicate notifications per (userId, sessionId, type) within 5s window
 const recentNotifications = new Map<string, number>();
@@ -28,7 +47,7 @@ export async function createNotification(input: CreateNotificationInput): Promis
   if (last && now - last < DEBOUNCE_MS) return null; // debounced
 
   recentNotifications.set(key, now);
-  evictStaleEntries();
+  if (recentNotifications.size > MAX_DEBOUNCE_ENTRIES) evictStaleEntries();
 
   const [row] = await db.insert(notificationEvents).values({
     userId: input.userId,
@@ -39,7 +58,43 @@ export async function createNotification(input: CreateNotificationInput): Promis
     body: input.body ?? null,
   }).returning();
 
-  return mapRow(row);
+  const notification = mapRow(row);
+
+  // Fire-and-forget push notification dispatch
+  if (pushGateway && pushTokenRepo) {
+    dispatchPush(notification).catch((err) =>
+      log.warn("Push notification dispatch failed", { error: String(err) })
+    );
+  }
+
+  return notification;
+}
+
+/** Dispatch push notification to all user devices (fire-and-forget). */
+async function dispatchPush(notification: NotificationEvent): Promise<void> {
+  if (!pushGateway || !pushTokenRepo) return;
+
+  const tokens = await pushTokenRepo.findByUser(notification.userId);
+  if (tokens.length === 0) return;
+
+  const result = await pushGateway.sendToTokens(
+    tokens.map((t) => t.fcmToken),
+    {
+      title: notification.title,
+      body: notification.body,
+      data: {
+        notificationId: notification.id,
+        type: notification.type,
+        ...(notification.sessionId && { sessionId: notification.sessionId }),
+        ...(notification.sessionName && { sessionName: notification.sessionName }),
+      },
+    }
+  );
+
+  // Clean up stale tokens
+  if (result.staleTokens.length > 0) {
+    await pushTokenRepo.deleteByTokens(result.staleTokens);
+  }
 }
 
 export async function listNotifications(
@@ -97,6 +152,37 @@ export async function getUnreadCount(userId: string): Promise<number> {
       isNull(notificationEvents.readAt)
     ));
   return row?.count ?? 0;
+}
+
+/**
+ * Broadcast a notification-dismissed event to all WebSocket clients
+ * via the terminal server's internal endpoint.
+ * Uses same server discovery as rdv CLI: RDV_TERMINAL_SOCKET > RDV_TERMINAL_PORT > TERMINAL_PORT > 6002.
+ * Fire-and-forget — failures are logged but never thrown.
+ */
+export async function broadcastDismissed(opts: { ids?: string[]; all?: boolean }): Promise<void> {
+  try {
+    const baseUrl = resolveTerminalServerUrl();
+    const resp = await fetch(`${baseUrl}/internal/notification-dismissed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    if (!resp.ok) {
+      log.warn("Failed to broadcast notification dismissed", { status: resp.status });
+    }
+  } catch (err) {
+    log.warn("Failed to broadcast notification dismissed", { error: String(err) });
+  }
+}
+
+function resolveTerminalServerUrl(): string {
+  const socketPath = process.env.RDV_TERMINAL_SOCKET;
+  if (socketPath) {
+    return `http://unix:${socketPath}:`;
+  }
+  const port = process.env.RDV_TERMINAL_PORT ?? process.env.TERMINAL_PORT ?? "6002";
+  return `http://127.0.0.1:${port}`;
 }
 
 function mapRow(row: typeof notificationEvents.$inferSelect): NotificationEvent {

@@ -102,6 +102,16 @@ import { getLogRepositoryInstance } from "./persistence/repositories/BetterSqlit
 import { QueryLogsUseCase, PruneLogsUseCase } from "@/application/use-cases/logs";
 import type { LogRepository } from "@/application/ports/LogRepository";
 
+// Push Notifications
+import { DrizzlePushTokenRepository } from "./persistence/repositories/DrizzlePushTokenRepository";
+import { FcmPushGateway, NullPushGateway } from "./external/fcm/FcmPushGateway";
+import type { PushNotificationGateway } from "@/application/ports/PushNotificationGateway";
+import type { PushTokenRepository } from "@/application/ports/PushTokenRepository";
+import {
+  setPushGateway,
+  setPushTokenRepository,
+} from "@/services/notification-service";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Repository Instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -355,6 +365,25 @@ export const queryLogsUseCase = new QueryLogsUseCase(logRepository);
 export const pruneLogsUseCase = new PruneLogsUseCase(logRepository);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Push Notification System
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const pushTokenRepository: PushTokenRepository =
+  new DrizzlePushTokenRepository();
+
+const fcmServiceAccountPath = process.env.FCM_SERVICE_ACCOUNT_PATH;
+const fcmProjectId = process.env.FCM_PROJECT_ID;
+
+export const pushNotificationGateway: PushNotificationGateway =
+  fcmServiceAccountPath && fcmProjectId
+    ? new FcmPushGateway(fcmProjectId, fcmServiceAccountPath)
+    : new NullPushGateway();
+
+// Wire push notification dependencies into NotificationService
+setPushGateway(pushNotificationGateway);
+setPushTokenRepository(pushTokenRepository);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Update System
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -450,6 +479,8 @@ export interface Container {
   tarballInstaller: TarballInstaller;
   deploymentRepository: DeploymentRepository;
   sessionDrainGateway: SessionDrainGateway;
+  pushTokenRepository: PushTokenRepository;
+  pushNotificationGateway: PushNotificationGateway;
 }
 
 /**
@@ -472,6 +503,8 @@ export const defaultContainer: Container = {
   tarballInstaller,
   deploymentRepository,
   sessionDrainGateway,
+  pushTokenRepository,
+  pushNotificationGateway,
 };
 
 /**
