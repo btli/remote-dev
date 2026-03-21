@@ -160,7 +160,7 @@ export async function getUnreadCount(userId: string): Promise<number> {
  * Uses same server discovery as rdv CLI: RDV_TERMINAL_SOCKET > RDV_TERMINAL_PORT > TERMINAL_PORT > 6002.
  * Fire-and-forget — failures are logged but never thrown.
  */
-export async function broadcastDismissed(opts: { ids?: string[]; all?: boolean }): Promise<void> {
+export async function broadcastDismissed(opts: { userId: string; ids?: string[]; all?: boolean }): Promise<void> {
   try {
     const baseUrl = resolveTerminalServerUrl();
     const resp = await fetch(`${baseUrl}/internal/notification-dismissed`, {
