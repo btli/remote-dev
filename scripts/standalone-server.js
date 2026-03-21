@@ -17,6 +17,21 @@ const net = require("net");
 // Set production mode
 process.env.NODE_ENV = "production";
 
+// Load .env.local (standalone mode doesn't auto-load it)
+const dotenvPath = path.join(__dirname, "..", ".env.local");
+if (fs.existsSync(dotenvPath)) {
+  const lines = fs.readFileSync(dotenvPath, "utf-8").split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx);
+    const value = trimmed.slice(eqIdx + 1);
+    if (!process.env[key]) process.env[key] = value;
+  }
+}
+
 // Determine the standalone directory (overridable for blue-green deploys)
 const standaloneDir = process.env.STANDALONE_DIR || path.join(__dirname, "..", ".next", "standalone");
 process.chdir(standaloneDir);

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:remote_dev/presentation/providers/providers.dart';
+import 'package:remote_dev/presentation/providers/push_notification_providers.dart';
 import 'package:remote_dev/presentation/screens/auth/login_screen.dart';
 import 'package:remote_dev/presentation/screens/home/home_screen.dart';
 import 'package:remote_dev/presentation/screens/session/terminal_screen.dart';
@@ -55,6 +56,8 @@ class RemoteDevApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = ref.watch(terminalPaletteProvider);
     final router = ref.watch(routerProvider);
+    // Watch push registration so it actually runs when authenticated
+    ref.watch(pushRegistrationProvider);
 
     return MaterialApp.router(
       title: 'Remote Dev',
