@@ -1,0 +1,97 @@
+name: remote_dev
+description: Remote Dev mobile terminal client - native Android/iOS app for managing persistent tmux sessions
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Terminal emulator
+  xterm: ^4.0.0
+
+  # State management (Riverpod with code generation)
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Networking
+  dio: ^5.7.0
+  web_socket_channel: ^3.0.1
+
+  # Auth & secure storage
+  flutter_secure_storage: ^9.2.2
+  flutter_inappwebview: ^6.1.5
+
+  # Navigation
+  go_router: ^14.6.2
+
+  # Serialization
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Network awareness
+  connectivity_plus: ^6.1.0
+
+  # Local preferences (non-sensitive)
+  shared_preferences: ^2.3.2
+
+  # Utilities
+  collection: ^1.18.0
+  equatable: ^2.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.6.1
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  flutter_lints: ^4.0.0
+  mocktail: ^1.0.4
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/fonts/
+
+  fonts:
+    - family: JetBrainsMono Nerd Font
+      fonts:
+        - asset: assets/fonts/JetBrainsMonoNerdFont-Regular.ttf
+        - asset: assets/fonts/JetBrainsMonoNerdFont-Bold.ttf
+          weight: 700
+    - family: FiraCode Nerd Font
+      fonts:
+        - asset: assets/fonts/FiraCodeNerdFont-Regular.ttf
+        - asset: assets/fonts/FiraCodeNerdFont-Bold.ttf
+          weight: 700
+    # TODO: Download remaining Nerd Font families as needed
+    # - family: Hack Nerd Font
+    # - family: CaskaydiaCove Nerd Font
+    - family: MesloLGS Nerd Font
+      fonts:
+        - asset: assets/fonts/MesloLGSNerdFont-Regular.ttf
+        - asset: assets/fonts/MesloLGSNerdFont-Bold.ttf
+          weight: 700
+    # - family: SourceCodePro Nerd Font
+    # - family: UbuntuMono Nerd Font
+    # - family: RobotoMono Nerd Font
+    # - family: Inconsolata Nerd Font
+    # - family: DejaVuSansMono Nerd Font
+    # - family: DroidSansMono Nerd Font
+    # - family: Noto Nerd Font
+    # - family: SpaceMono Nerd Font
+    # - family: IBMPlexMono Nerd Font
+    # - family: VictorMono Nerd Font
+    # - family: Iosevka Nerd Font
+    # - family: AnonymousPro Nerd Font
+    # - family: FiraMono Nerd Font
+    # - family: GeistMono Nerd Font
+    # - family: CommitMono Nerd Font
+    # - family: Monaspace Nerd Font
+    # - family: 0xProto Nerd Font

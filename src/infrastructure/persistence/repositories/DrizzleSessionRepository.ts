@@ -14,9 +14,12 @@ import type {
   SessionFilters,
   SessionOrderBy,
 } from "@/application/ports/SessionRepository";
+import type { SessionFolderQueryPort } from "@/application/ports/SessionFolderQueryPort";
 import { SessionMapper, type SessionDbRecord } from "../mappers/SessionMapper";
 
-export class DrizzleSessionRepository implements SessionRepository {
+export class DrizzleSessionRepository
+  implements SessionRepository, SessionFolderQueryPort
+{
   /**
    * Find a session by ID with user ownership check.
    */
@@ -186,6 +189,33 @@ export class DrizzleSessionRepository implements SessionRepository {
       filters: { splitGroupId },
       orderBy: { field: "tabOrder", direction: "asc" },
     });
+  }
+
+  /**
+   * Lightweight query for session-to-folder mappings (avoids domain entity mapping).
+   */
+  async findSessionFolderMappings(
+    userId: string
+  ): Promise<{ sessionId: string; folderId: string }[]> {
+    const rows = await db
+      .select({
+        id: terminalSessions.id,
+        folderId: terminalSessions.folderId,
+      })
+      .from(terminalSessions)
+      .where(
+        and(
+          eq(terminalSessions.userId, userId),
+          isNotNull(terminalSessions.folderId)
+        )
+      );
+
+    return rows
+      .filter((r) => r.folderId != null)
+      .map((r) => ({
+        sessionId: r.id,
+        folderId: r.folderId!,
+      }));
   }
 
   /**

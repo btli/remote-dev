@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import {
   listFoldersUseCase,
   createFolderUseCase,
@@ -10,7 +10,7 @@ import { EntityNotFoundError } from "@/domain/errors/DomainError";
 /**
  * GET /api/folders - Get all folders and session mappings for the current user
  */
-export const GET = withAuth(async (_request, { userId }) => {
+export const GET = withApiAuth(async (_request, { userId }) => {
   const result = await listFoldersUseCase.execute({ userId });
 
   return NextResponse.json({
@@ -22,7 +22,7 @@ export const GET = withAuth(async (_request, { userId }) => {
 /**
  * POST /api/folders - Create a new folder (optionally nested)
  */
-export const POST = withAuth(async (request, { userId }) => {
+export const POST = withApiAuth(async (request, { userId }) => {
   const result = await parseJsonBody<{ name: string; parentId?: string | null }>(request);
   if ("error" in result) return result.error;
   const { name, parentId } = result.data;

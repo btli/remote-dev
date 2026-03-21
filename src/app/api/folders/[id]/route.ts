@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
+import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import {
   updateFolderUseCase,
   moveFolderUseCase,
@@ -11,7 +11,7 @@ import { EntityNotFoundError, BusinessRuleViolationError } from "@/domain/errors
 /**
  * PATCH /api/folders/:id - Update a folder (or move to new parent)
  */
-export const PATCH = withAuth(async (request, { userId, params }) => {
+export const PATCH = withApiAuth(async (request, { userId, params }) => {
   const result = await parseJsonBody<{
     name?: string;
     collapsed?: boolean;
@@ -80,7 +80,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 /**
  * DELETE /api/folders/:id - Delete a folder
  */
-export const DELETE = withAuth(async (_request, { userId, params }) => {
+export const DELETE = withApiAuth(async (_request, { userId, params }) => {
   try {
     await deleteFolderUseCase.execute({
       folderId: params!.id,
