@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mobile terminal send button**: Wrapped `MobileInputBar` in a `<form>` so the mobile keyboard's `enterKeyHint="send"` properly triggers submission instead of inserting a newline
+- **Mobile terminal output resize**: Output panel now scrolls to bottom when the input textarea auto-expands with multi-line content
+- **Mobile terminal ANSI garbage**: Added stateful `AnsiStripper` that strips non-SGR terminal control sequences (cursor movement, screen clearing, tmux status bar, character set selection) before rendering, handling sequences split across WebSocket chunks
+
 ## [0.3.1] - 2026-03-21
 
 ### Added
