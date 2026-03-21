@@ -49,6 +49,11 @@ class ApiSessionRepository implements SessionRepository {
         if (input.agentFlags != null) 'agentFlags': input.agentFlags,
         if (input.startupCommand != null) 'startupCommand': input.startupCommand,
         if (input.parentSessionId != null) 'parentSessionId': input.parentSessionId,
+        if (input.createWorktree) 'createWorktree': true,
+        if (input.worktreeType != null) 'worktreeType': input.worktreeType,
+        if (input.baseBranch != null) 'baseBranch': input.baseBranch,
+        if (input.featureDescription != null)
+          'featureDescription': input.featureDescription,
       });
       return Success(_mapSession(data));
     } on AppError catch (e) {
