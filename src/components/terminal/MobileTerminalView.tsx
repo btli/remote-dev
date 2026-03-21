@@ -243,18 +243,26 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     }), []);
 
     // ── Auto-scroll ──────────────────────────────────────────────────────────
-    useEffect(() => {
+    const scrollToBottom = useCallback(() => {
       if (userScrolledUpRef.current) return;
       anchorRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
-    }, [outputEntries]);
+    }, []);
+
+    useEffect(() => {
+      scrollToBottom();
+    }, [outputEntries, scrollToBottom]);
 
     const handleScroll = useCallback(() => {
       const el = scrollRef.current;
       if (!el) return;
-      // User scrolled up if they're more than 50px from the bottom
       const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
       userScrolledUpRef.current = !isAtBottom;
     }, []);
+
+    // Re-scroll when input bar height changes (textarea expand/collapse)
+    const handleInputHeightChange = useCallback(() => {
+      scrollToBottom();
+    }, [scrollToBottom]);
 
     // ── Input handlers ───────────────────────────────────────────────────────
     const handleMobileKeyPress = useCallback(
@@ -351,6 +359,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
         <MobileInputBar
           ref={inputBarRef}
           onSubmit={sendInput}
+          onHeightChange={handleInputHeightChange}
           disabled={status !== "connected"}
           placeholder={session?.terminalType === "agent" ? "Ask the agent..." : "Type a command..."}
         />
