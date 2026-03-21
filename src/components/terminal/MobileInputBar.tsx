@@ -37,7 +37,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
     const [value, setValue] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement);
+    useImperativeHandle(ref, () => textareaRef.current!, []);
 
     const resetTextareaHeight = useCallback(() => {
       const textarea = textareaRef.current;
@@ -47,7 +47,8 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       onHeightChange?.();
     }, [onHeightChange]);
 
-    const handleSubmit = useCallback(() => {
+    const handleSubmit = useCallback((e?: React.FormEvent) => {
+      e?.preventDefault();
       const trimmed = value.trim();
       if (!trimmed || disabled) return;
 
@@ -55,14 +56,6 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       setValue("");
       resetTextareaHeight();
     }, [value, disabled, onSubmit, resetTextareaHeight]);
-
-    const handleFormSubmit = useCallback(
-      (e: React.FormEvent) => {
-        e.preventDefault();
-        handleSubmit();
-      },
-      [handleSubmit]
-    );
 
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -83,7 +76,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
 
     return (
       <form
-        onSubmit={handleFormSubmit}
+        onSubmit={handleSubmit}
         className={cn(
           "flex items-end gap-1.5 px-2 py-1.5 bg-popover/95 backdrop-blur-sm border-t border-border",
           className
