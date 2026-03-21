@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Cross-channel notification sync: `/internal/notification-dismissed` WebSocket broadcast
   - Flutter: `PushNotificationService` with FCM lifecycle, token refresh, and deep link to session on tap
   - Android notification channel via `AndroidManifest.xml` metadata
+- **Mobile-optimized terminal with native text input**: On mobile devices, replaces xterm.js canvas with a native text input bar and ANSI-to-HTML output panel
+  - `MobileTerminalView`: scrollable output panel with theme-aware ANSI color rendering
+  - `MobileInputBar`: native `<textarea>` with autocorrect, predictive text, and voice dictation
+  - `useTerminalWebSocket`: shared WebSocket hook with auth, reconnect, and message dispatch
+  - All session types (shell, agent) get native text input on mobile; desktop path unchanged
 - **Mobile worktree creation**: Create git worktrees from the Flutter mobile app's session creation sheet
   - Worktree type picker (feature/fix/chore/refactor/docs/release)
   - Branch name auto-suggestion from session name

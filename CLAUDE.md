@@ -439,7 +439,9 @@ bun run test:coverage  # Run tests with coverage
 | Component | Purpose |
 |-----------|---------|
 | `Terminal.tsx` | xterm.js wrapper with WebSocket and recording support |
-| `TerminalWithKeyboard.tsx` | Terminal with mobile keyboard support |
+| `TerminalWithKeyboard.tsx` | Terminal with mobile keyboard support (routes to MobileTerminalView on mobile) |
+| `MobileTerminalView.tsx` | Mobile-optimized terminal: ANSI output panel + native text input + special keys |
+| `MobileInputBar.tsx` | Native textarea with autocorrect, voice dictation, and predictive text |
 | `SplitPane.tsx` | In-session split pane container (multiple terminals in one session) |
 | `SplitPaneLayout.tsx` | Cross-session split layout (multiple sessions side-by-side) |
 | `ResizeHandle.tsx` | Draggable resize handle for split panes |
