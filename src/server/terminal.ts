@@ -167,7 +167,7 @@ function broadcastToUser(userId: string, data: Record<string, unknown>): void {
 /** Get the current active and agent session counts for drain status reporting. */
 function getSessionCounts(): { activeSessions: number; activeAgentSessions: number } {
   const activeAgentSessions = [...sessions.values()].filter(
-    (s) => s.terminalType === "agent"
+    (s) => s.terminalType === "agent" || s.terminalType === "loop"
   ).length;
   return { activeSessions: sessions.size, activeAgentSessions };
 }
@@ -1394,9 +1394,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       log.debug("PTY exited", { sessionId, exitCode, terminalType });
 
       if (ws.readyState === WebSocket.OPEN) {
-        // For agent terminals, send a special agent_exited message
+        // For agent/loop terminals, send a special agent_exited message
         // The frontend will show an exit screen with restart/close options
-        if (terminalType === "agent") {
+        if (terminalType === "agent" || terminalType === "loop") {
           agentLog.info("Agent session exited - sending agent_exited event", { sessionId });
           ws.send(JSON.stringify({
             type: "agent_exited",
@@ -1502,7 +1502,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             break;
 
           case "restart_agent": {
-            if (terminalType !== "agent") {
+            if (terminalType !== "agent" && terminalType !== "loop") {
               ws.send(JSON.stringify({
                 type: "error",
                 message: "restart_agent is only valid for agent sessions",
@@ -1556,7 +1556,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           }
 
           case "voice_start": {
-            if (session.terminalType !== "agent") {
+            if (session.terminalType !== "agent" && session.terminalType !== "loop") {
               ws.send(JSON.stringify({ type: "voice_error", message: "Voice mode is only available for agent sessions" }));
               break;
             }
