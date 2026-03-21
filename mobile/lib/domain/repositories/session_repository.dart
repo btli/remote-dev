@@ -14,6 +14,12 @@ class CreateSessionInput {
   final String? startupCommand;
   final String? parentSessionId;
 
+  // Worktree fields
+  final bool createWorktree;
+  final String? worktreeType;
+  final String? baseBranch;
+  final String? featureDescription;
+
   const CreateSessionInput({
     required this.name,
     this.projectPath,
@@ -25,6 +31,10 @@ class CreateSessionInput {
     this.agentFlags,
     this.startupCommand,
     this.parentSessionId,
+    this.createWorktree = false,
+    this.worktreeType,
+    this.baseBranch,
+    this.featureDescription,
   });
 }
 

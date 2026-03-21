@@ -169,6 +169,19 @@ class RemoteDevClient {
     );
   }
 
+  // ── Git ──────────────────────────────────────────────────────────────
+
+  /// Validates a filesystem path as a git repository and returns local branches.
+  /// Returns { isGitRepo: bool, branches: List<String> }.
+  Future<Map<String, dynamic>> validateGitPath(String path) async {
+    return _request(
+      () => _dio.get(
+        '/api/git/validate',
+        queryParameters: {'path': path},
+      ),
+    );
+  }
+
   // ── Splits ────────────────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> listSplits() async {
