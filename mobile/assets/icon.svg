@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Dark Tokyo Night background -->
+  <rect width="1024" height="1024" fill="#1a1b26"/>
+
+  <!-- Terminal prompt chevron > -->
+  <path d="M270 250 L500 512 L270 774" stroke="#7aa2f7" stroke-width="72" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Underscore cursor _ -->
+  <rect x="540" y="700" width="200" height="52" rx="8" fill="#7aa2f7"/>
+</svg>
