@@ -19,6 +19,8 @@ export interface TerminalRef {
   restartAgent: () => void;
   /** Get the WebSocket instance (for advanced use) */
   getWebSocket: () => WebSocket | null;
+  /** Send text input to the terminal via WebSocket (for external input sources) */
+  sendInput: (data: string) => void;
 }
 
 interface TerminalProps {
@@ -40,6 +42,8 @@ interface TerminalProps {
   environmentVars?: Record<string, string> | null;
   /** Terminal type for agent exit detection */
   terminalType?: "shell" | "agent" | "file" | string;
+  /** When true, disables xterm.js internal textarea so external input can be used */
+  mobileMode?: boolean;
   onStatusChange?: (status: ConnectionStatus) => void;
   onWebSocketReady?: (ws: WebSocket | null) => void;
   onSessionExit?: (exitCode: number) => void;
@@ -77,6 +81,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   isActive = false,
   environmentVars,
   terminalType = "shell",
+  mobileMode = false,
   onStatusChange,
   onWebSocketReady,
   onSessionExit,
@@ -156,6 +161,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const fontFamilyRef = useRef(fontFamily);
   const scrollbackRef = useRef(scrollback);
   const tmuxHistoryLimitRef = useRef(tmuxHistoryLimit);
+  // mobileMode only matters at terminal construction (disableStdin can't change post-init)
+  const mobileModeRef = useRef(mobileMode);
 
   // FIX: Use ref for terminal theme to avoid recreating terminal on theme changes.
   // Theme updates are applied dynamically via terminal.options.theme
@@ -187,11 +194,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // Keep scrollback refs in sync for pending terminal initialization
     scrollbackRef.current = scrollback;
     tmuxHistoryLimitRef.current = tmuxHistoryLimit;
+    mobileModeRef.current = mobileMode;
     // Keep environmentVars in sync (only used during initial connection)
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -205,6 +213,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       }
     },
     getWebSocket: () => wsRef.current,
+    sendInput: (data: string) => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "input", data }));
+      }
+    },
   }), []);
 
   const updateStatus = useCallback(
@@ -293,6 +307,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         allowProposedApi: true,
         allowTransparency: true, // Required for opacity/glass effect
         scrollback: scrollbackRef.current,
+        // Mobile mode: disable internal textarea so external MobileInputBar handles input
+        disableStdin: mobileModeRef.current,
         // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
         // Shift+click also works by default to bypass mouse mode
         macOptionClickForcesSelection: true,
@@ -1340,6 +1356,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     if ("button" in e && e.button !== 0) {
       return;
     }
+    // In mobile mode, don't steal focus from the external MobileInputBar
+    if (mobileModeRef.current) return;
     xtermRef.current?.focus();
   }, []);
 
