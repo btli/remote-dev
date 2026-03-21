@@ -54,6 +54,62 @@ const MAX_OUTPUT_ENTRIES = 2000;
 const MOBILE_COLS = 120;
 const MOBILE_ROWS = 24;
 
+/**
+ * Stateful terminal escape sequence stripper.
+ *
+ * Handles sequences split across WebSocket chunks by buffering incomplete
+ * escapes. Keeps SGR (colors/styles ending in 'm') for ansi-to-html.
+ * Strips everything else: cursor movement, screen clearing, tmux status
+ * bar rendering, character set selection, OSC, DCS, etc.
+ */
+class AnsiStripper {
+  private pending = "";
+  private static readonly MAX_PENDING = 64;
+
+  reset(): void {
+    this.pending = "";
+  }
+
+  process(data: string): string {
+    let input = this.pending + data;
+    this.pending = "";
+
+    // Buffer incomplete escape sequence at end of chunk for next call.
+    // Only buffer from the last \x1b if it's incomplete — complete
+    // sequences before it are kept for regex processing below.
+    const lastEsc = input.lastIndexOf("\x1b");
+    if (lastEsc !== -1) {
+      const tail = input.slice(lastEsc);
+      const isComplete =
+        /^\x1b\[[0-9;?]*[A-Za-z]/.test(tail) ||  // CSI (including SGR)
+        /^\x1b\].*(?:\x07|\x1b\\)/.test(tail) ||  // OSC
+        (/^\x1b[^[\]()]/.test(tail) && tail.length >= 2) ||  // Single-char
+        /^\x1b[()]./.test(tail);  // Character set
+
+      if (!isComplete) {
+        this.pending = tail.length <= AnsiStripper.MAX_PENDING ? tail : "";
+        input = input.slice(0, lastEsc);
+      }
+    }
+
+    return input
+      // Remove CSI sequences that are NOT SGR (ending in a-l, n-z, A-Z except m)
+      .replace(/\x1b\[[0-9;?]*[A-HJ-Za-lp-z]/g, "")
+      // Remove OSC sequences: \x1b] ... (terminated by BEL or ST)
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+      // Remove DCS/PM/APC sequences
+      .replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, "")
+      // Remove character set selection: \x1b(B, \x1b)0, etc.
+      .replace(/\x1b[()][A-Z0-9]/g, "")
+      // Remove single-character escapes (\x1b=, \x1b>, \x1bM, etc.)
+      .replace(/\x1b(?![\[(\])])[^\x1b]/g, "")
+      // Remove \r not followed by \n (in-line overwrites from progress bars)
+      .replace(/\r(?!\n)/g, "")
+      // Remove stray lone \x1b that might remain
+      .replace(/\x1b(?![\[(\]()])/g, "");
+  }
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -137,6 +193,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     const anchorRef = useRef<HTMLDivElement>(null);
     const inputBarRef = useRef<HTMLTextAreaElement>(null);
     const converterRef = useRef<AnsiToHtml | null>(null);
+    const stripperRef = useRef(new AnsiStripper());
     const lineIdRef = useRef(0);
     const userScrolledUpRef = useRef(false);
 
@@ -168,7 +225,10 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     const appendAnsiOutput = useCallback((ansi: string) => {
       const converter = converterRef.current;
       if (!converter) return;
-      const html = converter.toHtml(ansi);
+      // Strip non-SGR control sequences before color conversion
+      const cleaned = stripperRef.current.process(ansi);
+      if (!cleaned) return;
+      const html = converter.toHtml(cleaned);
       if (!html) return;
       setOutputEntries(prev => {
         const newEntry: OutputEntry = { id: lineIdRef.current++, html };
@@ -200,6 +260,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
       setOutputEntries([]);
       lineIdRef.current = 0;
       converterRef.current = createAnsiConverter(terminalTheme);
+      stripperRef.current.reset();
     }, [terminalTheme]);
 
     // ── WebSocket connection ─────────────────────────────────────────────────
@@ -243,15 +304,18 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     }), []);
 
     // ── Auto-scroll ──────────────────────────────────────────────────────────
-    useEffect(() => {
+    const scrollToBottom = useCallback(() => {
       if (userScrolledUpRef.current) return;
       anchorRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
-    }, [outputEntries]);
+    }, []);
+
+    useEffect(() => {
+      scrollToBottom();
+    }, [outputEntries, scrollToBottom]);
 
     const handleScroll = useCallback(() => {
       const el = scrollRef.current;
       if (!el) return;
-      // User scrolled up if they're more than 50px from the bottom
       const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
       userScrolledUpRef.current = !isAtBottom;
     }, []);
@@ -351,6 +415,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
         <MobileInputBar
           ref={inputBarRef}
           onSubmit={sendInput}
+          onHeightChange={scrollToBottom}
           disabled={status !== "connected"}
           placeholder={session?.terminalType === "agent" ? "Ask the agent..." : "Type a command..."}
         />
