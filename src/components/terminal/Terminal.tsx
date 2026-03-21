@@ -161,6 +161,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const fontFamilyRef = useRef(fontFamily);
   const scrollbackRef = useRef(scrollback);
   const tmuxHistoryLimitRef = useRef(tmuxHistoryLimit);
+  // mobileMode only matters at terminal construction (disableStdin can't change post-init)
+  const mobileModeRef = useRef(mobileMode);
 
   // FIX: Use ref for terminal theme to avoid recreating terminal on theme changes.
   // Theme updates are applied dynamically via terminal.options.theme
@@ -192,11 +194,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // Keep scrollback refs in sync for pending terminal initialization
     scrollbackRef.current = scrollback;
     tmuxHistoryLimitRef.current = tmuxHistoryLimit;
+    mobileModeRef.current = mobileMode;
     // Keep environmentVars in sync (only used during initial connection)
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -305,7 +308,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         allowTransparency: true, // Required for opacity/glass effect
         scrollback: scrollbackRef.current,
         // Mobile mode: disable internal textarea so external MobileInputBar handles input
-        disableStdin: mobileMode,
+        disableStdin: mobileModeRef.current,
         // Enable Option+click to force selection on macOS (bypasses tmux mouse mode)
         // Shift+click also works by default to bypass mouse mode
         macOptionClickForcesSelection: true,
@@ -885,7 +888,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       webglAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit, mobileMode]);
+  }, [sessionId, tmuxSessionName, projectPath, wsUrl, updateStatus, terminalType, markIntentionalExit]);
 
   // Update terminal options when font preferences change
   useEffect(() => {
@@ -1353,6 +1356,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     if ("button" in e && e.button !== 0) {
       return;
     }
+    // In mobile mode, don't steal focus from the external MobileInputBar
+    if (mobileModeRef.current) return;
     xtermRef.current?.focus();
   }, []);
 
