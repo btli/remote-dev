@@ -132,6 +132,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   const handleMobileKeyPress = useCallback(
     (key: string, modifiers?: { ctrl?: boolean; alt?: boolean }) => {
       let data = key;
+      // Convert Ctrl+letter to ANSI control code (Ctrl+A = 0x01, ..., Ctrl+Z = 0x1A)
       if (modifiers?.ctrl && key.length === 1) {
         const charCode = key.toUpperCase().charCodeAt(0);
         if (charCode >= 65 && charCode <= 90) {
@@ -171,6 +172,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         isRecording={isRecording}
         isActive={isActive}
         environmentVars={environmentVars}
+        terminalType={session?.terminalType}
         mobileMode={isMobile}
         onStatusChange={handleStatusChange}
         onWebSocketReady={handleWebSocketReady}
