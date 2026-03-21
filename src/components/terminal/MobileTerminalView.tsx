@@ -54,6 +54,59 @@ const MAX_OUTPUT_ENTRIES = 2000;
 const MOBILE_COLS = 120;
 const MOBILE_ROWS = 24;
 
+/**
+ * Stateful terminal escape sequence stripper.
+ *
+ * Handles sequences split across WebSocket chunks by buffering incomplete
+ * escapes. Keeps SGR (colors/styles ending in 'm') for ansi-to-html.
+ * Strips everything else: cursor movement, screen clearing, tmux status
+ * bar rendering, character set selection, OSC, DCS, etc.
+ */
+class AnsiStripper {
+  private pending = "";
+
+  process(data: string): string {
+    // Prepend any buffered partial sequence from previous chunk
+    let input = this.pending + data;
+    this.pending = "";
+
+    // If input ends with an incomplete escape, buffer it for next chunk
+    const lastEsc = input.lastIndexOf("\x1b");
+    if (lastEsc !== -1) {
+      const tail = input.slice(lastEsc);
+      // Check if tail is a complete sequence or still accumulating
+      // A complete CSI ends with a letter; a complete OSC ends with BEL or ST
+      const isCompleteCsi = /^\x1b\[[0-9;?]*[A-Za-z]/.test(tail);
+      const isCompleteSgr = /^\x1b\[[0-9;]*m/.test(tail);
+      const isCompleteOsc = /^\x1b\].*(?:\x07|\x1b\\)/.test(tail);
+      const isSingleChar = /^\x1b[^[\]()]/.test(tail) && tail.length >= 2;
+      const isCharSet = /^\x1b[()]./.test(tail);
+
+      if (!isCompleteCsi && !isCompleteSgr && !isCompleteOsc && !isSingleChar && !isCharSet) {
+        // Incomplete sequence — buffer it
+        this.pending = tail;
+        input = input.slice(0, lastEsc);
+      }
+    }
+
+    return input
+      // Remove CSI sequences that are NOT SGR (ending in a-l, n-z, A-Z except m)
+      .replace(/\x1b\[[0-9;?]*[A-HJ-Za-lp-z]/g, "")
+      // Remove OSC sequences: \x1b] ... (terminated by BEL or ST)
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+      // Remove DCS/PM/APC sequences
+      .replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, "")
+      // Remove character set selection: \x1b(B, \x1b)0, etc.
+      .replace(/\x1b[()][A-Z0-9]/g, "")
+      // Remove single-character escapes (\x1b=, \x1b>, \x1bM, etc.)
+      .replace(/\x1b[^\[(\])]/g, "")
+      // Remove \r not followed by \n (in-line overwrites from progress bars)
+      .replace(/\r(?!\n)/g, "")
+      // Remove stray lone \x1b that might remain
+      .replace(/\x1b(?![[\](])/g, "");
+  }
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -137,6 +190,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     const anchorRef = useRef<HTMLDivElement>(null);
     const inputBarRef = useRef<HTMLTextAreaElement>(null);
     const converterRef = useRef<AnsiToHtml | null>(null);
+    const stripperRef = useRef(new AnsiStripper());
     const lineIdRef = useRef(0);
     const userScrolledUpRef = useRef(false);
 
@@ -168,7 +222,10 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     const appendAnsiOutput = useCallback((ansi: string) => {
       const converter = converterRef.current;
       if (!converter) return;
-      const html = converter.toHtml(ansi);
+      // Strip non-SGR control sequences before color conversion
+      const cleaned = stripperRef.current.process(ansi);
+      if (!cleaned) return;
+      const html = converter.toHtml(cleaned);
       if (!html) return;
       setOutputEntries(prev => {
         const newEntry: OutputEntry = { id: lineIdRef.current++, html };
