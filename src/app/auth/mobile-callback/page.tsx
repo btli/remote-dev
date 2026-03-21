@@ -48,9 +48,11 @@ export default async function MobileCallbackPage() {
     email: user.email,
   });
 
-  // Redirect to deep link — the Flutter app intercepts this
+  // Redirect to deep link — the Flutter app intercepts this.
+  // Include the CF token so the app can send it as a cookie on API requests
+  // (CF Access blocks requests without a valid CF_Authorization cookie).
   redirect(
-    `remotedev://auth/callback?apiKey=${encodeURIComponent(result.key)}&userId=${encodeURIComponent(user.id)}&email=${encodeURIComponent(user.email ?? "")}`
+    `remotedev://auth/callback?apiKey=${encodeURIComponent(result.key)}&userId=${encodeURIComponent(user.id)}&email=${encodeURIComponent(user.email ?? "")}&cfToken=${encodeURIComponent(cfToken)}`
   );
 }
 
