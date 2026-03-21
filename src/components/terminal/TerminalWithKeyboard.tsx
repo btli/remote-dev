@@ -3,13 +3,13 @@
 import { useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import { Terminal, type TerminalRef } from "./Terminal";
 import { VoiceMicButton } from "./VoiceMicButton";
-import { MobileKeyboard } from "./MobileKeyboard";
+import { MobileTerminalView, type MobileTerminalViewRef } from "./MobileTerminalView";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { useMobile } from "@/hooks/useMobile";
-import { sendImageToTerminal } from "@/lib/image-upload";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { TerminalSession } from "@/types/session";
+import type { SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 
 export interface TerminalWithKeyboardRef {
   focus: () => void;
@@ -46,9 +46,9 @@ interface TerminalWithKeyboardProps {
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
   /** Called when a session status indicator is set or cleared */
-  onSessionStatus?: (sessionId: string, key: string, indicator: import("@/types/terminal-type").SessionStatusIndicator | null) => void;
+  onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
   /** Called when session progress is updated or cleared */
-  onSessionProgress?: (sessionId: string, progress: import("@/types/terminal-type").SessionProgress | null) => void;
+  onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
 }
 
 export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
@@ -80,6 +80,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
+  const mobileViewRef = useRef<MobileTerminalViewRef>(null);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [exitCode, setExitCode] = useState(0);
   const isMobile = useMobile();
@@ -87,9 +88,13 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
     focus: () => {
-      terminalRef.current?.focus();
+      if (isMobile) {
+        mobileViewRef.current?.focus();
+      } else {
+        terminalRef.current?.focus();
+      }
     },
-  }), []);
+  }), [isMobile]);
 
   const handleWebSocketReady = useCallback((ws: WebSocket | null) => {
     wsRef.current = ws;
@@ -98,58 +103,60 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   const handleSessionExit = useCallback((code: number) => {
     setExitCode(code);
     setSessionEnded(true);
-    // Don't call onSessionExit immediately - wait for user action
   }, []);
 
   const handleRestart = useCallback(async () => {
-    if (onSessionRestart) {
-      await onSessionRestart();
-    }
+    await onSessionRestart?.();
   }, [onSessionRestart]);
 
   const handleDelete = useCallback(async (deleteWorktree?: boolean) => {
     if (onSessionDelete) {
       await onSessionDelete(deleteWorktree);
     } else {
-      // Fallback to just calling onSessionExit if no delete handler
       onSessionExit?.(exitCode);
     }
   }, [onSessionDelete, onSessionExit, exitCode]);
 
-  const handleMobileKeyPress = useCallback(
-    (key: string, modifiers?: { ctrl?: boolean; alt?: boolean }) => {
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        return;
-      }
+  // ── Mobile path: MobileTerminalView with native text input ─────────────
+  if (isMobile) {
+    return (
+      <div className="flex flex-col h-full relative">
+        <MobileTerminalView
+          ref={mobileViewRef}
+          sessionId={sessionId}
+          tmuxSessionName={tmuxSessionName}
+          sessionName={sessionName}
+          projectPath={projectPath}
+          session={session}
+          wsUrl={wsUrl}
+          tmuxHistoryLimit={tmuxHistoryLimit}
+          notificationsEnabled={notificationsEnabled}
+          isRecording={isRecording}
+          environmentVars={environmentVars}
+          onStatusChange={onStatusChange}
+          onWebSocketReady={handleWebSocketReady}
+          onSessionExit={handleSessionExit}
+          onOutput={onOutput}
+          onSessionDelete={onSessionDelete}
+          onAgentActivityStatus={onAgentActivityStatus}
+          onAgentTodosUpdated={onAgentTodosUpdated}
+          onNotification={onNotification}
+          onSessionStatus={onSessionStatus}
+          onSessionProgress={onSessionProgress}
+        />
+        {sessionEnded && session && (
+          <SessionEndedOverlay
+            session={session}
+            exitCode={exitCode}
+            onRestart={handleRestart}
+            onDelete={handleDelete}
+          />
+        )}
+      </div>
+    );
+  }
 
-      let data = key;
-
-      // Handle Ctrl modifier - convert to control character
-      if (modifiers?.ctrl && key.length === 1) {
-        const charCode = key.toUpperCase().charCodeAt(0);
-        if (charCode >= 65 && charCode <= 90) {
-          // A-Z -> Ctrl codes (1-26)
-          data = String.fromCharCode(charCode - 64);
-        }
-      }
-
-      // Handle Alt modifier - send escape prefix
-      if (modifiers?.alt) {
-        data = "\x1b" + data;
-      }
-
-      wsRef.current.send(JSON.stringify({ type: "input", data }));
-    },
-    []
-  );
-
-  const handleImageUpload = useCallback(
-    async (file: File) => {
-      await sendImageToTerminal(file, wsRef.current);
-    },
-    []
-  );
-
+  // ── Desktop path: xterm.js Terminal ──────────────────────────────────────
   return (
     <div className="flex flex-col h-full relative">
       <div className="flex-1 min-h-0 relative">
@@ -187,12 +194,6 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
           </div>
         )}
       </div>
-      {isMobile && (
-        <MobileKeyboard
-          onKeyPress={handleMobileKeyPress}
-          onImageUpload={handleImageUpload}
-        />
-      )}
 
       {sessionEnded && session && (
         <SessionEndedOverlay
