@@ -1,6 +1,6 @@
 {
   "name": "remote-dev",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Web-based terminal interface with persistent tmux sessions and GitHub integration",
   "author": "Remote Dev Team",
   "private": true,
@@ -158,7 +158,7 @@
     "sharp",
     "unrs-resolver"
   ],
-  "_comment_overrides": "Deduplicate @codemirror transitive deps — legacy-modes and theme-one-dark pull older versions causing duplicate type declarations",
+  "_comment_overrides": "Deduplicate @codemirror transitive deps \u2014 legacy-modes and theme-one-dark pull older versions causing duplicate type declarations",
   "overrides": {
     "@codemirror/language": "6.12.2",
     "@codemirror/view": "6.39.16"

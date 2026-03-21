@@ -129,10 +129,43 @@ jobs:
           path: dist/*.tar.gz
           retention-days: 1
 
+  # ─── Build Android APK ───────────────────────────────────────────────────
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build debug APK
+        working-directory: mobile
+        run: flutter build apk --debug
+
+      - name: Rename APK with version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cp mobile/build/app/outputs/flutter-apk/app-debug.apk \
+             mobile/build/app/outputs/flutter-apk/remote-dev-${VERSION}-android-debug.apk
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: mobile/build/app/outputs/flutter-apk/remote-dev-*-android-debug.apk
+          retention-days: 1
+
   # ─── Create GitHub Release ────────────────────────────────────────────────
   publish:
     name: Publish Release
-    needs: build-release
+    needs: [build-release, build-android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -147,7 +180,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          shasum -a 256 *.tar.gz > checksums.txt
+          shasum -a 256 *.tar.gz *.apk > checksums.txt
           cat checksums.txt
 
       - name: Extract release notes from CHANGELOG.md
@@ -171,4 +204,5 @@ jobs:
             --title "Remote Dev $GITHUB_REF_NAME" \
             --notes "${{ steps.changelog.outputs.notes }}" \
             dist/*.tar.gz \
+            dist/*.apk \
             dist/checksums.txt
