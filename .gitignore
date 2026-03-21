@@ -63,6 +63,9 @@ next-env.d.ts
 # MCP config (machine-specific paths)
 .mcp.json
 
+# worktrees
+.worktrees/
+
 # worktree trash
 .trash/
 
