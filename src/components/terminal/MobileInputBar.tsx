@@ -52,7 +52,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       const trimmed = value.trim();
       if (!trimmed || disabled) return;
 
-      onSubmit(trimmed + "\n");
+      onSubmit(trimmed + "\r");
       setValue("");
       resetTextareaHeight();
     }, [value, disabled, onSubmit, resetTextareaHeight]);
