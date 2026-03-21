@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:remote_dev/application/ports/terminal_gateway.dart';
@@ -73,7 +74,11 @@ class TerminalWebSocketManager implements TerminalGateway {
         },
       );
 
-      _channel = WebSocketChannel.connect(uri);
+      final headers = <String, String>{};
+      if (params.cfToken != null) {
+        headers['Cookie'] = 'CF_Authorization=${params.cfToken}';
+      }
+      _channel = IOWebSocketChannel.connect(uri, headers: headers);
       await _channel!.ready;
 
       _subscription = _channel!.stream.listen(

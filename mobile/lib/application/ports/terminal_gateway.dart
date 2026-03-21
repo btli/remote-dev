@@ -10,6 +10,7 @@ class TerminalConnectionParams {
   final int cols;
   final int rows;
   final String terminalType;
+  final String? cfToken;
 
   const TerminalConnectionParams({
     required this.wsUrl,
@@ -19,6 +20,7 @@ class TerminalConnectionParams {
     this.cols = 80,
     this.rows = 24,
     this.terminalType = 'shell',
+    this.cfToken,
   });
 
   TerminalConnectionParams copyWith({
@@ -29,6 +31,7 @@ class TerminalConnectionParams {
     int? cols,
     int? rows,
     String? terminalType,
+    String? cfToken,
   }) {
     return TerminalConnectionParams(
       wsUrl: wsUrl ?? this.wsUrl,
@@ -38,6 +41,7 @@ class TerminalConnectionParams {
       cols: cols ?? this.cols,
       rows: rows ?? this.rows,
       terminalType: terminalType ?? this.terminalType,
+      cfToken: cfToken ?? this.cfToken,
     );
   }
 }
