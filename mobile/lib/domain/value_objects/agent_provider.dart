@@ -47,7 +47,8 @@ enum AgentActivityStatus {
   waiting('waiting'),
   idle('idle'),
   error('error'),
-  compacting('compacting');
+  compacting('compacting'),
+  ended('ended');
 
   const AgentActivityStatus(this.value);
   final String value;
@@ -58,6 +59,7 @@ enum AgentActivityStatus {
         'idle' => AgentActivityStatus.idle,
         'error' => AgentActivityStatus.error,
         'compacting' => AgentActivityStatus.compacting,
+        'ended' => AgentActivityStatus.ended,
         _ => null,
       };
 }

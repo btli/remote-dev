@@ -252,7 +252,7 @@ class _SessionTile extends StatelessWidget {
     return switch (session.agentActivityStatus) {
       AgentActivityStatus.running => Colors.green,
       AgentActivityStatus.waiting => Colors.amber,
-      AgentActivityStatus.idle => Colors.grey,
+      AgentActivityStatus.idle || AgentActivityStatus.ended => Colors.grey,
       AgentActivityStatus.error => colorScheme.error,
       AgentActivityStatus.compacting => Colors.blue,
       null => session.isActive

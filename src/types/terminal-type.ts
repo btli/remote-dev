@@ -326,7 +326,7 @@ export type AgentExitState = "running" | "exited" | "restarting" | "closed";
  * Agent activity status for real-time sidebar indicator.
  * Reported by Claude Code hooks via /internal/agent-status endpoint.
  */
-export type AgentActivityStatus = "running" | "waiting" | "idle" | "error" | "compacting";
+export type AgentActivityStatus = "running" | "waiting" | "idle" | "error" | "compacting" | "ended";
 
 /**
  * Agent session metadata stored with the session

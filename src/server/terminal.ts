@@ -200,6 +200,26 @@ function destroyPty(ptyProcess: IPty): void {
   }
 }
 
+/**
+ * Destroy a PTY, ignoring errors if it's already dead.
+ */
+function safeDestroyPty(ptyProcess: IPty): void {
+  try { destroyPty(ptyProcess); } catch { /* PTY may already be dead */ }
+}
+
+/**
+ * Check whether the current session map entry has been replaced by a newer
+ * connection. Used to guard against stale PTY onExit and WebSocket close/error
+ * handlers that fire after a reconnection has already swapped in a new session.
+ */
+function isStaleConnection(sessionId: string, pty: IPty | null, ws: WebSocket | null): boolean {
+  const current = sessions.get(sessionId);
+  if (!current) return false;
+  if (pty && current.pty !== pty) return true;
+  if (ws && current.ws !== ws) return true;
+  return false;
+}
+
 // Track sessions currently in the process of connecting to prevent rapid reconnection
 // that can exhaust PTY/FD resources and cause posix_spawnp failures
 const connectingSessionIds = new Set<string>();
@@ -1317,6 +1337,19 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     }
     connectingSessionIds.add(sessionId);
 
+    // Clean up any existing session for this ID before creating a new one.
+    // This prevents the old PTY's async onExit handler from firing after
+    // the new session is established and destroying it.
+    const existingSession = sessions.get(sessionId);
+    if (existingSession) {
+      log.debug("Replacing existing session connection", { sessionId });
+      sessions.delete(sessionId);
+      safeDestroyPty(existingSession.pty);
+      if (existingSession.ws !== ws && existingSession.ws.readyState === WebSocket.OPEN) {
+        existingSession.ws.close();
+      }
+    }
+
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
 
@@ -1397,6 +1430,11 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     ptyProcess.onExit(({ exitCode }) => {
       log.debug("PTY exited", { sessionId, exitCode, terminalType });
+
+      if (isStaleConnection(sessionId, ptyProcess, null)) {
+        log.debug("Stale PTY exit ignored (session has newer PTY)", { sessionId });
+        return;
+      }
 
       if (ws.readyState === WebSocket.OPEN) {
         // For agent/loop terminals, send a special agent_exited message
@@ -1517,7 +1555,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
             agentLog.info("Restarting agent session", { sessionId });
             try {
-              try { destroyPty(session.pty); } catch { /* old PTY may be dead */ }
+              safeDestroyPty(session.pty);
 
               execFile("tmux", ["kill-session", "-t", tmuxSessionName], () => {});
               createTmuxSession(tmuxSessionName, session.lastCols, session.lastRows, cwd, tmuxHistoryLimit);
@@ -1533,6 +1571,10 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
               newPty.onExit(({ exitCode: newExitCode }) => {
                 agentLog.info("Restarted agent session exited", { sessionId, exitCode: newExitCode });
+                if (isStaleConnection(sessionId, newPty, null)) {
+                  log.debug("Stale restarted PTY exit ignored", { sessionId });
+                  return;
+                }
                 if (ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify({
                     type: "agent_exited",
@@ -1615,11 +1657,19 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     ws.on("close", () => {
       log.debug("WebSocket closed", { sessionId });
+      if (isStaleConnection(sessionId, null, ws)) {
+        log.debug("Stale WebSocket close ignored (session has newer connection)", { sessionId });
+        return;
+      }
       cleanupSession(sessionId);
     });
 
     ws.on("error", (error) => {
       log.error("Terminal session error", { sessionId, error: String(error) });
+      if (isStaleConnection(sessionId, null, ws)) {
+        log.debug("Stale WebSocket error ignored (session has newer connection)", { sessionId });
+        return;
+      }
       cleanupSession(sessionId);
     });
 
@@ -1635,7 +1685,7 @@ function cleanup() {
   log.info("Shutting down terminal server (tmux sessions preserved)...");
   for (const [id, session] of sessions) {
     cleanupVoiceFifo(session);
-    try { destroyPty(session.pty); } catch { /* PTY may already be dead */ }
+    safeDestroyPty(session.pty);
     session.ws.close();
     log.debug("Closed PTY wrapper", { sessionId: id });
   }

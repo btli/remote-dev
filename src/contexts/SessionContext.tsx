@@ -21,7 +21,7 @@ import type {
 import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
-const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting"]);
+const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended"]);
 
 /**
  * Get the saved active session ID from localStorage.
