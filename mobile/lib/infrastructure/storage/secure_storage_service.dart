@@ -16,6 +16,12 @@ class SecureStorageService {
 
   final FlutterSecureStorage _storage;
 
+  // Generic key-value operations (used by ServerScopedStorage)
+  Future<String?> read(String key) => _storage.read(key: key);
+  Future<void> write(String key, String value) =>
+      _storage.write(key: key, value: value);
+  Future<void> delete(String key) => _storage.delete(key: key);
+
   // Storage keys
   static const _apiKeyKey = 'rdv_api_key';
   static const _serverUrlKey = 'rdv_server_url';
@@ -91,9 +97,6 @@ class SecureStorageService {
   Future<void> clearAll() => _storage.deleteAll();
 
   /// Check if credentials exist (does not validate them).
-  Future<bool> hasCredentials() async {
-    final key = await getApiKey();
-    final url = await getServerUrl();
-    return key != null && url != null;
-  }
+  Future<bool> hasCredentials() async =>
+      await getApiKey() != null && await getServerUrl() != null;
 }

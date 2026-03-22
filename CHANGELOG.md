@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile app multi-server support**: Save and switch between multiple remote-dev server instances with per-server credential isolation via `ServerScopedStorage`
+- **QR code server onboarding**: Scan a QR code from the web dashboard for zero-typing server setup using `mobile_scanner`
+- **Edge drawer navigation**: Swipe from left edge for instant session switching (1 gesture vs 2-3 taps), with floating status pill and quick actions panel
+- **Glassmorphism UI**: `GlassmorphicContainer` widget with frosted glass `BackdropFilter` surfaces on drawer, bottom sheets, and dialogs
+- **Smart input widgets**: Port stepper `[-][6001][+]`, protocol dropdown (http/https), host input with recent history autocomplete
+- **Credential auto-migration**: Existing single-server credentials automatically migrated to multi-server format on first launch
+
 ### Changed
 
 - **Mobile terminal rendering**: Replaced ANSI-to-HTML renderer (`MobileTerminalView`) with xterm.js + native input overlay. xterm.js handles all rendering (colors, cursor, tmux, scrollback) while `MobileInputBar` provides native text input with autocorrect, voice dictation, and predictive text. Special keys toolbar (ESC, TAB, CTRL, arrows) renders below the input bar.
+- **GoRouter**: Migrated to `ShellRoute` with `refreshListenable` for stable navigation (no more router recreation on state changes)
+- **Theme**: Transparent drawer/dialog/sheet backgrounds for glassmorphism, replaced manual color mixing with `Color.lerp`
 
 ## [0.3.1] - 2026-03-21
 
