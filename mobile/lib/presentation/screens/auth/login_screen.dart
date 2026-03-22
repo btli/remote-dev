@@ -45,10 +45,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     String email = '',
     String? cfToken,
   }) async {
-    final storage = ref.read(secureStorageProvider);
-    await storage.storeCredentials(
-      serverUrl: _baseUrl,
-      terminalPort: _terminalPort,
+    final scopedStorage = ref.read(serverScopedStorageProvider);
+    if (scopedStorage == null) {
+      setState(() => _error = 'No server configured');
+      return;
+    }
+    await scopedStorage.storeCredentials(
       apiKey: apiKey,
       userId: userId,
       email: email,
