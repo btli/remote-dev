@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-03-22
+
 ### Added
 
 - **Two-mode mobile keyboard**: Switchable Keys/Nav modes in the mobile terminal toolbar — Keys mode has ESC, TAB, ^C, ^D, CTRL/ALT/SHIFT sticky modifiers; Nav mode has arrow keys, HOME/END, PGUP/PGDN, ENTER, SHIFT+ENTER
@@ -30,10 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile modifier state**: Clear modifiers on mode switch and app background to prevent stuck state
 - **Folder session count reactivity**: Pass watched provider values as parameters instead of calling `ref.watch` inside helper methods
 - **Folder filter descendants**: `filteredSessionsProvider` now includes sessions from child folders, matching the count badges in FolderTree
-
-### Removed
-
-- **Dead mobile code**: Delete orphaned `HomeScreen`, `AdaptiveScaffold`, `SessionSidebar`, `SessionListScreen`, and `_QuickActionsPanel` (~660 lines)
 - **App icon corner artifacts**: Fix title bar bleeding into border stroke by using clipPath inset by stroke half-width instead of overlapping rounded rects
 - **App icon consistency**: Regenerate all icon formats (PWA, favicon, electron) from corrected source SVG
 - **Mobile IME composition**: Use `nativeEvent.isComposing` instead of synthetic event property for reliable CJK input on mobile browsers
@@ -42,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile terminal screen**: Use server-scoped storage providers (`activeServerConfigProvider`, `serverScopedStorageProvider`) instead of legacy flat-key providers for multi-server compatibility
 - **Mobile add server**: Omit port from server URL for Cloudflare Access and standard ports (443/80), preventing connection failures behind CF proxy
 - **Mobile add server**: Store credentials before persisting server config in manual setup flow, preventing orphaned configs if credential storage fails
+
+### Removed
+
+- **Dead mobile code**: Delete orphaned `HomeScreen`, `AdaptiveScaffold`, `SessionSidebar`, `SessionListScreen`, and `_QuickActionsPanel` (~660 lines)
 
 ## [0.3.5] - 2026-03-21
 
