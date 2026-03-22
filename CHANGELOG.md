@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Git credential suppression**: Automatically configure `gh` as the git credential helper in all terminal sessions, preventing macOS Keychain GUI prompts when agents run `git push/pull/fetch`. Profile sessions get `[credential]` in their `.gitconfig`; non-profile sessions get a session-scoped gitconfig with cleanup on close
+- **Folder git identity override**: Per-folder pseudonymous git name/email in folder preferences, injected as `GIT_AUTHOR_NAME/EMAIL` and `GIT_COMMITTER_NAME/EMAIL` into session environment. Identity inherits child-first through folder hierarchy
+- **Sensitive folder protection**: Mark folders as "sensitive" to require pseudonymous identity for commits and pushes. `isSensitive` flag propagates from any ancestor folder. Git guard API (`POST /api/folders/[id]/git-guard`) evaluates identity risk with `none/warn/block` levels
+- **Git identity guard hook**: rdv CLI `PreToolUse` hook intercepts `git commit` and `git push` Bash commands, calls the git-guard API, and blocks tool use (exit 2) when identity would leak in a sensitive folder
+- **Profile gitconfig migration**: `bun run db:migrate-profile-gitconfigs` adds `[credential]` section to existing profile `.gitconfig` files with idempotency checks
 - **Two-mode mobile keyboard**: Switchable Keys/Nav modes in the mobile terminal toolbar — Keys mode has ESC, TAB, ^C, ^D, CTRL/ALT/SHIFT sticky modifiers; Nav mode has arrow keys, HOME/END, PGUP/PGDN, ENTER, SHIFT+ENTER
 - **Sticky modifier keys**: CTRL/ALT/SHIFT toggles in the toolbar intercept the next keystroke typed in the text input, enabling Ctrl+C, Alt+key, and other combos on mobile
 - **`useMobileModifiers` hook**: Shared modifier state between MobileKeyboard and MobileInputBar with IME composition guard and double-consumption protection

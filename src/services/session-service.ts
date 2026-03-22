@@ -19,11 +19,11 @@ import * as TmuxService from "./tmux-service";
 import * as WorktreeService from "./worktree-service";
 import * as GitHubService from "./github-service";
 import * as AgentProfileService from "./agent-profile-service";
-import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession } from "./preferences-service";
+import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession, getFolderGitIdentity } from "./preferences-service";
 import { SessionServiceError } from "@/lib/errors";
 import { TerminalTypeRegistry } from "@/lib/terminal-plugins/registry";
 import { initializeBuiltInPlugins } from "@/lib/terminal-plugins/init";
-import { githubAccountRepository } from "@/infrastructure/container";
+import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 import { archiveSessionTodos } from "./agent-todo-sync";
 import { createApiKey } from "@/services/api-key-service";
@@ -37,6 +37,39 @@ initializeBuiltInPlugins();
 
 // Re-export for backwards compatibility with API routes
 export { SessionServiceError };
+
+/**
+ * Resolve git credential suppression env vars for a session.
+ * Returns GIT_TERMINAL_PROMPT=0 and optionally GIT_CONFIG_GLOBAL for non-profile sessions.
+ */
+async function resolveGitCredentialEnv(
+  sessionId: string,
+  hasProfile: boolean
+): Promise<Record<string, string>> {
+  try {
+    const env = await gitCredentialManager.buildSessionEnv(sessionId, hasProfile);
+    return env.toRecord();
+  } catch (error) {
+    log.error("Failed to build git credential env", { sessionId, error: String(error) });
+    return {};
+  }
+}
+
+/**
+ * Resolve folder-level git identity override env vars (pseudonymous commits).
+ */
+async function resolveFolderGitIdentityEnv(
+  userId: string,
+  folderId: string | null | undefined
+): Promise<Record<string, string>> {
+  try {
+    const { env } = await getFolderGitIdentity(userId, folderId);
+    return env ?? {};
+  } catch (error) {
+    log.error("Failed to resolve folder git identity", { folderId, error: String(error) });
+    return {};
+  }
+}
 
 /**
  * Create a new terminal session.
@@ -319,14 +352,16 @@ export async function createSession(
 
   // File and browser sessions don't need tmux — they're pure UI
   if (input.terminalType !== "file" && input.terminalType !== "browser") {
-    // Initial environment: profile env + folder env + GitHub account env + RDV vars
-    // All must be present at PTY spawn so agent processes inherit them immediately
-    // Precedence: profileEnv < folderEnv < ghAccountEnv < rdvEnv
-    // Bound GitHub account identity intentionally overrides folder-level env
-    // (e.g., user-set GH_TOKEN in folder prefs is superseded by the account binding)
+    const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
+    const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.folderId);
+
+    // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately
+    // Precedence: profileEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
     const initialEnv: Record<string, string> = {
       ...(profileEnv ?? {}),
       ...(folderEnv ?? {}),
+      ...folderGitIdentityEnv,
+      ...gitCredentialEnv,
       ...(ghAccountEnv ?? {}),
       ...rdvEnv,
     };
@@ -877,7 +912,15 @@ export async function resumeSession(
         log.error("Failed to resolve GitHub account env on resume", { sessionId, error: String(error) });
       }
 
-      await TmuxService.setSessionEnvironment(session.tmuxSessionName, { ...ghAccountEnv, ...rdvEnv });
+      const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!session.profileId);
+      const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.folderId);
+
+      await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
+        ...folderGitIdentityEnv,
+        ...gitCredentialEnv,
+        ...ghAccountEnv,
+        ...rdvEnv,
+      });
     } catch (error) {
       log.error("Failed to set env on resume", { sessionId, error: String(error) });
     }
@@ -940,6 +983,13 @@ export async function closeSession(
     );
   } catch (error) {
     log.error("Failed to revoke API key", { sessionId, error: String(error) });
+  }
+
+  // Clean up session-scoped gitconfig (non-profile sessions)
+  try {
+    await gitCredentialManager.cleanupSession(sessionId);
+  } catch (error) {
+    log.error("Failed to clean up session gitconfig", { sessionId, error: String(error) });
   }
 
   // Auto-archive completed agent tasks for this session

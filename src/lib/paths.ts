@@ -11,6 +11,7 @@
  * ├── profiles/          # Agent profiles
  * ├── projects/          # Worktree storage
  * ├── repos/             # Cloned repositories
+ * ├── session-gitconfigs/ # Session-scoped gitconfigs for non-profile sessions
  * ├── recordings/        # Session recordings
  * ├── server/            # Server runtime files
  * └── rdv/               # rdv CLI runtime files (.local-key)
@@ -116,6 +117,15 @@ export function getGhConfigsDir(): string {
 }
 
 /**
+ * Get the session-scoped gitconfig directory path.
+ * Non-profile sessions get a lightweight .gitconfig here for credential suppression.
+ * Files are named {sessionId}.gitconfig and cleaned up on session close.
+ */
+export function getSessionGitconfigsDir(): string {
+  return join(getDataDir(), "session-gitconfigs");
+}
+
+/**
  * Get the session recordings directory path.
  */
 export function getRecordingsDir(): string {
@@ -204,6 +214,7 @@ export function ensureDataDirectories(): void {
     getProjectsDir(),
     getReposDir(),
     getGhConfigsDir(),
+    getSessionGitconfigsDir(),
     getRecordingsDir(),
     getServerDir(),
     getRdvDir(),
@@ -250,6 +261,9 @@ export const AppPaths = {
   },
   get ghConfigsDir() {
     return getGhConfigsDir();
+  },
+  get sessionGitconfigsDir() {
+    return getSessionGitconfigsDir();
   },
   get recordingsDir() {
     return getRecordingsDir();

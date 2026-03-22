@@ -16,6 +16,7 @@ import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
 import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
 import { GhCliConfigGatewayImpl } from "./external/github/GhCliConfigGatewayImpl";
+import { SessionGitConfigGatewayImpl } from "./external/git/SessionGitConfigGatewayImpl";
 import { SystemEnvironmentGateway } from "./external/environment/SystemEnvironmentGateway";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
 import type { SessionFolderQueryPort } from "@/application/ports/SessionFolderQueryPort";
@@ -27,6 +28,8 @@ import type { GitHubIssueRepository } from "@/application/ports/GitHubIssueRepos
 import type { GitHubIssueGateway } from "@/application/ports/GitHubIssueGateway";
 import type { GitHubAccountRepository } from "@/application/ports/GitHubAccountRepository";
 import type { GhCliConfigGateway } from "@/application/ports/GhCliConfigGateway";
+import type { SessionGitConfigGateway } from "@/application/ports/SessionGitConfigGateway";
+import { GitCredentialManager } from "@/application/services/GitCredentialManager";
 
 // Session Use Cases
 import { CreateSessionUseCase } from "@/application/use-cases/session/CreateSessionUseCase";
@@ -168,6 +171,10 @@ export const githubIssueGateway: GitHubIssueGateway = new GitHubIssueGatewayImpl
 export const environmentGateway: EnvironmentGateway = new SystemEnvironmentGateway();
 
 export const ghCliConfigGateway: GhCliConfigGateway = new GhCliConfigGatewayImpl();
+
+export const sessionGitConfigGateway: SessionGitConfigGateway = new SessionGitConfigGatewayImpl();
+
+export const gitCredentialManager = new GitCredentialManager(sessionGitConfigGateway);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Use Case Instances
@@ -471,6 +478,7 @@ export interface Container {
   worktreeGateway: WorktreeGateway;
   githubIssueGateway: GitHubIssueGateway;
   ghCliConfigGateway: GhCliConfigGateway;
+  sessionGitConfigGateway: SessionGitConfigGateway;
   environmentGateway: EnvironmentGateway;
   logRepository: LogRepository;
   releaseRepository: ReleaseRepository;
@@ -495,6 +503,7 @@ export const defaultContainer: Container = {
   worktreeGateway,
   githubIssueGateway,
   ghCliConfigGateway,
+  sessionGitConfigGateway,
   environmentGateway,
   logRepository,
   releaseRepository,

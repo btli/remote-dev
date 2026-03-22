@@ -208,6 +208,12 @@ export const folderPreferences = sqliteTable(
     environmentVars: text("environment_vars"),
     // Pinned files as JSON: PinnedFile[]
     pinnedFiles: text("pinned_files"),
+    // Git identity override for pseudonymous/anonymous commits
+    // When set, these are injected as GIT_AUTHOR_NAME/EMAIL + GIT_COMMITTER_NAME/EMAIL
+    gitIdentityName: text("git_identity_name"),
+    gitIdentityEmail: text("git_identity_email"),
+    // Sensitive folder flag — requires pseudonymous identity, enables push protection
+    isSensitive: integer("is_sensitive", { mode: "boolean" }).default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

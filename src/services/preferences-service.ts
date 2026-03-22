@@ -408,6 +408,64 @@ export async function getEnvironmentForSession(
   return resolved?.variables ?? null;
 }
 
+/**
+ * Resolve git identity override for a folder.
+ *
+ * Walks the folder ancestry chain to find the nearest folder with a git identity
+ * configured (child overrides parent). Returns the identity as env vars that
+ * override GIT_AUTHOR_NAME/EMAIL and GIT_COMMITTER_NAME/EMAIL.
+ *
+ * Also returns the sensitive flag from the nearest folder that has it set.
+ */
+export async function getFolderGitIdentity(
+  userId: string,
+  folderId?: string | null
+): Promise<{
+  env: Record<string, string> | null;
+  isSensitive: boolean;
+  gitIdentityName: string | null;
+  gitIdentityEmail: string | null;
+}> {
+  if (!folderId) {
+    return { env: null, isSensitive: false, gitIdentityName: null, gitIdentityEmail: null };
+  }
+
+  const chain = await getFolderPreferencesChain(folderId, userId);
+
+  // Any ancestor marking the subtree sensitive propagates to all descendants
+  const isSensitive = chain.some((prefs) => prefs.isSensitive);
+
+  // Walk child-first (most specific) for identity override — child overrides parent
+  let gitIdentityName: string | null = null;
+  let gitIdentityEmail: string | null = null;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const prefs = chain[i];
+    if (prefs.gitIdentityName && !gitIdentityName) {
+      gitIdentityName = prefs.gitIdentityName;
+    }
+    if (prefs.gitIdentityEmail && !gitIdentityEmail) {
+      gitIdentityEmail = prefs.gitIdentityEmail;
+    }
+    if (gitIdentityName && gitIdentityEmail) break;
+  }
+
+  if (!gitIdentityName && !gitIdentityEmail) {
+    return { env: null, isSensitive, gitIdentityName: null, gitIdentityEmail: null };
+  }
+
+  const env: Record<string, string> = {};
+  if (gitIdentityName) {
+    env.GIT_AUTHOR_NAME = gitIdentityName;
+    env.GIT_COMMITTER_NAME = gitIdentityName;
+  }
+  if (gitIdentityEmail) {
+    env.GIT_AUTHOR_EMAIL = gitIdentityEmail;
+    env.GIT_COMMITTER_EMAIL = gitIdentityEmail;
+  }
+
+  return { env, isSensitive, gitIdentityName, gitIdentityEmail };
+}
+
 // ============================================================================
 // Database Mappers
 // ============================================================================
@@ -453,6 +511,9 @@ function mapDbFolderPreferences(
     defaultAgentProvider: dbRow.defaultAgentProvider ?? null,
     environmentVars: parseEnvironmentVars(dbRow.environmentVars),
     pinnedFiles: parsePinnedFiles(dbRow.pinnedFiles),
+    gitIdentityName: dbRow.gitIdentityName ?? null,
+    gitIdentityEmail: dbRow.gitIdentityEmail ?? null,
+    isSensitive: dbRow.isSensitive ?? false,
     createdAt: new Date(dbRow.createdAt),
     updatedAt: new Date(dbRow.updatedAt),
   };
