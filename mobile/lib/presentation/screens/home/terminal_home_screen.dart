@@ -82,11 +82,13 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
       drawerEnableOpenDragGesture: true,
       body: Stack(
         children: [
-          widget.child ??
-              _EmptyState(
-                onCreateSession: _onCreateSession,
-                onOpenDrawer: _openSessionDrawer,
-              ),
+          if (activeSessionId != null)
+            widget.child ?? const SizedBox.expand()
+          else
+            _EmptyState(
+              onCreateSession: _onCreateSession,
+              onOpenDrawer: _openSessionDrawer,
+            ),
 
           if (activeSessionId != null)
             Positioned(

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:remote_dev/domain/entities/server_config.dart';
@@ -109,7 +110,7 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
 
       if (mounted) {
         HapticFeedback.heavyImpact();
-        Navigator.of(context).pop(true);
+        context.go('/sessions');
       }
     } catch (e) {
       if (mounted) {

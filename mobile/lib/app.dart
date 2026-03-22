@@ -12,20 +12,16 @@ import 'package:remote_dev/presentation/screens/session/terminal_screen.dart';
 import 'package:remote_dev/presentation/screens/settings/settings_screen.dart';
 import 'package:remote_dev/presentation/theme/app_theme.dart';
 
-/// Listenable that notifies GoRouter to re-evaluate redirects
-/// without rebuilding the entire router instance.
 class _RouterRefreshNotifier extends ChangeNotifier {
   void notify() => notifyListeners();
 }
 
-/// Single GoRouter instance — persists across state changes.
-/// Uses refreshListenable to re-evaluate redirects reactively.
 final routerProvider = Provider<GoRouter>((ref) {
   final refreshNotifier = _RouterRefreshNotifier();
 
-  // Listen to auth and server changes, trigger redirect re-evaluation
   ref.listen(authNotifierProvider, (_, __) => refreshNotifier.notify());
   ref.listen(serverListProvider, (_, __) => refreshNotifier.notify());
+  ref.listen(activeServerIdProvider, (_, __) => refreshNotifier.notify());
 
   return GoRouter(
     initialLocation: '/sessions',
@@ -37,12 +33,16 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isOnLogin = location == '/login';
       final isOnSetup = location == '/servers/add';
 
+      // No servers → setup
       if (!hasServers && !isOnSetup) return '/servers/add';
+      // Let setup screen stay
       if (isOnSetup) return null;
 
       return switch (authState) {
         AuthLoading() => null,
+        // Unauthenticated → login (has servers but no credentials)
         Unauthenticated() => isOnLogin ? null : '/login',
+        // Authenticated → home (redirect away from login)
         Authenticated() => isOnLogin ? '/sessions' : null,
       };
     },
@@ -55,12 +55,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/servers/add',
         builder: (context, state) => const AddServerScreen(),
       ),
+      // TerminalHomeScreen wraps session routes
       ShellRoute(
         builder: (context, state, child) => TerminalHomeScreen(child: child),
         routes: [
           GoRoute(
             path: '/sessions',
-            builder: (context, state) => const SizedBox.shrink(),
+            builder: (context, state) => const _EmptySessionPlaceholder(),
           ),
           GoRoute(
             path: '/sessions/:id',
@@ -81,6 +82,15 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Transparent placeholder — TerminalHomeScreen shows its own empty state
+/// when this is the child (no active session selected).
+class _EmptySessionPlaceholder extends StatelessWidget {
+  const _EmptySessionPlaceholder();
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.expand();
+}
 
 /// Root application widget.
 class RemoteDevApp extends ConsumerWidget {
