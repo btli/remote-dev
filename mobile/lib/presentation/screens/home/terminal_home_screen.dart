@@ -245,7 +245,7 @@ class _SessionDrawer extends ConsumerWidget {
                                 await onSessionClose(session);
                                 return false;
                               },
-                              secondaryBackground: Container(
+                              background: Container(
                                 alignment: Alignment.centerRight,
                                 padding: const EdgeInsets.only(right: 20),
                                 margin: const EdgeInsets.symmetric(vertical: 1),
