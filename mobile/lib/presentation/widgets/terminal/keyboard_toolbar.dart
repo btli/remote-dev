@@ -290,33 +290,34 @@ class _KeyboardToolbarState extends State<KeyboardToolbar>
   }
 
   Widget _buildDpad() {
+    const size = 40.0; // Fixed touch target size for d-pad buttons
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _KeyButton(
+        _DpadButton(
           label: _navDpadUp.label,
-          isActive: false,
+          size: size,
           onTap: () => _handleKey(_navDpadUp),
         ),
         const SizedBox(height: 2),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _KeyButton(
+            _DpadButton(
               label: _navDpadLeft.label,
-              isActive: false,
+              size: size,
               onTap: () => _handleKey(_navDpadLeft),
             ),
             const SizedBox(width: 2),
-            _KeyButton(
+            _DpadButton(
               label: _navDpadDown.label,
-              isActive: false,
+              size: size,
               onTap: () => _handleKey(_navDpadDown),
             ),
             const SizedBox(width: 2),
-            _KeyButton(
+            _DpadButton(
               label: _navDpadRight.label,
-              isActive: false,
+              size: size,
               onTap: () => _handleKey(_navDpadRight),
             ),
           ],
@@ -450,6 +451,49 @@ class _KeyButton extends StatelessWidget {
                 color: isActive
                     ? theme.colorScheme.primary
                     : theme.colorScheme.onSurface.withValues(alpha: 0.8),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DpadButton extends StatelessWidget {
+  const _DpadButton({
+    required this.label,
+    required this.size,
+    required this.onTap,
+  });
+
+  final String label;
+  final double size;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Padding(
+        padding: const EdgeInsets.all(1.5),
+        child: Material(
+          color: theme.colorScheme.surface.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(6),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: onTap,
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+                ),
               ),
             ),
           ),
