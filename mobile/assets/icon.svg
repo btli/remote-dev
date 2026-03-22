@@ -8,14 +8,16 @@
       <stop offset="0%" stop-color="#7aa2f7"/>
       <stop offset="100%" stop-color="#bb9af7"/>
     </linearGradient>
+    <clipPath id="termClip">
+      <rect x="68" y="68" width="888" height="888" rx="92" ry="92"/>
+    </clipPath>
   </defs>
 
   <!-- Terminal window background with rounded corners -->
   <rect x="64" y="64" width="896" height="896" rx="96" ry="96" fill="url(#termBg)" stroke="#414868" stroke-width="8"/>
 
-  <!-- Title bar -->
-  <rect x="64" y="64" width="896" height="112" rx="96" ry="96" fill="#16161e"/>
-  <rect x="64" y="120" width="896" height="56" fill="#16161e"/>
+  <!-- Title bar (clipped to terminal shape) -->
+  <rect x="64" y="64" width="896" height="112" fill="#16161e" clip-path="url(#termClip)"/>
 
   <!-- Window controls -->
   <circle cx="160" cy="120" r="24" fill="#f7768e"/>

@@ -70,7 +70,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
         // Sticky modifier interception: when a modifier is active, consume the next
         // real keystroke, resolve it through modifiers, and send directly to terminal.
         // Guards: skip hardware modifiers, IME composition, and non-character keys.
-        if (modifierActive && resolveKey && onModifiedKeyPress && !e.isComposing && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (modifierActive && resolveKey && onModifiedKeyPress && !e.nativeEvent.isComposing && !e.ctrlKey && !e.altKey && !e.metaKey) {
           const { key } = e;
           if (key.length === 1 || key === "Enter" || key === "Backspace") {
             e.preventDefault();
@@ -80,7 +80,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
           }
         }
 
-        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
           e.preventDefault();
           handleSubmit();
         }
