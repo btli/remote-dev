@@ -176,9 +176,7 @@ export function MobileKeyboard({
     </button>
   );
 
-  const handleCameraClick = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+  const handleCameraClick = useCallback(() => fileInputRef.current?.click(), []);
 
   const cameraButton = onImageUpload && (
     <>

@@ -135,7 +135,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     async (file: File) => {
       await sendImageToTerminal(file, wsRef.current);
     },
-    [wsRef]
+    []
   );
 
   // ── Shared terminal component ─────────────────────────────────────────
