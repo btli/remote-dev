@@ -51,6 +51,7 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
   void _onSessionTap(Session session) {
     _scaffoldKey.currentState?.closeDrawer();
     HapticFeedback.selectionClick();
+    ref.read(activeSessionIdProvider.notifier).state = session.id;
     context.go('/sessions/${session.id}');
   }
 
