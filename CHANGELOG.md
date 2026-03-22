@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Empty input submit**: Send button now works without text, sending bare `\r` to confirm terminal prompts
 - **Ctrl+non-alpha keys**: CTRL modifier now correctly handles Ctrl+[ (ESC), Ctrl+\ (SIGQUIT), and other non-letter control codes
+- **Mobile terminal screen**: Use server-scoped storage providers (`activeServerConfigProvider`, `serverScopedStorageProvider`) instead of legacy flat-key providers for multi-server compatibility
+- **Mobile add server**: Omit port from server URL for Cloudflare Access and standard ports (443/80), preventing connection failures behind CF proxy
+- **Mobile add server**: Store credentials before persisting server config in manual setup flow, preventing orphaned configs if credential storage fails
 
 ## [0.3.5] - 2026-03-21
 

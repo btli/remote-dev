@@ -34,21 +34,21 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     final manager = ref.read(terminalManagerProvider(widget.sessionId));
     if (manager == null || _connected) return;
 
-    final config = ref.read(serverConfigProvider).valueOrNull;
+    final serverConfig = ref.read(activeServerConfigProvider);
     final client = ref.read(remoteDevClientProvider);
-    final storage = ref.read(secureStorageProvider);
-    if (config == null || client == null) return;
+    final scopedStorage = ref.read(serverScopedStorageProvider);
+    if (serverConfig == null || client == null) return;
 
     final session = ref.read(activeSessionProvider);
 
     try {
       final tokenData = await client.getSessionToken(widget.sessionId);
       final token = tokenData['token'] as String;
-      final cfToken = await storage.getCfToken();
+      final cfToken = await scopedStorage?.getCfToken();
 
       await manager.connect(
         TerminalConnectionParams(
-          wsUrl: config.wsUrl,
+          wsUrl: serverConfig.wsUrl,
           token: token,
           sessionId: widget.sessionId,
           tmuxSessionName: session?.tmuxSessionName ?? '',
