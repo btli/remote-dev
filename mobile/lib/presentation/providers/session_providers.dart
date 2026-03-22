@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/domain/entities/session.dart';
 import 'package:remote_dev/domain/repositories/session_repository.dart';
+import 'package:remote_dev/domain/value_objects/agent_provider.dart';
 import 'package:remote_dev/infrastructure/api/repositories/api_session_repository.dart';
 import 'package:remote_dev/presentation/providers/server_config_providers.dart';
 
@@ -62,6 +63,18 @@ class SessionListNotifier extends AsyncNotifier<List<Session>> {
         (state.valueOrNull ?? []).where((s) => s.id != id).toList(),
       );
     }
+  }
+
+  /// Update a session's agent activity status in-place (from WebSocket events).
+  void updateAgentStatus(String sessionId, AgentActivityStatus? status) {
+    final sessions = state.valueOrNull;
+    if (sessions == null) return;
+    state = AsyncValue.data(
+      sessions.map((s) {
+        if (s.id != sessionId) return s;
+        return s.copyWith(agentActivityStatus: status);
+      }).toList(),
+    );
   }
 }
 

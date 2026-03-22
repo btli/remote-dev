@@ -24,6 +24,7 @@ class TerminalWidget extends StatefulWidget {
     this.fontSize = 14.0,
     this.showKeyboardToolbar = true,
     this.onAgentExited,
+    this.onAgentStatusChanged,
     this.onConnectionStatusChanged,
     this.onNotificationDismissed,
     this.onImageUpload,
@@ -36,6 +37,7 @@ class TerminalWidget extends StatefulWidget {
   final double fontSize;
   final bool showKeyboardToolbar;
   final void Function(int? exitCode)? onAgentExited;
+  final void Function(String sessionId, String status)? onAgentStatusChanged;
   final void Function(ConnectionStatus status)? onConnectionStatusChanged;
   final void Function(List<String> ids, bool all)? onNotificationDismissed;
   final Future<void> Function(Uint8List bytes, String mimeType)? onImageUpload;
@@ -106,9 +108,10 @@ class _TerminalWidgetState extends State<TerminalWidget>
       case TerminalError(:final message):
         _terminal.write('\r\n\x1b[31mError: $message\x1b[0m\r\n');
       case TerminalReady():
-      case AgentStatusChanged():
       case NotificationReceived():
         break;
+      case AgentStatusChanged(:final sessionId, :final status):
+        widget.onAgentStatusChanged?.call(sessionId, status);
       case NotificationDismissed(:final ids, :final all):
         widget.onNotificationDismissed?.call(ids, all);
     }

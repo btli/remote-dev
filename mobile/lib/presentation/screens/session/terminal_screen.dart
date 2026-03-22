@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:remote_dev/application/ports/terminal_gateway.dart';
+import 'package:remote_dev/domain/value_objects/agent_provider.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
 import 'package:remote_dev/presentation/providers/push_notification_providers.dart';
 import 'package:remote_dev/presentation/widgets/terminal/agent_exit_overlay.dart';
@@ -95,6 +96,13 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     manager.sendInput(path);
   }
 
+  void _onAgentStatusChanged(String sessionId, String status) {
+    ref.read(sessionListProvider.notifier).updateAgentStatus(
+          sessionId,
+          AgentActivityStatus.fromString(status),
+        );
+  }
+
   void _onNotificationDismissed(List<String> ids, bool all) {
     final pushService = ref.read(pushNotificationServiceProvider);
     pushService?.handleDismissed(ids: ids, all: all);
@@ -129,6 +137,7 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
             fontFamily: fontFamily,
             fontSize: fontSize,
             onAgentExited: _onAgentExited,
+            onAgentStatusChanged: _onAgentStatusChanged,
             onNotificationDismissed: _onNotificationDismissed,
             onImageUpload: _onImageUpload,
           ),
