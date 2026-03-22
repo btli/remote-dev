@@ -63,10 +63,17 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   /// Called after successful login to transition to authenticated state.
-  Future<void> loginCompleted() async {
+  ///
+  /// Pass [serverUrl] and [email] directly to avoid provider timing issues —
+  /// the provider graph may not have rebuilt yet after invalidations.
+  Future<void> loginCompleted({String? serverUrl, String? email}) async {
     _ref.invalidate(serverConfigProvider);
     _ref.invalidate(serverListProvider);
-    await checkStoredCredentials();
+    if (serverUrl != null) {
+      state = Authenticated(serverUrl: serverUrl, email: email);
+    } else {
+      await checkStoredCredentials();
+    }
     _ref.invalidate(pushRegistrationProvider);
   }
 

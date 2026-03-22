@@ -30,6 +30,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _showApiKeyForm = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Pre-fill from active server config (e.g., when navigated from Add Server)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final config = ref.read(activeServerConfigProvider);
+      if (config != null && _serverUrlController.text.isEmpty) {
+        _serverUrlController.text = config.serverUrl;
+        _terminalPortController.text = config.terminalPort;
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _serverUrlController.dispose();
     _terminalPortController.dispose();
@@ -61,9 +74,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         nickname: '',
         serverUrl: _baseUrl,
         terminalPort: _terminalPort,
-        authMethod: cfToken != null
-            ? const CfAccessAuth()
-            : const ApiKeyAuth(),
+        authMethod: cfToken != null ? const CfAccessAuth() : const ApiKeyAuth(),
         createdAt: DateTime.now(),
         lastConnectedAt: DateTime.now(),
       );
@@ -86,7 +97,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       cfToken: cfToken,
     );
 
-    await ref.read(authNotifierProvider.notifier).loginCompleted();
+    await ref.read(authNotifierProvider.notifier).loginCompleted(
+          serverUrl: activeConfig.serverUrl,
+          email: email,
+        );
     if (mounted) context.go('/sessions');
   }
 
@@ -186,8 +200,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final data = response.data as Map<String, dynamic>;
 
       final sessions = data['sessions'] as List? ?? [];
-      final firstSession =
-          sessions.isNotEmpty ? sessions[0] as Map<String, dynamic>? : null;
+      final firstSession = sessions.firstOrNull as Map<String, dynamic>?;
       final userId = firstSession?['userId'] as String? ?? '';
 
       await _storeCredentialsAndLogin(
@@ -390,8 +403,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ),
                             const SizedBox(height: 12),
                             OutlinedButton.icon(
-                              onPressed:
-                                  _isLoading ? null : _loginWithApiKey,
+                              onPressed: _isLoading ? null : _loginWithApiKey,
                               icon: const Icon(Icons.login),
                               label: const Text('Connect with API Key'),
                             ),

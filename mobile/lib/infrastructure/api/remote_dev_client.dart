@@ -95,9 +95,8 @@ class RemoteDevClient {
   /// Returns both folders and the session-to-folder mapping.
   Future<FoldersResponse> listFolders() async {
     final response = await _request(() => _dio.get('/api/folders'));
-    final folders = response['folders'] as List? ??
-        response['items'] as List? ??
-        [];
+    final folders =
+        response['folders'] as List? ?? response['items'] as List? ?? [];
     final sessionFoldersRaw =
         response['sessionFolders'] as Map<String, dynamic>? ?? {};
     return FoldersResponse(
@@ -177,19 +176,23 @@ class RemoteDevClient {
     String? deviceId,
   ) async {
     await _request(
-      () => _dio.post('/api/notifications/push-token', data: {
-        'token': token,
-        'platform': platform,
-        if (deviceId != null) 'deviceId': deviceId,
-      }),
+      () => _dio.post(
+        '/api/notifications/push-token',
+        data: {
+          'token': token,
+          'platform': platform,
+          if (deviceId != null) 'deviceId': deviceId,
+        },
+      ),
     );
   }
 
   Future<void> unregisterPushToken(String token) async {
     await _request(
-      () => _dio.delete('/api/notifications/push-token', data: {
-        'token': token,
-      }),
+      () => _dio.delete(
+        '/api/notifications/push-token',
+        data: {'token': token},
+      ),
     );
   }
 
@@ -209,9 +212,8 @@ class RemoteDevClient {
 
   Future<List<Map<String, dynamic>>> listSplits() async {
     final response = await _request(() => _dio.get('/api/splits'));
-    final splits = response['splits'] as List? ??
-        response['items'] as List? ??
-        [];
+    final splits =
+        response['splits'] as List? ?? response['items'] as List? ?? [];
     return splits.cast<Map<String, dynamic>>();
   }
 

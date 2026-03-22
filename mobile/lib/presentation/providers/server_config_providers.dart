@@ -44,10 +44,8 @@ final activeServerConfigProvider = Provider<ServerConfig?>((ref) {
   final serverId = ref.watch(activeServerIdProvider);
   if (serverId == null) return null;
   final servers = ref.watch(serverListProvider);
-  final match = servers.firstWhereOrNull((s) => s.id == serverId);
-  if (match != null) return match;
-  // Stale ID (server was deleted) — return null so router redirects to setup
-  return null;
+  // Returns null for stale IDs (deleted server) so router redirects to setup.
+  return servers.firstWhereOrNull((s) => s.id == serverId);
 });
 
 /// Secure storage scoped to the active server.

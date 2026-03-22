@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import 'package:remote_dev/presentation/providers/providers.dart';
 import 'package:remote_dev/presentation/providers/push_notification_providers.dart';
-import 'package:remote_dev/presentation/providers/server_config_providers.dart';
 import 'package:remote_dev/presentation/screens/auth/login_screen.dart';
 import 'package:remote_dev/presentation/screens/home/terminal_home_screen.dart';
 import 'package:remote_dev/presentation/screens/server/add_server_screen.dart';
@@ -89,7 +88,7 @@ class _EmptySessionPlaceholder extends StatelessWidget {
   const _EmptySessionPlaceholder();
 
   @override
-  Widget build(BuildContext context) => const SizedBox.expand();
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 /// Root application widget.

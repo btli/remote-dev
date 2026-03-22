@@ -22,8 +22,7 @@ class TerminalHomeScreen extends ConsumerStatefulWidget {
   final Widget? child;
 
   @override
-  ConsumerState<TerminalHomeScreen> createState() =>
-      _TerminalHomeScreenState();
+  ConsumerState<TerminalHomeScreen> createState() => _TerminalHomeScreenState();
 }
 
 class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
@@ -89,7 +88,6 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
               onCreateSession: _onCreateSession,
               onOpenDrawer: _openSessionDrawer,
             ),
-
           if (activeSessionId != null)
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
@@ -101,7 +99,6 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
                 ),
               ),
             ),
-
           if (_showQuickActions)
             Positioned(
               right: 0,

@@ -11,7 +11,6 @@ import 'package:remote_dev/domain/value_objects/auth_method.dart';
 import 'package:remote_dev/infrastructure/storage/server_scoped_storage.dart';
 import 'package:remote_dev/presentation/providers/server_config_providers.dart';
 import 'package:remote_dev/presentation/screens/server/qr_scan_screen.dart';
-import 'package:remote_dev/presentation/widgets/common/glassmorphic_container.dart';
 import 'package:remote_dev/presentation/widgets/server/host_input.dart';
 import 'package:remote_dev/presentation/widgets/server/port_stepper.dart';
 import 'package:remote_dev/presentation/widgets/server/protocol_dropdown.dart';
@@ -126,9 +125,8 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
     if (host.isEmpty) return;
 
     final serverUrl = '$_protocol$host:$_port';
-    final authMethod = _authMethod == 'cloudflare'
-        ? const CfAccessAuth()
-        : const ApiKeyAuth();
+    final authMethod =
+        _authMethod == 'cloudflare' ? const CfAccessAuth() : const ApiKeyAuth();
 
     final config = ServerConfig(
       id: const Uuid().v4(),
@@ -140,6 +138,8 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
       lastConnectedAt: DateTime.now(),
     );
 
+    await _saveAndActivate(config);
+
     if (_authMethod == 'apikey' && _apiKeyController.text.isNotEmpty) {
       final scopedStorage = ServerScopedStorage(
         storage: ref.read(secureStorageProvider),
@@ -147,8 +147,6 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
       );
       await scopedStorage.setApiKey(_apiKeyController.text.trim());
     }
-
-    await _saveAndActivate(config);
 
     if (mounted) {
       HapticFeedback.heavyImpact();
