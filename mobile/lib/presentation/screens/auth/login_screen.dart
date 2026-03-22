@@ -4,6 +4,7 @@ import 'package:app_links/app_links.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
@@ -85,7 +86,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       cfToken: cfToken,
     );
 
-    ref.read(authNotifierProvider.notifier).loginCompleted();
+    await ref.read(authNotifierProvider.notifier).loginCompleted();
+    if (mounted) context.go('/sessions');
   }
 
   /// Opens Chrome Custom Tabs for CF Access auth, then receives

@@ -152,7 +152,11 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
 
     if (mounted) {
       HapticFeedback.heavyImpact();
-      Navigator.of(context).pop(true);
+      if (_authMethod == 'cloudflare') {
+        context.go('/login');
+      } else {
+        context.go('/sessions');
+      }
     }
   }
 
