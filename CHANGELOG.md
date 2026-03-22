@@ -13,11 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sticky modifier keys**: CTRL/ALT/SHIFT toggles in the toolbar intercept the next keystroke typed in the text input, enabling Ctrl+C, Alt+key, and other combos on mobile
 - **`useMobileModifiers` hook**: Shared modifier state between MobileKeyboard and MobileInputBar with IME composition guard and double-consumption protection
 - **Light mode app icon**: New `icon-light.svg` variant for light mode contexts
+- **Mobile folder filtering**: FolderTree integrated into the Flutter app's session drawer with collapsible hierarchy, session counts, and descendant folder filtering
+- **Mobile image upload**: Camera/gallery button in keyboard toolbar uploads images via `image_picker` and pastes the server path into the terminal
+- **Enriched session tiles**: Mobile drawer session tiles now show project path, git branch, agent provider, activity status colors, and suspended indicator
+- **Folder subtree helper**: `Folder.subtreeIds()` static method for reusable folder hierarchy traversal
 
 ### Fixed
 
 - **Mobile sticky keys in NAV mode**: CTRL/ALT/SHIFT modifiers and ESC/^C/^D quick keys now appear in both keyboard modes, fixing sticky modifiers being inaccessible in NAV mode
 - **Mobile nav button alignment**: Reorganize nav mode arrow keys into a d-pad cluster (↑ centered above ← ↓ →) with pure CSS flex layout, separate from other navigation keys
+- **Mobile drawer close**: Replace `Navigator.maybePop()` with `closeDrawer()` for reliable drawer dismissal inside GoRouter ShellRoute
+- **Mobile nested Scaffold**: Remove inner Scaffold/AppBar from TerminalScreen to fix double safe-area insets and status pill overlap
+- **Mobile back navigation**: Add PopScope to clear active session on hardware back button / swipe-back
+- **Mobile WebSocket lifecycle**: Add `_disposed` guard to prevent post-dispose crashes in `_doConnect`, `_onMessage`, `_onError`, `_onDone`, and `_scheduleReconnect`
+- **Mobile terminal focus**: Add explicit FocusNode management to prevent keyboard dismiss when tapping toolbar keys
+- **Mobile modifier state**: Clear modifiers on mode switch and app background to prevent stuck state
+- **Folder session count reactivity**: Pass watched provider values as parameters instead of calling `ref.watch` inside helper methods
+- **Folder filter descendants**: `filteredSessionsProvider` now includes sessions from child folders, matching the count badges in FolderTree
+
+### Removed
+
+- **Dead mobile code**: Delete orphaned `HomeScreen`, `AdaptiveScaffold`, `SessionSidebar`, `SessionListScreen`, and `_QuickActionsPanel` (~660 lines)
 - **App icon corner artifacts**: Fix title bar bleeding into border stroke by using clipPath inset by stroke half-width instead of overlapping rounded rects
 - **App icon consistency**: Regenerate all icon formats (PWA, favicon, electron) from corrected source SVG
 - **Mobile IME composition**: Use `nativeEvent.isComposing` instead of synthetic event property for reliable CJK input on mobile browsers
