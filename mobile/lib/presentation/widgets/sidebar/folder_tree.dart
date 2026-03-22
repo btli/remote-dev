@@ -96,6 +96,18 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
       );
     }
 
+    if (folderListAsync.hasError && folders.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          'Could not load folders',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.error,
+          ),
+        ),
+      );
+    }
+
     if (folders.isEmpty) {
       return const SizedBox.shrink();
     }

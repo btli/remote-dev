@@ -117,24 +117,29 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
       return const Center(child: Text('Not connected'));
     }
 
-    return Stack(
-      children: [
-        TerminalWidget(
-          gateway: manager,
-          palette: palette,
-          fontFamily: fontFamily,
-          fontSize: fontSize,
-          onAgentExited: _onAgentExited,
-          onNotificationDismissed: _onNotificationDismissed,
-          onImageUpload: _onImageUpload,
-        ),
-        if (_agentExited)
-          AgentExitOverlay(
-            exitCode: _agentExitCode,
-            onRestart: _onRestartAgent,
-            onClose: _navigateAway,
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _navigateAway();
+      },
+      child: Stack(
+        children: [
+          TerminalWidget(
+            gateway: manager,
+            palette: palette,
+            fontFamily: fontFamily,
+            fontSize: fontSize,
+            onAgentExited: _onAgentExited,
+            onNotificationDismissed: _onNotificationDismissed,
+            onImageUpload: _onImageUpload,
           ),
-      ],
+          if (_agentExited)
+            AgentExitOverlay(
+              exitCode: _agentExitCode,
+              onRestart: _onRestartAgent,
+              onClose: _navigateAway,
+            ),
+        ],
+      ),
     );
   }
 }

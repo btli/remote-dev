@@ -130,27 +130,15 @@ class _KeyboardToolbarState extends State<KeyboardToolbar>
     });
   }
 
+  /// Resolve a key through active modifiers. Pure computation — no state mutation.
   String _resolveSequence(String key) {
     // Pre-composed sequences (arrows, HOME, PGUP, etc.) skip modifier resolution
-    // but still clear modifiers so they don't stick
-    if (key.length > 1) {
-      _clearModifiers();
-      return key;
-    }
-
-    // Already a control character — don't double-resolve
-    if (key.codeUnitAt(0) < 32) {
-      _clearModifiers();
-      return key;
-    }
+    if (key.length > 1 || key.codeUnitAt(0) < 32) return key;
 
     var sequence = key;
 
     // Shift+Enter → ESC + CR
-    if (_shiftActive && key == '\r') {
-      _clearModifiers();
-      return '\x1b\r';
-    }
+    if (_shiftActive && key == '\r') return '\x1b\r';
 
     // Ctrl+key → control character (A-Z → 0x01-0x1A, @[\]^_ → 0x00-0x1F)
     if (_ctrlActive) {
@@ -165,7 +153,6 @@ class _KeyboardToolbarState extends State<KeyboardToolbar>
       sequence = '\x1b$sequence';
     }
 
-    _clearModifiers();
     return sequence;
   }
 
@@ -189,6 +176,9 @@ class _KeyboardToolbarState extends State<KeyboardToolbar>
     final anyActive = _ctrlActive || _altActive || _shiftActive;
     final sequence = anyActive ? _resolveSequence(key.sequence) : key.sequence;
     widget.onKey(sequence);
+
+    // Clear modifiers after sending (not inside _resolveSequence to avoid setState during build)
+    if (anyActive) _clearModifiers();
 
     // Return focus to terminal
     widget.terminalFocusNode?.requestFocus();
@@ -231,6 +221,8 @@ class _KeyboardToolbarState extends State<KeyboardToolbar>
           'png': 'image/png',
           'gif': 'image/gif',
           'webp': 'image/webp',
+          'heic': 'image/heic',
+          'heif': 'image/heif',
         }[ext] ??
         'image/png';
   }
