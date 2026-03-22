@@ -60,14 +60,15 @@ final serverScopedStorageProvider = Provider<ServerScopedStorage?>((ref) {
 });
 
 /// HTTP client for the active server's REST API.
-/// Only available when a server is selected.
+/// Only available when a server is selected and has scoped storage.
 final remoteDevClientProvider = Provider<RemoteDevClient?>((ref) {
   final config = ref.watch(activeServerConfigProvider);
-  if (config == null) return null;
+  final scopedStorage = ref.watch(serverScopedStorageProvider);
+  if (config == null || scopedStorage == null) return null;
 
-  final storage = ref.watch(secureStorageProvider);
   return RemoteDevClient(
-    storage: storage,
+    getApiKey: scopedStorage.getApiKey,
+    getCfToken: scopedStorage.getCfToken,
     baseUrl: config.serverUrl,
   );
 });

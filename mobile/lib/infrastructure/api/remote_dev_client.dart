@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart';
 
 import 'package:remote_dev/domain/errors/app_error.dart';
-import 'package:remote_dev/infrastructure/storage/secure_storage_service.dart';
 
 /// Response from the folders endpoint containing both folders and
 /// the session-to-folder mapping.
@@ -24,7 +23,8 @@ class FoldersResponse {
 /// interceptor reading from [SecureStorageService].
 class RemoteDevClient {
   RemoteDevClient({
-    required SecureStorageService storage,
+    required Future<String?> Function() getApiKey,
+    required Future<String?> Function() getCfToken,
     required String baseUrl,
   }) : _dio = Dio(
           BaseOptions(
@@ -36,7 +36,7 @@ class RemoteDevClient {
             validateStatus: (status) => status != null && status < 400,
           ),
         ) {
-    _dio.interceptors.add(_AuthInterceptor(storage));
+    _dio.interceptors.add(_AuthInterceptor(getApiKey, getCfToken));
   }
 
   final Dio _dio;
@@ -290,20 +290,20 @@ class RemoteDevClient {
 
 /// Dio interceptor that injects the Bearer API key and CF Access cookie.
 class _AuthInterceptor extends Interceptor {
-  _AuthInterceptor(this._storage);
-  final SecureStorageService _storage;
+  _AuthInterceptor(this._getApiKey, this._getCfToken);
+  final Future<String?> Function() _getApiKey;
+  final Future<String?> Function() _getCfToken;
 
   @override
   Future<void> onRequest(
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
-    final apiKey = await _storage.getApiKey();
+    final apiKey = await _getApiKey();
     if (apiKey != null) {
       options.headers['Authorization'] = 'Bearer $apiKey';
     }
-    // Send CF Access cookie so requests pass through Cloudflare Access
-    final cfToken = await _storage.getCfToken();
+    final cfToken = await _getCfToken();
     if (cfToken != null) {
       options.headers['Cookie'] = 'CF_Authorization=$cfToken';
     }
