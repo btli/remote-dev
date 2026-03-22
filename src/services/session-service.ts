@@ -903,7 +903,17 @@ export async function resumeSession(
         log.error("Failed to build git credential env on resume", { sessionId, error: String(error) });
       }
 
+      // Refresh folder git identity env on resume (may have changed while suspended)
+      let folderGitIdentityEnv: Record<string, string> = {};
+      try {
+        const { env } = await getFolderGitIdentity(userId, session.folderId);
+        folderGitIdentityEnv = env ?? {};
+      } catch (error) {
+        log.error("Failed to resolve folder git identity on resume", { sessionId, error: String(error) });
+      }
+
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
+        ...folderGitIdentityEnv,
         ...gitCredentialEnv,
         ...ghAccountEnv,
         ...rdvEnv,

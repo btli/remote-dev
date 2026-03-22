@@ -827,7 +827,7 @@ export function FolderPreferencesModal({
                 </div>
 
                 {/* Validation warning */}
-                {getValue("isSensitive") && !getValue("gitIdentityName") && !getValue("gitIdentityEmail") && (
+                {getValue("isSensitive") && (!getValue("gitIdentityName") || !getValue("gitIdentityEmail")) && (
                   <div className="flex items-center gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
                     <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0" />
                     <p className="text-xs text-yellow-500">
