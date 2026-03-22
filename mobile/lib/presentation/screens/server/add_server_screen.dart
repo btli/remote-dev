@@ -75,6 +75,14 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
     }
   }
 
+  /// Create a [ServerScopedStorage] for the given server ID.
+  ServerScopedStorage _scopedStorageFor(String serverId) {
+    return ServerScopedStorage(
+      storage: ref.read(secureStorageProvider),
+      serverId: serverId,
+    );
+  }
+
   Future<void> _handleQrPayload(String payload) async {
     try {
       final data = jsonDecode(payload) as Map<String, dynamic>;
@@ -95,11 +103,7 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
       );
 
       // Store credentials first — if this fails, no server config is orphaned
-      final scopedStorage = ServerScopedStorage(
-        storage: ref.read(secureStorageProvider),
-        serverId: config.id,
-      );
-      await scopedStorage.storeCredentials(
+      await _scopedStorageFor(config.id).storeCredentials(
         apiKey: apiKey,
         userId: userId ?? '',
         email: email ?? '',
@@ -124,7 +128,12 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
     final host = _hostController.text.trim();
     if (host.isEmpty) return;
 
-    final serverUrl = '$_protocol$host:$_port';
+    // For Cloudflare Access, omit the port — CF proxies on standard 443/80.
+    // For direct connections, always include the port.
+    final bool omitPort = _authMethod == 'cloudflare' ||
+        (_protocol == 'https://' && _port == 443) ||
+        (_protocol == 'http://' && _port == 80);
+    final serverUrl = omitPort ? '$_protocol$host' : '$_protocol$host:$_port';
     final authMethod =
         _authMethod == 'cloudflare' ? const CfAccessAuth() : const ApiKeyAuth();
 
@@ -138,15 +147,12 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
       lastConnectedAt: DateTime.now(),
     );
 
-    await _saveAndActivate(config);
-
+    // Store credentials first — if this fails, no server config is orphaned
     if (_authMethod == 'apikey' && _apiKeyController.text.isNotEmpty) {
-      final scopedStorage = ServerScopedStorage(
-        storage: ref.read(secureStorageProvider),
-        serverId: config.id,
-      );
-      await scopedStorage.setApiKey(_apiKeyController.text.trim());
+      await _scopedStorageFor(config.id).setApiKey(_apiKeyController.text.trim());
     }
+
+    await _saveAndActivate(config);
 
     if (mounted) {
       HapticFeedback.heavyImpact();
@@ -261,7 +267,7 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     SizedBox(
-                      width: 120,
+                      width: 140,
                       child: ProtocolDropdown(
                         value: _protocol,
                         onChanged: (v) => setState(() => _protocol = v),
