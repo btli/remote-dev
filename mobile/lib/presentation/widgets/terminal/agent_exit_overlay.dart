@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 ///
 /// Mirrors the web app's AgentExitScreen.tsx — shows exit code
 /// interpretation and restart/close actions.
-class AgentExitOverlay extends StatelessWidget {
+class AgentExitOverlay extends StatefulWidget {
   const AgentExitOverlay({
     super.key,
     required this.exitCode,
@@ -14,21 +14,34 @@ class AgentExitOverlay extends StatelessWidget {
 
   final int? exitCode;
   final VoidCallback onRestart;
-  final VoidCallback onClose;
+  final Future<void> Function() onClose;
 
-  String get _exitMessage => switch (exitCode) {
+  @override
+  State<AgentExitOverlay> createState() => _AgentExitOverlayState();
+}
+
+class _AgentExitOverlayState extends State<AgentExitOverlay> {
+  bool _closing = false;
+
+  String get _exitMessage => switch (widget.exitCode) {
         0 => 'Agent completed successfully',
         130 => 'Agent interrupted (Ctrl+C)',
         137 => 'Agent killed (out of memory)',
-        _ => 'Agent exited with code ${exitCode ?? 'unknown'}',
+        _ => 'Agent exited with code ${widget.exitCode ?? 'unknown'}',
       };
 
-  IconData get _exitIcon => switch (exitCode) {
+  IconData get _exitIcon => switch (widget.exitCode) {
         0 => Icons.check_circle_outline,
         130 => Icons.cancel_outlined,
         137 => Icons.memory_outlined,
         _ => Icons.error_outline,
       };
+
+  Future<void> _handleClose() async {
+    setState(() => _closing = true);
+    await widget.onClose();
+    if (mounted) setState(() => _closing = false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +56,7 @@ class AgentExitOverlay extends StatelessWidget {
             Icon(
               _exitIcon,
               size: 48,
-              color: exitCode == 0
+              color: widget.exitCode == 0
                   ? theme.colorScheme.primary
                   : theme.colorScheme.error,
             ),
@@ -58,14 +71,20 @@ class AgentExitOverlay extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 FilledButton.icon(
-                  onPressed: onRestart,
+                  onPressed: _closing ? null : widget.onRestart,
                   icon: const Icon(Icons.replay),
                   label: const Text('Restart'),
                 ),
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
-                  onPressed: onClose,
-                  icon: const Icon(Icons.close),
+                  onPressed: _closing ? null : _handleClose,
+                  icon: _closing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.close),
                   label: const Text('Close'),
                 ),
               ],
