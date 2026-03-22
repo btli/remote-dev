@@ -114,6 +114,11 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     context.go('/sessions');
   }
 
+  Future<void> _closeSessionAndNavigateAway() async {
+    await ref.read(sessionListProvider.notifier).closeSession(widget.sessionId);
+    _navigateAway(); // _navigateAway guards mounted internally
+  }
+
   @override
   Widget build(BuildContext context) {
     final manager = ref.watch(terminalManagerProvider(widget.sessionId));
@@ -146,7 +151,7 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
             AgentExitOverlay(
               exitCode: _agentExitCode,
               onRestart: _onRestartAgent,
-              onClose: _navigateAway,
+              onClose: _closeSessionAndNavigateAway,
             ),
         ],
       ),

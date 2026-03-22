@@ -55,6 +55,21 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
     context.go('/sessions/${session.id}');
   }
 
+  Future<void> _onSessionClose(Session session) async {
+    final activeId = ref.read(activeSessionIdProvider);
+    await ref.read(sessionListProvider.notifier).closeSession(session.id);
+
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+
+    // If the closed session was the active one, navigate to empty state
+    if (activeId == session.id) {
+      _scaffoldKey.currentState?.closeDrawer();
+      ref.read(activeSessionIdProvider.notifier).state = null;
+      context.go('/sessions');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -68,6 +83,7 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
       drawer: _SessionDrawer(
         serverName: activeServer?.displayName,
         onSessionTap: _onSessionTap,
+        onSessionClose: _onSessionClose,
         onCreateSession: _onCreateSession,
         onServerTap: () {
           _scaffoldKey.currentState?.closeDrawer();
@@ -107,12 +123,14 @@ class _SessionDrawer extends ConsumerWidget {
   const _SessionDrawer({
     required this.serverName,
     required this.onSessionTap,
+    required this.onSessionClose,
     required this.onCreateSession,
     required this.onServerTap,
   });
 
   final String? serverName;
   final void Function(Session) onSessionTap;
+  final Future<void> Function(Session) onSessionClose;
   final VoidCallback onCreateSession;
   final VoidCallback onServerTap;
 
@@ -217,10 +235,35 @@ class _SessionDrawer extends ConsumerWidget {
                             final session = sessions[index];
                             final isActive = session.id == activeSessionId;
 
-                            return _SessionTile(
-                              session: session,
-                              isActive: isActive,
-                              onTap: () => onSessionTap(session),
+                            return Dismissible(
+                              key: ValueKey(session.id),
+                              direction: DismissDirection.endToStart,
+                              // Return false: the provider rebuild handles
+                              // removal; letting Dismissible animate out would
+                              // conflict with the list rebuilding.
+                              confirmDismiss: (_) async {
+                                await onSessionClose(session);
+                                return false;
+                              },
+                              secondaryBackground: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 20),
+                                margin: const EdgeInsets.symmetric(vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.error,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  Icons.delete_outline_rounded,
+                                  color: colorScheme.onError,
+                                  size: 20,
+                                ),
+                              ),
+                              child: _SessionTile(
+                                session: session,
+                                isActive: isActive,
+                                onTap: () => onSessionTap(session),
+                              ),
                             );
                           },
                         ),
