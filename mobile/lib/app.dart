@@ -64,9 +64,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/sessions/:id',
-            builder: (context, state) => TerminalScreen(
-              sessionId: state.pathParameters['id']!,
-            ),
+            builder: (context, state) {
+              final id = state.pathParameters['id']!;
+              return TerminalScreen(key: ValueKey(id), sessionId: id);
+            },
           ),
         ],
       ),
