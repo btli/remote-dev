@@ -11,6 +11,7 @@ import { useTerminalWebSocket } from "@/hooks/useTerminalWebSocket";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
+import { useMobileModifiers } from "@/hooks/useMobileModifiers";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
 import type { ConnectionStatus } from "@/types/terminal";
@@ -205,6 +206,9 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     } | null>(null);
     const [isRestarting, setIsRestarting] = useState(false);
 
+    // ── Modifiers ────────────────────────────────────────────────────────────
+    const modifiers = useMobileModifiers();
+
     // ── Theme ─────────────────────────────────────────────────────────────────
     const terminalTheme = useTerminalTheme();
     const { getAgentActivityStatus } = useSessionContext();
@@ -321,28 +325,11 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
     }, []);
 
     // ── Input handlers ───────────────────────────────────────────────────────
-    const handleMobileKeyPress = useCallback(
-      (key: string, modifiers?: { ctrl?: boolean; alt?: boolean }) => {
-        let data = key;
-        if (modifiers?.ctrl && key.length === 1) {
-          const charCode = key.toUpperCase().charCodeAt(0);
-          if (charCode >= 65 && charCode <= 90) {
-            data = String.fromCharCode(charCode - 64);
-          }
-        }
-        if (modifiers?.alt) {
-          data = "\x1b" + data;
-        }
-        sendInput(data);
-      },
-      [sendInput]
-    );
-
     const handleImageUpload = useCallback(
       async (file: File) => {
         await sendImageToTerminal(file, wsRef.current);
       },
-      [wsRef]
+      []
     );
 
     // ── Agent restart / close ────────────────────────────────────────────────
@@ -415,6 +402,9 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
         <MobileInputBar
           ref={inputBarRef}
           onSubmit={sendInput}
+          onModifiedKeyPress={sendInput}
+          modifierActive={modifiers.anyActive}
+          resolveKey={modifiers.resolveKey}
           onHeightChange={scrollToBottom}
           disabled={status !== "connected"}
           placeholder={session?.terminalType === "agent" ? "Ask the agent..." : "Type a command..."}
@@ -422,7 +412,13 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
 
         {/* Special keys toolbar */}
         <MobileKeyboard
-          onKeyPress={handleMobileKeyPress}
+          onKeyPress={sendInput}
+          onModifierToggle={modifiers.toggleModifier}
+          ctrlActive={modifiers.ctrlActive}
+          altActive={modifiers.altActive}
+          shiftActive={modifiers.shiftActive}
+          anyModifierActive={modifiers.anyActive}
+          resolveKey={modifiers.resolveKey}
           onImageUpload={handleImageUpload}
         />
 

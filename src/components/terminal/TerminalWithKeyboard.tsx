@@ -8,6 +8,7 @@ import { VoiceMicButton } from "./VoiceMicButton";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { useMobile } from "@/hooks/useMobile";
+import { useMobileModifiers } from "@/hooks/useMobileModifiers";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import type { ConnectionStatus } from "@/types/terminal";
 import type { TerminalSession } from "@/types/session";
@@ -87,6 +88,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   const [exitCode, setExitCode] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected");
   const isMobile = useMobile();
+  const modifiers = useMobileModifiers();
 
   useImperativeHandle(ref, () => ({
     focus: () => {
@@ -125,27 +127,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   }, [onSessionDelete, onSessionExit, exitCode]);
 
   // ── Mobile input handlers ─────────────────────────────────────────────
-  const handleMobileTextSubmit = useCallback((text: string) => {
-    terminalRef.current?.sendInput(text);
+  const sendToTerminal = useCallback((data: string) => {
+    terminalRef.current?.sendInput(data);
   }, []);
-
-  const handleMobileKeyPress = useCallback(
-    (key: string, modifiers?: { ctrl?: boolean; alt?: boolean }) => {
-      let data = key;
-      // Convert Ctrl+letter to ANSI control code (Ctrl+A = 0x01, ..., Ctrl+Z = 0x1A)
-      if (modifiers?.ctrl && key.length === 1) {
-        const charCode = key.toUpperCase().charCodeAt(0);
-        if (charCode >= 65 && charCode <= 90) {
-          data = String.fromCharCode(charCode - 64);
-        }
-      }
-      if (modifiers?.alt) {
-        data = "\x1b" + data;
-      }
-      terminalRef.current?.sendInput(data);
-    },
-    []
-  );
 
   const handleImageUpload = useCallback(
     async (file: File) => {
@@ -212,13 +196,22 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
 
         <MobileInputBar
           ref={mobileInputRef}
-          onSubmit={handleMobileTextSubmit}
+          onSubmit={sendToTerminal}
+          onModifiedKeyPress={sendToTerminal}
+          modifierActive={modifiers.anyActive}
+          resolveKey={modifiers.resolveKey}
           disabled={connectionStatus !== "connected"}
           placeholder={session?.terminalType === "agent" ? "Ask the agent..." : "Type a command..."}
         />
 
         <MobileKeyboard
-          onKeyPress={handleMobileKeyPress}
+          onKeyPress={sendToTerminal}
+          onModifierToggle={modifiers.toggleModifier}
+          ctrlActive={modifiers.ctrlActive}
+          altActive={modifiers.altActive}
+          shiftActive={modifiers.shiftActive}
+          anyModifierActive={modifiers.anyActive}
+          resolveKey={modifiers.resolveKey}
           onImageUpload={handleImageUpload}
         />
 
