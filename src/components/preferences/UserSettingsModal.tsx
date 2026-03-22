@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Sparkles, Bell, ScrollText } from "lucide-react";
+import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Sparkles, Bell, ScrollText, Smartphone } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,7 +29,7 @@ import { useFolderContext } from "@/contexts/FolderContext";
 import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appearance";
 import { TmuxSessionManager } from "@/components/tmux";
 import { AgentCLIStatusPanel } from "@/components/agents";
-import { UpdateManager, LogViewer } from "@/components/system";
+import { UpdateManager, LogViewer, MobileSetupPanel } from "@/components/system";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { cn } from "@/lib/utils";
@@ -195,6 +195,10 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             <TabsTrigger value="logs" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
               <ScrollText className="w-4 h-4 shrink-0" />
               <span className="hidden sm:inline">Logs</span>
+            </TabsTrigger>
+            <TabsTrigger value="mobile" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
+              <Smartphone className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Mobile</span>
             </TabsTrigger>
           </TabsList>
 
@@ -496,6 +500,10 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
           <TabsContent value="logs" className="mt-4 flex-1 overflow-hidden flex flex-col pr-2 isolate">
             <LogViewer />
+          </TabsContent>
+
+          <TabsContent value="mobile" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
+            <MobileSetupPanel />
           </TabsContent>
         </Tabs>
 
