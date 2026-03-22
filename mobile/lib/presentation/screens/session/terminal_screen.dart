@@ -136,6 +136,7 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
             palette: palette,
             fontFamily: fontFamily,
             fontSize: fontSize,
+            isAgentSession: ref.watch(activeSessionProvider)?.isAgent ?? false,
             onAgentExited: _onAgentExited,
             onAgentStatusChanged: _onAgentStatusChanged,
             onNotificationDismissed: _onNotificationDismissed,
