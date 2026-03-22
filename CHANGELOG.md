@@ -10,9 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Mobile voice dictation**: Native text input bar in the Flutter app replaces xterm.dart's internal keyboard handler, enabling Android/iOS voice dictation, autocorrect, and predictive text. Mic/Send button toggles based on input state. Autocorrect is enabled only for agent sessions (disabled for shell to preserve command case sensitivity)
+- **"ended" agent activity status**: Sessions whose Claude Code session ends now show "ended" status instead of falling through to "idle". Supported across web sidebar, loop status bar, mobile home screen, and browser notifications
 
 ### Fixed
 
+- **False agent exit detection on reconnect**: Race condition where old PTY async `onExit` handlers could fire after WebSocket reconnection, destroying the new session and showing a false "Agent completed" exit screen. Added PTY/WS identity guards and proper pre-cleanup on reconnect
+- **Stale error status after session resume**: Resuming a suspended agent/loop session now resets `agentExitState`, `agentExitCode`, and `agentActivityStatus` so stale error indicators don't persist
 - **Mobile session selection deadlock**: Tapping a session in the Flutter app drawer now correctly loads the terminal instead of showing "No active session"
 
 ## [0.3.6] - 2026-03-22

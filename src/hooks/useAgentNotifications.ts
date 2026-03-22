@@ -22,6 +22,10 @@ const STATUS_MESSAGES: Partial<
     title: (n) => `${n} — Compacting context`,
     body: "Agent is compacting its context window",
   },
+  ended: {
+    title: (n) => `${n} — Session ended`,
+    body: "Agent session has ended",
+  },
 };
 
 interface UseAgentNotificationsOptions {
