@@ -55,8 +55,15 @@ const KEYS_ROW2: KeyConfig[] = [
 
 // ── Nav Mode: arrows, navigation, enter keys ───────────────────────────────
 
+const NAV_DPAD_TOP: KeyConfig = { label: "↑", key: "\x1b[A" };
+
+const NAV_DPAD_BOTTOM: KeyConfig[] = [
+  { label: "←", key: "\x1b[D" },
+  { label: "↓", key: "\x1b[B" },
+  { label: "→", key: "\x1b[C" },
+];
+
 const NAV_ROW1: KeyConfig[] = [
-  { label: "↑", key: "\x1b[A" },
   { label: "HOME", key: "\x1b[H" },
   { label: "END", key: "\x1b[F" },
   { label: "ENTER", key: "\r" },
@@ -64,9 +71,6 @@ const NAV_ROW1: KeyConfig[] = [
 ];
 
 const NAV_ROW2: KeyConfig[] = [
-  { label: "←", key: "\x1b[D" },
-  { label: "↓", key: "\x1b[B" },
-  { label: "→", key: "\x1b[C" },
   { label: "PGUP", key: "\x1b[5~" },
   { label: "PGDN", key: "\x1b[6~" },
 ];
@@ -211,8 +215,9 @@ export function MobileKeyboard({
     </>
   );
 
-  const row1 = mode === "keys" ? KEYS_ROW1 : NAV_ROW1;
-  const row2 = mode === "keys" ? KEYS_ROW2 : NAV_ROW2;
+  const isNav = mode === "nav";
+  const row1 = isNav ? NAV_ROW1 : KEYS_ROW1;
+  const row2 = isNav ? NAV_ROW2 : KEYS_ROW2;
 
   return (
     <div
@@ -222,20 +227,32 @@ export function MobileKeyboard({
         className
       )}
     >
-      {/* Row 1: main keys + mode switch */}
-      <div className="flex gap-1.5 items-center">
-        <div className="flex gap-1.5 flex-wrap flex-1">
-          {row1.map(renderKey)}
-        </div>
-        {modeSwitchButton}
-      </div>
+      <div className="flex gap-1.5">
+        {/* D-pad: ↑ centered above ← ↓ → */}
+        {isNav && (
+          <div className="flex flex-col gap-1.5 items-center">
+            {renderKey(NAV_DPAD_TOP)}
+            <div className="flex gap-1.5">
+              {NAV_DPAD_BOTTOM.map(renderKey)}
+            </div>
+          </div>
+        )}
 
-      {/* Row 2: extras/nav + camera */}
-      <div className="flex gap-1.5 items-center">
-        <div className="flex gap-1.5 flex-wrap flex-1">
-          {row2.map(renderKey)}
+        {/* Main keys + controls */}
+        <div className="flex flex-col gap-1.5 flex-1">
+          <div className="flex gap-1.5 items-center">
+            <div className="flex gap-1.5 flex-1">
+              {row1.map(renderKey)}
+            </div>
+            {modeSwitchButton}
+            {cameraButton}
+          </div>
+          <div className="flex gap-1.5 items-center">
+            <div className="flex gap-1.5 flex-1">
+              {row2.map(renderKey)}
+            </div>
+          </div>
         </div>
-        {cameraButton}
       </div>
     </div>
   );

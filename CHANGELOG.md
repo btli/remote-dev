@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile nav button alignment**: Reorganize nav mode arrow keys into a d-pad cluster (↑ centered above ← ↓ →) with pure CSS flex layout, separate from other navigation keys
 - **App icon corner artifacts**: Fix title bar bleeding into border stroke by using clipPath inset by stroke half-width instead of overlapping rounded rects
 - **App icon consistency**: Regenerate all icon formats (PWA, favicon, electron) from corrected source SVG
 - **Mobile IME composition**: Use `nativeEvent.isComposing` instead of synthetic event property for reliable CJK input on mobile browsers
