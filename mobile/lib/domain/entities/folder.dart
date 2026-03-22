@@ -25,6 +25,23 @@ class Folder {
 
   bool get isRoot => parentId == null;
 
+  /// Collect a folder ID and all its descendant IDs via BFS.
+  ///
+  /// Useful for filtering sessions that belong to a folder subtree.
+  static Set<String> subtreeIds(String folderId, List<Folder> allFolders) {
+    final ids = <String>{folderId};
+    final queue = [folderId];
+    while (queue.isNotEmpty) {
+      final parentId = queue.removeLast();
+      for (final folder in allFolders) {
+        if (folder.parentId == parentId && ids.add(folder.id)) {
+          queue.add(folder.id);
+        }
+      }
+    }
+    return ids;
+  }
+
   /// Copy with updated fields. Use [clearParentId] to move folder to root.
   Folder copyWith({
     String? name,

@@ -52,8 +52,8 @@ final sessionFoldersProvider = Provider<Map<String, String>>((ref) {
 final activeFolderIdProvider = StateProvider<String?>((ref) => null);
 
 /// Sessions filtered by the active folder. When activeFolderId is null,
-/// all sessions are shown. Otherwise, only sessions whose folderId matches
-/// (either from session.folderId or the sessionFolders mapping) are shown.
+/// all sessions are shown. Otherwise, sessions belonging to the selected
+/// folder or any of its descendants are included.
 final filteredSessionsProvider = Provider<List<Session>>((ref) {
   final activeFolderId = ref.watch(activeFolderIdProvider);
   final sessions = ref.watch(sessionListProvider).valueOrNull ?? [];
@@ -61,11 +61,11 @@ final filteredSessionsProvider = Provider<List<Session>>((ref) {
   if (activeFolderId == null) return sessions;
 
   final sessionFolders = ref.watch(sessionFoldersProvider);
+  final allFolders = ref.watch(foldersProvider);
+  final folderIds = Folder.subtreeIds(activeFolderId, allFolders);
 
   return sessions.where((session) {
-    // Check session's own folderId first
-    if (session.folderId == activeFolderId) return true;
-    // Fall back to sessionFolders mapping
-    return sessionFolders[session.id] == activeFolderId;
+    final fid = session.folderId ?? sessionFolders[session.id];
+    return fid != null && folderIds.contains(fid);
   }).toList();
 });

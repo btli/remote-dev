@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import 'package:remote_dev/domain/errors/app_error.dart';
@@ -227,6 +229,40 @@ class RemoteDevClient {
         data: {'cfToken': cfToken},
       ),
     );
+  }
+
+  // ── Images ──────────────────────────────────────────────────────────
+
+  /// Upload image bytes to the server. Returns the server-side file path.
+  Future<String> uploadImage(Uint8List bytes, String mimeType) async {
+    final ext = const {
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/gif': '.gif',
+      'image/webp': '.webp',
+    }[mimeType] ??
+        '.png';
+    final fileName = 'image-${DateTime.now().millisecondsSinceEpoch}$ext';
+
+    final formData = FormData.fromMap({
+      'image': MultipartFile.fromBytes(
+        bytes,
+        filename: fileName,
+        contentType: DioMediaType.parse(mimeType),
+      ),
+    });
+
+    final response =
+        await _request(() => _dio.post('/api/images', data: formData));
+    final path = response['path'] as String?;
+    if (path == null) {
+      throw const ApiError(
+        'No path in upload response',
+        code: 'UPLOAD_ERROR',
+        statusCode: 0,
+      );
+    }
+    return path;
   }
 
   // ── Internal ──────────────────────────────────────────────────────────

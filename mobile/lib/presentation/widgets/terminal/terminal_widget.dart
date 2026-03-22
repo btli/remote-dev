@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart' as xterm;
@@ -25,6 +26,8 @@ class TerminalWidget extends StatefulWidget {
     this.onAgentExited,
     this.onConnectionStatusChanged,
     this.onNotificationDismissed,
+    this.onImageUpload,
+    this.terminalFocusNode,
   });
 
   final TerminalGateway gateway;
@@ -35,6 +38,8 @@ class TerminalWidget extends StatefulWidget {
   final void Function(int? exitCode)? onAgentExited;
   final void Function(ConnectionStatus status)? onConnectionStatusChanged;
   final void Function(List<String> ids, bool all)? onNotificationDismissed;
+  final Future<void> Function(Uint8List bytes, String mimeType)? onImageUpload;
+  final FocusNode? terminalFocusNode;
 
   @override
   State<TerminalWidget> createState() => _TerminalWidgetState();
@@ -43,6 +48,8 @@ class TerminalWidget extends StatefulWidget {
 class _TerminalWidgetState extends State<TerminalWidget>
     with WidgetsBindingObserver {
   late final xterm.Terminal _terminal;
+  late FocusNode _terminalFocus;
+  bool _ownsFocusNode = false;
   StreamSubscription<TerminalEvent>? _eventSub;
   StreamSubscription<ConnectionStatus>? _statusSub;
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
@@ -55,6 +62,8 @@ class _TerminalWidgetState extends State<TerminalWidget>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _ownsFocusNode = widget.terminalFocusNode == null;
+    _terminalFocus = widget.terminalFocusNode ?? FocusNode();
 
     _terminal = xterm.Terminal(
       maxLines: 50000, // Match server's tmux history-limit
@@ -123,6 +132,7 @@ class _TerminalWidgetState extends State<TerminalWidget>
     WidgetsBinding.instance.removeObserver(this);
     _eventSub?.cancel();
     _statusSub?.cancel();
+    if (_ownsFocusNode) _terminalFocus.dispose();
     super.dispose();
   }
 
@@ -157,6 +167,7 @@ class _TerminalWidgetState extends State<TerminalWidget>
               fontSize: widget.fontSize,
               fontFamily: widget.fontFamily,
             ),
+            focusNode: _terminalFocus,
             autofocus: true,
           ),
         ),
@@ -165,6 +176,8 @@ class _TerminalWidgetState extends State<TerminalWidget>
         if (widget.showKeyboardToolbar)
           KeyboardToolbar(
             onKey: (sequence) => widget.gateway.sendInput(sequence),
+            onImageUpload: widget.onImageUpload,
+            terminalFocusNode: _terminalFocus,
           ),
       ],
     );
