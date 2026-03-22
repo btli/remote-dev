@@ -159,6 +159,7 @@ function getSessionIconColor(
     case "compacting":
       return "text-blue-500 agent-breathing";
     case "idle":
+    case "ended":
       return "text-muted-foreground";
     case "error":
       return "text-red-500";

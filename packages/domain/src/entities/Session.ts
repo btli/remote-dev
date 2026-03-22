@@ -234,12 +234,24 @@ export class Session {
     return this.withUpdates({ status: SessionStatus.suspended() });
   }
 
+  /**
+   * Resume this session from suspended state.
+   * Resets agent exit state so stale exit/error status doesn't persist.
+   * @throws InvalidStateTransitionError if not in suspended state
+   */
   resume(): Session {
     this.props.status.validateTransitionTo(SessionStatus.active(), "resume");
-    return this.withUpdates({
+    const updates: Partial<SessionProps> = {
       status: SessionStatus.active(),
       lastActivityAt: new Date(),
-    });
+    };
+    if (this.props.terminalType === "agent") {
+      updates.agentExitState = "running";
+      updates.agentExitCode = null;
+      updates.agentExitedAt = null;
+      updates.agentActivityStatus = null;
+    }
+    return this.withUpdates(updates);
   }
 
   close(): Session {

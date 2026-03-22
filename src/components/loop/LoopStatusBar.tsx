@@ -31,6 +31,7 @@ const STATUS_LABELS: Record<string, string> = {
   idle: "Idle",
   error: "Error",
   compacting: "Thinking",
+  ended: "Ended",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -39,6 +40,7 @@ const STATUS_COLORS: Record<string, string> = {
   idle: "bg-muted-foreground/50",
   error: "bg-red-500",
   compacting: "bg-blue-500",
+  ended: "bg-muted-foreground/50",
 };
 
 export function LoopStatusBar({
