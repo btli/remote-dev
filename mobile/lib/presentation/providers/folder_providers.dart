@@ -62,18 +62,7 @@ final filteredSessionsProvider = Provider<List<Session>>((ref) {
 
   final sessionFolders = ref.watch(sessionFoldersProvider);
   final allFolders = ref.watch(foldersProvider);
-
-  // Build subtree of the selected folder and all descendants
-  final folderIds = <String>{activeFolderId};
-  final queue = [activeFolderId];
-  while (queue.isNotEmpty) {
-    final parentId = queue.removeLast();
-    for (final f in allFolders) {
-      if (f.parentId == parentId && folderIds.add(f.id)) {
-        queue.add(f.id);
-      }
-    }
-  }
+  final folderIds = Folder.subtreeIds(activeFolderId, allFolders);
 
   return sessions.where((session) {
     final fid = session.folderId ?? sessionFolders[session.id];

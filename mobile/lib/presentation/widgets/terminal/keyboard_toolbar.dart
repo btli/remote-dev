@@ -132,13 +132,11 @@ class _KeyboardToolbarState extends State<KeyboardToolbar>
 
   /// Resolve a key through active modifiers. Pure computation — no state mutation.
   String _resolveSequence(String key) {
-    // Pre-composed sequences (arrows, HOME, PGUP, etc.) skip modifier resolution
+    // Pre-composed sequences (arrows, HOME, PGUP, etc.) and control characters
+    // skip modifier resolution — they are already fully formed.
     if (key.length > 1 || key.codeUnitAt(0) < 32) return key;
 
     var sequence = key;
-
-    // Shift+Enter → ESC + CR
-    if (_shiftActive && key == '\r') return '\x1b\r';
 
     // Ctrl+key → control character (A-Z → 0x01-0x1A, @[\]^_ → 0x00-0x1F)
     if (_ctrlActive) {
