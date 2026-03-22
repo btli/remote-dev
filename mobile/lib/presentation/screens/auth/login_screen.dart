@@ -5,7 +5,11 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 
+import 'package:remote_dev/domain/entities/server_config.dart';
+import 'package:remote_dev/domain/value_objects/auth_method.dart';
+import 'package:remote_dev/infrastructure/storage/server_scoped_storage.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -45,17 +49,42 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     String email = '',
     String? cfToken,
   }) async {
-    final scopedStorage = ref.read(serverScopedStorageProvider);
-    if (scopedStorage == null) {
-      setState(() => _error = 'No server configured');
-      return;
+    // Ensure a server config exists for this URL
+    final store = ref.read(serverConfigStoreProvider);
+    var activeConfig = ref.read(activeServerConfigProvider);
+
+    if (activeConfig == null || activeConfig.serverUrl != _baseUrl) {
+      // Create a new server config for this URL
+      final config = ServerConfig(
+        id: const Uuid().v4(),
+        nickname: '',
+        serverUrl: _baseUrl,
+        terminalPort: _terminalPort,
+        authMethod: cfToken != null
+            ? const CfAccessAuth()
+            : const ApiKeyAuth(),
+        createdAt: DateTime.now(),
+        lastConnectedAt: DateTime.now(),
+      );
+      await store.save(config);
+      await store.setActiveServerId(config.id);
+      ref.invalidate(serverListProvider);
+      ref.read(activeServerIdProvider.notifier).state = config.id;
+      activeConfig = config;
     }
+
+    // Write credentials to server-scoped storage
+    final scopedStorage = ServerScopedStorage(
+      storage: ref.read(secureStorageProvider),
+      serverId: activeConfig.id,
+    );
     await scopedStorage.storeCredentials(
       apiKey: apiKey,
       userId: userId,
       email: email,
       cfToken: cfToken,
     );
+
     ref.read(authNotifierProvider.notifier).loginCompleted();
   }
 
