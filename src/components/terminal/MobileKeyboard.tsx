@@ -176,11 +176,15 @@ export function MobileKeyboard({
     </button>
   );
 
+  const handleCameraClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
   const cameraButton = onImageUpload && (
     <>
       <div className="w-px bg-border mx-1 self-stretch" />
       <button
-        onClick={() => fileInputRef.current?.click()}
+        onClick={handleCameraClick}
         disabled={isUploading}
         className={cn(
           "px-2.5 py-1.5 rounded-md text-xs font-medium",

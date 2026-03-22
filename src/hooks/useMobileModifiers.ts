@@ -67,11 +67,14 @@ export function useMobileModifiers(): MobileModifiers {
         return "\x1b\r";
       }
 
-      // Ctrl+letter → ANSI control code (Ctrl+A = 0x01, ..., Ctrl+Z = 0x1A)
+      // Ctrl+key → ANSI control code
+      // Ctrl+A..Z = 0x01..0x1A, Ctrl+@.._ = 0x00..0x1F (includes Ctrl+[ = ESC, Ctrl+\ = SIGQUIT)
       if (ctrlActive && sequence.length === 1) {
-        const charCode = sequence.toUpperCase().charCodeAt(0);
-        if (charCode >= 65 && charCode <= 90) {
+        const charCode = sequence.charCodeAt(0);
+        if (charCode >= 64 && charCode <= 95) {
           sequence = String.fromCharCode(charCode - 64);
+        } else if (charCode >= 97 && charCode <= 122) {
+          sequence = String.fromCharCode(charCode - 96);
         }
       }
 

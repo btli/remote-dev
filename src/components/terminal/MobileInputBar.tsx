@@ -95,6 +95,11 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       onHeightChange?.();
     }, [onHeightChange]);
 
+    const handleChange = useCallback(
+      (e: React.ChangeEvent<HTMLTextAreaElement>) => setValue(e.target.value),
+      []
+    );
+
     return (
       <form
         onSubmit={handleSubmit}
@@ -106,7 +111,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
         <textarea
           ref={textareaRef}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={handleChange}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           placeholder={placeholder}
