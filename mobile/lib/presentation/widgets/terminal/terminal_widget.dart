@@ -15,6 +15,11 @@ import 'package:remote_dev/presentation/widgets/terminal/keyboard_toolbar.dart';
 ///
 /// Connects to a [TerminalGateway], pipes output to the terminal
 /// emulator, and sends user input back over the gateway.
+///
+/// Uses `readOnly: true` on [xterm.TerminalView] so that the system keyboard
+/// is driven by a native [TextField] instead of xterm's internal input handler.
+/// This enables OS-level features like voice dictation, autocorrect, and
+/// predictive text that xterm's custom input handling blocks.
 class TerminalWidget extends StatefulWidget {
   const TerminalWidget({
     super.key,
@@ -29,6 +34,7 @@ class TerminalWidget extends StatefulWidget {
     this.onNotificationDismissed,
     this.onImageUpload,
     this.terminalFocusNode,
+    this.isAgentSession = false,
   });
 
   final TerminalGateway gateway;
@@ -43,6 +49,9 @@ class TerminalWidget extends StatefulWidget {
   final Future<void> Function(Uint8List bytes, String mimeType)? onImageUpload;
   final FocusNode? terminalFocusNode;
 
+  /// Whether this is an agent session (affects input bar placeholder text).
+  final bool isAgentSession;
+
   @override
   State<TerminalWidget> createState() => _TerminalWidgetState();
 }
@@ -55,6 +64,9 @@ class _TerminalWidgetState extends State<TerminalWidget>
   StreamSubscription<TerminalEvent>? _eventSub;
   StreamSubscription<ConnectionStatus>? _statusSub;
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
+
+  /// Focus node for the native text input bar.
+  final _inputFocus = FocusNode();
 
   // Track terminal dimensions for resize events
   int _lastCols = 0;
@@ -75,11 +87,6 @@ class _TerminalWidgetState extends State<TerminalWidget>
     _eventSub = widget.gateway.events.listen(_onTerminalEvent);
     _statusSub =
         widget.gateway.connectionStatus.listen(_onConnectionStatusChanged);
-
-    // Forward user input to the gateway
-    _terminal.onOutput = (data) {
-      widget.gateway.sendInput(data);
-    };
 
     // Forward resize events to the gateway
     _terminal.onResize = (cols, rows, _, __) {
@@ -135,6 +142,7 @@ class _TerminalWidgetState extends State<TerminalWidget>
     WidgetsBinding.instance.removeObserver(this);
     _eventSub?.cancel();
     _statusSub?.cancel();
+    _inputFocus.dispose();
     if (_ownsFocusNode) _terminalFocus.dispose();
     super.dispose();
   }
@@ -161,28 +169,231 @@ class _TerminalWidgetState extends State<TerminalWidget>
             ),
           ),
 
-        // Terminal view
+        // Terminal view — readOnly so the system keyboard is driven by our
+        // native TextField below instead of xterm's internal input handler.
         Expanded(
-          child: xterm.TerminalView(
-            _terminal,
-            theme: xtermTheme,
-            textStyle: xterm.TerminalStyle(
-              fontSize: widget.fontSize,
-              fontFamily: widget.fontFamily,
+          child: GestureDetector(
+            onTap: () => _inputFocus.requestFocus(),
+            child: xterm.TerminalView(
+              _terminal,
+              theme: xtermTheme,
+              textStyle: xterm.TerminalStyle(
+                fontSize: widget.fontSize,
+                fontFamily: widget.fontFamily,
+              ),
+              focusNode: _terminalFocus,
+              readOnly: true,
+              autofocus: false,
             ),
-            focusNode: _terminalFocus,
-            autofocus: true,
           ),
         ),
 
-        // Mobile keyboard toolbar
+        // Native text input bar — enables voice dictation, autocorrect,
+        // and predictive text from the OS keyboard.
+        _InputBar(
+          focusNode: _inputFocus,
+          onSubmit: (text) => widget.gateway.sendInput(text),
+          disabled: _connectionStatus != ConnectionStatus.connected,
+          isAgentSession: widget.isAgentSession,
+        ),
+
+        // Mobile keyboard toolbar (special keys, modifiers, d-pad)
         if (widget.showKeyboardToolbar)
           KeyboardToolbar(
             onKey: (sequence) => widget.gateway.sendInput(sequence),
             onImageUpload: widget.onImageUpload,
-            terminalFocusNode: _terminalFocus,
+            terminalFocusNode: _inputFocus,
           ),
       ],
+    );
+  }
+}
+
+/// Native text input bar for mobile terminal sessions.
+///
+/// Uses a standard [TextField] instead of xterm's internal input handler,
+/// enabling OS-level voice dictation, autocorrect, and predictive text.
+/// Mirrors the web app's MobileInputBar component.
+///
+/// - Empty → shows mic icon (tapping focuses field to open keyboard with
+///   native voice input available)
+/// - Has text → shows send icon
+/// - Enter submits text + "\r" and clears
+/// - Auto-expands up to 4 lines
+class _InputBar extends StatefulWidget {
+  const _InputBar({
+    required this.focusNode,
+    required this.onSubmit,
+    this.disabled = false,
+    this.isAgentSession = false,
+  });
+
+  final FocusNode focusNode;
+  final void Function(String data) onSubmit;
+  final bool disabled;
+  final bool isAgentSession;
+
+  @override
+  State<_InputBar> createState() => _InputBarState();
+}
+
+class _InputBarState extends State<_InputBar> {
+  final _controller = TextEditingController();
+  bool _hasText = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onTextChanged);
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onTextChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onTextChanged() {
+    final hasText = _controller.text.isNotEmpty;
+    if (hasText != _hasText) {
+      setState(() => _hasText = hasText);
+    }
+  }
+
+  void _submit() {
+    if (widget.disabled) return;
+    final text = _controller.text;
+    widget.onSubmit(text.isNotEmpty ? '$text\r' : '\r');
+    _controller.clear();
+  }
+
+  void _onChanged(String value) {
+    // Intercept newline from the soft keyboard Enter key and treat it as
+    // submit (matching the web MobileInputBar behavior).  With maxLines > 1,
+    // Flutter shows a newline key instead of a send key, so onSubmitted never
+    // fires — we detect the trailing newline here instead.
+    if (value.endsWith('\n')) {
+      _controller.text = value.substring(0, value.length - 1);
+      _controller.selection = TextSelection.collapsed(
+        offset: _controller.text.length,
+      );
+      _submit();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final borderRadius = BorderRadius.circular(12);
+    final placeholder = widget.isAgentSession
+        ? 'Ask the agent...'
+        : 'Type a command...';
+
+    // Safe area bottom padding when keyboard is hidden (home indicator).
+    final bottomPadding = MediaQuery.of(context).viewInsets.bottom == 0
+        ? MediaQuery.of(context).viewPadding.bottom
+        : 0.0;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor.withValues(alpha: 0.95),
+        border: Border(
+          top: BorderSide(
+            color: theme.dividerColor.withValues(alpha: 0.2),
+          ),
+        ),
+      ),
+      padding: EdgeInsets.only(
+        left: 8,
+        right: 8,
+        top: 6,
+        bottom: 6 + bottomPadding,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              focusNode: widget.focusNode,
+              enabled: !widget.disabled,
+              maxLines: 4,
+              minLines: 1,
+              textInputAction: TextInputAction.send,
+              autocorrect: widget.isAgentSession,
+              enableSuggestions: widget.isAgentSession,
+              textCapitalization: widget.isAgentSession
+                  ? TextCapitalization.sentences
+                  : TextCapitalization.none,
+              style: TextStyle(
+                fontSize: 14,
+                color: colorScheme.onSurface,
+              ),
+              decoration: InputDecoration(
+                hintText: placeholder,
+                hintStyle: TextStyle(
+                  fontSize: 14,
+                  color: colorScheme.onSurface.withValues(alpha: 0.4),
+                ),
+                filled: true,
+                fillColor: colorScheme.surfaceContainerHigh
+                    .withValues(alpha: 0.5),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: borderRadius,
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: borderRadius,
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: borderRadius,
+                  borderSide: BorderSide(
+                    color: colorScheme.primary.withValues(alpha: 0.5),
+                  ),
+                ),
+                isDense: true,
+              ),
+              onChanged: _onChanged,
+              onSubmitted: (_) => _submit(),
+            ),
+          ),
+
+          const SizedBox(width: 6),
+
+          // Mic / Send toggle button
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: IconButton(
+              onPressed: widget.disabled
+                  ? null
+                  // Mic focuses the field to open the OS keyboard with
+                  // its native voice input button.
+                  : (_hasText ? _submit : widget.focusNode.requestFocus),
+              icon: Icon(
+                _hasText ? Icons.send_rounded : Icons.mic_rounded,
+                size: 20,
+              ),
+              color: _hasText
+                  ? colorScheme.primary
+                  : colorScheme.onSurface.withValues(alpha: 0.4),
+              style: IconButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              tooltip: _hasText ? 'Send' : 'Voice input',
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
