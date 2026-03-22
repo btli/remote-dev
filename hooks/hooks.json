@@ -11,6 +11,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook pre-tool-use",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreCompact": [

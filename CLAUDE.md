@@ -58,6 +58,7 @@ bun run db:studio    # Open Drizzle Studio
 bun run db:seed      # Seed authorized users
 bun run db:migrate-agents  # One-time agent session migration
 bun run db:migrate-github-accounts  # Backfill GitHub account metadata from existing OAuth accounts
+bun run db:migrate-profile-gitconfigs  # Add [credential] section to existing profile .gitconfig files
 ```
 
 ## Logging (NON-NEGOTIABLE)
@@ -211,7 +212,7 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv browser type` | Type text in browser |
 | `rdv browser evaluate` | Evaluate JavaScript |
 | `rdv session git-status` | Get git status for session |
-| `rdv hook pre-tool-use` | Handle PreToolUse hook (report running) |
+| `rdv hook pre-tool-use` | Handle PreToolUse hook (report running, git identity guard) |
 | `rdv hook post-tool-use` | Handle PostToolUse hook (sync tasks from stdin) |
 | `rdv hook pre-compact` | Handle PreCompact hook (report compacting) |
 | `rdv hook notification` | Handle Notification hook (report waiting) |
@@ -539,6 +540,7 @@ React Contexts in `src/contexts/`:
 - `POST /api/folders` - Create folder
 - `PATCH /api/folders/:id` - Update folder
 - `DELETE /api/folders/:id` - Delete folder
+- `POST /api/folders/:id/git-guard` - Evaluate git identity risk for commit/push in folder
 
 ### Preferences
 - `GET /api/preferences` - Get user settings + all folder preferences

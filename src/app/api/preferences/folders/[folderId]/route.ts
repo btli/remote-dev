@@ -42,6 +42,9 @@ export const PUT = withAuth(async (request, { userId, params }) => {
     "environmentVars",
     "pinnedFiles",
     "defaultAgentProvider",
+    "gitIdentityName",
+    "gitIdentityEmail",
+    "isSensitive",
   ];
 
   const filteredUpdates: Record<string, unknown> = {};

@@ -94,6 +94,11 @@ export interface FolderPreferences {
   environmentVars: EnvironmentVariables | null;
   // Pinned files for quick access in sidebar
   pinnedFiles: PinnedFile[] | null;
+  // Git identity override for pseudonymous/anonymous commits
+  gitIdentityName: string | null;
+  gitIdentityEmail: string | null;
+  // Sensitive folder flag — requires pseudonymous identity, enables push protection
+  isSensitive: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -177,4 +182,9 @@ export interface UpdateFolderPreferencesInput {
   environmentVars?: EnvironmentVariables | null;
   // Pinned files for quick access in sidebar
   pinnedFiles?: PinnedFile[] | null;
+  // Git identity override for pseudonymous/anonymous commits
+  gitIdentityName?: string | null;
+  gitIdentityEmail?: string | null;
+  // Sensitive folder flag — requires pseudonymous identity, enables push protection
+  isSensitive?: boolean;
 }

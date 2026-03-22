@@ -30,6 +30,7 @@ import { execFileNoThrow } from "@/lib/exec";
 import { safeJsonParse } from "@/lib/utils";
 import { getProfilesDir } from "@/lib/paths";
 import { ProfileIsolation } from "@/domain/value-objects/ProfileIsolation";
+import { gitCredentialManager } from "@/infrastructure/container";
 import type {
   AgentProfile,
   CreateAgentProfileInput,
@@ -44,6 +45,19 @@ import type {
 
 // Profile base directory - use centralized path configuration
 const getProfilesBaseDir = () => getProfilesDir();
+
+/**
+ * Resolve the git [credential] section for profile .gitconfig files.
+ * Returns an empty string if the credential manager is unavailable.
+ */
+async function getCredentialSection(): Promise<string> {
+  try {
+    return await gitCredentialManager.getCredentialSection();
+  } catch (error) {
+    log.warn("Failed to get credential section for profile gitconfig", { error: String(error) });
+    return "";
+  }
+}
 
 /**
  * Sanitize a git config value to prevent injection attacks.
@@ -314,11 +328,12 @@ export async function initializeProfileDirectory(
     await mkdir(dir, { recursive: true });
   }
 
-  // Create default .gitconfig
+  // Create default .gitconfig with credential helper to suppress macOS keychain prompts
+  const credentialSection = await getCredentialSection();
   const gitConfig = `[user]
 \tname =
 \temail =
-`;
+${credentialSection}`;
   await writeFile(join(configDir, ".gitconfig"), gitConfig);
 
   // Create default CLAUDE.md if Claude provider
@@ -504,12 +519,15 @@ export async function setProfileGitIdentity(
       ? sanitizeGitConfigValue(identity.gpgKeyId)
       : null;
 
+    // Preserve credential helper section when rewriting gitconfig
+    const credentialSection = await getCredentialSection();
+
     const gitConfig = `[user]
 \tname = ${safeName}
 \temail = ${safeEmail}
 ${safeGpgKey ? `\tsigningkey = ${safeGpgKey}` : ""}
 ${safeGpgKey ? "[commit]\n\tgpgsign = true" : ""}
-`;
+${credentialSection}`;
     await writeFile(join(profile.configDir, ".gitconfig"), gitConfig);
   }
 }

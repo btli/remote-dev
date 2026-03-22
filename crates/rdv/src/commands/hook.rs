@@ -124,6 +124,118 @@ async fn handle_stop(client: &Client, agent: Option<String>, reason: Option<Stri
     Ok(())
 }
 
+/// Check if a git command in a sensitive folder would leak identity.
+/// Reads the PreToolUse payload from stdin, inspects for git commit/push commands,
+/// and calls the git-guard API to evaluate identity risk.
+/// Returns true if the tool use should be blocked.
+async fn check_git_identity_guard(client: &Client) -> bool {
+    // Read stdin to get the tool payload
+    let mut buf = Vec::new();
+    if std::io::stdin().read_to_end(&mut buf).is_err() {
+        return false;
+    }
+
+    let payload: serde_json::Value = match serde_json::from_slice(&buf) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    // Only check Bash tool calls
+    let tool_name = payload.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    if tool_name != "Bash" {
+        return false;
+    }
+
+    let command = payload
+        .get("tool_input")
+        .and_then(|v| v.get("command"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Check if the command is a git commit or git push
+    let is_git_commit = command.contains("git commit") || command.contains("git-commit");
+    let is_git_push = command.contains("git push") || command.contains("git-push");
+    if !is_git_commit && !is_git_push {
+        return false;
+    }
+
+    let operation = if is_git_push { "push" } else { "commit" };
+
+    // Need session ID to look up folder
+    let sid = match client.session_id() {
+        Some(s) => s,
+        None => return false,
+    };
+
+    // Get the session's folder ID
+    #[derive(serde::Deserialize)]
+    struct SessionInfo {
+        #[serde(rename = "folderId")]
+        folder_id: Option<String>,
+    }
+
+    let session: SessionInfo = match client.get(&format!("/api/sessions/{sid}")).await {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let folder_id = match &session.folder_id {
+        Some(id) => id,
+        None => return false,
+    };
+
+    // Read git identity from environment (set by session-service)
+    let proposed_name = std::env::var("GIT_AUTHOR_NAME")
+        .or_else(|_| std::env::var("GIT_COMMITTER_NAME"))
+        .unwrap_or_default();
+    let proposed_email = std::env::var("GIT_AUTHOR_EMAIL")
+        .or_else(|_| std::env::var("GIT_COMMITTER_EMAIL"))
+        .unwrap_or_default();
+
+    // Always call the guard API — the server determines if the folder is sensitive
+    // even when no identity env vars are set (which is the most dangerous case)
+
+    // Call the git-guard API
+    let guard_payload = json!({
+        "proposedName": proposed_name,
+        "proposedEmail": proposed_email,
+        "operation": operation,
+    });
+
+    #[derive(serde::Deserialize)]
+    struct GuardResult {
+        risk: String,
+        reason: Option<String>,
+    }
+
+    let result: GuardResult = match client
+        .post_json(&format!("/api/folders/{folder_id}/git-guard"), &guard_payload)
+        .await
+    {
+        Ok(val) => match serde_json::from_value(val) {
+            Ok(r) => r,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+
+    match result.risk.as_str() {
+        "block" => {
+            if let Some(reason) = &result.reason {
+                eprintln!("🛡️  Git identity guard: {reason}");
+            }
+            true
+        }
+        "warn" => {
+            if let Some(reason) = &result.reason {
+                eprintln!("⚠️  Git identity warning: {reason}");
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Sync task/todo data from stdin to the terminal server.
 /// Drains stdin even if no session ID is available to prevent blocking the caller.
 async fn sync_todos_from_stdin(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
@@ -149,6 +261,9 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
     match args.command {
         HookCommand::PreToolUse => {
             report_status(client, "running").await;
+            if check_git_identity_guard(client).await {
+                std::process::exit(2);
+            }
         }
         HookCommand::PostToolUse => {
             sync_todos_from_stdin(client).await?;

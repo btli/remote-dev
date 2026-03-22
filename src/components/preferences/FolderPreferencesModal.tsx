@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint, FileText, ChevronDown, ChevronRight } from "lucide-react";
+import { Folder, RotateCcw, Github, FolderGit2, Loader2, Terminal, AlertTriangle, Settings, Palette, Check, Download, FolderOpen, Fingerprint, FileText, ChevronDown, ChevronRight, Shield } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -499,7 +500,14 @@ export function FolderPreferencesModal({
   };
 
   // Check if any settings in a tab are overridden
-  const hasGeneralOverrides = isOverridden("defaultWorkingDirectory") || isOverridden("defaultShell") || isOverridden("startupCommand") || isOverridden("defaultAgentProvider");
+  const hasGeneralOverrides =
+    isOverridden("defaultWorkingDirectory") ||
+    isOverridden("defaultShell") ||
+    isOverridden("startupCommand") ||
+    isOverridden("defaultAgentProvider") ||
+    isOverridden("gitIdentityName") ||
+    isOverridden("gitIdentityEmail") ||
+    getValue("isSensitive");
   const hasAppearanceOverrides = isOverridden("theme") || isOverridden("fontSize") || isOverridden("fontFamily");
   const hasRepoOverrides = isOverridden("githubRepoId") || isOverridden("localRepoPath");
   const hasEnvOverrides = isOverridden("environmentVars");
@@ -750,6 +758,84 @@ export function FolderPreferencesModal({
                   </div>
                 );
               })()}
+
+              {/* Git Identity Section */}
+              <div className="pt-2 border-t border-border space-y-3">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-muted-foreground" />
+                  <Label className="text-muted-foreground font-medium">Git Identity</Label>
+                </div>
+
+                {/* Sensitive Toggle */}
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
+                  <div className="space-y-0.5">
+                    <Label className="text-foreground">Sensitive Folder</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Require pseudonymous identity for commits and pushes.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={getValue("isSensitive") ?? false}
+                    onCheckedChange={(checked) => setValue("isSensitive", checked)}
+                  />
+                </div>
+
+                {/* Git Identity Name */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-muted-foreground">Commit Author Name</Label>
+                    {isOverridden("gitIdentityName") && (
+                      <span className="text-xs text-primary">Overridden</span>
+                    )}
+                  </div>
+                  <Input
+                    value={getValue("gitIdentityName") || ""}
+                    onChange={(e) =>
+                      setValue("gitIdentityName", e.target.value || null)
+                    }
+                    placeholder="Pseudonymous name for git commits"
+                    className={cn(
+                      "bg-card border-border text-foreground placeholder:text-muted-foreground",
+                      isOverridden("gitIdentityName") && "border-primary/50"
+                    )}
+                  />
+                </div>
+
+                {/* Git Identity Email */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-muted-foreground">Commit Author Email</Label>
+                    {isOverridden("gitIdentityEmail") && (
+                      <span className="text-xs text-primary">Overridden</span>
+                    )}
+                  </div>
+                  <Input
+                    value={getValue("gitIdentityEmail") || ""}
+                    onChange={(e) =>
+                      setValue("gitIdentityEmail", e.target.value || null)
+                    }
+                    placeholder="Pseudonymous email for git commits"
+                    className={cn(
+                      "bg-card border-border text-foreground placeholder:text-muted-foreground",
+                      isOverridden("gitIdentityEmail") && "border-primary/50"
+                    )}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Override git author identity for sessions in this folder.
+                    {getValue("isSensitive") && " Required when folder is marked sensitive."}
+                  </p>
+                </div>
+
+                {/* Validation warning */}
+                {getValue("isSensitive") && !getValue("gitIdentityName") && !getValue("gitIdentityEmail") && (
+                  <div className="flex items-center gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
+                    <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0" />
+                    <p className="text-xs text-yellow-500">
+                      Sensitive folder requires a pseudonymous git identity. Configure name and email above.
+                    </p>
+                  </div>
+                )}
+              </div>
             </TabsContent>
 
             {/* Appearance Tab */}
