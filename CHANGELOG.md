@@ -7,22 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-03-22
+
 ### Added
 
 - **Mobile voice dictation**: Native text input bar in the Flutter app replaces xterm.dart's internal keyboard handler, enabling Android/iOS voice dictation, autocorrect, and predictive text. Mic/Send button toggles based on input state. Autocorrect is enabled only for agent sessions (disabled for shell to preserve command case sensitivity)
 - **"ended" agent activity status**: Sessions whose Claude Code session ends now show "ended" status instead of falling through to "idle". Supported across web sidebar, loop status bar, mobile home screen, and browser notifications
 - **Mobile session close**: Swipe-to-close gesture on session tiles in the Flutter drawer sidebar, matching the web app's swipe-to-close pattern. Agent exit overlay "Close" button now actually closes the session server-side (kills tmux) instead of just navigating away
-
-### Fixed
-
-- **False agent exit detection on reconnect**: Race condition where old PTY async `onExit` handlers could fire after WebSocket reconnection, destroying the new session and showing a false "Agent completed" exit screen. Added PTY/WS identity guards and proper pre-cleanup on reconnect
-- **Stale error status after session resume**: Resuming a suspended agent/loop session now resets `agentExitState`, `agentExitCode`, and `agentActivityStatus` so stale error indicators don't persist
-- **Mobile session selection deadlock**: Tapping a session in the Flutter app drawer now correctly loads the terminal instead of showing "No active session"
-
-## [0.3.6] - 2026-03-22
-
-### Added
-
 - **Git credential suppression**: Automatically configure `gh` as the git credential helper in all terminal sessions, preventing macOS Keychain GUI prompts when agents run `git push/pull/fetch`. Profile sessions get `[credential]` in their `.gitconfig`; non-profile sessions get a session-scoped gitconfig with cleanup on close
 - **Folder git identity override**: Per-folder pseudonymous git name/email in folder preferences, injected as `GIT_AUTHOR_NAME/EMAIL` and `GIT_COMMITTER_NAME/EMAIL` into session environment. Identity inherits child-first through folder hierarchy
 - **Sensitive folder protection**: Mark folders as "sensitive" to require pseudonymous identity for commits and pushes. `isSensitive` flag propagates from any ancestor folder. Git guard API (`POST /api/folders/[id]/git-guard`) evaluates identity risk with `none/warn/block` levels
@@ -39,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **False agent exit detection on reconnect**: Race condition where old PTY async `onExit` handlers could fire after WebSocket reconnection, destroying the new session and showing a false "Agent completed" exit screen. Added PTY/WS identity guards and proper pre-cleanup on reconnect
+- **Stale error status after session resume**: Resuming a suspended agent/loop session now resets `agentExitState`, `agentExitCode`, and `agentActivityStatus` so stale error indicators don't persist
+- **Mobile session selection deadlock**: Tapping a session in the Flutter app drawer now correctly loads the terminal instead of showing "No active session"
 - **Mobile sticky keys in NAV mode**: CTRL/ALT/SHIFT modifiers and ESC/^C/^D quick keys now appear in both keyboard modes, fixing sticky modifiers being inaccessible in NAV mode
 - **Mobile nav button alignment**: Reorganize nav mode arrow keys into a d-pad cluster (↑ centered above ← ↓ →) with pure CSS flex layout, separate from other navigation keys
 - **Mobile drawer close**: Replace `Navigator.maybePop()` with `closeDrawer()` for reliable drawer dismissal inside GoRouter ShellRoute
