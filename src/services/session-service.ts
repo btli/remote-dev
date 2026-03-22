@@ -39,6 +39,39 @@ initializeBuiltInPlugins();
 export { SessionServiceError };
 
 /**
+ * Resolve git credential suppression env vars for a session.
+ * Returns GIT_TERMINAL_PROMPT=0 and optionally GIT_CONFIG_GLOBAL for non-profile sessions.
+ */
+async function resolveGitCredentialEnv(
+  sessionId: string,
+  hasProfile: boolean
+): Promise<Record<string, string>> {
+  try {
+    const env = await gitCredentialManager.buildSessionEnv(sessionId, hasProfile);
+    return env.toRecord();
+  } catch (error) {
+    log.error("Failed to build git credential env", { sessionId, error: String(error) });
+    return {};
+  }
+}
+
+/**
+ * Resolve folder-level git identity override env vars (pseudonymous commits).
+ */
+async function resolveFolderGitIdentityEnv(
+  userId: string,
+  folderId: string | null | undefined
+): Promise<Record<string, string>> {
+  try {
+    const { env } = await getFolderGitIdentity(userId, folderId);
+    return env ?? {};
+  } catch (error) {
+    log.error("Failed to resolve folder git identity", { folderId, error: String(error) });
+    return {};
+  }
+}
+
+/**
  * Create a new terminal session.
  * SECURITY: Wraps tmux creation with proper cleanup on DB failure.
  */
@@ -319,23 +352,8 @@ export async function createSession(
 
   // File and browser sessions don't need tmux — they're pure UI
   if (input.terminalType !== "file" && input.terminalType !== "browser") {
-    // Build git credential suppression env (GIT_TERMINAL_PROMPT=0, GIT_CONFIG_GLOBAL for non-profile)
-    let gitCredentialEnv: Record<string, string> = {};
-    try {
-      const credEnv = await gitCredentialManager.buildSessionEnv(sessionId, !!profile);
-      gitCredentialEnv = credEnv.toRecord();
-    } catch (error) {
-      log.error("Failed to build git credential env", { sessionId, error: String(error) });
-    }
-
-    // Resolve folder-level git identity override (pseudonymous commits for sensitive folders)
-    let folderGitIdentityEnv: Record<string, string> = {};
-    try {
-      const { env } = await getFolderGitIdentity(userId, input.folderId);
-      folderGitIdentityEnv = env ?? {};
-    } catch (error) {
-      log.error("Failed to resolve folder git identity", { sessionId, error: String(error) });
-    }
+    const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
+    const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.folderId);
 
     // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately
     // Precedence: profileEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
@@ -894,23 +912,8 @@ export async function resumeSession(
         log.error("Failed to resolve GitHub account env on resume", { sessionId, error: String(error) });
       }
 
-      // Refresh git credential suppression env on resume
-      let gitCredentialEnv: Record<string, string> = {};
-      try {
-        const credEnv = await gitCredentialManager.buildSessionEnv(sessionId, !!session.profileId);
-        gitCredentialEnv = credEnv.toRecord();
-      } catch (error) {
-        log.error("Failed to build git credential env on resume", { sessionId, error: String(error) });
-      }
-
-      // Refresh folder git identity env on resume (may have changed while suspended)
-      let folderGitIdentityEnv: Record<string, string> = {};
-      try {
-        const { env } = await getFolderGitIdentity(userId, session.folderId);
-        folderGitIdentityEnv = env ?? {};
-      } catch (error) {
-        log.error("Failed to resolve folder git identity on resume", { sessionId, error: String(error) });
-      }
+      const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!session.profileId);
+      const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.folderId);
 
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
         ...folderGitIdentityEnv,
