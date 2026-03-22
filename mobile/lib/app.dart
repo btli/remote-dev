@@ -4,20 +4,41 @@ import 'package:go_router/go_router.dart';
 
 import 'package:remote_dev/presentation/providers/providers.dart';
 import 'package:remote_dev/presentation/providers/push_notification_providers.dart';
+import 'package:remote_dev/presentation/providers/server_config_providers.dart';
 import 'package:remote_dev/presentation/screens/auth/login_screen.dart';
-import 'package:remote_dev/presentation/screens/home/home_screen.dart';
+import 'package:remote_dev/presentation/screens/home/terminal_home_screen.dart';
+import 'package:remote_dev/presentation/screens/server/add_server_screen.dart';
 import 'package:remote_dev/presentation/screens/session/terminal_screen.dart';
 import 'package:remote_dev/presentation/screens/settings/settings_screen.dart';
 import 'package:remote_dev/presentation/theme/app_theme.dart';
 
-/// GoRouter configuration with auth-based redirects.
+/// Listenable that notifies GoRouter to re-evaluate redirects
+/// without rebuilding the entire router instance.
+class _RouterRefreshNotifier extends ChangeNotifier {
+  void notify() => notifyListeners();
+}
+
+/// Single GoRouter instance — persists across state changes.
+/// Uses refreshListenable to re-evaluate redirects reactively.
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authNotifierProvider);
+  final refreshNotifier = _RouterRefreshNotifier();
+
+  // Listen to auth and server changes, trigger redirect re-evaluation
+  ref.listen(authNotifierProvider, (_, __) => refreshNotifier.notify());
+  ref.listen(serverListProvider, (_, __) => refreshNotifier.notify());
 
   return GoRouter(
-    initialLocation: '/login',
+    initialLocation: '/sessions',
+    refreshListenable: refreshNotifier,
     redirect: (context, state) {
-      final isOnLogin = state.matchedLocation == '/login';
+      final authState = ref.read(authNotifierProvider);
+      final hasServers = ref.read(serverListProvider).isNotEmpty;
+      final location = state.matchedLocation;
+      final isOnLogin = location == '/login';
+      final isOnSetup = location == '/servers/add';
+
+      if (!hasServers && !isOnSetup) return '/servers/add';
+      if (isOnSetup) return null;
 
       return switch (authState) {
         AuthLoading() => null,
@@ -31,17 +52,30 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const LoginScreen(),
       ),
       GoRoute(
-        path: '/sessions',
-        builder: (context, state) => const HomeScreen(),
+        path: '/servers/add',
+        builder: (context, state) => const AddServerScreen(),
       ),
-      GoRoute(
-        path: '/sessions/:id',
-        builder: (context, state) => TerminalScreen(
-          sessionId: state.pathParameters['id']!,
-        ),
+      ShellRoute(
+        builder: (context, state, child) => TerminalHomeScreen(child: child),
+        routes: [
+          GoRoute(
+            path: '/sessions',
+            builder: (context, state) => const SizedBox.shrink(),
+          ),
+          GoRoute(
+            path: '/sessions/:id',
+            builder: (context, state) => TerminalScreen(
+              sessionId: state.pathParameters['id']!,
+            ),
+          ),
+        ],
       ),
       GoRoute(
         path: '/settings',
+        builder: (context, state) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: '/servers',
         builder: (context, state) => const SettingsScreen(),
       ),
     ],
@@ -56,7 +90,6 @@ class RemoteDevApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = ref.watch(terminalPaletteProvider);
     final router = ref.watch(routerProvider);
-    // Watch push registration so it actually runs when authenticated
     ref.watch(pushRegistrationProvider);
 
     return MaterialApp.router(

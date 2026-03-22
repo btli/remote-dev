@@ -22,7 +22,11 @@ final class Unauthenticated extends AuthState {
   const Unauthenticated();
 }
 
-/// Manages authentication state by checking secure storage for credentials.
+/// Manages authentication state scoped to the active server.
+///
+/// Checks the active server's scoped storage for credentials.
+/// When no server is configured, transitions to Unauthenticated
+/// (the router then redirects to server setup).
 class AuthNotifier extends StateNotifier<AuthState> {
   AuthNotifier(this._ref) : super(const AuthLoading()) {
     checkStoredCredentials();
@@ -30,17 +34,27 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   final Ref _ref;
 
-  /// Check if valid credentials exist in secure storage.
+  /// Check if valid credentials exist for the active server.
   Future<void> checkStoredCredentials() async {
     state = const AuthLoading();
-    final storage = _ref.read(secureStorageProvider);
-    final hasCredentials = await storage.hasCredentials();
 
+    final config = _ref.read(activeServerConfigProvider);
+    if (config == null) {
+      state = const Unauthenticated();
+      return;
+    }
+
+    final scopedStorage = _ref.read(serverScopedStorageProvider);
+    if (scopedStorage == null) {
+      state = const Unauthenticated();
+      return;
+    }
+
+    final hasCredentials = await scopedStorage.hasCredentials();
     if (hasCredentials) {
-      final serverUrl = await storage.getServerUrl();
-      final email = await storage.getUserEmail();
+      final email = await scopedStorage.getUserEmail();
       state = Authenticated(
-        serverUrl: serverUrl ?? '',
+        serverUrl: config.serverUrl,
         email: email,
       );
     } else {
@@ -50,21 +64,20 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   /// Called after successful login to transition to authenticated state.
   Future<void> loginCompleted() async {
-    // Invalidate server config so it re-reads from storage
     _ref.invalidate(serverConfigProvider);
+    _ref.invalidate(serverListProvider);
     await checkStoredCredentials();
-    // Trigger push notification registration after credentials are available
     _ref.invalidate(pushRegistrationProvider);
   }
 
-  /// Sign out: clear storage and transition to unauthenticated.
+  /// Sign out from the active server only.
   Future<void> signOut() async {
-    // Unregister push token before clearing credentials
     final pushService = _ref.read(pushNotificationServiceProvider);
     await pushService?.unregister();
 
-    final storage = _ref.read(secureStorageProvider);
-    await storage.clearAll();
+    final scopedStorage = _ref.read(serverScopedStorageProvider);
+    await scopedStorage?.clearAll();
+
     _ref.invalidate(serverConfigProvider);
     state = const Unauthenticated();
   }

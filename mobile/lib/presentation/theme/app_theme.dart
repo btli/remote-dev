@@ -65,12 +65,7 @@ class NerdFonts {
 /// Build a Material 3 ThemeData from a terminal palette.
 class AppTheme {
   static Color _mixColors(Color base, Color blend, double amount) {
-    return Color.fromARGB(
-      255,
-      (base.r * 255 * (1 - amount) + blend.r * 255 * amount).round().clamp(0, 255),
-      (base.g * 255 * (1 - amount) + blend.g * 255 * amount).round().clamp(0, 255),
-      (base.b * 255 * (1 - amount) + blend.b * 255 * amount).round().clamp(0, 255),
-    );
+    return Color.lerp(base, blend, amount)!;
   }
 
   static ThemeData fromPalette(TerminalPalette palette, {bool isDark = true}) {
@@ -109,7 +104,7 @@ class AppTheme {
             error: error,
             onError: fg,
             surface: bg,
-            onSurface: bg,
+            onSurface: fg,
           );
 
     return ThemeData(
@@ -118,12 +113,18 @@ class AppTheme {
       brightness: isDark ? Brightness.dark : Brightness.light,
       scaffoldBackgroundColor: bg,
       appBarTheme: AppBarTheme(
-        backgroundColor: bg,
+        backgroundColor: Colors.transparent,
         foregroundColor: fg,
         elevation: 0,
+        scrolledUnderElevation: 0,
       ),
       drawerTheme: DrawerThemeData(
-        backgroundColor: bg,
+        // Transparent — GlassmorphicContainer handles the frosted glass
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.horizontal(right: Radius.circular(20)),
+        ),
       ),
       cardTheme: CardThemeData(
         color: surfaceContainerLow,
@@ -191,19 +192,23 @@ class AppTheme {
         elevation: 4,
       ),
       navigationDrawerTheme: NavigationDrawerThemeData(
-        backgroundColor: bg,
+        // Transparent — GlassmorphicContainer.drawer handles surface
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         indicatorColor: primary.withValues(alpha: 0.12),
         indicatorShape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: surfaceContainerLow,
+        // Semi-transparent for frosted glass bottom sheets
+        backgroundColor: surfaceContainerLow.withValues(alpha: 0.80),
         showDragHandle: true,
         dragHandleColor: fg.withValues(alpha: 0.2),
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
+        elevation: 0,
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
@@ -230,7 +235,9 @@ class AppTheme {
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: surfaceContainerHigh,
+        // Semi-transparent for frosted glass dialogs
+        backgroundColor: surfaceContainerHigh.withValues(alpha: 0.85),
+        elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
