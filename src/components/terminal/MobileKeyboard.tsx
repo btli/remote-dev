@@ -32,16 +32,26 @@ interface KeyConfig {
   modifier?: ModifierKey;
 }
 
-// ── Keys Mode: modifiers, control combos, punctuation ──────────────────────
+// ── Shared keys (present in both modes) ─────────────────────────────────────
 
-const KEYS_ROW1: KeyConfig[] = [
-  { label: "ESC", key: "\x1b" },
-  { label: "TAB", key: "\t" },
-  { label: "^C", key: "\x03" },
-  { label: "^D", key: "\x04" },
+const MODIFIER_KEYS: KeyConfig[] = [
   { label: "CTRL", key: "ctrl", type: "modifier", modifier: "ctrl" },
   { label: "ALT", key: "alt", type: "modifier", modifier: "alt" },
   { label: "SHIFT", key: "shift", type: "modifier", modifier: "shift" },
+];
+
+const QUICK_KEYS: KeyConfig[] = [
+  { label: "ESC", key: "\x1b" },
+  { label: "^C", key: "\x03" },
+  { label: "^D", key: "\x04" },
+];
+
+// ── Keys Mode: control combos, punctuation ──────────────────────────────────
+
+const KEYS_ROW1: KeyConfig[] = [
+  ...QUICK_KEYS,
+  { label: "TAB", key: "\t" },
+  ...MODIFIER_KEYS,
 ];
 
 const KEYS_ROW2: KeyConfig[] = [
@@ -68,9 +78,11 @@ const NAV_ROW1: KeyConfig[] = [
   { label: "END", key: "\x1b[F" },
   { label: "ENTER", key: "\r" },
   { label: "⇧↵", key: "\x1b\r" },
+  ...MODIFIER_KEYS,
 ];
 
 const NAV_ROW2: KeyConfig[] = [
+  ...QUICK_KEYS,
   { label: "PGUP", key: "\x1b[5~" },
   { label: "PGDN", key: "\x1b[6~" },
 ];
