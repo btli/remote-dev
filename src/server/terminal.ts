@@ -1339,14 +1339,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // Clean up any existing session for this ID before creating a new one.
     // This prevents the old PTY's async onExit handler from firing after
-    // the new session is established and destroying it.
-    const existingSession = sessions.get(sessionId);
-    if (existingSession) {
+    // the new session is established and destroying it. Uses cleanupSession()
+    // to ensure all resources (timers, voice FIFO, status maps) are released.
+    if (sessions.has(sessionId)) {
       log.debug("Replacing existing session connection", { sessionId });
-      sessions.delete(sessionId);
-      safeDestroyPty(existingSession.pty);
-      if (existingSession.ws !== ws && existingSession.ws.readyState === WebSocket.OPEN) {
-        existingSession.ws.close();
+      const oldWs = sessions.get(sessionId)!.ws;
+      cleanupSession(sessionId);
+      if (oldWs !== ws && oldWs.readyState === WebSocket.OPEN) {
+        oldWs.close();
       }
     }
 
