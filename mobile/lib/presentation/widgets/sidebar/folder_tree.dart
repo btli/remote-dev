@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/domain/entities/folder.dart';
+import 'package:remote_dev/domain/entities/session.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
 
 /// A collapsible folder tree widget for the sidebar.
@@ -39,9 +40,12 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
   }
 
   /// Count sessions belonging to a folder (and its descendants).
-  int _sessionCount(String folderId, List<Folder> allFolders) {
-    final sessionFolders = ref.read(sessionFoldersProvider);
-    final sessions = ref.read(sessionListProvider).valueOrNull ?? [];
+  int _sessionCount(
+    String folderId,
+    List<Folder> allFolders,
+    List<Session> sessions,
+    Map<String, String> sessionFolders,
+  ) {
     final folderIds = _folderSubtreeIds(folderId, allFolders);
 
     var count = 0;
@@ -74,6 +78,7 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
     final activeFolderId = ref.watch(activeFolderIdProvider);
     final folderListAsync = ref.watch(folderListProvider);
     final allSessions = ref.watch(sessionListProvider).valueOrNull ?? [];
+    final sessionFolders = ref.watch(sessionFoldersProvider);
 
     if (folderListAsync.isLoading && folders.isEmpty) {
       return Padding(
@@ -144,7 +149,7 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
 
           // Root folders and their children
           for (final folder in rootFolders)
-            _buildFolderSubtree(folder, folders, activeFolderId, 0),
+            _buildFolderSubtree(folder, folders, activeFolderId, 0, allSessions, sessionFolders),
         ],
       ],
     );
@@ -155,11 +160,13 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
     List<Folder> allFolders,
     String? activeFolderId,
     int depth,
+    List<Session> allSessions,
+    Map<String, String> sessionFolders,
   ) {
     final hasChildren = _hasChildren(folder.id, allFolders);
     final isExpanded = _expandedIds.contains(folder.id);
     final children = hasChildren ? _childrenOf(folder.id, allFolders) : <Folder>[];
-    final sessionCount = _sessionCount(folder.id, allFolders);
+    final sessionCount = _sessionCount(folder.id, allFolders, allSessions, sessionFolders);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -193,7 +200,7 @@ class _FolderTreeState extends ConsumerState<FolderTree> {
         ),
         if (isExpanded)
           for (final child in children)
-            _buildFolderSubtree(child, allFolders, activeFolderId, depth + 1),
+            _buildFolderSubtree(child, allFolders, activeFolderId, depth + 1, allSessions, sessionFolders),
       ],
     );
   }

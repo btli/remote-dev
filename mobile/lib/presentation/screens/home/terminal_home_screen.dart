@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:remote_dev/domain/entities/session.dart';
+import 'package:remote_dev/domain/value_objects/agent_provider.dart';
 import 'package:remote_dev/presentation/providers/providers.dart';
 import 'package:remote_dev/presentation/widgets/common/glassmorphic_container.dart';
 import 'package:remote_dev/presentation/widgets/session/create_session_sheet.dart';
+import 'package:remote_dev/presentation/widgets/sidebar/folder_tree.dart';
 
 /// Terminal-first home screen with edge drawer navigation.
 ///
@@ -27,7 +29,6 @@ class TerminalHomeScreen extends ConsumerStatefulWidget {
 
 class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey();
-  bool _showQuickActions = false;
 
   void _openSessionDrawer() {
     HapticFeedback.lightImpact();
@@ -35,7 +36,6 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
   }
 
   void _onCreateSession() {
-    setState(() => _showQuickActions = false);
     final folderId = ref.read(activeFolderIdProvider);
     showModalBottomSheet<void>(
       context: context,
@@ -50,7 +50,7 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
 
   void _onSessionTap(Session session) {
     ref.read(activeSessionIdProvider.notifier).state = session.id;
-    Navigator.of(context).maybePop(); // Close drawer
+    _scaffoldKey.currentState?.closeDrawer();
     HapticFeedback.selectionClick();
     context.go('/sessions/${session.id}');
   }
@@ -59,7 +59,6 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final sessions = ref.watch(filteredSessionsProvider);
     final activeSessionId = ref.watch(activeSessionIdProvider);
     final activeServer = ref.watch(activeServerConfigProvider);
 
@@ -67,13 +66,11 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
       key: _scaffoldKey,
       backgroundColor: colorScheme.surface,
       drawer: _SessionDrawer(
-        sessions: sessions,
-        activeSessionId: activeSessionId,
         serverName: activeServer?.displayName,
         onSessionTap: _onSessionTap,
         onCreateSession: _onCreateSession,
         onServerTap: () {
-          Navigator.of(context).maybePop();
+          _scaffoldKey.currentState?.closeDrawer();
           context.push('/servers');
         },
       ),
@@ -99,32 +96,6 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
                 ),
               ),
             ),
-          if (_showQuickActions)
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              child: GestureDetector(
-                onHorizontalDragEnd: (details) {
-                  if (details.primaryVelocity != null &&
-                      details.primaryVelocity! > 0) {
-                    setState(() => _showQuickActions = false);
-                  }
-                },
-                child: _QuickActionsPanel(
-                  onCreateSession: _onCreateSession,
-                  onSettings: () {
-                    setState(() => _showQuickActions = false);
-                    context.push('/settings');
-                  },
-                  onServers: () {
-                    setState(() => _showQuickActions = false);
-                    context.push('/servers');
-                  },
-                  onClose: () => setState(() => _showQuickActions = false),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -132,28 +103,26 @@ class _TerminalHomeScreenState extends ConsumerState<TerminalHomeScreen> {
 }
 
 /// Session drawer with frosted glass surface.
-class _SessionDrawer extends StatelessWidget {
+class _SessionDrawer extends ConsumerWidget {
   const _SessionDrawer({
-    required this.sessions,
-    required this.activeSessionId,
     required this.serverName,
     required this.onSessionTap,
     required this.onCreateSession,
     required this.onServerTap,
   });
 
-  final List<Session> sessions;
-  final String? activeSessionId;
   final String? serverName;
   final void Function(Session) onSessionTap;
   final VoidCallback onCreateSession;
   final VoidCallback onServerTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final drawerWidth = MediaQuery.of(context).size.width * 0.80;
+    final sessions = ref.watch(filteredSessionsProvider);
+    final activeSessionId = ref.watch(activeSessionIdProvider);
 
     return SizedBox(
       width: drawerWidth.clamp(280, 360).toDouble(),
@@ -195,6 +164,18 @@ class _SessionDrawer extends StatelessWidget {
                         ),
                       ],
                     ),
+                  ),
+                ),
+
+                Divider(color: colorScheme.outlineVariant),
+
+                // Folder tree (collapsible, filters sessions)
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.35,
+                  ),
+                  child: const SingleChildScrollView(
+                    child: FolderTree(),
                   ),
                 ),
 
@@ -266,51 +247,124 @@ class _SessionTile extends StatelessWidget {
   final VoidCallback onTap;
 
   Color _statusColor(ColorScheme colorScheme) {
-    if (session.isAgent) {
-      if (session.agentNeedsAttention) return colorScheme.error;
-      if (session.agentIsWaiting) return Colors.amber;
-      return colorScheme.primary;
-    }
-    if (session.isActive) return colorScheme.primary;
-    return colorScheme.outlineVariant;
+    if (session.agentNeedsAttention) return colorScheme.error;
+
+    return switch (session.agentActivityStatus) {
+      AgentActivityStatus.running => Colors.green,
+      AgentActivityStatus.waiting => Colors.amber,
+      AgentActivityStatus.idle => Colors.grey,
+      AgentActivityStatus.error => colorScheme.error,
+      AgentActivityStatus.compacting => Colors.blue,
+      null => session.isActive
+          ? colorScheme.primary
+          : colorScheme.outlineVariant,
+    };
   }
 
-  IconData get _typeIcon {
-    if (session.isAgent) return Icons.smart_toy_rounded;
-    return Icons.terminal_rounded;
+  IconData get _typeIcon =>
+      session.isAgent ? Icons.smart_toy_outlined : Icons.terminal_rounded;
+
+  String? _subtitle() {
+    final parts = <String>[];
+
+    final path = session.projectPath;
+    if (path != null && path.isNotEmpty) {
+      final segments = path.split('/').where((s) => s.isNotEmpty);
+      if (segments.isNotEmpty) parts.add(segments.last);
+    }
+
+    final branch = session.worktreeBranch;
+    if (branch != null && branch.isNotEmpty) {
+      parts.add(branch);
+    }
+
+    if (session.isAgent && session.agentProvider.isAgent) {
+      parts.add(session.agentProvider.displayName);
+    }
+
+    return parts.isEmpty ? null : parts.join(' \u00b7 ');
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final subtitle = _subtitle();
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1),
-      child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        selected: isActive,
-        selectedColor: colorScheme.primary,
-        selectedTileColor: colorScheme.primary.withValues(alpha: 0.12),
-        leading: Icon(_typeIcon, size: 18),
-        title: Text(
-          session.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+      child: Material(
+        color: isActive
+            ? colorScheme.primary.withValues(alpha: 0.12)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _statusColor(colorScheme),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Icon(
+                  _typeIcon,
+                  size: 18,
+                  color: isActive
+                      ? colorScheme.primary
+                      : colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        session.name,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight:
+                              isActive ? FontWeight.w600 : FontWeight.w400,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (subtitle != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            subtitle,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurface
+                                  .withValues(alpha: 0.5),
+                              fontSize: 11,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (session.isSuspended)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Icon(
+                      Icons.pause_circle_outline,
+                      size: 16,
+                      color: colorScheme.onSurface.withValues(alpha: 0.4),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
-        trailing: Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: _statusColor(colorScheme),
-          ),
-        ),
-        onTap: onTap,
       ),
     );
   }
@@ -333,6 +387,7 @@ class _StatusPill extends ConsumerWidget {
     if (session == null) return const SizedBox.shrink();
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: GlassmorphicContainer.statusBar(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -368,105 +423,6 @@ class _StatusPill extends ConsumerWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Quick actions panel (right edge).
-class _QuickActionsPanel extends StatelessWidget {
-  const _QuickActionsPanel({
-    required this.onCreateSession,
-    required this.onSettings,
-    required this.onServers,
-    required this.onClose,
-  });
-
-  final VoidCallback onCreateSession;
-  final VoidCallback onSettings;
-  final VoidCallback onServers;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return GlassmorphicContainer.panel(
-      width: 200,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Text(
-                      'Quick Actions',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: colorScheme.onSurface.withValues(alpha: 0.7),
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded, size: 18),
-                      onPressed: onClose,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              _QuickAction(
-                icon: Icons.add_rounded,
-                label: 'New Session',
-                onTap: onCreateSession,
-              ),
-              const Divider(indent: 16, endIndent: 16),
-              _QuickAction(
-                icon: Icons.dns_rounded,
-                label: 'Servers',
-                onTap: onServers,
-              ),
-              _QuickAction(
-                icon: Icons.settings_rounded,
-                label: 'Settings',
-                onTap: onSettings,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickAction extends StatelessWidget {
-  const _QuickAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return ListTile(
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      leading: Icon(icon, size: 20),
-      title: Text(
-        label,
-        style: theme.textTheme.bodyMedium,
-      ),
-      onTap: onTap,
     );
   }
 }

@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Remote Dev needs access to your photo library to upload images to terminal sessions.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Remote Dev needs camera access to take photos for terminal sessions.</string>
 </dict>
 </plist>

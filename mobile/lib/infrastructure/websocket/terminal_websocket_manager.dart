@@ -20,6 +20,7 @@ class TerminalWebSocketManager implements TerminalGateway {
 
   final Future<String> Function() _tokenFactory;
 
+  bool _disposed = false;
   WebSocketChannel? _channel;
   TerminalConnectionParams? _params;
   StreamSubscription<dynamic>? _subscription;
@@ -49,7 +50,9 @@ class TerminalWebSocketManager implements TerminalGateway {
 
   void _setStatus(ConnectionStatus status) {
     _currentStatus = status;
-    _statusController.add(status);
+    if (!_statusController.isClosed) {
+      _statusController.add(status);
+    }
   }
 
   @override
@@ -60,6 +63,7 @@ class TerminalWebSocketManager implements TerminalGateway {
   }
 
   Future<void> _doConnect(TerminalConnectionParams params) async {
+    if (_disposed) return;
     _setStatus(ConnectionStatus.connecting);
     _cleanupChannel();
 
@@ -97,6 +101,7 @@ class TerminalWebSocketManager implements TerminalGateway {
   }
 
   void _onMessage(dynamic data) {
+    if (_disposed) return;
     if (data is! String) return;
     try {
       final message = WsServerMessage.fromJson(data);
@@ -135,11 +140,13 @@ class TerminalWebSocketManager implements TerminalGateway {
       };
 
   void _onError(Object error) {
+    if (_disposed) return;
     _messageController.addError(error);
     _scheduleReconnect();
   }
 
   void _onDone() {
+    if (_disposed) return;
     // Capture close code before _cleanupChannel can null _channel
     final closeCode = _channel?.closeCode;
     _handleClose(closeCode);
@@ -156,6 +163,7 @@ class TerminalWebSocketManager implements TerminalGateway {
   }
 
   void _scheduleReconnect() {
+    if (_disposed) return;
     if (_params == null) return;
     if (_reconnectAttempt >= _maxReconnectAttempts) {
       _setStatus(ConnectionStatus.failed);
@@ -174,6 +182,7 @@ class TerminalWebSocketManager implements TerminalGateway {
   }
 
   Future<void> _reconnect() async {
+    if (_disposed) return;
     if (_params == null) return;
 
     try {
@@ -222,6 +231,7 @@ class TerminalWebSocketManager implements TerminalGateway {
 
   @override
   void dispose() {
+    _disposed = true;
     _setStatus(ConnectionStatus.disconnected);
     _params = null;
     _reconnectTimer?.cancel();
