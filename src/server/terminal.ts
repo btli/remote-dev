@@ -1497,7 +1497,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
         switch (msg.type) {
           case "input":
-            ptyProcess.write(msg.data);
+            connection.pty.write(msg.data);
             break;
           case "resize": {
             // Ignore resize events with invalid dimensions
@@ -1533,7 +1533,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
               // Always resize this connection's PTY
               try {
-                ptyProcess.resize(pending.cols, pending.rows);
+                connection.pty.resize(pending.cols, pending.rows);
               } catch {
                 // Ignore resize errors from pty
               }
@@ -1573,13 +1573,15 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
             }
 
             agentLog.info("Restarting agent session", { connectionId, sessionId });
+            // Collect other connections BEFORE the try block so the error
+            // handler can clean up orphaned sessionConnections entries.
+            const otherConns = getConnectionsForSession(sessionId).filter(
+              (c) => c.connectionId !== connectionId
+            );
             try {
               // Destroy PTYs for ALL connections to this session before
               // killing the tmux session, so their onExit handlers see the
               // connection already removed and skip the stale-exit path.
-              const otherConns = getConnectionsForSession(sessionId).filter(
-                (c) => c.connectionId !== connectionId
-              );
               for (const other of otherConns) {
                 safeDestroyPty(other.pty);
                 connections.delete(other.connectionId);
@@ -1668,6 +1670,22 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               });
             } catch (error) {
               agentLog.error("Failed to restart agent session", { connectionId, sessionId, error: String(error) });
+              // Other connections were removed from `connections` but may still
+              // be in `sessionConnections`. Clean up the orphaned entries so
+              // session-level state is properly released.
+              const connSet = sessionConnections.get(sessionId);
+              if (connSet) {
+                for (const other of otherConns) {
+                  connSet.delete(other.connectionId);
+                  if (other.ws.readyState === WebSocket.OPEN) {
+                    other.ws.send(JSON.stringify({
+                      type: "error",
+                      message: "Lost connection during agent restart",
+                    }));
+                    other.ws.close();
+                  }
+                }
+              }
               cleanupConnection(connectionId);
               ws.send(JSON.stringify({
                 type: "error",
@@ -1688,10 +1706,10 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               // Simulate holding SPACE to trigger Claude Code voice recording.
               // Send initial space immediately, then repeat at 50ms to mimic key-hold.
               // Server-side avoids round-trip latency from browser -> WS -> server.
-              ptyProcess.write(" ");
+              connection.pty.write(" ");
               connection.voiceSpaceInterval = setInterval(() => {
                 if (connections.has(connectionId)) {
-                  ptyProcess.write(" ");
+                  connection.pty.write(" ");
                 } else {
                   clearInterval(connection.voiceSpaceInterval!);
                   connection.voiceSpaceInterval = null;
@@ -1725,7 +1743,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       } catch {
         // JSON parse error on non-binary message — forward raw text to PTY
         if (connections.has(connectionId)) {
-          ptyProcess.write(message.toString());
+          connection.pty.write(message.toString());
         }
       }
     });
