@@ -4,6 +4,7 @@ import * as pty from "node-pty";
 import type { IPty } from "node-pty";
 
 import { execFile, execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as pathResolve } from "node:path";
@@ -79,7 +80,8 @@ function validatePath(path: string | undefined): string | undefined {
 }
 
 
-interface TerminalSession {
+interface TerminalConnection {
+  connectionId: string;
   pty: IPty;
   ws: WebSocket;
   sessionId: string;
@@ -101,7 +103,35 @@ interface TerminalSession {
   voiceSpaceInterval: ReturnType<typeof setInterval> | null;
 }
 
-const sessions = new Map<string, TerminalSession>();
+// All active connections, keyed by connectionId (UUID)
+const connections = new Map<string, TerminalConnection>();
+
+// Session -> connection IDs for multi-client support
+const sessionConnections = new Map<string, Set<string>>();
+
+// Which connection controls tmux resize per session (newest wins)
+const sessionPrimaryConnection = new Map<string, string>();
+
+/** Get all active connections for a session */
+function getConnectionsForSession(sessionId: string): TerminalConnection[] {
+  const connIds = sessionConnections.get(sessionId);
+  if (!connIds) return [];
+  const result: TerminalConnection[] = [];
+  for (const id of connIds) {
+    const conn = connections.get(id);
+    if (conn) result.push(conn);
+  }
+  return result;
+}
+
+/** Get any single active connection for a session (for internal API lookups) */
+function getAnyConnectionForSession(sessionId: string): TerminalConnection | undefined {
+  const connIds = sessionConnections.get(sessionId);
+  if (!connIds) return undefined;
+  const firstId = connIds.values().next().value;
+  if (!firstId) return undefined;
+  return connections.get(firstId);
+}
 
 // Per-session status indicators (key -> StatusIndicator)
 type StatusIndicator = { value: string; icon?: string; color?: string; updatedAt: string };
@@ -147,9 +177,9 @@ const TMUX_KEY_MAP: Record<string, string> = {
 /** Broadcast a JSON message to all connected WebSocket clients */
 function broadcastToClients(data: Record<string, unknown>): void {
   const message = JSON.stringify(data);
-  for (const [, s] of sessions) {
-    if (s.ws.readyState === WebSocket.OPEN) {
-      s.ws.send(message);
+  for (const [, conn] of connections) {
+    if (conn.ws.readyState === WebSocket.OPEN) {
+      conn.ws.send(message);
     }
   }
 }
@@ -157,9 +187,9 @@ function broadcastToClients(data: Record<string, unknown>): void {
 /** Broadcast a JSON message only to WebSocket clients belonging to a specific user */
 function broadcastToUser(userId: string, data: Record<string, unknown>): void {
   const message = JSON.stringify(data);
-  for (const [, s] of sessions) {
-    if (s.userId === userId && s.ws.readyState === WebSocket.OPEN) {
-      s.ws.send(message);
+  for (const [, conn] of connections) {
+    if (conn.userId === userId && conn.ws.readyState === WebSocket.OPEN) {
+      conn.ws.send(message);
     }
   }
 }
@@ -171,18 +201,24 @@ function isAgentTerminalType(type: string): boolean {
 
 /** Get the current active and agent session counts for drain status reporting. */
 function getSessionCounts(): { activeSessions: number; activeAgentSessions: number } {
-  const activeAgentSessions = [...sessions.values()].filter(
-    (s) => isAgentTerminalType(s.terminalType)
-  ).length;
-  return { activeSessions: sessions.size, activeAgentSessions };
+  // Count unique sessions, not individual connections
+  let activeAgentSessions = 0;
+  for (const [sessionId] of sessionConnections) {
+    const conn = getAnyConnectionForSession(sessionId);
+    if (conn && isAgentTerminalType(conn.terminalType)) {
+      activeAgentSessions++;
+    }
+  }
+  return { activeSessions: sessionConnections.size, activeAgentSessions };
 }
 
 /** Broadcast a JSON message to clients connected to a specific session */
 function broadcastToSession(sessionId: string, data: Record<string, unknown>): void {
   const message = JSON.stringify(data);
-  const session = sessions.get(sessionId);
-  if (session?.ws.readyState === WebSocket.OPEN) {
-    session.ws.send(message);
+  for (const conn of getConnectionsForSession(sessionId)) {
+    if (conn.ws.readyState === WebSocket.OPEN) {
+      conn.ws.send(message);
+    }
   }
 }
 
@@ -208,61 +244,52 @@ function safeDestroyPty(ptyProcess: IPty): void {
 }
 
 /**
- * Check whether the current session map entry has been replaced by a newer
- * connection. Used to guard against stale PTY onExit and WebSocket close/error
- * handlers that fire after a reconnection has already swapped in a new session.
- */
-function isStaleConnection(sessionId: string, pty: IPty | null, ws: WebSocket | null): boolean {
-  const current = sessions.get(sessionId);
-  if (!current) return false;
-  if (pty && current.pty !== pty) return true;
-  if (ws && current.ws !== ws) return true;
-  return false;
-}
-
-// Track sessions currently in the process of connecting to prevent rapid reconnection
-// that can exhaust PTY/FD resources and cause posix_spawnp failures
-const connectingSessionIds = new Set<string>();
-
-/**
- * Safely cleanup a terminal session. Guards against double-cleanup from
+ * Safely cleanup a single connection. Guards against double-cleanup from
  * concurrent events (PTY exit, WebSocket close, WebSocket error).
  */
-function cleanupSession(sessionId: string): void {
-  connectingSessionIds.delete(sessionId);
+function cleanupConnection(connectionId: string): void {
+  const conn = connections.get(connectionId);
+  if (!conn) return;
 
-  const session = sessions.get(sessionId);
-  if (!session) return;
+  // Remove from connections map first to prevent concurrent cleanup
+  connections.delete(connectionId);
 
-  // Remove first to prevent concurrent cleanup from other event handlers
-  sessions.delete(sessionId);
-
-  if (session.resizeTimeout) {
-    clearTimeout(session.resizeTimeout);
-  }
-
-  // Clean up voice space interval and FIFO
-  if (session.voiceSpaceInterval) {
-    clearInterval(session.voiceSpaceInterval);
-    session.voiceSpaceInterval = null;
-  }
-  cleanupVoiceFifo(session);
-
-  // Clean up per-session state maps
-  sessionStatusIndicators.delete(sessionId);
-  sessionProgressBars.delete(sessionId);
-  // Clean up any Claude session mappings pointing to this session
-  for (const [claudeId, rdvId] of claudeSessionMap) {
-    if (rdvId === sessionId) {
-      claudeSessionMap.delete(claudeId);
+  // Remove from session connections
+  const connSet = sessionConnections.get(conn.sessionId);
+  if (connSet) {
+    connSet.delete(connectionId);
+    if (connSet.size === 0) {
+      // Last connection closed — clean up session-level state
+      sessionConnections.delete(conn.sessionId);
+      sessionStatusIndicators.delete(conn.sessionId);
+      sessionProgressBars.delete(conn.sessionId);
+      for (const [claudeId, rdvId] of claudeSessionMap) {
+        if (rdvId === conn.sessionId) {
+          claudeSessionMap.delete(claudeId);
+        }
+      }
     }
   }
 
-  try {
-    destroyPty(session.pty);
-  } catch {
-    // PTY may already be dead
+  // Promote another connection to primary if this one was it
+  if (sessionPrimaryConnection.get(conn.sessionId) === connectionId) {
+    const remaining = sessionConnections.get(conn.sessionId);
+    const nextPrimary = remaining?.values().next().value;
+    if (nextPrimary) {
+      sessionPrimaryConnection.set(conn.sessionId, nextPrimary);
+    } else {
+      sessionPrimaryConnection.delete(conn.sessionId);
+    }
   }
+
+  // Per-connection cleanup
+  if (conn.resizeTimeout) clearTimeout(conn.resizeTimeout);
+  if (conn.voiceSpaceInterval) {
+    clearInterval(conn.voiceSpaceInterval);
+    conn.voiceSpaceInterval = null;
+  }
+  cleanupVoiceFifo(conn);
+  safeDestroyPty(conn.pty);
 }
 
 // Re-import would create circular deps with types/terminal.ts in server context,
@@ -276,13 +303,15 @@ const MAX_VOICE_BUFFER_CHUNKS = 100;
  * Opens the FIFO for writing asynchronously (blocks until a reader opens it),
  * buffering any audio chunks received before the reader connects.
  */
-function createVoiceFifo(session: TerminalSession): string {
-  const fifoPath = `${tmpdir()}/rdv-voice-${session.sessionId}.fifo`;
+function createVoiceFifo(conn: TerminalConnection): string {
+  // Use sessionId (not connectionId) — the sox shim inside tmux looks up
+  // the FIFO by $RDV_SESSION_ID: /tmp/rdv-voice-${RDV_SESSION_ID}.fifo
+  const fifoPath = `${tmpdir()}/rdv-voice-${conn.sessionId}.fifo`;
   try { fs.unlinkSync(fifoPath); } catch { /* may not exist */ }
   execFileSync("mkfifo", ["-m", "0600", fifoPath]);
-  session.voiceFifoPath = fifoPath;
-  session.voiceAudioBuffer = [];
-  session.voiceFifoReady = false;
+  conn.voiceFifoPath = fifoPath;
+  conn.voiceAudioBuffer = [];
+  conn.voiceFifoReady = false;
 
   // Open FIFO for writing asynchronously — blocks until reader opens
   fs.open(fifoPath, fs.constants.O_WRONLY, (err, fd) => {
@@ -290,9 +319,9 @@ function createVoiceFifo(session: TerminalSession): string {
       voiceLog.error("Failed to open FIFO for writing", { error: err.message });
       return;
     }
-    session.voiceFifoFd = fd;
+    conn.voiceFifoFd = fd;
     // Flush buffered audio before marking ready
-    for (const chunk of session.voiceAudioBuffer) {
+    for (const chunk of conn.voiceAudioBuffer) {
       try {
         fs.writeSync(fd, chunk);
       } catch (flushErr) {
@@ -300,9 +329,9 @@ function createVoiceFifo(session: TerminalSession): string {
         break;
       }
     }
-    session.voiceAudioBuffer = [];
-    session.voiceFifoReady = true;
-    voiceLog.debug("FIFO writer connected", { sessionId: session.sessionId });
+    conn.voiceAudioBuffer = [];
+    conn.voiceFifoReady = true;
+    voiceLog.debug("FIFO writer connected", { connectionId: conn.connectionId, sessionId: conn.sessionId });
   });
 
   return fifoPath;
@@ -311,17 +340,17 @@ function createVoiceFifo(session: TerminalSession): string {
 /**
  * Clean up voice FIFO resources: close file descriptor, remove pipe, reset state.
  */
-function cleanupVoiceFifo(session: TerminalSession): void {
-  if (session.voiceFifoFd !== null) {
-    try { fs.closeSync(session.voiceFifoFd); } catch { /* may be closed */ }
-    session.voiceFifoFd = null;
+function cleanupVoiceFifo(conn: TerminalConnection): void {
+  if (conn.voiceFifoFd !== null) {
+    try { fs.closeSync(conn.voiceFifoFd); } catch { /* may be closed */ }
+    conn.voiceFifoFd = null;
   }
-  if (session.voiceFifoPath) {
-    try { fs.unlinkSync(session.voiceFifoPath); } catch { /* may be deleted */ }
-    session.voiceFifoPath = null;
+  if (conn.voiceFifoPath) {
+    try { fs.unlinkSync(conn.voiceFifoPath); } catch { /* may be deleted */ }
+    conn.voiceFifoPath = null;
   }
-  session.voiceFifoReady = false;
-  session.voiceAudioBuffer = [];
+  conn.voiceFifoReady = false;
+  conn.voiceAudioBuffer = [];
 }
 
 /**
@@ -487,20 +516,23 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
     agentLog.info("Session exited", { sessionId, exitCode: exitCode ?? "unknown" });
 
-    // Find the WebSocket connection for this session and notify the client
-    const session = sessions.get(sessionId);
-    if (session && session.ws.readyState === WebSocket.OPEN) {
-      session.ws.send(
-        JSON.stringify({
-          type: "agent_exited",
-          sessionId,
-          exitCode,
-          exitedAt: new Date().toISOString(),
-        })
-      );
-      agentLog.debug("Notified client", { sessionId });
+    // Notify ALL connected clients for this session
+    const sessionConns = getConnectionsForSession(sessionId);
+    if (sessionConns.length > 0) {
+      const exitMsg = JSON.stringify({
+        type: "agent_exited",
+        sessionId,
+        exitCode,
+        exitedAt: new Date().toISOString(),
+      });
+      for (const conn of sessionConns) {
+        if (conn.ws.readyState === WebSocket.OPEN) {
+          conn.ws.send(exitMsg);
+        }
+      }
+      agentLog.debug("Notified clients", { sessionId, clientCount: sessionConns.length });
     } else {
-      agentLog.debug("No active WebSocket", { sessionId });
+      agentLog.debug("No active WebSocket connections", { sessionId });
     }
 
     sendJson(res, 200, { success: true, sessionId, exitCode });
@@ -866,13 +898,13 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         sendJson(res, 400, { error: "Missing sessionId or text" });
         return true;
       }
-      const session = sessions.get(sessionId);
-      if (!session) {
+      const conn = getAnyConnectionForSession(sessionId);
+      if (!conn) {
         sendJson(res, 404, { error: "No active PTY session found" });
         return true;
       }
-      session.pty.write(text);
-      ptyLog.debug("PTY write", { sessionId, length: text.length });
+      conn.pty.write(text);
+      ptyLog.debug("PTY write", { sessionId, connectionId: conn.connectionId, length: text.length });
       sendJson(res, 200, { success: true });
     } catch (error) {
       ptyLog.error("PTY write error", { error: String(error) });
@@ -895,12 +927,12 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         sendJson(res, 400, { error: "Missing sessionId or key" });
         return true;
       }
-      const session = sessions.get(sessionId);
-      if (!session) {
+      const conn = getAnyConnectionForSession(sessionId);
+      if (!conn) {
         sendJson(res, 404, { error: "No active PTY session found" });
         return true;
       }
-      const tmuxName = session.tmuxSessionName;
+      const tmuxName = conn.tmuxSessionName;
       const mappedKey = TMUX_KEY_MAP[key];
 
       if (mappedKey) {
@@ -933,13 +965,13 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         sendJson(res, 400, { error: "Missing sessionId" });
         return true;
       }
-      const session = sessions.get(sessionId);
-      if (!session) {
+      const conn = getAnyConnectionForSession(sessionId);
+      if (!conn) {
         sendJson(res, 404, { error: "Session not found" });
         return true;
       }
       const { stdout } = await execFileAsync("tmux", [
-        "capture-pane", "-t", session.tmuxSessionName, "-p", "-J",
+        "capture-pane", "-t", conn.tmuxSessionName, "-p", "-J",
       ]);
       sendJson(res, 200, {
         sessionId,
@@ -1327,33 +1359,13 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     // SECURITY: Validate cwd to prevent path traversal
     const cwd = validatePath(rawCwd);
 
-    // Prevent rapid reconnection attempts that can exhaust PTY resources
-    // If this session is already in the process of connecting, reject
-    if (connectingSessionIds.has(sessionId)) {
-      log.warn("Connection rejected: session already connecting", { sessionId });
-      ws.send(JSON.stringify({ type: "error", message: "Connection in progress, please wait" }));
-      ws.close(4004, "Connection in progress");
-      return;
-    }
-    connectingSessionIds.add(sessionId);
-
-    // Clean up any existing session for this ID before creating a new one.
-    // This prevents the old PTY's async onExit handler from firing after
-    // the new session is established and destroying it. Uses cleanupSession()
-    // to ensure all resources (timers, voice FIFO, status maps) are released.
-    if (sessions.has(sessionId)) {
-      log.debug("Replacing existing session connection", { sessionId });
-      const oldWs = sessions.get(sessionId)!.ws;
-      cleanupSession(sessionId);
-      if (oldWs !== ws && oldWs.readyState === WebSocket.OPEN) {
-        oldWs.close();
-      }
-    }
+    // Generate a unique connection ID for multi-client support
+    const connectionId = randomUUID();
 
     // Check if tmux session exists (for attach vs create decision)
     const tmuxExists = tmuxSessionExists(tmuxSessionName);
 
-    log.debug("Connection request", { sessionId, tmuxSessionName, tmuxExists });
+    log.debug("Connection request", { connectionId, sessionId, tmuxSessionName, tmuxExists });
 
     let ptyProcess: IPty;
 
@@ -1382,8 +1394,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
         }));
       }
     } catch (error) {
-      log.error("Failed to create/attach tmux session", { error: String(error) });
-      connectingSessionIds.delete(sessionId);
+      log.error("Failed to create/attach tmux session", { connectionId, sessionId, error: String(error) });
       ws.send(JSON.stringify({
         type: "error",
         message: `Failed to create terminal session: ${(error as Error).message}`,
@@ -1392,7 +1403,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       return;
     }
 
-    const session: TerminalSession = {
+    const connection: TerminalConnection = {
+      connectionId,
       pty: ptyProcess,
       ws,
       sessionId,
@@ -1411,11 +1423,16 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       voiceSpaceInterval: null,
     };
 
-    sessions.set(sessionId, session);
-    // Connection established, allow future reconnection attempts
-    connectingSessionIds.delete(sessionId);
+    // Register connection in both maps
+    connections.set(connectionId, connection);
+    if (!sessionConnections.has(sessionId)) {
+      sessionConnections.set(sessionId, new Set());
+    }
+    sessionConnections.get(sessionId)!.add(connectionId);
+    // Newest connection is primary for resize
+    sessionPrimaryConnection.set(sessionId, connectionId);
 
-    log.debug("Terminal session started", { sessionId, cols, rows, tmuxSessionName });
+    log.debug("Terminal connection started", { connectionId, sessionId, cols, rows, tmuxSessionName });
 
     // Note: Environment variables are now injected at session creation time
     // (in TmuxService.createSession) BEFORE the startup command runs.
@@ -1429,33 +1446,31 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
-      log.debug("PTY exited", { sessionId, exitCode, terminalType });
+      log.debug("PTY exited", { connectionId, sessionId, exitCode, terminalType });
 
-      if (isStaleConnection(sessionId, ptyProcess, null)) {
-        log.debug("Stale PTY exit ignored (session has newer PTY)", { sessionId });
+      if (!connections.has(connectionId)) {
+        log.debug("Stale PTY exit ignored", { connectionId, sessionId });
         return;
       }
 
+      // Each connection has its own PTY (tmux attach-session process).
+      // When the tmux session dies, ALL connections' PTYs exit independently.
+      // Only notify THIS connection's WebSocket to avoid duplicate messages.
       if (ws.readyState === WebSocket.OPEN) {
-        // For agent/loop terminals, send a special agent_exited message
-        // The frontend will show an exit screen with restart/close options
         if (isAgentTerminalType(terminalType)) {
-          agentLog.info("Agent session exited - sending agent_exited event", { sessionId });
+          agentLog.info("Agent PTY exited", { connectionId, sessionId, exitCode });
           ws.send(JSON.stringify({
             type: "agent_exited",
             sessionId,
             exitCode,
             exitedAt: new Date().toISOString(),
           }));
-          // Don't close the WebSocket yet - let the frontend handle it
-          // The user may want to restart the agent
         } else {
-          // For shell terminals, just send exit and close
           ws.send(JSON.stringify({ type: "exit", code: exitCode }));
           ws.close();
         }
       }
-      cleanupSession(sessionId);
+      cleanupConnection(connectionId);
     });
 
     ws.on("message", (message, isBinary) => {
@@ -1465,14 +1480,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           const buf = Buffer.isBuffer(message) ? message : Buffer.from(message as ArrayBuffer);
           if (buf.length > 1 && buf[0] === VOICE_AUDIO_PREFIX) {
             const pcmData = buf.subarray(1);
-            if (session.voiceFifoReady && session.voiceFifoFd !== null) {
-              fs.write(session.voiceFifoFd, pcmData, (writeErr) => {
+            if (connection.voiceFifoReady && connection.voiceFifoFd !== null) {
+              fs.write(connection.voiceFifoFd, pcmData, (writeErr) => {
                 if (writeErr) {
                   voiceLog.warn("FIFO write error", { error: writeErr.message });
                 }
               });
-            } else if (session.voiceAudioBuffer.length < MAX_VOICE_BUFFER_CHUNKS) {
-              session.voiceAudioBuffer.push(pcmData);
+            } else if (connection.voiceAudioBuffer.length < MAX_VOICE_BUFFER_CHUNKS) {
+              connection.voiceAudioBuffer.push(pcmData);
             }
             return;
           }
@@ -1498,49 +1513,53 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               break;
             }
 
-            session.pendingResize = { cols: nextCols, rows: nextRows };
-            if (session.resizeTimeout) {
+            connection.pendingResize = { cols: nextCols, rows: nextRows };
+            if (connection.resizeTimeout) {
               break;
             }
 
-            session.resizeTimeout = setTimeout(() => {
-              const pending = session.pendingResize;
-              session.pendingResize = null;
-              session.resizeTimeout = null;
+            connection.resizeTimeout = setTimeout(() => {
+              const pending = connection.pendingResize;
+              connection.pendingResize = null;
+              connection.resizeTimeout = null;
 
               if (!pending) return;
-              if (pending.cols === session.lastCols && pending.rows === session.lastRows) {
+              if (pending.cols === connection.lastCols && pending.rows === connection.lastRows) {
                 return;
               }
 
-              session.lastCols = pending.cols;
-              session.lastRows = pending.rows;
+              connection.lastCols = pending.cols;
+              connection.lastRows = pending.rows;
 
+              // Always resize this connection's PTY
               try {
                 ptyProcess.resize(pending.cols, pending.rows);
               } catch {
                 // Ignore resize errors from pty
               }
 
-              execFile(
-                "tmux",
-                [
-                  "resize-window",
-                  "-t",
-                  tmuxSessionName,
-                  "-x",
-                  String(pending.cols),
-                  "-y",
-                  String(pending.rows),
-                ],
-                () => {}
-              );
+              // Only resize the tmux window if this is the primary connection
+              if (sessionPrimaryConnection.get(sessionId) === connectionId) {
+                execFile(
+                  "tmux",
+                  [
+                    "resize-window",
+                    "-t",
+                    tmuxSessionName,
+                    "-x",
+                    String(pending.cols),
+                    "-y",
+                    String(pending.rows),
+                  ],
+                  () => {}
+                );
+              }
             }, 50);
             break;
           }
           case "detach":
-            log.debug("Detaching from tmux session", { tmuxSessionName });
-            cleanupSession(sessionId);
+            log.debug("Detaching from tmux session", { connectionId, sessionId, tmuxSessionName });
+            cleanupConnection(connectionId);
             ws.close();
             break;
 
@@ -1553,15 +1572,71 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               break;
             }
 
-            agentLog.info("Restarting agent session", { sessionId });
+            agentLog.info("Restarting agent session", { connectionId, sessionId });
             try {
-              safeDestroyPty(session.pty);
+              // Destroy PTYs for ALL connections to this session before
+              // killing the tmux session, so their onExit handlers see the
+              // connection already removed and skip the stale-exit path.
+              const otherConns = getConnectionsForSession(sessionId).filter(
+                (c) => c.connectionId !== connectionId
+              );
+              for (const other of otherConns) {
+                safeDestroyPty(other.pty);
+                connections.delete(other.connectionId);
+              }
+              safeDestroyPty(connection.pty);
 
-              execFile("tmux", ["kill-session", "-t", tmuxSessionName], () => {});
-              createTmuxSession(tmuxSessionName, session.lastCols, session.lastRows, cwd, tmuxHistoryLimit);
+              // Use synchronous kill so the session is fully gone before we
+              // recreate it — avoids a race between async kill and sync create.
+              try {
+                execFileSync("tmux", ["kill-session", "-t", tmuxSessionName], { stdio: "pipe" });
+              } catch { /* session may already be dead */ }
+              createTmuxSession(tmuxSessionName, connection.lastCols, connection.lastRows, cwd, tmuxHistoryLimit);
 
-              const newPty = attachToTmuxSession(tmuxSessionName, session.lastCols, session.lastRows);
-              session.pty = newPty;
+              const newPty = attachToTmuxSession(tmuxSessionName, connection.lastCols, connection.lastRows);
+              connection.pty = newPty;
+
+              // Reconnect other connections to the new tmux session
+              for (const other of otherConns) {
+                try {
+                  const otherPty = attachToTmuxSession(tmuxSessionName, other.lastCols, other.lastRows);
+                  other.pty = otherPty;
+                  connections.set(other.connectionId, other);
+                  otherPty.onData((data) => {
+                    if (other.ws.readyState === WebSocket.OPEN) {
+                      other.ws.send(JSON.stringify({ type: "output", data }));
+                    }
+                  });
+                  otherPty.onExit(({ exitCode: otherExitCode }) => {
+                    if (!connections.has(other.connectionId)) return;
+                    const otherExitMsg = JSON.stringify({
+                      type: "agent_exited",
+                      sessionId,
+                      exitCode: otherExitCode,
+                      exitedAt: new Date().toISOString(),
+                    });
+                    if (other.ws.readyState === WebSocket.OPEN) {
+                      other.ws.send(otherExitMsg);
+                    }
+                    cleanupConnection(other.connectionId);
+                  });
+                } catch (reattachErr) {
+                  agentLog.warn("Failed to reattach other connection after restart", {
+                    connectionId: other.connectionId,
+                    error: String(reattachErr),
+                  });
+                  // Clean up the failed connection
+                  const connSet = sessionConnections.get(sessionId);
+                  if (connSet) connSet.delete(other.connectionId);
+                  if (other.ws.readyState === WebSocket.OPEN) {
+                    other.ws.send(JSON.stringify({
+                      type: "error",
+                      message: "Lost connection during agent restart",
+                    }));
+                    other.ws.close();
+                  }
+                }
+              }
 
               newPty.onData((data) => {
                 if (ws.readyState === WebSocket.OPEN) {
@@ -1570,9 +1645,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
               });
 
               newPty.onExit(({ exitCode: newExitCode }) => {
-                agentLog.info("Restarted agent session exited", { sessionId, exitCode: newExitCode });
-                if (isStaleConnection(sessionId, newPty, null)) {
-                  log.debug("Stale restarted PTY exit ignored", { sessionId });
+                agentLog.info("Restarted agent session exited", { connectionId, sessionId, exitCode: newExitCode });
+                if (!connections.has(connectionId)) {
+                  log.debug("Stale restarted PTY exit ignored", { connectionId, sessionId });
                   return;
                 }
                 if (ws.readyState === WebSocket.OPEN) {
@@ -1583,17 +1658,17 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                     exitedAt: new Date().toISOString(),
                   }));
                 }
-                cleanupSession(sessionId);
+                cleanupConnection(connectionId);
               });
 
-              ws.send(JSON.stringify({
+              broadcastToSession(sessionId, {
                 type: "agent_restarted",
                 sessionId,
                 tmuxSessionName,
-              }));
+              });
             } catch (error) {
-              agentLog.error("Failed to restart agent session", { sessionId, error: String(error) });
-              cleanupSession(sessionId);
+              agentLog.error("Failed to restart agent session", { connectionId, sessionId, error: String(error) });
+              cleanupConnection(connectionId);
               ws.send(JSON.stringify({
                 type: "error",
                 message: `Failed to restart agent: ${(error as Error).message}`,
@@ -1603,74 +1678,68 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
           }
 
           case "voice_start": {
-            if (!isAgentTerminalType(session.terminalType)) {
+            if (!isAgentTerminalType(connection.terminalType)) {
               ws.send(JSON.stringify({ type: "voice_error", message: "Voice mode is only available for agent sessions" }));
               break;
             }
             try {
-              const fifoPath = createVoiceFifo(session);
-              voiceLog.debug("Created FIFO", { sessionId, fifoPath });
+              const fifoPath = createVoiceFifo(connection);
+              voiceLog.debug("Created FIFO", { connectionId, sessionId, fifoPath });
               // Simulate holding SPACE to trigger Claude Code voice recording.
               // Send initial space immediately, then repeat at 50ms to mimic key-hold.
-              // Server-side avoids round-trip latency from browser → WS → server.
+              // Server-side avoids round-trip latency from browser -> WS -> server.
               ptyProcess.write(" ");
-              session.voiceSpaceInterval = setInterval(() => {
-                if (sessions.has(sessionId)) {
+              connection.voiceSpaceInterval = setInterval(() => {
+                if (connections.has(connectionId)) {
                   ptyProcess.write(" ");
                 } else {
-                  clearInterval(session.voiceSpaceInterval!);
-                  session.voiceSpaceInterval = null;
+                  clearInterval(connection.voiceSpaceInterval!);
+                  connection.voiceSpaceInterval = null;
                 }
               }, 50);
               ws.send(JSON.stringify({ type: "voice_ready", sessionId }));
             } catch (error) {
-              voiceLog.error("Failed to create FIFO", { sessionId, error: String(error) });
+              voiceLog.error("Failed to create FIFO", { connectionId, sessionId, error: String(error) });
               ws.send(JSON.stringify({ type: "voice_error", message: `Voice setup failed: ${(error as Error).message}` }));
             }
             break;
           }
 
           case "voice_stop": {
-            voiceLog.debug("Stopping voice", { sessionId });
+            voiceLog.debug("Stopping voice", { connectionId, sessionId });
             // Stop simulating SPACE hold
-            if (session.voiceSpaceInterval) {
-              clearInterval(session.voiceSpaceInterval);
-              session.voiceSpaceInterval = null;
+            if (connection.voiceSpaceInterval) {
+              clearInterval(connection.voiceSpaceInterval);
+              connection.voiceSpaceInterval = null;
             }
-            if (session.voiceFifoFd !== null) {
+            if (connection.voiceFifoFd !== null) {
               try {
                 const silencePadding = Buffer.alloc(3200); // 100ms silence at 16kHz/16bit
-                fs.writeSync(session.voiceFifoFd, silencePadding);
+                fs.writeSync(connection.voiceFifoFd, silencePadding);
               } catch { /* ignore */ }
             }
-            cleanupVoiceFifo(session);
+            cleanupVoiceFifo(connection);
             break;
           }
         }
       } catch {
         // JSON parse error on non-binary message — forward raw text to PTY
-        if (sessions.has(sessionId)) {
+        if (connections.has(connectionId)) {
           ptyProcess.write(message.toString());
         }
       }
     });
 
     ws.on("close", () => {
-      log.debug("WebSocket closed", { sessionId });
-      if (isStaleConnection(sessionId, null, ws)) {
-        log.debug("Stale WebSocket close ignored (session has newer connection)", { sessionId });
-        return;
-      }
-      cleanupSession(sessionId);
+      log.debug("WebSocket closed", { connectionId, sessionId });
+      if (!connections.has(connectionId)) return;
+      cleanupConnection(connectionId);
     });
 
     ws.on("error", (error) => {
-      log.error("Terminal session error", { sessionId, error: String(error) });
-      if (isStaleConnection(sessionId, null, ws)) {
-        log.debug("Stale WebSocket error ignored (session has newer connection)", { sessionId });
-        return;
-      }
-      cleanupSession(sessionId);
+      log.error("Terminal connection error", { connectionId, sessionId, error: String(error) });
+      if (!connections.has(connectionId)) return;
+      cleanupConnection(connectionId);
     });
 
     // Send ready signal
@@ -1683,13 +1752,15 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 // Graceful shutdown: destroy PTY wrappers but preserve tmux sessions for reconnection
 function cleanup() {
   log.info("Shutting down terminal server (tmux sessions preserved)...");
-  for (const [id, session] of sessions) {
-    cleanupVoiceFifo(session);
-    safeDestroyPty(session.pty);
-    session.ws.close();
-    log.debug("Closed PTY wrapper", { sessionId: id });
+  for (const [id, conn] of connections) {
+    cleanupVoiceFifo(conn);
+    safeDestroyPty(conn.pty);
+    conn.ws.close();
+    log.debug("Closed PTY wrapper", { connectionId: id, sessionId: conn.sessionId });
   }
-  sessions.clear();
+  connections.clear();
+  sessionConnections.clear();
+  sessionPrimaryConnection.clear();
   process.exit(0);
 }
 
