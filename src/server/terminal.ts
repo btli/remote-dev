@@ -174,6 +174,11 @@ const TMUX_KEY_MAP: Record<string, string> = {
   "Space": "Space",
 };
 
+/** Build an agent_exited event payload */
+function agentExitedEvent(sessionId: string, exitCode: number | null): Record<string, unknown> {
+  return { type: "agent_exited", sessionId, exitCode, exitedAt: new Date().toISOString() };
+}
+
 /** Broadcast a JSON message to all connected WebSocket clients */
 function broadcastToClients(data: Record<string, unknown>): void {
   const message = JSON.stringify(data);
@@ -254,31 +259,29 @@ function cleanupConnection(connectionId: string): void {
   // Remove from connections map first to prevent concurrent cleanup
   connections.delete(connectionId);
 
-  // Remove from session connections
+  // Remove from session connections and update session-level state
   const connSet = sessionConnections.get(conn.sessionId);
   if (connSet) {
     connSet.delete(connectionId);
-    if (connSet.size === 0) {
-      // Last connection closed — clean up session-level state
-      sessionConnections.delete(conn.sessionId);
-      sessionStatusIndicators.delete(conn.sessionId);
-      sessionProgressBars.delete(conn.sessionId);
-      for (const [claudeId, rdvId] of claudeSessionMap) {
-        if (rdvId === conn.sessionId) {
-          claudeSessionMap.delete(claudeId);
-        }
-      }
-    }
   }
 
-  // Promote another connection to primary if this one was it
-  if (sessionPrimaryConnection.get(conn.sessionId) === connectionId) {
-    const remaining = sessionConnections.get(conn.sessionId);
-    const nextPrimary = remaining?.values().next().value;
+  const isLastConnection = !connSet || connSet.size === 0;
+  if (isLastConnection) {
+    // Last connection closed — clean up all session-level state
+    sessionConnections.delete(conn.sessionId);
+    sessionPrimaryConnection.delete(conn.sessionId);
+    sessionStatusIndicators.delete(conn.sessionId);
+    sessionProgressBars.delete(conn.sessionId);
+    for (const [claudeId, rdvId] of claudeSessionMap) {
+      if (rdvId === conn.sessionId) {
+        claudeSessionMap.delete(claudeId);
+      }
+    }
+  } else if (sessionPrimaryConnection.get(conn.sessionId) === connectionId) {
+    // Promote another connection to primary for resize control
+    const nextPrimary = connSet.values().next().value;
     if (nextPrimary) {
       sessionPrimaryConnection.set(conn.sessionId, nextPrimary);
-    } else {
-      sessionPrimaryConnection.delete(conn.sessionId);
     }
   }
 
@@ -516,21 +519,11 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
     agentLog.info("Session exited", { sessionId, exitCode: exitCode ?? "unknown" });
 
-    // Notify ALL connected clients for this session
-    const sessionConns = getConnectionsForSession(sessionId);
-    if (sessionConns.length > 0) {
-      const exitMsg = JSON.stringify({
-        type: "agent_exited",
-        sessionId,
-        exitCode,
-        exitedAt: new Date().toISOString(),
-      });
-      for (const conn of sessionConns) {
-        if (conn.ws.readyState === WebSocket.OPEN) {
-          conn.ws.send(exitMsg);
-        }
-      }
-      agentLog.debug("Notified clients", { sessionId, clientCount: sessionConns.length });
+    // Notify all connected clients for this session
+    const clientCount = getConnectionsForSession(sessionId).length;
+    if (clientCount > 0) {
+      broadcastToSession(sessionId, agentExitedEvent(sessionId, exitCode));
+      agentLog.debug("Notified clients", { sessionId, clientCount });
     } else {
       agentLog.debug("No active WebSocket connections", { sessionId });
     }
@@ -1459,12 +1452,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       if (ws.readyState === WebSocket.OPEN) {
         if (isAgentTerminalType(terminalType)) {
           agentLog.info("Agent PTY exited", { connectionId, sessionId, exitCode });
-          ws.send(JSON.stringify({
-            type: "agent_exited",
-            sessionId,
-            exitCode,
-            exitedAt: new Date().toISOString(),
-          }));
+          ws.send(JSON.stringify(agentExitedEvent(sessionId, exitCode)));
         } else {
           ws.send(JSON.stringify({ type: "exit", code: exitCode }));
           ws.close();
@@ -1611,14 +1599,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                   });
                   otherPty.onExit(({ exitCode: otherExitCode }) => {
                     if (!connections.has(other.connectionId)) return;
-                    const otherExitMsg = JSON.stringify({
-                      type: "agent_exited",
-                      sessionId,
-                      exitCode: otherExitCode,
-                      exitedAt: new Date().toISOString(),
-                    });
                     if (other.ws.readyState === WebSocket.OPEN) {
-                      other.ws.send(otherExitMsg);
+                      other.ws.send(JSON.stringify(agentExitedEvent(sessionId, otherExitCode)));
                     }
                     cleanupConnection(other.connectionId);
                   });
@@ -1653,12 +1635,7 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
                   return;
                 }
                 if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({
-                    type: "agent_exited",
-                    sessionId,
-                    exitCode: newExitCode,
-                    exitedAt: new Date().toISOString(),
-                  }));
+                  ws.send(JSON.stringify(agentExitedEvent(sessionId, newExitCode)));
                 }
                 cleanupConnection(connectionId);
               });
