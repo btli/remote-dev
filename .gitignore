@@ -65,6 +65,7 @@ next-env.d.ts
 
 # worktrees
 .worktrees/
+.claude/worktrees/
 
 # worktree trash
 .trash/

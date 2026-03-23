@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart' as xterm;
 
 import 'package:remote_dev/application/ports/terminal_gateway.dart';
@@ -215,10 +215,8 @@ class _TerminalWidgetState extends State<TerminalWidget>
 /// enabling OS-level voice dictation, autocorrect, and predictive text.
 /// Mirrors the web app's MobileInputBar component.
 ///
-/// - Empty → shows mic icon (tapping focuses field to open keyboard with
-///   native voice input available)
-/// - Has text → shows send icon
-/// - Enter submits text + "\r" and clears
+/// - Tap send: submits text + "\r" and clears (empty tap sends bare "\r")
+/// - Long-press send: inserts text without "\r" (for tab completion workflows)
 /// - Auto-expands up to 4 lines
 class _InputBar extends StatefulWidget {
   const _InputBar({
@@ -266,6 +264,31 @@ class _InputBarState extends State<_InputBar> {
     final text = _controller.text;
     widget.onSubmit(text.isNotEmpty ? '$text\r' : '\r');
     _controller.clear();
+  }
+
+  /// Long-press: send text without \r (for tab completion workflows).
+  /// Does nothing if input is empty.
+  void _submitWithoutReturn() {
+    if (widget.disabled) return;
+    final text = _controller.text;
+    if (text.isEmpty) return;
+    widget.onSubmit(text);
+    _controller.clear();
+    HapticFeedback.mediumImpact();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Text inserted'),
+          duration: const Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            bottom: MediaQuery.of(context).size.height - 150,
+            left: 16,
+            right: 16,
+          ),
+        ),
+      );
+    }
   }
 
   void _onChanged(String value) {
@@ -367,29 +390,24 @@ class _InputBarState extends State<_InputBar> {
 
           const SizedBox(width: 6),
 
-          // Mic / Send toggle button
-          SizedBox(
-            width: 40,
-            height: 40,
-            child: IconButton(
-              onPressed: widget.disabled
-                  ? null
-                  // Mic focuses the field to open the OS keyboard with
-                  // its native voice input button.
-                  : (_hasText ? _submit : widget.focusNode.requestFocus),
-              icon: Icon(
-                _hasText ? Icons.send_rounded : Icons.mic_rounded,
-                size: 20,
-              ),
-              color: _hasText
-                  ? colorScheme.primary
-                  : colorScheme.onSurface.withValues(alpha: 0.4),
-              style: IconButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+          // Send button — tap = send with \r, long-press = send without \r
+          GestureDetector(
+            onTap: widget.disabled ? null : _submit,
+            onLongPress:
+                widget.disabled || !_hasText ? null : _submitWithoutReturn,
+            child: Tooltip(
+              message: _hasText ? 'Send (hold to insert)' : 'Send',
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: Icon(
+                  Icons.send_rounded,
+                  size: 20,
+                  color: _hasText
+                      ? colorScheme.primary
+                      : colorScheme.onSurface.withValues(alpha: 0.4),
                 ),
               ),
-              tooltip: _hasText ? 'Send' : 'Voice input',
             ),
           ),
         ],

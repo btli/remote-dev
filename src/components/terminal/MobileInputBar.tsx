@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, forwardRef, useImperativeHandle } from "react";
+import { useState, useCallback, useRef, forwardRef, useImperativeHandle, useEffect } from "react";
 import { Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +25,8 @@ interface MobileInputBarProps {
  * by using a standard HTML textarea instead of xterm.js's internal textarea
  * (which disables all of these to prevent duplication bugs).
  *
- * - Enter / Send button: submit text and clear
+ * - Tap send / Enter: submits text + "\r" and clears (empty tap sends bare "\r")
+ * - Long-press send: inserts text without "\r" (for tab completion workflows)
  * - Shift+Enter: insert literal newline
  * - Auto-expands height with content (max 8rem)
  */
@@ -65,6 +66,54 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       resetTextareaHeight();
     }, [value, disabled, onSubmit, resetTextareaHeight]);
 
+    // Long-press send: insert text without \r (for tab completion workflows)
+    const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const longPressFiredRef = useRef(false);
+    const [longPressActive, setLongPressActive] = useState(false);
+
+    // Store current value in a ref so pointer handlers always see the latest
+    const valueRef = useRef(value);
+    useEffect(() => { valueRef.current = value; }, [value]);
+
+    const clearLongPressTimer = useCallback(() => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    }, []);
+
+    // Clean up timer on unmount
+    useEffect(() => clearLongPressTimer, [clearLongPressTimer]);
+
+    const handleSendPointerDown = useCallback(() => {
+      if (disabled) return;
+      longPressFiredRef.current = false;
+      longPressTimerRef.current = setTimeout(() => {
+        longPressFiredRef.current = true;
+        const currentValue = valueRef.current;
+        if (!currentValue) return;
+        onSubmit(currentValue);
+        setValue("");
+        resetTextareaHeight();
+        setLongPressActive(true);
+        setTimeout(() => setLongPressActive(false), 600);
+      }, 400);
+    }, [disabled, onSubmit, resetTextareaHeight]);
+
+    const handleSendPointerUp = useCallback((e: React.PointerEvent) => {
+      clearLongPressTimer();
+      if (!longPressFiredRef.current) {
+        // Normal tap — let click propagate to form submit
+        return;
+      }
+      // Long-press already fired; prevent double-submit
+      e.preventDefault();
+    }, [clearLongPressTimer]);
+
+    const handleSendPointerCancel = useCallback(() => {
+      clearLongPressTimer();
+    }, [clearLongPressTimer]);
+
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         // Sticky modifier interception: when a modifier is active, consume the next
@@ -87,6 +136,12 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       },
       [handleSubmit, modifierActive, resolveKey, onModifiedKeyPress]
     );
+
+    function sendButtonStyle(): string {
+      if (disabled) return "text-muted-foreground/40";
+      if (longPressActive) return "text-green-400 bg-green-400/20";
+      return "text-primary active:bg-primary/20";
+    }
 
     const handleInput = useCallback((e: React.FormEvent<HTMLTextAreaElement>) => {
       const textarea = e.currentTarget;
@@ -136,16 +191,30 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
         <button
           type="submit"
           disabled={disabled}
+          onPointerDown={handleSendPointerDown}
+          onPointerUp={handleSendPointerUp}
+          onPointerCancel={handleSendPointerCancel}
+          onContextMenu={(e) => e.preventDefault()}
+          onClick={(e) => {
+            // If long-press already fired, prevent the form submit from click
+            if (longPressFiredRef.current) {
+              e.preventDefault();
+              longPressFiredRef.current = false;
+            }
+          }}
           className={cn(
-            "p-2 rounded-md shrink-0 touch-manipulation",
-            "transition-colors duration-100",
-            !disabled
-              ? "text-primary active:bg-primary/20"
-              : "text-muted-foreground/40"
+            "relative p-2 rounded-md shrink-0 touch-manipulation",
+            "transition-colors duration-200",
+            sendButtonStyle()
           )}
-          aria-label="Send"
+          aria-label="Send (hold to insert without executing)"
         >
           <Send className="w-4 h-4" />
+          {longPressActive && (
+            <span className="absolute -top-8 left-1/2 -translate-x-1/2 text-xs bg-popover text-popover-foreground px-2 py-1 rounded shadow-md whitespace-nowrap pointer-events-none">
+              Text inserted
+            </span>
+          )}
         </button>
       </form>
     );
