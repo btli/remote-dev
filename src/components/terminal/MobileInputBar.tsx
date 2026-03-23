@@ -110,9 +110,13 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       e.preventDefault();
     }, [clearLongPressTimer]);
 
-    const handleSendPointerCancel = useCallback(() => {
-      clearLongPressTimer();
-    }, [clearLongPressTimer]);
+    const handleSendClick = useCallback((e: React.MouseEvent) => {
+      // If long-press already fired, prevent the form submit from click
+      if (longPressFiredRef.current) {
+        e.preventDefault();
+        longPressFiredRef.current = false;
+      }
+    }, []);
 
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -187,23 +191,15 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
           disabled={disabled}
           onPointerDown={handleSendPointerDown}
           onPointerUp={handleSendPointerUp}
-          onPointerCancel={handleSendPointerCancel}
+          onPointerCancel={clearLongPressTimer}
           onContextMenu={(e) => e.preventDefault()}
-          onClick={(e) => {
-            // If long-press already fired, prevent the form submit from click
-            if (longPressFiredRef.current) {
-              e.preventDefault();
-              longPressFiredRef.current = false;
-            }
-          }}
+          onClick={handleSendClick}
           className={cn(
             "relative p-2 rounded-md shrink-0 touch-manipulation",
             "transition-colors duration-200",
-            disabled
-              ? "text-muted-foreground/40"
-              : longPressActive
-                ? "text-green-400 bg-green-400/20"
-                : "text-primary active:bg-primary/20"
+            disabled && "text-muted-foreground/40",
+            !disabled && longPressActive && "text-green-400 bg-green-400/20",
+            !disabled && !longPressActive && "text-primary active:bg-primary/20"
           )}
           aria-label="Send (hold to insert without executing)"
         >
