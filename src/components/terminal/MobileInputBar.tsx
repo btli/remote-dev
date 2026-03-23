@@ -137,12 +137,6 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       [handleSubmit, modifierActive, resolveKey, onModifiedKeyPress]
     );
 
-    function sendButtonStyle(): string {
-      if (disabled) return "text-muted-foreground/40";
-      if (longPressActive) return "text-green-400 bg-green-400/20";
-      return "text-primary active:bg-primary/20";
-    }
-
     const handleInput = useCallback((e: React.FormEvent<HTMLTextAreaElement>) => {
       const textarea = e.currentTarget;
       textarea.style.height = "auto";
@@ -205,7 +199,11 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
           className={cn(
             "relative p-2 rounded-md shrink-0 touch-manipulation",
             "transition-colors duration-200",
-            sendButtonStyle()
+            disabled
+              ? "text-muted-foreground/40"
+              : longPressActive
+                ? "text-green-400 bg-green-400/20"
+                : "text-primary active:bg-primary/20"
           )}
           aria-label="Send (hold to insert without executing)"
         >

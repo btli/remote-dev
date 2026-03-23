@@ -272,9 +272,9 @@ class _InputBarState extends State<_InputBar> {
     if (widget.disabled) return;
     final text = _controller.text;
     if (text.isEmpty) return;
+    HapticFeedback.mediumImpact();
     widget.onSubmit(text);
     _controller.clear();
-    HapticFeedback.mediumImpact();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
