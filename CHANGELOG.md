@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-client session support**: Web and mobile can now connect to the same terminal session simultaneously without triggering a reconnection loop. Each client gets its own PTY attached to the same tmux session. Newest connection controls terminal resize.
+
 ## [0.3.6] - 2026-03-22
 
 ### Added
