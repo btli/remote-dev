@@ -139,6 +139,7 @@ class _SessionDrawer extends ConsumerWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final drawerWidth = MediaQuery.of(context).size.width * 0.80;
+    final sessionListState = ref.watch(sessionListProvider);
     final sessions = ref.watch(filteredSessionsProvider);
     final activeSessionId = ref.watch(activeSessionIdProvider);
 
@@ -219,7 +220,39 @@ class _SessionDrawer extends ConsumerWidget {
 
                 // Session list
                 Expanded(
-                  child: sessions.isEmpty
+                  child: sessionListState.hasError
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.error_outline_rounded,
+                                  color: colorScheme.error,
+                                  size: 32,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  '${sessionListState.error}',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.error,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 12),
+                                TextButton.icon(
+                                  onPressed: () => ref.invalidate(sessionListProvider),
+                                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                                  label: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : sessionListState.isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : sessions.isEmpty
                       ? Center(
                           child: Text(
                             'No sessions yet',
