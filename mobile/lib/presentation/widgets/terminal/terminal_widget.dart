@@ -397,6 +397,7 @@ class _InputBarState extends State<_InputBar> {
                 widget.disabled || !_hasText ? null : _submitWithoutReturn,
             child: Tooltip(
               message: _hasText ? 'Send (hold to insert)' : 'Send',
+              triggerMode: TooltipTriggerMode.manual,
               child: SizedBox(
                 width: 40,
                 height: 40,
