@@ -32,10 +32,16 @@ class KeyboardToolbar extends StatefulWidget {
 enum _KeyboardMode { keys, nav }
 
 class _ToolbarKey {
-  const _ToolbarKey(this.label, this.sequence, {this.isModifier = false});
+  const _ToolbarKey(
+    this.label,
+    this.sequence, {
+    this.isModifier = false,
+    this.icon,
+  });
   final String label;
   final String sequence;
   final bool isModifier;
+  final IconData? icon;
 }
 
 // ── Shared keys ────────────────────────────────────────────────────────
@@ -43,12 +49,23 @@ const _kEsc = _ToolbarKey('ESC', '\x1b');
 const _kCtrlC = _ToolbarKey('^C', '\x03');
 const _kCtrlD = _ToolbarKey('^D', '\x04');
 const _kTab = _ToolbarKey('TAB', '\t');
+const _kBackspace =
+    _ToolbarKey('⌫', '\x7f', icon: Icons.backspace_outlined);
 const _kCtrl = _ToolbarKey('CTRL', 'ctrl', isModifier: true);
 const _kAlt = _ToolbarKey('ALT', 'alt', isModifier: true);
 const _kShift = _ToolbarKey('SHIFT', 'shift', isModifier: true);
 
 // ── Keys mode ──────────────────────────────────────────────────────────
-const _keysRow1 = [_kEsc, _kCtrlC, _kCtrlD, _kTab, _kCtrl, _kAlt, _kShift];
+const _keysRow1 = [
+  _kEsc,
+  _kCtrlC,
+  _kCtrlD,
+  _kTab,
+  _kBackspace,
+  _kCtrl,
+  _kAlt,
+  _kShift,
+];
 const _keysRow2 = [
   _ToolbarKey('|', '|'),
   _ToolbarKey('/', '/'),
@@ -67,6 +84,7 @@ const _navDpadRight = _ToolbarKey('\u2192', '\x1b[C');
 const _navRow1 = [
   _ToolbarKey('HOME', '\x1b[H'),
   _ToolbarKey('END', '\x1b[F'),
+  _kBackspace,
   _ToolbarKey('ENTER', '\r'),
   _ToolbarKey('\u21e7\u21b5', '\x1b\r'),
   _kCtrl,
@@ -405,6 +423,7 @@ class _KeyboardToolbarState extends State<KeyboardToolbar>
           Expanded(
             child: _KeyButton(
               label: key.label,
+              icon: key.icon,
               isActive: _isModifierActive(key),
               onTap: () => _handleKey(key),
             ),
@@ -420,15 +439,20 @@ class _KeyButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.isActive = false,
+    this.icon,
   });
 
   final String label;
   final VoidCallback onTap;
   final bool isActive;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final color = isActive
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurface.withValues(alpha: 0.8);
 
     return Padding(
       padding: const EdgeInsets.all(1.5),
@@ -443,16 +467,17 @@ class _KeyButton extends StatelessWidget {
           child: Container(
             height: 36,
             alignment: Alignment.center,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-                color: isActive
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.onSurface.withValues(alpha: 0.8),
-              ),
-            ),
+            child: icon != null
+                ? Icon(icon, size: 14, color: color)
+                : Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight:
+                          isActive ? FontWeight.bold : FontWeight.w500,
+                      color: color,
+                    ),
+                  ),
           ),
         ),
       ),

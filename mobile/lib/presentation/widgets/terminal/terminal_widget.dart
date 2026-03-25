@@ -215,8 +215,9 @@ class _TerminalWidgetState extends State<TerminalWidget>
 /// enabling OS-level voice dictation, autocorrect, and predictive text.
 /// Mirrors the web app's MobileInputBar component.
 ///
-/// - Tap send: submits text + "\r" and clears (empty tap sends bare "\r")
-/// - Long-press send: inserts text without "\r" (for tab completion workflows)
+/// - Send mode (default): tap sends text + "\r" (empty tap sends bare "\r")
+/// - Type mode: tap sends text without "\r" (empty tap does nothing)
+/// - Long-press send button: toggles between Send and Type mode
 /// - Auto-expands up to 4 lines
 class _InputBar extends StatefulWidget {
   const _InputBar({
@@ -238,6 +239,7 @@ class _InputBar extends StatefulWidget {
 class _InputBarState extends State<_InputBar> {
   final _controller = TextEditingController();
   bool _hasText = false;
+  bool _typeMode = false;
 
   @override
   void initState() {
@@ -262,33 +264,37 @@ class _InputBarState extends State<_InputBar> {
   void _submit() {
     if (widget.disabled) return;
     final text = _controller.text;
-    widget.onSubmit(text.isNotEmpty ? '$text\r' : '\r');
+
+    if (_typeMode) {
+      // Type mode: send text only (no \r), do nothing if empty
+      if (text.isEmpty) return;
+      widget.onSubmit(text);
+    } else {
+      // Send mode: send text + \r (original behavior)
+      widget.onSubmit(text.isNotEmpty ? '$text\r' : '\r');
+    }
+
     _controller.clear();
   }
 
-  /// Long-press: send text without \r (for tab completion workflows).
-  /// Does nothing if input is empty.
-  void _submitWithoutReturn() {
-    if (widget.disabled) return;
-    final text = _controller.text;
-    if (text.isEmpty) return;
+  /// Long-press: toggle between Send mode and Type mode.
+  void _toggleTypeMode() {
     HapticFeedback.mediumImpact();
-    widget.onSubmit(text);
-    _controller.clear();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+    setState(() => _typeMode = !_typeMode);
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
         SnackBar(
-          content: const Text('Text inserted'),
+          content: Text(
+            _typeMode
+                ? 'Type mode — tap to insert text'
+                : 'Send mode — tap to execute',
+          ),
           duration: const Duration(seconds: 1),
           behavior: SnackBarBehavior.floating,
-          margin: EdgeInsets.only(
-            bottom: MediaQuery.of(context).size.height - 150,
-            left: 16,
-            right: 16,
-          ),
+          margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
         ),
       );
-    }
   }
 
   void _onChanged(String value) {
@@ -303,6 +309,37 @@ class _InputBarState extends State<_InputBar> {
       );
       _submit();
     }
+  }
+
+  Widget _buildSendButton(ColorScheme colorScheme) {
+    final Color iconColor;
+    if (!_hasText) {
+      iconColor = colorScheme.onSurface.withValues(alpha: 0.4);
+    } else if (_typeMode) {
+      iconColor = colorScheme.tertiary;
+    } else {
+      iconColor = colorScheme.primary;
+    }
+
+    return GestureDetector(
+      onTap: widget.disabled ? null : _submit,
+      onLongPress: widget.disabled ? null : _toggleTypeMode,
+      child: Tooltip(
+        message: _typeMode
+            ? 'Type mode (hold for send mode)'
+            : 'Send (hold for type mode)',
+        triggerMode: TooltipTriggerMode.manual,
+        child: SizedBox(
+          width: 40,
+          height: 40,
+          child: Icon(
+            _typeMode ? Icons.keyboard_rounded : Icons.send_rounded,
+            size: 20,
+            color: iconColor,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -390,27 +427,8 @@ class _InputBarState extends State<_InputBar> {
 
           const SizedBox(width: 6),
 
-          // Send button — tap = send with \r, long-press = send without \r
-          GestureDetector(
-            onTap: widget.disabled ? null : _submit,
-            onLongPress:
-                widget.disabled || !_hasText ? null : _submitWithoutReturn,
-            child: Tooltip(
-              message: _hasText ? 'Send (hold to insert)' : 'Send',
-              triggerMode: TooltipTriggerMode.manual,
-              child: SizedBox(
-                width: 40,
-                height: 40,
-                child: Icon(
-                  Icons.send_rounded,
-                  size: 20,
-                  color: _hasText
-                      ? colorScheme.primary
-                      : colorScheme.onSurface.withValues(alpha: 0.4),
-                ),
-              ),
-            ),
-          ),
+          // Send button — tap = send, long-press = toggle type/send mode
+          _buildSendButton(colorScheme),
         ],
       ),
     );
