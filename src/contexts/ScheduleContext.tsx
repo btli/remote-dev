@@ -246,9 +246,13 @@ export function ScheduleProvider({ children }: ScheduleProviderProps) {
       }
 
       const data = await response.json();
+
+      // Refresh schedules to sync nextRunAt and status after execution
+      await refreshSchedules();
+
       return data.execution;
     },
-    []
+    [refreshSchedules]
   );
 
   // Get execution history
