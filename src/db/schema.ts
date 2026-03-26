@@ -296,6 +296,8 @@ export const portRegistry = sqliteTable(
     index("port_registry_folder_idx").on(table.folderId),
     // Composite index for fast conflict detection
     index("port_registry_user_port_idx").on(table.userId, table.port),
+    // Prevent duplicate port+variable registrations per user
+    uniqueIndex("port_registry_user_port_var_unique").on(table.userId, table.port, table.variableName),
   ]
 );
 

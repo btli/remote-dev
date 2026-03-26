@@ -18,8 +18,32 @@ import type {
 } from "@/types/environment";
 import { isEnvVarDisabled } from "@/types/environment";
 import type { FolderPreferencesWithMeta } from "@/types/preferences";
-// NOTE: This module is shared between server and client (via PreferencesContext).
-// Cannot use the structured logger here as it depends on Node-only better-sqlite3.
+// This module is shared between server and client (via PreferencesContext).
+// Use a lazy-loaded logger that falls back to console.* on the client where
+// the structured logger (which depends on Node-only better-sqlite3) is unavailable.
+import type { Logger } from "@/infrastructure/logging/AppLogger";
+
+let _log: Logger | null = null;
+function getLog(): Logger {
+  if (!_log) {
+    if (typeof window === "undefined") {
+      // Server-side: use the structured logger
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { createLogger } = require("@/lib/logger") as { createLogger: (ns: string) => Logger };
+      _log = createLogger("Environment");
+    } else {
+      // Client-side fallback: map to console methods
+      _log = {
+        error: (msg, data) => data ? console.error("[Environment]", msg, data) : console.error("[Environment]", msg),
+        warn: (msg, data) => data ? console.warn("[Environment]", msg, data) : console.warn("[Environment]", msg),
+        info: (msg, data) => data ? console.info("[Environment]", msg, data) : console.info("[Environment]", msg),
+        debug: (msg, data) => data ? console.debug("[Environment]", msg, data) : console.debug("[Environment]", msg),
+        trace: (msg, data) => data ? console.debug("[Environment]", msg, data) : console.debug("[Environment]", msg),
+      };
+    }
+  }
+  return _log;
+}
 
 /**
  * Resolve environment variables with hierarchical inheritance.
@@ -188,12 +212,12 @@ export function parseEnvironmentVars(
   try {
     const parsed = JSON.parse(json);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      console.warn("[Environment] Invalid environment variables format, expected object");
+      getLog().warn("Invalid environment variables format, expected object");
       return null;
     }
     return parsed as EnvironmentVariables;
   } catch (error) {
-    console.warn("[Environment] Failed to parse environment variables JSON:", error);
+    getLog().warn("Failed to parse environment variables JSON", { error: String(error) });
     return null;
   }
 }
