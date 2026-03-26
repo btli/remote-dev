@@ -21,8 +21,32 @@ import type {
   PreferenceSource,
   ExtendedPreferenceSourceMap,
 } from "@/types/preferences";
-// NOTE: This module is shared between server and client (via PreferencesContext).
-// Cannot use the structured logger here as it depends on Node-only better-sqlite3.
+// This module is shared between server and client (via PreferencesContext).
+// Use a lazy-loaded logger that falls back to console.* on the client where
+// the structured logger (which depends on Node-only better-sqlite3) is unavailable.
+import type { Logger } from "@/infrastructure/logging/AppLogger";
+
+let _log: Logger | null = null;
+function getLog(): Logger {
+  if (!_log) {
+    if (typeof window === "undefined") {
+      // Server-side: use the structured logger
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { createLogger } = require("@/lib/logger") as { createLogger: (ns: string) => Logger };
+      _log = createLogger("Preferences");
+    } else {
+      // Client-side fallback: map to console methods
+      _log = {
+        error: (msg, data) => console.error("[Preferences]", msg, data),
+        warn: (msg, data) => console.warn("[Preferences]", msg, data),
+        info: (msg, data) => console.info("[Preferences]", msg, data),
+        debug: (msg, data) => console.debug("[Preferences]", msg, data),
+        trace: (msg, data) => console.debug("[Preferences]", msg, data),
+      };
+    }
+  }
+  return _log;
+}
 
 /**
  * System-wide default preferences
@@ -69,7 +93,7 @@ export function buildAncestryChain(
   while (currentId) {
     // Circular reference protection - this indicates data corruption
     if (visited.has(currentId)) {
-      console.error("[Preferences] Data integrity issue: Circular reference detected in folder hierarchy", {
+      getLog().error("Data integrity issue: Circular reference detected in folder hierarchy", {
         folderId: currentId,
         visited: Array.from(visited),
       });
@@ -82,7 +106,7 @@ export function buildAncestryChain(
       // Missing folder in hierarchy - may indicate orphaned data or race condition
       if (currentId !== folderId) {
         // Only warn if it's not the target folder (target might just not exist yet)
-        console.warn("[Preferences] Folder not found in hierarchy during ancestry chain build:", currentId);
+        getLog().warn("Folder not found in hierarchy during ancestry chain build", { folderId: currentId });
       }
       break;
     }
