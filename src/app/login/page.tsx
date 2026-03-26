@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -64,7 +64,7 @@ export default function LoginPage() {
               />
             </div>
             {error && (
-              <p className="text-sm text-destructive">{error}</p>
+              <p className="text-sm text-destructive" role="alert">{error}</p>
             )}
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Signing in..." : "Sign in"}
@@ -81,14 +81,15 @@ export default function LoginPage() {
 }
 
 const APK_DOWNLOAD_URL =
-  "https://github.com/btli/remote-dev/releases/latest/download/remote-dev-0.3.0-android-debug.apk";
+  "https://github.com/btli/remote-dev/releases/latest";
+
+const subscribe = () => () => {};
+const getIsMobile = () =>
+  /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const getServerSnapshot = () => false;
 
 function MobileAppBanner() {
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    setIsMobile(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-  }, []);
+  const isMobile = useSyncExternalStore(subscribe, getIsMobile, getServerSnapshot);
 
   if (!isMobile) return null;
 
@@ -103,7 +104,7 @@ function MobileAppBanner() {
           </p>
         </div>
         <Button size="sm" variant="outline" asChild>
-          <a href={APK_DOWNLOAD_URL}>Download APK</a>
+          <a href={APK_DOWNLOAD_URL}>Get Latest</a>
         </Button>
       </CardContent>
     </Card>
