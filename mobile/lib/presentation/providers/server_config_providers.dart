@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:remote_dev/domain/entities/server_config.dart';
 import 'package:remote_dev/infrastructure/api/remote_dev_client.dart';
+import 'package:remote_dev/infrastructure/auth/cf_token_refresh_service.dart';
 import 'package:remote_dev/infrastructure/storage/secure_storage_service.dart';
 import 'package:remote_dev/infrastructure/storage/server_config_store.dart';
 import 'package:remote_dev/infrastructure/storage/server_scoped_storage.dart';
@@ -57,17 +58,56 @@ final serverScopedStorageProvider = Provider<ServerScopedStorage?>((ref) {
   return ServerScopedStorage(storage: storage, serverId: config.id);
 });
 
+/// CF Access token refresh service for the active server.
+///
+/// Only created for servers using CF Access authentication. Handles
+/// automatic re-authentication when the CF JWT expires by opening
+/// the browser and waiting for the deep link callback.
+///
+/// The global deep link listener in [RemoteDevApp] routes incoming
+/// `remotedev://auth/callback` URIs to this service when a refresh
+/// is in progress.
+final cfTokenRefreshServiceProvider =
+    Provider<CfTokenRefreshService?>((ref) {
+  final config = ref.watch(activeServerConfigProvider);
+  final scopedStorage = ref.watch(serverScopedStorageProvider);
+  if (config == null || scopedStorage == null) return null;
+
+  // Only CF Access servers need token refresh
+  if (!config.isCfAccess) return null;
+
+  final service = CfTokenRefreshService(
+    serverUrl: config.serverUrl,
+    onCredentialsRefreshed: (apiKey, cfToken) async {
+      await scopedStorage.setApiKey(apiKey);
+      if (cfToken != null) {
+        await scopedStorage.setCfToken(cfToken);
+      }
+    },
+  );
+
+  ref.onDispose(service.dispose);
+  return service;
+});
+
 /// HTTP client for the active server's REST API.
 /// Only available when a server is selected and has scoped storage.
+///
+/// For CF Access servers, the client is wired with an [onTokenExpired]
+/// callback that triggers automatic re-authentication when 302/303
+/// redirects are detected.
 final remoteDevClientProvider = Provider<RemoteDevClient?>((ref) {
   final config = ref.watch(activeServerConfigProvider);
   final scopedStorage = ref.watch(serverScopedStorageProvider);
   if (config == null || scopedStorage == null) return null;
 
+  final refreshService = ref.watch(cfTokenRefreshServiceProvider);
+
   return RemoteDevClient(
     getApiKey: scopedStorage.getApiKey,
     getCfToken: scopedStorage.getCfToken,
     baseUrl: config.serverUrl,
+    onTokenExpired: refreshService?.refresh,
   );
 });
 

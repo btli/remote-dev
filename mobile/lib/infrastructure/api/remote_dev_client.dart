@@ -28,6 +28,7 @@ class RemoteDevClient {
     required Future<String?> Function() getApiKey,
     required Future<String?> Function() getCfToken,
     required String baseUrl,
+    this.onTokenExpired,
   }) : _dio = Dio(
           BaseOptions(
             baseUrl: baseUrl,
@@ -42,6 +43,11 @@ class RemoteDevClient {
   }
 
   final Dio _dio;
+
+  /// Called when a CF Access token expiry is detected (302/303 redirect).
+  /// Should trigger re-authentication and return `true` if new credentials
+  /// were obtained, allowing the failed request to be retried automatically.
+  final Future<bool> Function()? onTokenExpired;
 
   // ── Sessions ──────────────────────────────────────────────────────────
 
@@ -268,18 +274,54 @@ class RemoteDevClient {
   // ── Internal ──────────────────────────────────────────────────────────
 
   /// Generic request wrapper that converts Dio exceptions to domain errors.
+  ///
+  /// Detects CF Access token expiry (302/303 redirects that pass
+  /// `validateStatus`) and triggers automatic re-authentication via
+  /// [onTokenExpired]. If the refresh succeeds, the original request is
+  /// retried once with the new credentials.
   Future<Map<String, dynamic>> _request(
     Future<Response<dynamic>> Function() request,
   ) async {
     try {
       final response = await request();
-      final data = response.data;
-      if (data is Map<String, dynamic>) return data;
-      if (data is List) return {'items': data};
-      return {};
+
+      // CF Access redirects come back as 302/303 with followRedirects: false.
+      // Since validateStatus allows < 400, these are "successful" responses
+      // with non-JSON bodies. Detect and handle token refresh.
+      if (!_isCfRedirect(response)) return _normalizeData(response.data);
+
+      if (onTokenExpired != null && await onTokenExpired!()) {
+        // Retry with fresh credentials (the _AuthInterceptor reads from
+        // storage on each request, so the new token is picked up).
+        final retryResponse = await request();
+        if (_isCfRedirect(retryResponse)) _throwTokenExpired();
+        return _normalizeData(retryResponse.data);
+      }
+
+      _throwTokenExpired();
+    } on AppError {
+      rethrow;
     } on DioException catch (e) {
       throw _mapDioError(e);
     }
+  }
+
+  static bool _isCfRedirect(Response<dynamic> response) {
+    final status = response.statusCode;
+    return status == 302 || status == 303;
+  }
+
+  static Map<String, dynamic> _normalizeData(dynamic data) {
+    if (data is Map<String, dynamic>) return data;
+    if (data is List) return {'items': data};
+    return {};
+  }
+
+  static Never _throwTokenExpired() {
+    throw const AuthError(
+      'Session expired. Please sign in again.',
+      code: 'CF_TOKEN_EXPIRED',
+    );
   }
 
   AppError _mapDioError(DioException e) {

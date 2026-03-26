@@ -1,5 +1,6 @@
 export 'appearance_providers.dart';
 export 'auth_providers.dart';
+export 'deep_link_providers.dart';
 export 'folder_providers.dart';
 export 'git_providers.dart';
 export 'server_config_providers.dart';
