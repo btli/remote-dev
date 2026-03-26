@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Multi-client session support**: Web and mobile can now connect to the same terminal session simultaneously without triggering a reconnection loop. Each client gets its own PTY attached to the same tmux session. Newest connection controls terminal resize.
+- **App-level error and 404 pages**: Added `error.tsx` and `not-found.tsx` with Tokyo Night glassmorphism styling, replacing raw Next.js error pages
+- **Login page metadata**: Added page title and description via login layout for SEO and browser tab clarity
+- **Stale APK download URL**: Changed hardcoded v0.3.0 APK link to version-independent releases page
+- **Login error accessibility**: Added `role="alert"` to login error message for screen reader announcement
+- **Server-side logger compliance**: Replaced `console.error/warn` with structured logger in `preferences.ts` and `environment.ts`
+- **Port registry uniqueness**: Added unique index on `(userId, port, variableName)` to prevent duplicate port registrations
+- **Tmux session name validation**: Tightened terminal server validation from permissive alphanumeric pattern to strict `rdv-{uuid}` format matching the domain layer
 
 ## [0.3.6] - 2026-03-22
 
