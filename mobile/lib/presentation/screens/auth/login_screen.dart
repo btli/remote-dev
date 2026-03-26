@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:app_links/app_links.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -115,12 +114,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     StreamSubscription<Uri>? sub;
     try {
-      // Listen for the deep link callback from the server
-      final appLinks = AppLinks();
+      // Listen for the deep link callback via the shared broadcast stream.
+      // This avoids creating a second AppLinks instance that would race
+      // with the global listener in RemoteDevApp.
+      final deepLinkStream = ref.read(deepLinkStreamProvider);
       final completer = Completer<Uri>();
-      sub = appLinks.uriLinkStream.listen((uri) {
+      sub = deepLinkStream.listen((uri) {
         if (uri.scheme == 'remotedev' &&
             uri.host == 'auth' &&
+            uri.path == '/callback' &&
             !completer.isCompleted) {
           completer.complete(uri);
         }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -93,11 +95,64 @@ class _EmptySessionPlaceholder extends StatelessWidget {
 }
 
 /// Root application widget.
-class RemoteDevApp extends ConsumerWidget {
+///
+/// Listens for `remotedev://auth/callback` deep links via the shared
+/// [deepLinkStreamProvider] so that automatic CF Access token refresh
+/// can complete even when the login screen is not mounted. When the
+/// [CfTokenRefreshService] has an active refresh in progress, the deep
+/// link is routed there. Otherwise the link is ignored here (the login
+/// screen subscribes to the same broadcast stream for initial auth).
+class RemoteDevApp extends ConsumerStatefulWidget {
   const RemoteDevApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RemoteDevApp> createState() => _RemoteDevAppState();
+}
+
+class _RemoteDevAppState extends ConsumerState<RemoteDevApp> {
+  StreamSubscription<Uri>? _deepLinkSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Defer subscription until after the first build so that
+    // ref.read is safe and the provider container is fully wired.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final stream = ref.read(deepLinkStreamProvider);
+      _deepLinkSub = stream.listen(_handleDeepLink);
+    });
+  }
+
+  Future<void> _handleDeepLink(Uri uri) async {
+    if (uri.scheme != 'remotedev' ||
+        uri.host != 'auth' ||
+        uri.path != '/callback') {
+      return;
+    }
+
+    final refreshService = ref.read(cfTokenRefreshServiceProvider);
+
+    // Only intercept the deep link when a token refresh is in progress.
+    // If no refresh is active, the login screen's own listener handles it.
+    if (refreshService == null || !refreshService.isRefreshing) return;
+
+    await refreshService.handleDeepLink(uri);
+
+    // After credentials are refreshed, invalidate data providers so the
+    // UI refetches with the new token.
+    ref.invalidate(sessionListProvider);
+    ref.invalidate(folderListProvider);
+  }
+
+  @override
+  void dispose() {
+    _deepLinkSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final palette = ref.watch(terminalPaletteProvider);
     final router = ref.watch(routerProvider);
     ref.watch(pushRegistrationProvider);
