@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
 import { getAuthSession } from "@/lib/auth-utils";
 import { db } from "@/db";
@@ -28,7 +29,7 @@ export default async function Home() {
   const session = await getAuthSession();
 
   if (!session?.user?.id) {
-    return null;
+    redirect("/login");
   }
 
   // Fetch user's active and suspended sessions
