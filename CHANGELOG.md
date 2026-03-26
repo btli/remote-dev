@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Server-side logger compliance**: Replaced `console.error/warn` with structured logger in `preferences.ts` and `environment.ts`
 - **Port registry uniqueness**: Added unique index on `(userId, port, variableName)` to prevent duplicate port registrations
 - **Tmux session name validation**: Tightened terminal server validation from permissive alphanumeric pattern to strict `rdv-{uuid}` format matching the domain layer
+- **Schedule state sync after execution**: Schedules no longer show "Overdue" after firing — `executeNow()` now refreshes client state immediately
+- **Auth timeout detection**: Expired sessions redirect to login instead of showing a blank/frozen page. All API calls in SessionContext detect 401 responses and redirect automatically. SessionProvider revalidates every 5 minutes and on tab focus.
 
 ## [0.3.6] - 2026-03-22
 
