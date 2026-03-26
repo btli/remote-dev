@@ -18,6 +18,7 @@ import type {
   CreateSessionInput,
   SessionStatus,
 } from "@/types/session";
+import { checkAuthResponse } from "@/lib/api-client";
 import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
@@ -290,6 +291,7 @@ export function SessionProvider({
   const refreshSessions = useCallback(async () => {
     try {
       const response = await fetch("/api/sessions?status=active,suspended");
+      if (checkAuthResponse(response)) return;
       if (!response.ok) throw new Error("Failed to fetch sessions");
       const data = await response.json();
       dispatch({ type: "LOAD_SESSIONS", sessions: data.sessions });
@@ -315,6 +317,8 @@ export function SessionProvider({
         body: JSON.stringify(input),
       });
 
+      if (checkAuthResponse(response)) return undefined as unknown as TerminalSession;
+
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || "Failed to create session");
@@ -338,6 +342,8 @@ export function SessionProvider({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updates),
         });
+
+        if (checkAuthResponse(response)) return;
 
         if (!response.ok) {
           // Rollback on error - refetch
@@ -367,6 +373,8 @@ export function SessionProvider({
         const response = await fetch(url, {
           method: "DELETE",
         });
+
+        if (checkAuthResponse(response)) return;
 
         if (!response.ok) {
           // Rollback on error - refetch and restore active session
@@ -398,6 +406,8 @@ export function SessionProvider({
           method: "POST",
         });
 
+        if (checkAuthResponse(response)) return;
+
         if (!response.ok) {
           await refreshSessions();
           throw new Error("Failed to suspend session");
@@ -423,6 +433,8 @@ export function SessionProvider({
           method: "POST",
         });
 
+        if (checkAuthResponse(response)) return;
+
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
 
@@ -430,7 +442,8 @@ export function SessionProvider({
           if (response.status === 410) {
             console.warn(`Tmux session gone for ${sessionId}, auto-closing...`);
             dispatch({ type: "DELETE", sessionId });
-            await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+            const deleteResponse = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+            if (checkAuthResponse(deleteResponse)) return;
             return; // Don't throw - session has been cleaned up
           }
 
@@ -460,6 +473,8 @@ export function SessionProvider({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionIds }),
         });
+
+        if (checkAuthResponse(response)) return;
 
         if (!response.ok) {
           await refreshSessions();
