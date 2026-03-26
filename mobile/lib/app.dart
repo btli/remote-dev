@@ -139,6 +139,10 @@ class _RemoteDevAppState extends ConsumerState<RemoteDevApp> {
 
     await refreshService.handleDeepLink(uri);
 
+    // Guard against the widget being disposed during the async gap
+    // (e.g., hot restart or app teardown while the browser was open).
+    if (!mounted) return;
+
     // After credentials are refreshed, invalidate data providers so the
     // UI refetches with the new token.
     ref.invalidate(sessionListProvider);
