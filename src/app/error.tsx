@@ -28,7 +28,7 @@ export default function Error({
       <Card className="w-full max-w-md border-border/50 bg-card/80 backdrop-blur-xl">
         <CardHeader>
           <CardTitle className="text-lg">Something went wrong</CardTitle>
-          <CardDescription>
+          <CardDescription role="alert">
             An unexpected error occurred. Please try again or return to the home
             page.
           </CardDescription>
