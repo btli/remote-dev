@@ -51,10 +51,10 @@ function getCleanEnvironment(): Record<string, string> {
 
 /**
  * Validate a tmux session name to prevent command injection.
- * Only allows alphanumeric characters, hyphens, and underscores.
+ * Must match the rdv-{uuid} format used by the domain layer (TmuxSessionName).
  */
 function validateSessionName(name: string): boolean {
-  return /^[a-zA-Z0-9_-]+$/.test(name);
+  return /^rdv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name);
 }
 
 /**
