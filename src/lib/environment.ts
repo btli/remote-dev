@@ -34,11 +34,11 @@ function getLog(): Logger {
     } else {
       // Client-side fallback: map to console methods
       _log = {
-        error: (msg, data) => console.error("[Environment]", msg, data),
-        warn: (msg, data) => console.warn("[Environment]", msg, data),
-        info: (msg, data) => console.info("[Environment]", msg, data),
-        debug: (msg, data) => console.debug("[Environment]", msg, data),
-        trace: (msg, data) => console.debug("[Environment]", msg, data),
+        error: (msg, data) => data ? console.error("[Environment]", msg, data) : console.error("[Environment]", msg),
+        warn: (msg, data) => data ? console.warn("[Environment]", msg, data) : console.warn("[Environment]", msg),
+        info: (msg, data) => data ? console.info("[Environment]", msg, data) : console.info("[Environment]", msg),
+        debug: (msg, data) => data ? console.debug("[Environment]", msg, data) : console.debug("[Environment]", msg),
+        trace: (msg, data) => data ? console.debug("[Environment]", msg, data) : console.debug("[Environment]", msg),
       };
     }
   }

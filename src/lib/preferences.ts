@@ -37,11 +37,11 @@ function getLog(): Logger {
     } else {
       // Client-side fallback: map to console methods
       _log = {
-        error: (msg, data) => console.error("[Preferences]", msg, data),
-        warn: (msg, data) => console.warn("[Preferences]", msg, data),
-        info: (msg, data) => console.info("[Preferences]", msg, data),
-        debug: (msg, data) => console.debug("[Preferences]", msg, data),
-        trace: (msg, data) => console.debug("[Preferences]", msg, data),
+        error: (msg, data) => data ? console.error("[Preferences]", msg, data) : console.error("[Preferences]", msg),
+        warn: (msg, data) => data ? console.warn("[Preferences]", msg, data) : console.warn("[Preferences]", msg),
+        info: (msg, data) => data ? console.info("[Preferences]", msg, data) : console.info("[Preferences]", msg),
+        debug: (msg, data) => data ? console.debug("[Preferences]", msg, data) : console.debug("[Preferences]", msg),
+        trace: (msg, data) => data ? console.debug("[Preferences]", msg, data) : console.debug("[Preferences]", msg),
       };
     }
   }
