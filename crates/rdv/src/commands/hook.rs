@@ -125,7 +125,7 @@ async fn handle_stop(client: &Client, agent: Option<String>, reason: Option<Stri
         }
         Err(e) => {
             eprintln!("warning: failed to check tasks: {e}");
-            println!("Unable to verify task completion due to a connection error. Please run TaskList to check your tasks before stopping.");
+            println!("Unable to verify task completion. Please run TaskList to check your tasks before stopping.");
             true
         }
     };
