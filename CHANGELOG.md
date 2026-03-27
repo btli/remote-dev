@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stop hook silent failure on DB error**: `/internal/agent-stop-check` now returns a descriptive error message when the task database is unavailable, instead of silently allowing the agent to stop without checking tasks
+- **Internal endpoint security**: Consolidated all `/internal/*` endpoint localhost restrictions into a single guard, covering previously unprotected `/agent-status`, `/agent-exit`, and `/notify` endpoints
+- **Stop hook retry on network failure**: `rdv hook stop` now retries the task check once after 500ms on connection-level errors (refused, reset, timeout) before falling back to the error message
+- **Hook validation visibility**: When agent hook validation fails and auto-repair also fails, a user-visible notification is now created instead of only logging server-side
+- **Hook marker matching specificity**: Hook deduplication now inspects only the `command` field of hook entries, preventing false matches on user hooks that contain marker substrings in descriptions
+- **stableId hash collisions**: Replaced 32-bit djb2 hash with dual-pass FNV-1a/Murmur (~52-bit) for task dedup keys, reducing collision risk for similar task subjects
+- **Plugin hook naming**: Renamed misleading `session-start` PreToolUse hook command to `active` (same handler, clearer intent)
+
+### Added
+
+- **SessionEnd hook**: Agent sessions now install a `SessionEnd` hook that reports "ended" status when the session closes, enabling learning analysis triggers
+
+### Fixed
+
 - **Mobile terminal scrollback**: Rewrote touch scroll handler to directly manipulate xterm viewport `scrollTop` instead of `terminal.scrollLines()`, bypassing xterm.js v6's internal document-level touch gesture handlers that were consuming touch events and preventing scrollback on mobile browsers. Improved momentum physics with rolling velocity average, 0.95 decay factor, and 5px activation threshold.
 - **Mobile terminal CSS touch handling**: Added `touch-action: none` and `overscroll-behavior: contain` to xterm viewport and container to prevent browser interference (pull-to-refresh, rubber-band bounce) with terminal scrolling
 
