@@ -244,7 +244,9 @@ export async function checkTasksOnStop(
     const postTaskKey = `${POST_TASK_MARKER_PREFIX}${postTaskTitle}`;
     const exists = tasks.some(
       (t) => t.agentTaskKey === postTaskKey ||
-        // Fallback: check legacy description marker
+        // Legacy fallback: tasks created before agentTaskKey column was added
+        // stored the key in the description field instead. Safe to remove once
+        // all sessions from before the migration are closed.
         t.description?.startsWith(postTaskKey)
     );
     if (!exists) {
