@@ -12,8 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile toolbar backspace button**: ⌫ (DEL) button in both Keys and Nav toolbar modes for deleting characters in the terminal. Supports ALT+⌫ for delete-word.
 - **Mobile type/send mode toggle**: Long-press the send button to switch between Send mode (text + `\r`) and Type mode (text only, no `\r`). Enables building up terminal input piece by piece before executing.
 - **Auto-refresh expired CF tokens**: When the Cloudflare Access token expires, the mobile app automatically opens the browser for re-authentication and retries the failed request, instead of silently showing empty sessions.
+- **Mobile scroll-to-bottom button**: Floating "Latest" pill button appears when the terminal is scrolled up into history on mobile. Tapping it scrolls back to the latest output.
 
 ### Fixed
+
+- **Mobile terminal scrollback**: Rewrote touch scroll handler to directly manipulate xterm viewport `scrollTop` instead of `terminal.scrollLines()`, bypassing xterm.js v6's internal document-level touch gesture handlers that were consuming touch events and preventing scrollback on mobile browsers. Improved momentum physics with rolling velocity average, 0.95 decay factor, and 5px activation threshold.
+- **Mobile terminal CSS touch handling**: Added `touch-action: none` and `overscroll-behavior: contain` to xterm viewport and container to prevent browser interference (pull-to-refresh, rubber-band bounce) with terminal scrolling
 
 - **Multi-client session support**: Web and mobile can now connect to the same terminal session simultaneously without triggering a reconnection loop. Each client gets its own PTY attached to the same tmux session. Newest connection controls terminal resize.
 - **App-level error and 404 pages**: Added `error.tsx` and `not-found.tsx` with Tokyo Night glassmorphism styling, replacing raw Next.js error pages
