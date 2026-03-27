@@ -334,6 +334,57 @@ describe("TaskCreate/TaskUpdate key mismatch (position-based fallback)", () => {
   });
 });
 
+describe("stableId collision resistance", () => {
+  it("numbered steps produce unique IDs", () => {
+    const ids = new Set<string>();
+    for (let i = 1; i <= 20; i++) {
+      const ops = parsePostToolUsePayload({
+        tool_name: "TaskCreate",
+        tool_input: { subject: `Step ${i}: Do something` },
+      });
+      if (ops[0].type === "create") {
+        ids.add(ops[0].agentTaskId);
+      }
+    }
+    expect(ids.size).toBe(20);
+  });
+
+  it("similar prefixed subjects produce unique IDs", () => {
+    const subjects = [
+      "Fix authentication bug",
+      "Fix authorization bug",
+      "Fix authentication flow",
+      "Fix authorization flow",
+      "Fix auth token refresh",
+    ];
+    const ids = new Set<string>();
+    for (const subject of subjects) {
+      const ops = parsePostToolUsePayload({
+        tool_name: "TaskCreate",
+        tool_input: { subject },
+      });
+      if (ops[0].type === "create") {
+        ids.add(ops[0].agentTaskId);
+      }
+    }
+    expect(ids.size).toBe(subjects.length);
+  });
+
+  it("1000 random-ish subjects have no collisions", () => {
+    const ids = new Set<string>();
+    for (let i = 0; i < 1000; i++) {
+      const ops = parsePostToolUsePayload({
+        tool_name: "TaskCreate",
+        tool_input: { subject: `Task ${i}: ${String.fromCharCode(65 + (i % 26))} work item` },
+      });
+      if (ops[0].type === "create") {
+        ids.add(ops[0].agentTaskId);
+      }
+    }
+    expect(ids.size).toBe(1000);
+  });
+});
+
 describe("classifyTask", () => {
   it("classifies a post-task via agentTaskKey", () => {
     const task = makeTask({
