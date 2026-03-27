@@ -1264,16 +1264,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   }, [handleSendImage]);
 
   // Mobile touch scrolling support
-  // xterm.js v6 has internal touch gesture handlers on `document` that can interfere
-  // with custom touch scrolling. Instead of using terminal.scrollLines(), we directly
-  // manipulate the .xterm-viewport element's scrollTop, which xterm monitors via
-  // scroll events to sync its internal buffer position.
+  // xterm.js v6 uses a VS Code ScrollableElement internally to manage viewport scroll.
+  // Direct .xterm-viewport.scrollTop manipulation is NOT detected by this widget and
+  // gets overwritten on the next sync cycle. We must use terminal.scrollLines() which
+  // properly updates the buffer position and triggers the viewport sync.
   useEffect(() => {
     const container = terminalRef.current;
     if (!container) return;
 
-    // Find xterm's viewport element — it has overflow-y: scroll
-    const getViewport = () => container.querySelector('.xterm-viewport') as HTMLElement | null;
+    const SCROLL_ACTIVATION_PX = 5;
+    const MOMENTUM_START_THRESHOLD = 1.5;
+    const MOMENTUM_STOP_THRESHOLD = 0.3;
+    const MOMENTUM_DECAY = 0.95; // Feels closer to iOS native momentum
+    const MAX_VELOCITY_SAMPLES = 5;
 
     let touchStartY = 0;
     let lastTouchY = 0;
@@ -1281,17 +1284,40 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     let velocityY = 0;
     let isScrolling = false;
     let momentumAnimationId: number | null = null;
+    let accumulatedDelta = 0;
+    let cellHeight = 0;
 
-    // Rolling velocity samples for smoother momentum
     const velocitySamples: number[] = [];
-    const MAX_SAMPLES = 5;
 
-    const handleTouchStart = (e: TouchEvent) => {
-      // Cancel any ongoing momentum scroll
+    const computeCellHeight = (): number => {
+      const terminal = xtermRef.current;
+      if (terminal && terminal.rows > 0) {
+        const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
+        if (viewport && viewport.clientHeight > 0) {
+          return viewport.clientHeight / terminal.rows;
+        }
+      }
+      return fontSizeRef.current * 1.2;
+    };
+
+    /** Consume accumulatedDelta and scroll the terminal by whole lines. */
+    const flushScrollLines = (): void => {
+      const linesToScroll = Math.trunc(accumulatedDelta / cellHeight);
+      if (linesToScroll !== 0) {
+        xtermRef.current?.scrollLines(linesToScroll);
+        accumulatedDelta -= linesToScroll * cellHeight;
+      }
+    };
+
+    const cancelMomentum = (): void => {
       if (momentumAnimationId) {
         cancelAnimationFrame(momentumAnimationId);
         momentumAnimationId = null;
       }
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      cancelMomentum();
 
       if (e.touches.length === 1) {
         touchStartY = e.touches[0].clientY;
@@ -1299,19 +1325,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         lastTouchTime = performance.now();
         velocityY = 0;
         velocitySamples.length = 0;
+        accumulatedDelta = 0;
         isScrolling = false;
+        cellHeight = computeCellHeight();
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      // Cancel scroll on multi-touch (pinch gesture)
       if (e.touches.length !== 1) {
         isScrolling = false;
         return;
       }
 
       const currentY = e.touches[0].clientY;
-      const deltaY = lastTouchY - currentY; // positive = scrolling up (older content)
+      const deltaY = lastTouchY - currentY; // positive = finger moved up
       const now = performance.now();
       const timeDelta = now - lastTouchTime;
 
@@ -1319,27 +1346,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       if (timeDelta > 0) {
         const instantVelocity = (deltaY / timeDelta) * 16; // Normalize to ~60fps frame
         velocitySamples.push(instantVelocity);
-        if (velocitySamples.length > MAX_SAMPLES) {
+        if (velocitySamples.length > MAX_VELOCITY_SAMPLES) {
           velocitySamples.shift();
         }
-        // Average of recent samples for smooth velocity
         velocityY = velocitySamples.reduce((a, b) => a + b, 0) / velocitySamples.length;
       }
 
-      // Lower threshold (5px) for faster scroll activation
-      if (!isScrolling && Math.abs(currentY - touchStartY) > 5) {
+      if (!isScrolling && Math.abs(currentY - touchStartY) > SCROLL_ACTIVATION_PX) {
         isScrolling = true;
       }
 
       if (isScrolling) {
         e.preventDefault();
-
-        const viewport = getViewport();
-        if (viewport) {
-          // Direct scrollTop manipulation — xterm watches this via scroll events
-          viewport.scrollTop += deltaY;
-        }
-
+        accumulatedDelta += deltaY;
+        flushScrollLines();
         lastTouchY = currentY;
         lastTouchTime = now;
       }
@@ -1347,47 +1367,48 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     const handleTouchEnd = () => {
       if (!isScrolling) return;
+      isScrolling = false;
 
-      const viewport = getViewport();
-      if (!viewport) {
-        isScrolling = false;
-        return;
-      }
+      if (!xtermRef.current) return;
 
-      // Apply momentum scrolling with natural decay
       const applyMomentum = () => {
-        if (Math.abs(velocityY) < 0.3) {
+        if (Math.abs(velocityY) < MOMENTUM_STOP_THRESHOLD) {
           momentumAnimationId = null;
           return;
         }
 
-        viewport.scrollTop += velocityY;
+        accumulatedDelta += velocityY;
+        flushScrollLines();
 
-        // Natural decay — 0.95 feels closer to iOS native momentum
-        velocityY *= 0.95;
+        velocityY *= MOMENTUM_DECAY;
         momentumAnimationId = requestAnimationFrame(applyMomentum);
       };
 
-      // Only apply momentum if velocity is significant
-      if (Math.abs(velocityY) > 1.5) {
+      if (Math.abs(velocityY) > MOMENTUM_START_THRESHOLD) {
         momentumAnimationId = requestAnimationFrame(applyMomentum);
       }
+    };
 
+    // Reset all scroll state (used by touchcancel when iOS interrupts a gesture)
+    const handleTouchCancel = () => {
+      cancelMomentum();
       isScrolling = false;
+      velocityY = 0;
+      accumulatedDelta = 0;
     };
 
     // Register on container — fires before xterm's document-level handlers
     container.addEventListener("touchstart", handleTouchStart, { passive: true });
     container.addEventListener("touchmove", handleTouchMove, { passive: false });
     container.addEventListener("touchend", handleTouchEnd, { passive: true });
+    container.addEventListener("touchcancel", handleTouchCancel, { passive: true });
 
     return () => {
-      if (momentumAnimationId) {
-        cancelAnimationFrame(momentumAnimationId);
-      }
+      cancelMomentum();
       container.removeEventListener("touchstart", handleTouchStart);
       container.removeEventListener("touchmove", handleTouchMove);
       container.removeEventListener("touchend", handleTouchEnd);
+      container.removeEventListener("touchcancel", handleTouchCancel);
     };
   }, []);
 
