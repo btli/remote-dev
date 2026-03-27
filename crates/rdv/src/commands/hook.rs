@@ -38,11 +38,8 @@ enum HookCommand {
         #[arg(long)]
         body: Option<String>,
     },
-    /// Handle SessionEnd hook: report session ended, optionally trigger learning
+    /// Handle SessionEnd hook: report session ended
     SessionEnd {
-        /// Skip learning/analysis extraction
-        #[arg(long)]
-        skip_learn: bool,
     },
     /// Validate that all hooks can reach the server and are functional
     Validate,
@@ -314,23 +311,8 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             });
             let _ = client.post_json("/internal/notify", &payload).await;
         }
-        HookCommand::SessionEnd { skip_learn } => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => return Ok(()),
-            };
-
+        HookCommand::SessionEnd {} => {
             report_status(client, "ended").await;
-
-            if !skip_learn {
-                let payload = json!({
-                    "sessionId": sid,
-                    "type": "info",
-                    "title": "Session ended",
-                    "body": "Consider running `rdv learn analyze` to extract learnings.",
-                });
-                let _ = client.post_json("/internal/notify", &payload).await;
-            }
         }
         HookCommand::Validate => {
             let mut results: Vec<serde_json::Value> = Vec::new();
