@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Mobile terminal scrollback**: Rewrote touch scroll handler to directly manipulate xterm viewport `scrollTop` instead of `terminal.scrollLines()`, bypassing xterm.js v6's internal document-level touch gesture handlers that were consuming touch events and preventing scrollback on mobile browsers. Improved momentum physics with rolling velocity average, 0.95 decay factor, and 5px activation threshold.
+- **Mobile terminal scrollback**: Fixed touch scrollback by using `terminal.scrollLines()` API instead of direct `scrollTop` manipulation, which xterm.js v6's internal VS Code ScrollableElement silently overwrites. Added pixel-to-line delta accumulation, `touchcancel` handling, and improved momentum physics.
 - **Mobile terminal CSS touch handling**: Added `touch-action: none` and `overscroll-behavior: contain` to xterm viewport and container to prevent browser interference (pull-to-refresh, rubber-band bounce) with terminal scrolling
 
 - **Multi-client session support**: Web and mobile can now connect to the same terminal session simultaneously without triggering a reconnection loop. Each client gets its own PTY attached to the same tmux session. Newest connection controls terminal resize.

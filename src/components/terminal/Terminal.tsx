@@ -1285,7 +1285,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     let isScrolling = false;
     let momentumAnimationId: number | null = null;
     let accumulatedDelta = 0;
-    let cellHeight = 0;
 
     const velocitySamples: number[] = [];
 
@@ -1302,10 +1301,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     /** Consume accumulatedDelta and scroll the terminal by whole lines. */
     const flushScrollLines = (): void => {
-      const linesToScroll = Math.trunc(accumulatedDelta / cellHeight);
+      const h = computeCellHeight();
+      if (h <= 0) return;
+      const linesToScroll = Math.trunc(accumulatedDelta / h);
       if (linesToScroll !== 0) {
         xtermRef.current?.scrollLines(linesToScroll);
-        accumulatedDelta -= linesToScroll * cellHeight;
+        accumulatedDelta -= linesToScroll * h;
       }
     };
 
@@ -1327,7 +1328,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         velocitySamples.length = 0;
         accumulatedDelta = 0;
         isScrolling = false;
-        cellHeight = computeCellHeight();
       }
     };
 
@@ -1356,12 +1356,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         isScrolling = true;
       }
 
+      // Always update position/time so velocity samples are per-frame, not cumulative
+      lastTouchY = currentY;
+      lastTouchTime = now;
+
       if (isScrolling) {
         e.preventDefault();
         accumulatedDelta += deltaY;
         flushScrollLines();
-        lastTouchY = currentY;
-        lastTouchTime = now;
       }
     };
 
