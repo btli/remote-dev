@@ -473,8 +473,8 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
-  // --- Localhost restriction for drain endpoints ---
-  if (pathname === "/internal/drain" || pathname === "/internal/drain-status") {
+  // --- Localhost restriction for ALL internal endpoints ---
+  if (pathname.startsWith("/internal/")) {
     if (!isLocalhostRequest(req)) {
       sendJson(res, 403, { error: "Forbidden: localhost only" });
       return true;
@@ -636,10 +636,6 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // POST /internal/notification-dismissed — broadcast that notifications were read/deleted
   if (pathname === "/internal/notification-dismissed" && req.method === "POST") {
-    if (!isLocalhostRequest(req)) {
-      sendJson(res, 403, { error: "Forbidden: localhost only" });
-      return true;
-    }
     const payload = await parseRequestJson(req, res);
     if (!payload) return true;
     const { ids, all, userId } = payload;
@@ -654,19 +650,6 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     });
     sendJson(res, 200, { success: true });
     return true;
-  }
-
-  // --- Localhost restriction for internal task endpoints ---
-  const isInternalTaskEndpoint =
-    pathname === "/internal/agent-stop-check" ||
-    pathname === "/internal/agent-todos" ||
-    pathname === "/internal/tasks" ||
-    pathname.startsWith("/internal/tasks/");
-  if (isInternalTaskEndpoint) {
-    if (!isLocalhostRequest(req)) {
-      sendJson(res, 403, { error: "Forbidden: localhost only" });
-      return true;
-    }
   }
 
   // Handle agent stop task check from Claude Code Stop hook
@@ -692,13 +675,14 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       }
     } catch (error) {
       internalLog.error("Agent stop check error", { error: String(error) });
-      // On error, allow the agent to stop (don't block on failures)
+      // On error, tell the agent to verify tasks manually (don't silently allow stop)
+      const errorMsg = "Unable to verify task completion due to a server error. Please run TaskList to check your tasks before stopping.";
       const wantsText = req.headers.accept?.includes("text/plain");
       if (wantsText) {
         res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end("");
+        res.end(errorMsg);
       } else {
-        sendJson(res, 200, { message: null });
+        sendJson(res, 200, { message: errorMsg });
       }
     }
 
