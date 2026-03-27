@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rdv hook claude session-start",
+            "command": "rdv hook claude active",
             "timeout": 5
           }
         ]
