@@ -1143,9 +1143,29 @@ async function ensureAgentConfig(
     const primaryDir = [...configDirs][0];
     if (primaryDir) {
       AgentProfileService.validateAgentHooks(primaryDir, provider, sessionId, rdvEnv)
-        .then((result) => {
+        .then(async (result) => {
           if (!result.valid) {
             log.error("Hook validation failed", { sessionId, error: result.error });
+            // Notify user that hooks may not work correctly
+            try {
+              const session = await db.query.terminalSessions.findFirst({
+                where: eq(terminalSessions.id, sessionId),
+                columns: { userId: true, name: true },
+              });
+              if (session) {
+                const NotificationService = await import("@/services/notification-service");
+                await NotificationService.createNotification({
+                  userId: session.userId,
+                  sessionId,
+                  sessionName: session.name,
+                  type: "agent_error",
+                  title: "Agent hooks validation failed",
+                  body: `Session "${session.name}" may not report status correctly. Try restarting the session.`,
+                });
+              }
+            } catch (notifyErr) {
+              log.warn("Failed to create hook validation notification", { error: String(notifyErr) });
+            }
           } else if (result.repaired) {
             log.info("Hooks were auto-repaired", { sessionId });
           }
