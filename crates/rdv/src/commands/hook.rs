@@ -72,6 +72,16 @@ async fn report_status(client: &Client, status: &str) {
     }
 }
 
+/// Check if an error is a connection-level failure (worth retrying).
+fn is_connection_error(err: &dyn std::error::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("connection refused")
+        || msg.contains("connect error")
+        || msg.contains("connection reset")
+        || msg.contains("broken pipe")
+        || msg.contains("timed out")
+}
+
 /// Handle agent stop: report idle, check incomplete tasks, notify if proceeding.
 /// Returns Ok(()) early if no session ID is available.
 async fn handle_stop(client: &Client, agent: Option<String>, reason: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
@@ -80,12 +90,25 @@ async fn handle_stop(client: &Client, agent: Option<String>, reason: Option<Stri
         None => return Ok(()),
     };
 
+    // Report idle status (fire-and-forget, don't block on it)
     let idle_query = [("sessionId", sid), ("status", "idle")];
+    let idle_future = client.post_empty_with_query("/internal/agent-status", &idle_query);
+
+    // Check tasks with single retry on connection failure
     let check_query = [("sessionId", sid)];
-    let (idle_result, check_result) = tokio::join!(
-        client.post_empty_with_query("/internal/agent-status", &idle_query),
-        client.post_empty_with_query("/internal/agent-stop-check", &check_query)
-    );
+    let check_future = async {
+        let result = client.post_empty_with_query("/internal/agent-stop-check", &check_query).await;
+        match &result {
+            Err(e) if is_connection_error(e.as_ref()) => {
+                eprintln!("warning: stop-check connection failed, retrying in 500ms...");
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                client.post_empty_with_query("/internal/agent-stop-check", &check_query).await
+            }
+            _ => result,
+        }
+    };
+
+    let (idle_result, check_result) = tokio::join!(idle_future, check_future);
     if let Err(e) = idle_result {
         eprintln!("warning: failed to report idle status: {e}");
     }
@@ -102,7 +125,7 @@ async fn handle_stop(client: &Client, agent: Option<String>, reason: Option<Stri
         }
         Err(e) => {
             eprintln!("warning: failed to check tasks: {e}");
-            println!("Unable to verify task completion — please check your rdv task list before stopping.");
+            println!("Unable to verify task completion. Please run TaskList to check your tasks before stopping.");
             true
         }
     };
