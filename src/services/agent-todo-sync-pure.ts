@@ -139,13 +139,23 @@ function parseStringArray(value: unknown): string[] | undefined {
   return value.filter((v): v is string => typeof v === "string");
 }
 
-/** Create a stable short ID from a string (for dedup) */
+/** Create a stable short ID from a string (for dedup).
+ *
+ * Uses two independent 32-bit hash passes (FNV-1a and Murmur-inspired)
+ * combined into a wider value to reduce collision probability for similar
+ * strings like "Step 1: ...", "Step 2: ...".
+ */
 function stableId(s: string): string {
-  let hash = 0;
+  let h1 = 0x811c9dc5; // FNV-1a offset basis (32-bit)
+  let h2 = 0x01000193; // secondary seed
   for (let i = 0; i < s.length; i++) {
-    const char = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0; // Convert to 32-bit integer
+    const c = s.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193); // FNV-1a prime
+    h2 ^= c;
+    h2 = Math.imul(h2, 0x5bd1e995); // Murmur-inspired multiplier
   }
-  return `cc-${Math.abs(hash).toString(36)}`;
+  // Combine both hashes for wider distribution (~52 effective bits)
+  const combined = (Math.abs(h1) * 0x100000 + Math.abs(h2 >>> 12)) % Number.MAX_SAFE_INTEGER;
+  return `cc-${combined.toString(36)}`;
 }
