@@ -6,6 +6,7 @@ import { MobileInputBar } from "./MobileInputBar";
 import { MobileKeyboard } from "./MobileKeyboard";
 import { VoiceMicButton } from "./VoiceMicButton";
 import { SessionEndedOverlay } from "./SessionEndedOverlay";
+import { ChevronDown } from "lucide-react";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { useMobile } from "@/hooks/useMobile";
 import { useMobileModifiers } from "@/hooks/useMobileModifiers";
@@ -87,6 +88,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   const [sessionEnded, setSessionEnded] = useState(false);
   const [exitCode, setExitCode] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected");
+  const [isTerminalScrolledUp, setIsTerminalScrolledUp] = useState(false);
   const isMobile = useMobile();
   const modifiers = useMobileModifiers();
 
@@ -168,6 +170,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         onNotification={onNotification}
         onSessionStatus={onSessionStatus}
         onSessionProgress={onSessionProgress}
+        onScrollStateChange={setIsTerminalScrolledUp}
       />
     </ErrorBoundary>
   );
@@ -193,6 +196,18 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
             </div>
           )}
         </div>
+
+        {/* Scroll to bottom indicator — mobile only */}
+        {isTerminalScrolledUp && (
+          <button
+            type="button"
+            onClick={() => terminalRef.current?.scrollToBottom?.()}
+            className="absolute bottom-[calc(theme(spacing.16)+env(safe-area-inset-bottom))] right-3 z-30 flex items-center gap-1.5 rounded-full bg-primary/90 backdrop-blur-sm px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary active:scale-95 animate-in fade-in slide-in-from-bottom-2 duration-200"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+            <span>Latest</span>
+          </button>
+        )}
 
         <MobileInputBar
           ref={mobileInputRef}

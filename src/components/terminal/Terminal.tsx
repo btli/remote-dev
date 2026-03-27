@@ -21,6 +21,8 @@ export interface TerminalRef {
   getWebSocket: () => WebSocket | null;
   /** Send text input to the terminal via WebSocket (for external input sources) */
   sendInput: (data: string) => void;
+  /** Scroll the terminal to the bottom (latest output) */
+  scrollToBottom: () => void;
 }
 
 interface TerminalProps {
@@ -64,6 +66,8 @@ interface TerminalProps {
   onSessionProgress?: (sessionId: string, progress: import("@/types/terminal-type").SessionProgress | null) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
+  /** Called when terminal scroll position changes between scrolled-up and at-bottom */
+  onScrollStateChange?: (isScrolledUp: boolean) => void;
 }
 
 export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal({
@@ -94,6 +98,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onSessionProgress,
   onOutput,
   onDimensionsChange,
+  onScrollStateChange,
 }, ref) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermContainerRef = useRef<HTMLDivElement>(null);
@@ -108,6 +113,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const isScrolledUpRef = useRef(false);
   const isUnmountingRef = useRef(false);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -150,6 +156,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onSessionProgressRef = useRef(onSessionProgress);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
+  const onScrollStateChangeRef = useRef(onScrollStateChange);
   const recordActivityRef = useRef(recordActivity);
 
   // FIX: Use refs for font and scrollback to avoid recreating terminal on changes.
@@ -187,6 +194,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onSessionProgressRef.current = onSessionProgress;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
+    onScrollStateChangeRef.current = onScrollStateChange;
     recordActivityRef.current = recordActivity;
     // Keep font refs in sync for pending terminal initialization
     fontSizeRef.current = fontSize;
@@ -199,7 +207,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -218,6 +226,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "input", data }));
       }
+    },
+    scrollToBottom: () => {
+      xtermRef.current?.scrollToBottom();
     },
   }), []);
 
@@ -368,6 +379,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         // Additional mobile hints
         textarea.setAttribute("x-webkit-speech", "false");
       }
+
+      // Track scroll position for mobile scroll-to-bottom indicator
+      terminal.onScroll(() => {
+        const viewport = xtermContainerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null;
+        if (!viewport) return;
+        const isAtBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
+        const scrolledUp = !isAtBottom;
+        if (scrolledUp !== isScrolledUpRef.current) {
+          isScrolledUpRef.current = scrolledUp;
+          onScrollStateChangeRef.current?.(scrolledUp);
+        }
+      });
 
       // Custom keyboard handler for macOS shortcuts, clipboard, and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
@@ -1241,19 +1264,27 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   }, [handleSendImage]);
 
   // Mobile touch scrolling support
-  // xterm.js has limited touch support, so we handle touch events manually
-  // to enable scrollback navigation on mobile devices
+  // xterm.js v6 has internal touch gesture handlers on `document` that can interfere
+  // with custom touch scrolling. Instead of using terminal.scrollLines(), we directly
+  // manipulate the .xterm-viewport element's scrollTop, which xterm monitors via
+  // scroll events to sync its internal buffer position.
   useEffect(() => {
-    const terminal = xtermRef.current;
     const container = terminalRef.current;
-    if (!terminal || !container) return;
+    if (!container) return;
+
+    // Find xterm's viewport element — it has overflow-y: scroll
+    const getViewport = () => container.querySelector('.xterm-viewport') as HTMLElement | null;
 
     let touchStartY = 0;
-    let touchStartTime = 0;
     let lastTouchY = 0;
+    let lastTouchTime = 0;
     let velocityY = 0;
     let isScrolling = false;
     let momentumAnimationId: number | null = null;
+
+    // Rolling velocity samples for smoother momentum
+    const velocitySamples: number[] = [];
+    const MAX_SAMPLES = 5;
 
     const handleTouchStart = (e: TouchEvent) => {
       // Cancel any ongoing momentum scroll
@@ -1265,72 +1296,87 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       if (e.touches.length === 1) {
         touchStartY = e.touches[0].clientY;
         lastTouchY = touchStartY;
-        touchStartTime = Date.now();
+        lastTouchTime = performance.now();
         velocityY = 0;
+        velocitySamples.length = 0;
         isScrolling = false;
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-
-      const currentY = e.touches[0].clientY;
-      const deltaY = lastTouchY - currentY;
-      const timeDelta = Date.now() - touchStartTime;
-
-      // Track velocity for momentum scrolling
-      if (timeDelta > 0) {
-        velocityY = deltaY / timeDelta * 16; // Normalize to ~60fps
+      // Cancel scroll on multi-touch (pinch gesture)
+      if (e.touches.length !== 1) {
+        isScrolling = false;
+        return;
       }
 
-      // Determine if this is a scroll gesture (vertical movement > threshold)
-      if (!isScrolling && Math.abs(currentY - touchStartY) > 10) {
+      const currentY = e.touches[0].clientY;
+      const deltaY = lastTouchY - currentY; // positive = scrolling up (older content)
+      const now = performance.now();
+      const timeDelta = now - lastTouchTime;
+
+      // Track velocity with rolling average
+      if (timeDelta > 0) {
+        const instantVelocity = (deltaY / timeDelta) * 16; // Normalize to ~60fps frame
+        velocitySamples.push(instantVelocity);
+        if (velocitySamples.length > MAX_SAMPLES) {
+          velocitySamples.shift();
+        }
+        // Average of recent samples for smooth velocity
+        velocityY = velocitySamples.reduce((a, b) => a + b, 0) / velocitySamples.length;
+      }
+
+      // Lower threshold (5px) for faster scroll activation
+      if (!isScrolling && Math.abs(currentY - touchStartY) > 5) {
         isScrolling = true;
       }
 
       if (isScrolling) {
-        // Prevent default to stop page scrolling
         e.preventDefault();
 
-        // Scroll the terminal: positive deltaY = scroll up (show older content)
-        // Each "line" in xterm is about 16-20px depending on font size
-        const lines = Math.round(deltaY / 18);
-        if (lines !== 0) {
-          terminal.scrollLines(lines);
-          lastTouchY = currentY;
-          touchStartTime = Date.now();
+        const viewport = getViewport();
+        if (viewport) {
+          // Direct scrollTop manipulation — xterm watches this via scroll events
+          viewport.scrollTop += deltaY;
         }
+
+        lastTouchY = currentY;
+        lastTouchTime = now;
       }
     };
 
     const handleTouchEnd = () => {
       if (!isScrolling) return;
 
-      // Apply momentum scrolling
+      const viewport = getViewport();
+      if (!viewport) {
+        isScrolling = false;
+        return;
+      }
+
+      // Apply momentum scrolling with natural decay
       const applyMomentum = () => {
-        if (Math.abs(velocityY) < 0.5) {
+        if (Math.abs(velocityY) < 0.3) {
           momentumAnimationId = null;
           return;
         }
 
-        const lines = Math.round(velocityY / 18);
-        if (lines !== 0) {
-          terminal.scrollLines(lines);
-        }
+        viewport.scrollTop += velocityY;
 
-        // Decay velocity
-        velocityY *= 0.92;
+        // Natural decay — 0.95 feels closer to iOS native momentum
+        velocityY *= 0.95;
         momentumAnimationId = requestAnimationFrame(applyMomentum);
       };
 
-      if (Math.abs(velocityY) > 2) {
+      // Only apply momentum if velocity is significant
+      if (Math.abs(velocityY) > 1.5) {
         momentumAnimationId = requestAnimationFrame(applyMomentum);
       }
 
       isScrolling = false;
     };
 
-    // Use passive: false to allow preventDefault in touchmove
+    // Register on container — fires before xterm's document-level handlers
     container.addEventListener("touchstart", handleTouchStart, { passive: true });
     container.addEventListener("touchmove", handleTouchMove, { passive: false });
     container.addEventListener("touchend", handleTouchEnd, { passive: true });
