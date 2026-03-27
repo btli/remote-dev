@@ -565,12 +565,17 @@
 /* xterm.js container - ensure it fills parent height */
 .terminal.xterm {
   height: 100%;
+  touch-action: none;           /* Let JS handle all touch gestures on terminal */
+  overscroll-behavior: contain;  /* Prevent pull-to-refresh and rubber-band on terminal */
 }
 
-/* Hide xterm scrollbar */
+/* Hide xterm scrollbar and configure touch behavior */
 .xterm-viewport {
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE and Edge */
+  touch-action: none;           /* Prevent browser default scroll — JS handles it */
+  overscroll-behavior: contain;  /* Contain scroll within viewport, no chain to parent */
+  -webkit-overflow-scrolling: touch; /* Smooth momentum scrolling on older iOS */
 }
 
 .xterm-viewport::-webkit-scrollbar {
