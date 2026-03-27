@@ -707,6 +707,7 @@ function curlForStatus(status: string): string {
  * - PreCompact → status "compacting" (context window compaction in progress)
  * - Notification (permission/elicitation) → status "waiting" (needs user input)
  * - Stop → status "idle" + task completion check
+ * - SessionEnd → status "ended" + optional learning analysis
  *
  * Task sync hooks:
  * - PostToolUse (matcher: "TaskCreate|TaskUpdate|TodoWrite") → syncs tasks to project_task table
@@ -758,6 +759,11 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook stop", stopCurlFallback), timeout: 15 }],
   };
 
+  // SessionEnd hook: report "ended" status + optional learning analysis
+  const sessionEndHook = {
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook session-end", curlForStatus("ended")), timeout: 10 }],
+  };
+
   // Task sync hook: reads PostToolUse JSON from stdin
   const todoCurlFallback =
     'INPUT=$(cat); ' + CURL_ENV_PREAMBLE +
@@ -782,6 +788,7 @@ export async function installAgentHooks(
   const existingNotification = Array.isArray(existingHooks.Notification) ? existingHooks.Notification : [];
   const existingStop = Array.isArray(existingHooks.Stop) ? existingHooks.Stop : [];
   const existingPostToolUse = Array.isArray(existingHooks.PostToolUse) ? existingHooks.PostToolUse : [];
+  const existingSessionEnd = Array.isArray(existingHooks.SessionEnd) ? existingHooks.SessionEnd : [];
 
   // Clean up legacy SessionStart RDV hooks from older installations
   const existingSessionStart = Array.isArray(existingHooks.SessionStart) ? existingHooks.SessionStart : [];
@@ -795,6 +802,7 @@ export async function installAgentHooks(
     PostToolUse: [...withoutRdvHooks(existingPostToolUse, hookMarkers), postToolUseTodoHook],
     Notification: [...withoutRdvHooks(existingNotification, hookMarkers), notificationHook],
     Stop: [...withoutRdvHooks(existingStop, hookMarkers), stopHook],
+    SessionEnd: [...withoutRdvHooks(existingSessionEnd, hookMarkers), sessionEndHook],
     // Remove legacy SessionStart RDV hooks (replaced by PreToolUse)
     ...(cleanedSessionStart.length > 0 ? { SessionStart: cleanedSessionStart } : { SessionStart: undefined }),
   };
