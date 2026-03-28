@@ -575,7 +575,6 @@
   -ms-overflow-style: none; /* IE and Edge */
   touch-action: none;           /* Prevent browser default scroll — JS handles it */
   overscroll-behavior: contain;  /* Contain scroll within viewport, no chain to parent */
-  -webkit-overflow-scrolling: touch; /* Smooth momentum scrolling on older iOS */
 }
 
 .xterm-viewport::-webkit-scrollbar {
