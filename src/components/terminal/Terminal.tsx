@@ -1290,11 +1290,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     const computeCellHeight = (): number => {
       const terminal = xtermRef.current;
-      if (terminal && terminal.rows > 0) {
-        const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
-        if (viewport && viewport.clientHeight > 0) {
-          return viewport.clientHeight / terminal.rows;
-        }
+      const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
+      if (terminal && terminal.rows > 0 && viewport && viewport.clientHeight > 0) {
+        return viewport.clientHeight / terminal.rows;
       }
       return fontSizeRef.current * 1.2;
     };
