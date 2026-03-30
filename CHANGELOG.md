@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent peer communication**: Folder-scoped inter-agent messaging via MCP server (`rdv-peers`). Agents in the same project folder can discover each other (`list_peers`), exchange messages (`send_message`/`check_messages`), and share work summaries (`set_summary`). Auto-registered in each agent's settings.json at session creation. Messages delivered via PreToolUse hook. Also available via `rdv peer` CLI for non-MCP agents.
 - **SessionEnd hook**: Agent sessions now install a `SessionEnd` hook that reports "ended" status when the session closes, enabling learning analysis triggers
 - **Mobile toolbar backspace button**: ⌫ (DEL) button in both Keys and Nav toolbar modes for deleting characters in the terminal. Supports ALT+⌫ for delete-word.
 - **Mobile type/send mode toggle**: Long-press the send button to switch between Send mode (text + `\r`) and Type mode (text only, no `\r`). Enables building up terminal input piece by piece before executing.

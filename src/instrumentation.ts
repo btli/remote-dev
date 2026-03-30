@@ -33,5 +33,13 @@ export async function register() {
     } catch (error) {
       log.error("Trash cleanup failed", { error: String(error) });
     }
+
+    // Clean up old peer messages (24h TTL)
+    try {
+      const { cleanupOldMessages } = await import("@/services/peer-service");
+      await cleanupOldMessages();
+    } catch (error) {
+      log.error("Peer message cleanup failed", { error: String(error) });
+    }
   }
 }

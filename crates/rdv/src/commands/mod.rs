@@ -5,6 +5,7 @@ pub mod folder;
 pub mod hook;
 pub mod indicator;
 pub mod notification;
+pub mod peer;
 pub mod screen;
 pub mod send;
 pub mod session;

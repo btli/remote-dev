@@ -3,7 +3,7 @@ mod commands;
 mod config;
 
 use clap::Parser;
-use commands::{agent, browser, context, folder, hook, indicator, notification, screen, send, session, status, system, task, teams, tmux_compat, worktree};
+use commands::{agent, browser, context, folder, hook, indicator, notification, peer, screen, send, session, status, system, task, teams, tmux_compat, worktree};
 
 #[derive(Parser)]
 #[command(name = "rdv", version, about = "CLI for Remote Dev terminal server")]
@@ -54,6 +54,8 @@ enum Command {
     ClearProgress(indicator::ClearProgressArgs),
     /// Write a per-session structured log entry
     Log(indicator::LogArgs),
+    /// Communicate with peer agents in the same project folder
+    Peer(peer::PeerArgs),
     /// Multi-agent team orchestration
     Teams(teams::TeamsArgs),
     /// tmux compatibility layer
@@ -85,6 +87,7 @@ async fn main() {
         Command::SetProgress(args) => indicator::run_set_progress(args, &client).await,
         Command::ClearProgress(args) => indicator::run_clear_progress(args, &client).await,
         Command::Log(args) => indicator::run_log(args, &client).await,
+        Command::Peer(args) => peer::run(args, &client, cli.human).await,
         Command::Teams(args) => teams::run(args, &client, cli.human).await,
         Command::Tmux(args) => tmux_compat::run(args, &client, cli.human).await,
     };

@@ -211,6 +211,10 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv browser click` | Click at coordinates |
 | `rdv browser type` | Type text in browser |
 | `rdv browser evaluate` | Evaluate JavaScript |
+| `rdv peer list` | List peer agents in same project folder |
+| `rdv peer send` | Send message to peers (direct or broadcast) |
+| `rdv peer messages` | Poll for new peer messages |
+| `rdv peer summary` | Set work summary visible to peers |
 | `rdv session git-status` | Get git status for session |
 | `rdv hook pre-tool-use` | Handle PreToolUse hook (report running, git identity guard) |
 | `rdv hook post-tool-use` | Handle PostToolUse hook (sync tasks from stdin) |
@@ -322,6 +326,7 @@ src/
 | `folder_github_account_link` | Per-folder GitHub account bindings |
 | `project_task` | Project tasks with priority, labels, subtasks, dependencies, and due dates |
 | `task_dependency` | Junction table for task blocked-by relationships |
+| `agent_peer_message` | Folder-scoped inter-agent messages with 24h TTL |
 
 ### Service Layer
 
@@ -350,6 +355,7 @@ Located in `src/services/`:
 | `ClaudeSessionService` | Discover resumable Claude Code sessions from `.jsonl` files |
 | `TaskService` | Project task CRUD, folder-scoped queries, dependency management, bulk archival |
 | `NotificationService` | Notification CRUD, debounced creation, read/delete management |
+| `PeerService` | Folder-scoped inter-agent peer discovery and messaging |
 | `BrowserService` | Headless browser automation (navigate, click, type, screenshot) |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
@@ -386,6 +392,38 @@ Remote Dev supports multiple AI coding agents with unified management:
 ├── .gitconfig         # Isolated git identity
 └── .env               # Secrets from provider
 ```
+
+### Agent Peer Communication
+
+Folder-scoped inter-agent messaging allows agents in the same project folder to discover each other and coordinate work.
+
+**Architecture:**
+- `rdv-peers` MCP server auto-registered in each agent's `settings.json` at session creation
+- MCP server (stdio transport) talks to terminal server's `/internal/peers/*` endpoints
+- Messages stored in `agent_peer_messages` SQLite table with 24h cleanup
+- PreToolUse hook checks for pending messages and delivers them automatically
+
+**MCP Tools:**
+| Tool | Description |
+|------|-------------|
+| `list_peers` | Discover other agents in the same project folder |
+| `send_message` | Send direct or broadcast message to peers |
+| `check_messages` | Check for new messages since last poll |
+| `set_summary` | Set work summary visible to peers |
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| `src/mcp/peer-server.ts` | Standalone MCP stdio server |
+| `src/services/peer-service.ts` | DB operations for peer messaging |
+| `crates/rdv/src/commands/peer.rs` | `rdv peer` CLI for non-MCP agents |
+
+**Internal API:**
+- `GET /internal/peers/list?sessionId=` — List peers in same folder
+- `POST /internal/peers/messages/send` — Send message
+- `GET /internal/peers/messages/poll?sessionId=&since=` — Poll new messages
+- `POST /internal/peers/summary` — Set work summary
+- `POST /internal/peers/cleanup` — Clean old messages
 
 ### Electron Desktop App
 
