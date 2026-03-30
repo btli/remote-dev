@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Intelligent agent session titles**: Agent sessions are now auto-titled with a 2-3 word summary derived from the first user message in the Claude Code `.jsonl` session file. Titles are applied once via `rdv` hooks and broadcast to all connected clients in real-time. Manual rename locks the title. The stable Claude session UUID is stored in `typeMetadata` and surfaced in peer discovery for richer agent-to-agent context.
 - **Agent peer communication**: Folder-scoped inter-agent messaging via MCP server (`rdv-peers`). Agents in the same project folder can discover each other (`list_peers`), exchange messages (`send_message`/`check_messages`), and share work summaries (`set_summary`). Auto-registered in each agent's settings.json at session creation. Messages delivered via PreToolUse hook. Also available via `rdv peer` CLI for non-MCP agents.
 - **SessionEnd hook**: Agent sessions now install a `SessionEnd` hook that reports "ended" status when the session closes, enabling learning analysis triggers
 - **Mobile toolbar backspace button**: ⌫ (DEL) button in both Keys and Nav toolbar modes for deleting characters in the terminal. Supports ALT+⌫ for delete-word.

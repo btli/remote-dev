@@ -47,6 +47,8 @@ interface TerminalWithKeyboardProps {
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   /** Called when agent TodoWrite tasks are synced */
   onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when an agent session is auto-titled from its .jsonl file */
+  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
   /** Called when a session status indicator is set or cleared */
@@ -78,6 +80,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onSessionDelete,
   onAgentActivityStatus,
   onAgentTodosUpdated,
+  onSessionRenamed,
   onNotification,
   onSessionStatus,
   onSessionProgress,
@@ -167,6 +170,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         onDimensionsChange={onDimensionsChange}
         onAgentActivityStatus={onAgentActivityStatus}
         onAgentTodosUpdated={onAgentTodosUpdated}
+        onSessionRenamed={onSessionRenamed}
         onNotification={onNotification}
         onSessionStatus={onSessionStatus}
         onSessionProgress={onSessionProgress}

@@ -1196,6 +1196,35 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // ═══ Agent auto-title endpoint ═══════════════════════════════════════════
+
+  // POST /internal/agent-title?sessionId=xxx — auto-title an agent session from its .jsonl
+  if (pathname === "/internal/agent-title" && req.method === "POST") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId parameter" });
+      return true;
+    }
+
+    // Fire-and-forget: apply auto-title and broadcast if successful
+    import("@/services/agent-title-service")
+      .then(async (AgentTitleService) => {
+        const result = await AgentTitleService.tryApplyAutoTitle(sessionId);
+        if (!result.applied || !result.title || !result.userId) return;
+
+        broadcastToUser(result.userId, {
+          type: "session_renamed",
+          sessionId,
+          name: result.title,
+          claudeSessionId: result.claudeSessionId,
+        });
+      })
+      .catch((err) => agentStatusLog.error("Auto-title failed", { error: String(err), sessionId }));
+
+    sendJson(res, 200, { success: true });
+    return true;
+  }
+
   // ═══ Peer communication endpoints ═════════════════════════════════════════
 
   // GET /internal/peers/list?sessionId=xxx

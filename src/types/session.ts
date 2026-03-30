@@ -177,6 +177,8 @@ export interface UpdateSessionInput {
   tabOrder?: number;
   projectPath?: string;
   profileId?: string | null;
+  /** Shallow-merged into existing typeMetadata JSON. Set a key to null to delete it. */
+  typeMetadataPatch?: Record<string, unknown>;
 }
 
 export interface SessionWithMetadata extends TerminalSession {

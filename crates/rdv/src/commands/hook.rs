@@ -56,6 +56,27 @@ enum HookCommand {
     },
 }
 
+/// Try to apply an auto-title to the agent session from its .jsonl file.
+/// Fire-and-forget: never blocks the hook, silently ignores errors.
+/// Uses a tmpfile sentinel so it fires at most once per session lifetime.
+async fn try_apply_auto_title(client: &Client) {
+    let sid = match client.session_id() {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Sentinel: skip if we've already attempted for this session
+    let sentinel = std::path::PathBuf::from(format!("/tmp/rdv-autotitle-{sid}"));
+    if sentinel.exists() {
+        return;
+    }
+    // Create sentinel before firing request (best-effort)
+    let _ = std::fs::write(&sentinel, "");
+
+    let query = [("sessionId", sid)];
+    let _ = client.post_empty_with_query("/internal/agent-title", &query).await;
+}
+
 /// Report an agent activity status to the terminal server.
 /// Silently returns if no session ID is available.
 async fn report_status(client: &Client, status: &str) {
@@ -328,6 +349,8 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             report_status(client, "running").await;
             // Check for peer messages (non-blocking, best-effort)
             check_peer_messages(client).await;
+            // Try to auto-title the session from Claude Code's .jsonl (idempotent)
+            try_apply_auto_title(client).await;
             if check_git_identity_guard(client).await {
                 std::process::exit(2);
             }
@@ -418,6 +441,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 "session-start" | "active" | "prompt-submit" => {
                     report_status(client, "running").await;
                     check_peer_messages(client).await;
+                    try_apply_auto_title(client).await;
                 }
                 "stop" | "idle" => {
                     handle_stop(client, agent, reason).await?;

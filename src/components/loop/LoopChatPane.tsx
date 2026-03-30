@@ -46,6 +46,7 @@ interface LoopChatPaneProps {
   environmentVars?: Record<string, string> | null;
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onAgentTodosUpdated?: (sessionId: string) => void;
+  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   onNotification?: (notification: Record<string, unknown>) => void;
   onSessionStatus?: (
     sessionId: string,
@@ -74,6 +75,7 @@ export function LoopChatPane({
   environmentVars,
   onAgentActivityStatus,
   onAgentTodosUpdated,
+  onSessionRenamed,
   onNotification,
   onSessionStatus,
   onSessionProgress,
@@ -330,6 +332,7 @@ export function LoopChatPane({
             onAgentRestarted={handleAgentRestarted}
             onAgentActivityStatus={onAgentActivityStatus}
             onAgentTodosUpdated={onAgentTodosUpdated}
+            onSessionRenamed={onSessionRenamed}
             onNotification={onNotification}
             onSessionStatus={onSessionStatus}
             onSessionProgress={onSessionProgress}

@@ -58,6 +58,8 @@ interface TerminalProps {
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   /** Called when agent TodoWrite tasks are synced (from PostToolUse hooks) */
   onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when an agent session is auto-titled from its .jsonl file */
+  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
   /** Called when a session status indicator is set or cleared */
@@ -93,6 +95,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onAgentRestarted,
   onAgentActivityStatus,
   onAgentTodosUpdated,
+  onSessionRenamed,
   onNotification,
   onSessionStatus,
   onSessionProgress,
@@ -151,6 +154,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onAgentRestartedRef = useRef(onAgentRestarted);
   const onAgentActivityStatusRef = useRef(onAgentActivityStatus);
   const onAgentTodosUpdatedRef = useRef(onAgentTodosUpdated);
+  const onSessionRenamedRef = useRef(onSessionRenamed);
   const onNotificationRef = useRef(onNotification);
   const onSessionStatusRef = useRef(onSessionStatus);
   const onSessionProgressRef = useRef(onSessionProgress);
@@ -189,6 +193,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onAgentRestartedRef.current = onAgentRestarted;
     onAgentActivityStatusRef.current = onAgentActivityStatus;
     onAgentTodosUpdatedRef.current = onAgentTodosUpdated;
+    onSessionRenamedRef.current = onSessionRenamed;
     onNotificationRef.current = onNotification;
     onSessionStatusRef.current = onSessionStatus;
     onSessionProgressRef.current = onSessionProgress;
@@ -207,7 +212,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -622,6 +627,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               case "agent_todos_updated":
                 // Agent TodoWrite tasks synced — refresh task list
                 onAgentTodosUpdatedRef.current?.(msg.sessionId);
+                break;
+              case "session_renamed":
+                // Agent session auto-titled from .jsonl first user message
+                onSessionRenamedRef.current?.(msg.sessionId, msg.name, msg.claudeSessionId);
                 break;
               case "notification":
                 // In-app notification broadcast from terminal server

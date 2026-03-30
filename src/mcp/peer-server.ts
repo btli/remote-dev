@@ -202,6 +202,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
               `  Provider: ${p.agentProvider || "unknown"}`,
               `  Status: ${p.agentActivityStatus || "unknown"}${p.isConnected ? " (connected)" : " (disconnected)"}`,
             ];
+            if (p.claudeSessionId) {
+              parts.push(`  Claude Session: ${p.claudeSessionId}`);
+            }
             if (p.peerSummary) {
               parts.push(`  Working on: ${p.peerSummary}`);
             }

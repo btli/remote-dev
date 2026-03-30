@@ -66,6 +66,8 @@ interface SessionContextValue extends SessionState {
   setActiveSession: (sessionId: string | null) => void;
   reorderSessions: (sessionIds: string[]) => Promise<void>;
   refreshSessions: () => Promise<void>;
+  /** Local-only UI update — no API call. Use when the server already persisted the change. */
+  patchSessionLocal: (sessionId: string, updates: Partial<TerminalSession>) => void;
   /** Agent activity statuses for real-time sidebar indicators */
   agentActivityStatuses: Record<string, AgentActivityStatus>;
   setAgentActivityStatus: (sessionId: string, status: AgentActivityStatus) => void;
@@ -462,6 +464,10 @@ export function SessionProvider({
     dispatch({ type: "SET_ACTIVE", sessionId });
   }, []);
 
+  const patchSessionLocal = useCallback((sessionId: string, updates: Partial<TerminalSession>) => {
+    dispatch({ type: "UPDATE", sessionId, updates });
+  }, []);
+
   const reorderSessions = useCallback(
     async (sessionIds: string[]) => {
       // Optimistic update
@@ -499,6 +505,7 @@ export function SessionProvider({
       setActiveSession,
       reorderSessions,
       refreshSessions,
+      patchSessionLocal,
       agentActivityStatuses,
       setAgentActivityStatus,
       getAgentActivityStatus,
@@ -517,6 +524,7 @@ export function SessionProvider({
       setActiveSession,
       reorderSessions,
       refreshSessions,
+      patchSessionLocal,
       agentActivityStatuses,
       setAgentActivityStatus,
       getAgentActivityStatus,
