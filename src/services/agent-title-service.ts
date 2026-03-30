@@ -137,6 +137,7 @@ export async function tryApplyAutoTitle(
   const claudeSessionId = claudeSession.sessionId;
 
   // 7. Atomic update: set name + claudeSessionId in typeMetadata
+  let wrote = false;
   await db.transaction(async (tx) => {
     // Re-read to avoid race conditions
     const current = await tx.query.terminalSessions.findFirst({
@@ -161,7 +162,13 @@ export async function tryApplyAutoTitle(
         updatedAt: new Date(),
       })
       .where(eq(terminalSessions.id, sessionId));
+
+    wrote = true;
   });
+
+  if (!wrote) {
+    return { applied: false };
+  }
 
   log.info("Auto-titled agent session", { sessionId, title, claudeSessionId });
 
