@@ -169,7 +169,7 @@ export function SplitPaneLayout({
                 }
                 onAgentTodosUpdated={() => debouncedRefresh()}
                 onSessionRenamed={(sid, name, claudeSessionId) => {
-                  const updates: Record<string, unknown> = { name };
+                  const updates: Partial<TerminalSession> = { name };
                   if (claudeSessionId) {
                     updates.typeMetadata = { ...pane.session?.typeMetadata, claudeSessionId };
                   }

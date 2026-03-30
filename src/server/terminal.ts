@@ -1200,10 +1200,6 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // POST /internal/agent-title?sessionId=xxx — auto-title an agent session from its .jsonl
   if (pathname === "/internal/agent-title" && req.method === "POST") {
-    if (!isLocalhostRequest(req)) {
-      sendJson(res, 403, { error: "Forbidden: localhost only" });
-      return true;
-    }
     const sessionId = query.sessionId as string;
     if (!sessionId) {
       sendJson(res, 400, { error: "Missing sessionId parameter" });

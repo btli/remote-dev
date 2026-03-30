@@ -11,6 +11,7 @@ import { terminalSessions, agentProfiles } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import { safeJsonParse } from "@/lib/utils";
+import { listSessions } from "@/services/claude-session-service";
 
 const log = createLogger("AgentTitleService");
 
@@ -109,9 +110,8 @@ export async function tryApplyAutoTitle(
   }
 
   // 5. Find the .jsonl file that was created closest to (and after) this session's start
-  const { listSessions } = await import("@/services/claude-session-service");
   const claudeSessions = await listSessions(session.projectPath, {
-    limit: 10,
+    limit: 3,
     profileConfigDir,
   });
 
@@ -121,9 +121,7 @@ export async function tryApplyAutoTitle(
   }
 
   // Filter to .jsonl files created after this rdv session, pick the closest match
-  const sessionCreatedMs = session.createdAt instanceof Date
-    ? session.createdAt.getTime()
-    : Number(session.createdAt);
+  const sessionCreatedMs = session.createdAt.getTime();
   const candidates = claudeSessions.filter((cs) => {
     const csTime = new Date(cs.timestamp).getTime();
     return csTime >= sessionCreatedMs;

@@ -237,6 +237,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Terminal refs for focus management
   const terminalRefsMap = useRef<Map<string, TerminalWithKeyboardRef>>(new Map());
+  // Stable ref for sessions list — used in callbacks to avoid dep churn
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
 
   // Compute WebSocket URL based on current location (supports cloudflared tunnels)
   const wsUrl = useMemo(() => {
@@ -389,12 +392,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       // titleLocked=true, permanently preventing future auto-title updates.
       const updates: Partial<TerminalSession> = { name };
       if (claudeSessionId) {
-        const existing = sessions.find((s) => s.id === sid);
+        const existing = sessionsRef.current.find((s) => s.id === sid);
         updates.typeMetadata = { ...existing?.typeMetadata, claudeSessionId };
       }
       patchSessionLocal(sid, updates);
     },
-    [patchSessionLocal, sessions]
+    [patchSessionLocal]
   );
 
   // Split state from context

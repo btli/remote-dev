@@ -624,7 +624,7 @@ export async function updateSession(
 
   if (typeMetadataPatch) {
     let meta: Record<string, unknown> = {};
-    if (existing.typeMetadata && typeof existing.typeMetadata === "object") {
+    if (existing.typeMetadata) {
       meta = { ...existing.typeMetadata };
     }
     for (const [key, value] of Object.entries(typeMetadataPatch)) {
