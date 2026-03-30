@@ -714,7 +714,8 @@ function curlForStatus(status: string): string {
  */
 export async function installAgentHooks(
   configDir: string,
-  provider: AgentProvider
+  provider: AgentProvider,
+  rdvEnv?: Record<string, string>
 ): Promise<void> {
   // Only Claude Code supports hooks currently
   if (provider !== "claude") return;
@@ -814,17 +815,30 @@ export async function installAgentHooks(
 
   // Clean up stale MCP server entries from previous installations.
   // The MCP server backend was removed; leftover entries cause silent connection failures.
-  const mcpServers = existingSettings.mcpServers as Record<string, unknown> | undefined;
-  if (mcpServers && "remote-dev" in mcpServers) {
+  const mcpServers = (existingSettings.mcpServers ?? {}) as Record<string, unknown>;
+  if ("remote-dev" in mcpServers) {
     delete mcpServers["remote-dev"];
-    if (Object.keys(mcpServers).length === 0) {
-      delete existingSettings.mcpServers;
-    }
   }
+
+  // Register rdv-peers MCP server for inter-agent communication.
+  // RDV env vars must be passed explicitly since MCP servers spawned by Claude Code
+  // don't inherit the tmux session environment.
+  const peerServerPath = join(import.meta.dirname, "..", "mcp", "peer-server.ts");
+  const rdvKeys = ["RDV_SESSION_ID", "RDV_TERMINAL_SOCKET", "RDV_TERMINAL_PORT"] as const;
+  const peerMcpEnv: Record<string, string> = {};
+  for (const key of rdvKeys) {
+    if (rdvEnv?.[key]) peerMcpEnv[key] = rdvEnv[key];
+  }
+  mcpServers["rdv-peers"] = {
+    command: "node",
+    args: ["--import", "tsx/esm", peerServerPath],
+    env: peerMcpEnv,
+  };
 
   const updatedSettings = {
     ...existingSettings,
     hooks: mergedHooks,
+    ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
   };
 
   // Skip write if settings are unchanged (hooks already current)

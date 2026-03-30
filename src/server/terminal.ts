@@ -20,6 +20,7 @@ const notifyLog = createLogger("Notify");
 const voiceLog = createLogger("Voice");
 const internalLog = createLogger("InternalAPI");
 const ptyLog = createLogger("PtyControl");
+const peerLog = createLogger("PeerAPI");
 
 // Re-export for backwards compatibility with API routes
 export { generateWsToken } from "../lib/ws-token.js";
@@ -1195,6 +1196,110 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // ═══ Peer communication endpoints ═════════════════════════════════════════
+
+  // GET /internal/peers/list?sessionId=xxx
+  if (pathname === "/internal/peers/list" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+
+    try {
+      const PeerService = await import("@/services/peer-service");
+      const peers = await PeerService.getPeers(sessionId, (id) => sessionConnections.has(id));
+      sendJson(res, 200, { peers });
+    } catch (err) {
+      peerLog.error("Failed to list peers", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to list peers" });
+    }
+    return true;
+  }
+
+  // POST /internal/peers/messages/send { fromSessionId, toSessionId?, body }
+  if (pathname === "/internal/peers/messages/send" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+
+    const { fromSessionId, toSessionId, body: msgBody } = payload;
+    if (!fromSessionId || !msgBody) {
+      sendJson(res, 400, { error: "Missing fromSessionId or body" });
+      return true;
+    }
+
+    try {
+      const PeerService = await import("@/services/peer-service");
+      const result = await PeerService.sendMessage({
+        fromSessionId: fromSessionId as string,
+        toSessionId: toSessionId as string | undefined,
+        body: msgBody as string,
+      });
+      sendJson(res, 200, result);
+    } catch (err) {
+      peerLog.error("Failed to send peer message", { error: String(err) });
+      sendJson(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  // GET /internal/peers/messages/poll?sessionId=xxx&since=<isoTimestamp>
+  if (pathname === "/internal/peers/messages/poll" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    const since = query.since as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+
+    try {
+      const sinceDate = since ? new Date(since) : new Date(0);
+      const PeerService = await import("@/services/peer-service");
+      const messages = await PeerService.pollMessages(sessionId, sinceDate);
+      sendJson(res, 200, { messages });
+    } catch (err) {
+      peerLog.error("Failed to poll peer messages", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to poll messages" });
+    }
+    return true;
+  }
+
+  // POST /internal/peers/summary { sessionId, summary }
+  if (pathname === "/internal/peers/summary" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+
+    const { sessionId, summary } = payload;
+    if (!sessionId || typeof summary !== "string") {
+      sendJson(res, 400, { error: "Missing sessionId or summary" });
+      return true;
+    }
+
+    try {
+      const PeerService = await import("@/services/peer-service");
+      await PeerService.setSummary(sessionId as string, summary);
+      broadcastToClients({ type: "peer_summary_updated", sessionId, summary });
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      peerLog.error("Failed to set peer summary", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to set summary" });
+    }
+    return true;
+  }
+
+  // POST /internal/peers/cleanup
+  if (pathname === "/internal/peers/cleanup" && req.method === "POST") {
+    try {
+      const PeerService = await import("@/services/peer-service");
+      await PeerService.cleanupOldMessages();
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      peerLog.error("Failed to cleanup peer messages", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to cleanup" });
+    }
+    return true;
+  }
+
   // --- end cmux parity endpoints ---
 
   if (!pathname?.startsWith("/internal/scheduler/")) {
@@ -1295,6 +1400,13 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       log.info("Terminal server running", { transport: "http", port, websocket: `ws://localhost:${port}`, internalApi: `http://localhost:${port}/internal/scheduler/*` });
     });
   }
+
+  // Periodic peer message cleanup (hourly, 24h TTL)
+  setInterval(() => {
+    import("@/services/peer-service")
+      .then((PeerService) => PeerService.cleanupOldMessages())
+      .catch((err) => peerLog.error("Periodic peer cleanup failed", { error: String(err) }));
+  }, 60 * 60 * 1000);
 
   wss.on("connection", async (ws, req) => {
     const query = Object.fromEntries(new URL(req.url || "", "http://localhost").searchParams);

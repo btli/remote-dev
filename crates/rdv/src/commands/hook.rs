@@ -256,6 +256,51 @@ async fn check_git_identity_guard(client: &Client) -> bool {
     }
 }
 
+/// Check for pending peer messages and print them to stderr.
+/// Persists the last poll timestamp to a file to avoid re-processing.
+async fn check_peer_messages(client: &Client) {
+    let sid = match client.session_id() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let ts_file = format!("/tmp/rdv-peer-poll-{sid}");
+    let since = std::fs::read_to_string(&ts_file)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let query = [("sessionId", sid), ("since", since.as_str())];
+    let result: Result<serde_json::Value, _> = client
+        .get_with_query("/internal/peers/messages/poll", &query)
+        .await;
+
+    // Always update timestamp to avoid re-processing on failure
+    let _ = std::fs::write(&ts_file, &now);
+
+    let resp = match result {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let messages = match resp.get("messages").and_then(|v| v.as_array()) {
+        Some(msgs) if !msgs.is_empty() => msgs,
+        _ => return,
+    };
+
+    for msg in messages {
+        let from = msg.get("fromSessionName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let body = msg.get("body")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let is_broadcast = msg.get("toSessionId")
+            .map_or(true, |v| v.is_null());
+        let target = if is_broadcast { " (broadcast)" } else { "" };
+        eprintln!("📨 Peer message from {from}{target}: {body}");
+    }
+}
+
 /// Sync task/todo data from stdin to the terminal server.
 /// Drains stdin even if no session ID is available to prevent blocking the caller.
 async fn sync_todos_from_stdin(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
@@ -281,6 +326,8 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
     match args.command {
         HookCommand::PreToolUse => {
             report_status(client, "running").await;
+            // Check for peer messages (non-blocking, best-effort)
+            check_peer_messages(client).await;
             if check_git_identity_guard(client).await {
                 std::process::exit(2);
             }
@@ -370,6 +417,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             match event.as_str() {
                 "session-start" | "active" | "prompt-submit" => {
                     report_status(client, "running").await;
+                    check_peer_messages(client).await;
                 }
                 "stop" | "idle" => {
                     handle_stop(client, agent, reason).await?;

@@ -1633,6 +1633,35 @@ export const pushTokens = sqliteTable(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Agent Peer Messages (folder-scoped inter-agent communication)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const agentPeerMessages = sqliteTable(
+  "agent_peer_message",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    folderId: text("folder_id").notNull(),
+    fromSessionId: text("from_session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    fromSessionName: text("from_session_name").notNull(),
+    toSessionId: text("to_session_id").references(() => terminalSessions.id, {
+      onDelete: "set null",
+    }),
+    body: text("body").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("peer_message_folder_created_idx").on(table.folderId, table.createdAt),
+    index("peer_message_to_session_idx").on(table.toSessionId),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // System Update Cache
 // ═══════════════════════════════════════════════════════════════════════════════
 

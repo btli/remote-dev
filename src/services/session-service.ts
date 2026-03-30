@@ -1133,7 +1133,7 @@ async function ensureAgentConfig(
 
   await Promise.all(
     [...configDirs].map((dir) =>
-      AgentProfileService.installAgentHooks(dir, provider)
+      AgentProfileService.installAgentHooks(dir, provider, rdvEnv)
         .catch((e) => log.error("Failed to install agent hooks", { sessionId, dir, error: String(e) }))
     )
   );
