@@ -29,7 +29,7 @@ export interface UseTerminalWebSocketOptions {
   onAgentRestarted?: () => void;
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onAgentTodosUpdated?: (sessionId: string) => void;
-  onSessionRenamed?: (sessionId: string, name: string) => void;
+  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   onNotification?: (notification: Record<string, unknown>) => void;
   onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
   onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
@@ -293,7 +293,7 @@ export function useTerminalWebSocket({
               break;
 
             case "session_renamed":
-              onSessionRenamedRef.current?.(msg.sessionId, msg.name);
+              onSessionRenamedRef.current?.(msg.sessionId, msg.name, msg.claudeSessionId);
               break;
 
             case "notification":

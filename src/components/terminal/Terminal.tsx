@@ -59,7 +59,7 @@ interface TerminalProps {
   /** Called when agent TodoWrite tasks are synced (from PostToolUse hooks) */
   onAgentTodosUpdated?: (sessionId: string) => void;
   /** Called when an agent session is auto-titled from its .jsonl file */
-  onSessionRenamed?: (sessionId: string, name: string) => void;
+  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   /** Called when a notification is broadcast from the terminal server */
   onNotification?: (notification: Record<string, unknown>) => void;
   /** Called when a session status indicator is set or cleared */
@@ -630,7 +630,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 break;
               case "session_renamed":
                 // Agent session auto-titled from .jsonl first user message
-                onSessionRenamedRef.current?.(msg.sessionId, msg.name);
+                onSessionRenamedRef.current?.(msg.sessionId, msg.name, msg.claudeSessionId);
                 break;
               case "notification":
                 // In-app notification broadcast from terminal server

@@ -35,7 +35,7 @@ import {
 } from "@/hooks/useEnvironmentWithSecrets";
 import type { FolderRepoStats } from "./Sidebar";
 import type { PinnedFile } from "@/types/pinned-files";
-import { WORKTREE_TYPES, type WorktreeType } from "@/types/session";
+import { WORKTREE_TYPES, type WorktreeType, type TerminalSession } from "@/types/session";
 import { sanitizeBranchName } from "@/lib/git-utils";
 import { Terminal as TerminalIcon, Plus, Columns, Rows, Maximize2, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -382,14 +382,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Handle server-pushed session rename (auto-title from .jsonl)
   const handleSessionRenamed = useCallback(
-    (sid: string, name: string) => {
+    (sid: string, name: string, claudeSessionId?: string) => {
       // Local-only update — the DB write already happened server-side
       // in tryApplyAutoTitle. We just need the UI to reflect the new name.
       // Do NOT call updateSession() here: that sends a PATCH which sets
       // titleLocked=true, permanently preventing future auto-title updates.
-      patchSessionLocal(sid, { name });
+      const updates: Partial<TerminalSession> = { name };
+      if (claudeSessionId) {
+        const existing = sessions.find((s) => s.id === sid);
+        updates.typeMetadata = { ...existing?.typeMetadata, claudeSessionId };
+      }
+      patchSessionLocal(sid, updates);
     },
-    [patchSessionLocal]
+    [patchSessionLocal, sessions]
   );
 
   // Split state from context

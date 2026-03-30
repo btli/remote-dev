@@ -46,7 +46,7 @@ interface LoopChatPaneProps {
   environmentVars?: Record<string, string> | null;
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   onAgentTodosUpdated?: (sessionId: string) => void;
-  onSessionRenamed?: (sessionId: string, name: string) => void;
+  onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   onNotification?: (notification: Record<string, unknown>) => void;
   onSessionStatus?: (
     sessionId: string,

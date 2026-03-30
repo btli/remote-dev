@@ -168,8 +168,12 @@ export function SplitPaneLayout({
                   setAgentActivityStatus(sid, status as AgentActivityStatus)
                 }
                 onAgentTodosUpdated={() => debouncedRefresh()}
-                onSessionRenamed={(sid, name) => {
-                  patchSessionLocal(sid, { name });
+                onSessionRenamed={(sid, name, claudeSessionId) => {
+                  const updates: Record<string, unknown> = { name };
+                  if (claudeSessionId) {
+                    updates.typeMetadata = { ...pane.session?.typeMetadata, claudeSessionId };
+                  }
+                  patchSessionLocal(sid, updates);
                 }}
                 onNotification={(notification) => {
                   addNotification(hydrateNotification(notification));

@@ -72,6 +72,7 @@ export async function tryApplyAutoTitle(
       typeMetadata: true,
       projectPath: true,
       profileId: true,
+      createdAt: true,
     },
   });
 
@@ -80,8 +81,8 @@ export async function tryApplyAutoTitle(
     return { applied: false };
   }
 
-  // 2. Guard: only agent sessions
-  if (session.terminalType !== "agent") {
+  // 2. Guard: only agent/loop sessions (both are Claude-backed)
+  if (session.terminalType !== "agent" && session.terminalType !== "loop") {
     return { applied: false };
   }
 
@@ -107,11 +108,10 @@ export async function tryApplyAutoTitle(
     profileConfigDir = profile?.configDir;
   }
 
-  // 5. Find the most recently modified .jsonl file in that directory
-  //    Use listSessions which already does this efficiently
+  // 5. Find the .jsonl file that was created closest to (and after) this session's start
   const { listSessions } = await import("@/services/claude-session-service");
   const claudeSessions = await listSessions(session.projectPath, {
-    limit: 1,
+    limit: 10,
     profileConfigDir,
   });
 
@@ -120,7 +120,18 @@ export async function tryApplyAutoTitle(
     return { applied: false };
   }
 
-  const claudeSession = claudeSessions[0];
+  // Filter to .jsonl files created after this rdv session, pick the closest match
+  const sessionCreatedMs = session.createdAt instanceof Date
+    ? session.createdAt.getTime()
+    : Number(session.createdAt);
+  const candidates = claudeSessions.filter((cs) => {
+    const csTime = new Date(cs.timestamp).getTime();
+    return csTime >= sessionCreatedMs;
+  });
+  // Fall back to the newest file if no candidates match (clock skew, etc.)
+  const claudeSession = candidates.length > 0
+    ? candidates[candidates.length - 1] // oldest match (closest to session creation)
+    : claudeSessions[0];
 
   if (!claudeSession.firstUserMessage) {
     log.debug("No first user message in Claude session", { sessionId, claudeSessionId: claudeSession.sessionId });
