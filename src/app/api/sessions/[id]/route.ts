@@ -45,7 +45,14 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 
   const updates: UpdateSessionInput = {};
 
-  if (body.name !== undefined) updates.name = body.name;
+  if (body.name !== undefined) {
+    updates.name = body.name;
+    // Lock the title so auto-rename doesn't overwrite a user-chosen name.
+    // Only relevant for agent sessions, but harmless on others — set unconditionally
+    // to avoid an extra DB lookup. The guard in tryApplyAutoTitle only checks
+    // titleLocked on agent sessions anyway.
+    updates.typeMetadataPatch = { titleLocked: true };
+  }
   if (body.status !== undefined) updates.status = body.status as SessionStatus;
   if (body.pinned !== undefined) updates.pinned = body.pinned;
   if (body.tabOrder !== undefined) updates.tabOrder = body.tabOrder;

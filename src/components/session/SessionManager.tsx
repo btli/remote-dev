@@ -173,6 +173,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     agentActivityStatuses,
     setSessionStatusIndicator,
     setSessionProgress,
+    patchSessionLocal,
   } = useSessionContext();
 
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -377,6 +378,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setAgentActivityStatus(sid, status as AgentActivityStatus);
     },
     [setAgentActivityStatus]
+  );
+
+  // Handle server-pushed session rename (auto-title from .jsonl)
+  const handleSessionRenamed = useCallback(
+    (sid: string, name: string) => {
+      // Local-only update — the DB write already happened server-side
+      // in tryApplyAutoTitle. We just need the UI to reflect the new name.
+      // Do NOT call updateSession() here: that sends a PATCH which sets
+      // titleLocked=true, permanently preventing future auto-title updates.
+      patchSessionLocal(sid, { name });
+    },
+    [patchSessionLocal]
   );
 
   // Split state from context
@@ -1769,6 +1782,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             environmentVars={getEnvironmentWithSecrets(folderId)}
                             onAgentActivityStatus={handleAgentActivityStatus}
                             onAgentTodosUpdated={() => debouncedRefresh()}
+                            onSessionRenamed={handleSessionRenamed}
                             onNotification={(notification) => {
                               addNotification(hydrateNotification(notification));
                             }}
@@ -1802,6 +1816,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             onNavigateToSession={(id) => setActiveSession(id)}
                             onAgentActivityStatus={handleAgentActivityStatus}
                             onAgentTodosUpdated={() => debouncedRefresh()}
+                            onSessionRenamed={handleSessionRenamed}
                             onNotification={(notification) => {
                               addNotification(hydrateNotification(notification));
                             }}
@@ -1843,6 +1858,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
                           onAgentActivityStatus={handleAgentActivityStatus}
                           onAgentTodosUpdated={() => debouncedRefresh()}
+                          onSessionRenamed={handleSessionRenamed}
                           onNotification={(notification) => {
                             addNotification(hydrateNotification(notification));
                           }}

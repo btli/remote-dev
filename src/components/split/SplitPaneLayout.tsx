@@ -57,7 +57,7 @@ export function SplitPaneLayout({
   scrollback,
   tmuxHistoryLimit,
 }: SplitPaneLayoutProps) {
-  const { setAgentActivityStatus, setSessionStatusIndicator, setSessionProgress } = useSessionContext();
+  const { patchSessionLocal, setAgentActivityStatus, setSessionStatusIndicator, setSessionProgress } = useSessionContext();
   const { debouncedRefresh } = useTaskContext();
   const { addNotification } = useNotificationContext();
   const isHorizontal = splitGroup.direction === "horizontal";
@@ -168,6 +168,9 @@ export function SplitPaneLayout({
                   setAgentActivityStatus(sid, status as AgentActivityStatus)
                 }
                 onAgentTodosUpdated={() => debouncedRefresh()}
+                onSessionRenamed={(sid, name) => {
+                  patchSessionLocal(sid, { name });
+                }}
                 onNotification={(notification) => {
                   addNotification(hydrateNotification(notification));
                 }}

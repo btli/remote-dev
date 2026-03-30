@@ -618,10 +618,30 @@ export async function updateSession(
     });
   }
 
+  // Build the DB-level updates, handling typeMetadataPatch merge
+  const { typeMetadataPatch, ...directUpdates } = updates;
+  let mergedTypeMetadata: string | undefined;
+
+  if (typeMetadataPatch) {
+    let meta: Record<string, unknown> = {};
+    if (existing.typeMetadata && typeof existing.typeMetadata === "object") {
+      meta = { ...existing.typeMetadata };
+    }
+    for (const [key, value] of Object.entries(typeMetadataPatch)) {
+      if (value === null) {
+        delete meta[key];
+      } else {
+        meta[key] = value;
+      }
+    }
+    mergedTypeMetadata = JSON.stringify(meta);
+  }
+
   const [updated] = await db
     .update(terminalSessions)
     .set({
-      ...updates,
+      ...directUpdates,
+      ...(mergedTypeMetadata !== undefined ? { typeMetadata: mergedTypeMetadata } : {}),
       updatedAt: new Date(),
     })
     .where(

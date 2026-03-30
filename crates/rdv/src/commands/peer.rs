@@ -47,6 +47,8 @@ struct Peer {
     agent_activity_status: Option<String>,
     #[serde(rename = "peerSummary")]
     peer_summary: Option<String>,
+    #[serde(rename = "claudeSessionId")]
+    claude_session_id: Option<String>,
     #[serde(rename = "isConnected")]
     is_connected: bool,
 }

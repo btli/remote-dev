@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { agentPeerMessages, terminalSessions } from "@/db/schema";
 import { eq, and, or, isNull, gt, inArray, sql } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
+import { safeJsonParse } from "@/lib/utils";
 
 const log = createLogger("PeerService");
 
@@ -17,6 +18,7 @@ export interface PeerInfo {
   agentProvider: string | null;
   agentActivityStatus: string | null;
   peerSummary: string | null;
+  claudeSessionId: string | null;
   isConnected: boolean;
 }
 
@@ -63,25 +65,30 @@ export async function getPeers(
 
   return peers
     .filter((p) => p.id !== sessionId)
-    .map((p) => ({
-      sessionId: p.id,
-      name: p.name,
-      agentProvider: p.agentProvider,
-      agentActivityStatus: p.agentActivityStatus,
-      peerSummary: parsePeerSummary(p.typeMetadata),
-      isConnected: isConnectedFn ? isConnectedFn(p.id) : false,
-    }));
+    .map((p) => {
+      const agentMeta = parseAgentMeta(p.typeMetadata);
+      return {
+        sessionId: p.id,
+        name: p.name,
+        agentProvider: p.agentProvider,
+        agentActivityStatus: p.agentActivityStatus,
+        peerSummary: agentMeta.peerSummary,
+        claudeSessionId: agentMeta.claudeSessionId,
+        isConnected: isConnectedFn ? isConnectedFn(p.id) : false,
+      };
+    });
 }
 
-/** Extract peerSummary from typeMetadata JSON, returning null on parse failure. */
-function parsePeerSummary(typeMetadata: string | null): string | null {
-  if (!typeMetadata) return null;
-  try {
-    const meta = JSON.parse(typeMetadata);
-    return meta.peerSummary ?? null;
-  } catch {
-    return null;
-  }
+/** Extract agent metadata fields from typeMetadata JSON. */
+function parseAgentMeta(typeMetadata: string | null): {
+  peerSummary: string | null;
+  claudeSessionId: string | null;
+} {
+  const meta = safeJsonParse<Record<string, unknown>>(typeMetadata, {});
+  return {
+    peerSummary: (meta.peerSummary as string) ?? null,
+    claudeSessionId: (meta.claudeSessionId as string) ?? null,
+  };
 }
 
 /**
@@ -207,12 +214,7 @@ export async function setSummary(
       columns: { typeMetadata: true },
     });
 
-    let metadata: Record<string, unknown> = {};
-    try {
-      if (session?.typeMetadata) metadata = JSON.parse(session.typeMetadata);
-    } catch {
-      // start fresh if existing metadata is corrupt
-    }
+    const metadata = safeJsonParse<Record<string, unknown>>(session?.typeMetadata, {});
     metadata.peerSummary = summary;
 
     await tx
