@@ -130,8 +130,9 @@ impl From<&PeerMessage> for MessageRow {
             } else {
                 "broadcast".into()
             },
-            body: if m.body.len() > 80 {
-                format!("{}...", &m.body[..77])
+            body: if m.body.chars().count() > 80 {
+                let truncated: String = m.body.chars().take(77).collect();
+                format!("{truncated}...")
             } else {
                 m.body.clone()
             },

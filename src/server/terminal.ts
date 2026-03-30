@@ -1238,7 +1238,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       sendJson(res, 200, result);
     } catch (err) {
       peerLog.error("Failed to send peer message", { error: String(err) });
-      sendJson(res, 400, { error: String(err) });
+      sendJson(res, 500, { error: String(err) });
     }
     return true;
   }

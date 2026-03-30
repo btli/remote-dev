@@ -19,11 +19,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import * as http from "node:http";
 
-const SESSION_ID = process.env.RDV_SESSION_ID;
-if (!SESSION_ID) {
-  process.stderr.write("rdv-peers: RDV_SESSION_ID not set, exiting\n");
-  process.exit(1);
-}
+const SESSION_ID = process.env.RDV_SESSION_ID ?? "";
 
 // Track last poll time so we only get new messages
 let lastPollTimestamp = new Date().toISOString();
@@ -179,6 +175,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
+  if (!SESSION_ID) {
+    return textResult("Error: RDV_SESSION_ID not set. Peer tools require an active agent session.");
+  }
+
   try {
     switch (name) {
       case "list_peers": {
@@ -239,11 +239,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           `/internal/peers/messages/poll?sessionId=${SESSION_ID}&since=${encodeURIComponent(lastPollTimestamp)}`,
           "GET"
         );
-        lastPollTimestamp = new Date().toISOString();
 
         if (resp.status !== 200) {
           return textResult(`Error: ${JSON.stringify(resp.data)}`);
         }
+
+        // Only advance timestamp after a successful response to avoid losing messages
+        lastPollTimestamp = new Date().toISOString();
 
         const messages =
           (resp.data.messages as Array<Record<string, unknown>>) || [];
@@ -291,4 +293,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const transport = new StdioServerTransport();
-await server.connect(transport);
+server.connect(transport).catch((err) => {
+  process.stderr.write(`rdv-peers: failed to start: ${err}\n`);
+  process.exit(1);
+});

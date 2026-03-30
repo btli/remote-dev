@@ -859,11 +859,6 @@ export async function resumeSession(
       ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
       : process.env.HOME;
 
-    if (configDir && agentProvider !== "none") {
-      // On resume, hooks were installed at create time — just refresh the primary configDir
-      await ensureAgentConfig(new Set([configDir]), agentProvider, sessionId);
-    }
-
     // Refresh RDV + GitHub account env vars on resume (may be missing on older
     // sessions, or stale if the folder's account binding or OAuth token changed)
     try {
@@ -890,6 +885,11 @@ export async function resumeSession(
           : { RDV_API_PORT: process.env.PORT ?? "6001" }),
         ...(agentApiKey ? { RDV_API_KEY: agentApiKey } : {}),
       };
+
+      if (configDir && agentProvider !== "none") {
+        // On resume, refresh hooks/MCP config with current rdvEnv so peer MCP server gets env vars
+        await ensureAgentConfig(new Set([configDir]), agentProvider, sessionId, rdvEnv);
+      }
 
       let ghAccountEnv: Record<string, string> = {};
       try {
