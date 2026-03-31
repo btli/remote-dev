@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile type/send mode toggle**: Long-press the send button to switch between Send mode (text + `\r`) and Type mode (text only, no `\r`). Enables building up terminal input piece by piece before executing.
 - **Auto-refresh expired CF tokens**: When the Cloudflare Access token expires, the mobile app automatically opens the browser for re-authentication and retries the failed request, instead of silently showing empty sessions.
 - **Mobile scroll-to-bottom button**: Floating "Latest" pill button appears when the terminal is scrolled up into history on mobile. Tapping it scrolls back to the latest output.
+- **`rdv session title` command**: Agents can set meaningful kebab-case session titles (3-5 words) for peer identification via `rdv session title <kebab-title>`
+- **Auto-broadcast on git push**: Pushing to main/master automatically broadcasts a rebase alert to the peer chatroom so other agents know to pull latest changes
+- **Auto-broadcast on session lifecycle**: Session start and stop events are automatically broadcast to the peer chatroom for situational awareness
+- **Session title history**: Title changes are tracked in `typeMetadata` for context when titles are updated
+
+### Changed
+
+- Agent session auto-titles now use kebab-case format (e.g., "fix-login-bug" instead of "fix login bug")
+- Auto-title stop-word stripping produces more meaningful titles (e.g., "fix-login-bug" instead of "fix-the-login")
+- PreToolUse hook now shows full peer status digest (agent names, activity status, work summaries) alongside new messages
+- Stop hook now clears peer summary and broadcasts "finished work" to peer chatroom
 
 ### Fixed
 
