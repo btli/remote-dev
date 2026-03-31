@@ -28,6 +28,7 @@ export interface PeerMessage {
   fromSessionName: string;
   toSessionId: string | null;
   body: string;
+  isUserMessage: boolean;
   createdAt: string;
 }
 
@@ -48,35 +49,8 @@ export async function getPeers(
     return [];
   }
 
-  const peers = await db.query.terminalSessions.findMany({
-    where: and(
-      eq(terminalSessions.folderId, session.folderId),
-      inArray(terminalSessions.terminalType, ["agent", "loop"]),
-      inArray(terminalSessions.status, ["active", "suspended"]),
-    ),
-    columns: {
-      id: true,
-      name: true,
-      agentProvider: true,
-      agentActivityStatus: true,
-      typeMetadata: true,
-    },
-  });
-
-  return peers
-    .filter((p) => p.id !== sessionId)
-    .map((p) => {
-      const agentMeta = parseAgentMeta(p.typeMetadata);
-      return {
-        sessionId: p.id,
-        name: p.name,
-        agentProvider: p.agentProvider,
-        agentActivityStatus: p.agentActivityStatus,
-        peerSummary: agentMeta.peerSummary,
-        claudeSessionId: agentMeta.claudeSessionId,
-        isConnected: isConnectedFn ? isConnectedFn(p.id) : false,
-      };
-    });
+  const allPeers = await getFolderPeers(session.folderId, isConnectedFn);
+  return allPeers.filter((p) => p.sessionId !== sessionId);
 }
 
 /** Extract agent metadata fields from typeMetadata JSON. */
@@ -88,6 +62,27 @@ function parseAgentMeta(typeMetadata: string | null): {
   return {
     peerSummary: (meta.peerSummary as string) ?? null,
     claudeSessionId: (meta.claudeSessionId as string) ?? null,
+  };
+}
+
+/** Convert a DB message row to a PeerMessage. */
+function toMessageRow(row: {
+  id: string;
+  fromSessionId: string | null;
+  fromSessionName: string;
+  toSessionId: string | null;
+  body: string;
+  isUserMessage?: boolean | null;
+  createdAt: Date | string | number;
+}): PeerMessage {
+  return {
+    id: row.id,
+    fromSessionId: row.fromSessionId,
+    fromSessionName: row.fromSessionName,
+    toSessionId: row.toSessionId,
+    body: row.body,
+    isUserMessage: row.isUserMessage ?? false,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
 }
 
@@ -162,7 +157,7 @@ export async function pollMessages(
     return [];
   }
 
-  const messages = await db
+  const rows = await db
     .select({
       id: agentPeerMessages.id,
       fromSessionId: agentPeerMessages.fromSessionId,
@@ -190,14 +185,7 @@ export async function pollMessages(
     )
     .orderBy(agentPeerMessages.createdAt);
 
-  return messages.map((m) => ({
-    id: m.id,
-    fromSessionId: m.fromSessionId,
-    fromSessionName: m.fromSessionName,
-    toSessionId: m.toSessionId,
-    body: m.body,
-    createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : String(m.createdAt),
-  }));
+  return rows.map(toMessageRow);
 }
 
 /**
@@ -235,4 +223,118 @@ export async function cleanupOldMessages(): Promise<void> {
     .where(sql`${agentPeerMessages.createdAt} < ${cutoff.getTime()}`);
 
   log.debug("Peer message cleanup complete");
+}
+
+/**
+ * Send a message from the user (not from an agent session).
+ * Inserts directly with fromSessionId=null and isUserMessage=true.
+ */
+export async function sendUserMessage(params: {
+  folderId: string;
+  fromName: string;
+  body: string;
+}): Promise<{ messageId: string; message: PeerMessage }> {
+  const { folderId, fromName, body } = params;
+
+  if (body.length > MAX_MESSAGE_LENGTH) {
+    throw new Error(`Message exceeds maximum length of ${MAX_MESSAGE_LENGTH} characters`);
+  }
+
+  const messageId = crypto.randomUUID();
+  const now = new Date();
+
+  await db.insert(agentPeerMessages).values({
+    id: messageId,
+    folderId,
+    fromSessionId: null,
+    fromSessionName: fromName,
+    toSessionId: null,
+    body,
+    isUserMessage: true,
+    createdAt: now,
+  });
+
+  log.debug("User message sent", { messageId, folderId, fromName });
+
+  const message: PeerMessage = {
+    id: messageId,
+    fromSessionId: null,
+    fromSessionName: fromName,
+    toSessionId: null,
+    body,
+    isUserMessage: true,
+    createdAt: now.toISOString(),
+  };
+
+  return { messageId, message };
+}
+
+/**
+ * List all messages in a folder (for the chat room UI).
+ * Unlike pollMessages, this is not session-scoped — it returns the full conversation.
+ */
+export async function listFolderMessages(
+  folderId: string,
+  limit: number = 200
+): Promise<PeerMessage[]> {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const rows = await db
+    .select({
+      id: agentPeerMessages.id,
+      fromSessionId: agentPeerMessages.fromSessionId,
+      fromSessionName: agentPeerMessages.fromSessionName,
+      toSessionId: agentPeerMessages.toSessionId,
+      body: agentPeerMessages.body,
+      isUserMessage: agentPeerMessages.isUserMessage,
+      createdAt: agentPeerMessages.createdAt,
+    })
+    .from(agentPeerMessages)
+    .where(
+      and(
+        eq(agentPeerMessages.folderId, folderId),
+        gt(agentPeerMessages.createdAt, cutoff)
+      )
+    )
+    .orderBy(agentPeerMessages.createdAt)
+    .limit(limit);
+
+  return rows.map(toMessageRow);
+}
+
+/**
+ * List active agent peers in a folder (without requiring a calling session ID).
+ * Used by the chat room UI's tab bar to show agent activity dots.
+ */
+export async function getFolderPeers(
+  folderId: string,
+  isConnectedFn?: (id: string) => boolean
+): Promise<PeerInfo[]> {
+  const peers = await db.query.terminalSessions.findMany({
+    where: and(
+      eq(terminalSessions.folderId, folderId),
+      inArray(terminalSessions.terminalType, ["agent", "loop"]),
+      inArray(terminalSessions.status, ["active", "suspended"]),
+    ),
+    columns: {
+      id: true,
+      name: true,
+      agentProvider: true,
+      agentActivityStatus: true,
+      typeMetadata: true,
+    },
+  });
+
+  return peers.map((p) => {
+    const agentMeta = parseAgentMeta(p.typeMetadata);
+    return {
+      sessionId: p.id,
+      name: p.name,
+      agentProvider: p.agentProvider,
+      agentActivityStatus: p.agentActivityStatus,
+      peerSummary: agentMeta.peerSummary,
+      claudeSessionId: agentMeta.claudeSessionId,
+      isConnected: isConnectedFn ? isConnectedFn(p.id) : false,
+    };
+  });
 }

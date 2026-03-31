@@ -62,6 +62,7 @@ interface LoopChatPaneProps {
     sessionId: string,
     state: "running" | "exited" | "restarting" | "closed"
   ) => void;
+  onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
 }
 
 export function LoopChatPane({
@@ -81,6 +82,7 @@ export function LoopChatPane({
   onSessionProgress,
   onSessionClose,
   onAgentStateChange,
+  onPeerMessageCreated,
 }: LoopChatPaneProps) {
   const { getAgentActivityStatus } = useSessionContext();
   const activityStatus = getAgentActivityStatus(session.id);
@@ -336,6 +338,7 @@ export function LoopChatPane({
             onNotification={onNotification}
             onSessionStatus={onSessionStatus}
             onSessionProgress={onSessionProgress}
+            onPeerMessageCreated={onPeerMessageCreated}
           />
         </TerminalDrawer>
       </div>

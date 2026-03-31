@@ -21,6 +21,7 @@ import { SessionMCPProvider } from "@/contexts/SessionMCPContext";
 import { TaskProvider } from "@/contexts/TaskContext";
 import { GitHubAccountProvider } from "@/contexts/GitHubAccountContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
+import { PeerChatProvider } from "@/contexts/PeerChatContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
 import type { TerminalSession } from "@/types/session";
@@ -130,6 +131,7 @@ export default async function Home() {
                               <TaskProvider>
                                 <SessionMCPProvider>
                                   <NotificationProvider>
+                                    <PeerChatProvider>
                                     <div className="flex h-screen flex-col bg-background">
                                       {/* Header - hidden on mobile, shown in sidebar instead */}
                                       <Header
@@ -143,6 +145,7 @@ export default async function Home() {
                                       {/* Main content */}
                                       <SessionManager isGitHubConnected={isGitHubConnected} />
                                     </div>
+                                    </PeerChatProvider>
                                   </NotificationProvider>
                                 </SessionMCPProvider>
                               </TaskProvider>

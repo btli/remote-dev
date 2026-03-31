@@ -1264,6 +1264,33 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         toSessionId: toSessionId as string | undefined,
         body: msgBody as string,
       });
+
+      // Look up sender name for broadcast
+      const senderSession = await import("@/db").then(async ({ db }) => {
+        const { eq } = await import("drizzle-orm");
+        const { terminalSessions: ts } = await import("@/db/schema");
+        return db.query.terminalSessions.findFirst({
+          where: eq(ts.id, fromSessionId as string),
+          columns: { name: true, folderId: true },
+        });
+      });
+
+      if (senderSession?.folderId) {
+        broadcastToClients({
+          type: "peer_message_created",
+          folderId: senderSession.folderId,
+          message: {
+            id: result.messageId,
+            fromSessionId,
+            fromSessionName: senderSession.name,
+            toSessionId: toSessionId ?? null,
+            body: msgBody,
+            isUserMessage: false,
+            createdAt: new Date().toISOString(),
+          },
+        });
+      }
+
       sendJson(res, 200, result);
     } catch (err) {
       peerLog.error("Failed to send peer message", { error: String(err) });
@@ -1313,6 +1340,27 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       peerLog.error("Failed to set peer summary", { error: String(err) });
       sendJson(res, 500, { error: "Failed to set summary" });
     }
+    return true;
+  }
+
+  // POST /internal/peers/broadcast { folderId, message }
+  // Used by Next.js API routes to broadcast peer messages to WebSocket clients
+  if (pathname === "/internal/peers/broadcast" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+
+    const { folderId, message } = payload;
+    if (!folderId || !message) {
+      sendJson(res, 400, { error: "Missing folderId or message" });
+      return true;
+    }
+
+    broadcastToClients({
+      type: "peer_message_created",
+      folderId,
+      message,
+    });
+    sendJson(res, 200, { ok: true });
     return true;
   }
 

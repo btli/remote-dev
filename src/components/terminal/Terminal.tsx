@@ -66,6 +66,8 @@ interface TerminalProps {
   onSessionStatus?: (sessionId: string, key: string, indicator: import("@/types/terminal-type").SessionStatusIndicator | null) => void;
   /** Called when session progress is updated or cleared */
   onSessionProgress?: (sessionId: string, progress: import("@/types/terminal-type").SessionProgress | null) => void;
+  /** Called when a peer message is created (broadcast from terminal server) */
+  onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
   /** Called when terminal scroll position changes between scrolled-up and at-bottom */
@@ -99,6 +101,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onNotification,
   onSessionStatus,
   onSessionProgress,
+  onPeerMessageCreated,
   onOutput,
   onDimensionsChange,
   onScrollStateChange,
@@ -158,6 +161,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onNotificationRef = useRef(onNotification);
   const onSessionStatusRef = useRef(onSessionStatus);
   const onSessionProgressRef = useRef(onSessionProgress);
+  const onPeerMessageCreatedRef = useRef(onPeerMessageCreated);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const onScrollStateChangeRef = useRef(onScrollStateChange);
@@ -197,6 +201,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onNotificationRef.current = onNotification;
     onSessionStatusRef.current = onSessionStatus;
     onSessionProgressRef.current = onSessionProgress;
+    onPeerMessageCreatedRef.current = onPeerMessageCreated;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     onScrollStateChangeRef.current = onScrollStateChange;
@@ -212,7 +217,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -653,6 +658,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
               case "session_progress_cleared":
                 // Clear session progress bar
                 onSessionProgressRef.current?.(msg.sessionId, null);
+                break;
+              case "peer_message_created":
+                // Peer message broadcast — forward to chat room context
+                if (msg.folderId && msg.message) {
+                  onPeerMessageCreatedRef.current?.(msg.folderId as string, msg.message);
+                }
                 break;
               case "voice_ready":
                 console.log(`[Voice] Ready for session ${msg.sessionId}`);

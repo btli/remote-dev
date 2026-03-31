@@ -65,6 +65,10 @@ import { useAgentNotifications } from "@/hooks/useAgentNotifications";
 import { NotificationPanel } from "@/components/notifications/NotificationPanel";
 import { useNotificationContext, hydrateNotification } from "@/contexts/NotificationContext";
 import { dismissToastsForSession } from "@/lib/notification-toast";
+import { usePeerChatContext } from "@/contexts/PeerChatContext";
+import { FolderTabBar } from "@/components/peers/FolderTabBar";
+import { PeerChatRoom } from "@/components/peers/PeerChatRoom";
+import type { ActiveView } from "@/types/peer-chat";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -179,6 +183,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [wizardFolderId, setWizardFolderId] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [activeView, setActiveView] = useState<ActiveView>("terminal");
+  const peerChat = usePeerChatContext();
   const isMobile = useMobile();
   const isPWA = usePWA();
   // Use useSyncExternalStore for localStorage values to avoid hydration mismatches
@@ -381,6 +387,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setAgentActivityStatus(sid, status as AgentActivityStatus);
     },
     [setAgentActivityStatus]
+  );
+
+  const handlePeerMessageCreated = useCallback(
+    (_folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => {
+      peerChat.addMessage(message);
+    },
+    [peerChat.addMessage]
   );
 
   // Handle server-pushed session rename (auto-title from .jsonl)
@@ -1523,6 +1536,45 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     return map;
   }, [activeSessions]);
 
+  // Handle view change from FolderTabBar (terminal/chat toggle)
+  const handleViewChange = useCallback(
+    (view: ActiveView) => {
+      setActiveView(view);
+      if (view === "chat") {
+        peerChat.markAllRead();
+      } else {
+        peerChat.markChatInactive();
+      }
+    },
+    [peerChat.markAllRead, peerChat.markChatInactive]
+  );
+
+  // Handle agent tab click from FolderTabBar
+  const handleAgentTabClick = useCallback(
+    (sessionId: string) => {
+      setActiveView("terminal");
+      setActiveSession(sessionId);
+    },
+    [setActiveSession]
+  );
+
+  /** Agent sessions in the active folder — drives FolderTabBar */
+  const folderAgentSessions = useMemo(() => {
+    if (!activeProject.folderId) return [];
+    return activeSessions.filter(
+      (s) =>
+        s.folderId === activeProject.folderId &&
+        (s.terminalType === "agent" || s.terminalType === "loop")
+    );
+  }, [activeSessions, activeProject.folderId]);
+
+  // Reset to terminal view when all agent sessions close (tab bar disappears)
+  useEffect(() => {
+    if (folderAgentSessions.length === 0 && activeView === "chat") {
+      setActiveView("terminal");
+    }
+  }, [folderAgentSessions.length, activeView]);
+
   /** Resolve GitHub repo ID for the task sidebar */
   const taskSidebarRepoId = useMemo(() => {
     if (!activeProject.folderId) return null;
@@ -1651,6 +1703,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
         )}
 
+        {/* Folder tab bar — Terminal / Chat Room / Agent tabs */}
+        {activeSessions.length > 0 && folderAgentSessions.length > 0 && (
+          <FolderTabBar
+            activeView={activeView}
+            onViewChange={handleViewChange}
+            agentSessions={folderAgentSessions}
+            activeSessionId={activeSessionId}
+            onAgentTabClick={handleAgentTabClick}
+            chatUnreadCount={peerChat.unreadCount}
+          />
+        )}
+
         {/* Empty state when no sessions */}
         {!loading && activeSessions.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
@@ -1687,8 +1751,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             </div>
           </div>
         ) : (
-          /* Terminal Container */
-          <div className={cn("flex-1 p-3 overflow-hidden", isMobile && "pb-safe-bottom")}>
+          <>
+          {/* Terminal Container — hidden when chat view is active */}
+          <div className={cn("flex-1 p-3 overflow-hidden", isMobile && "pb-safe-bottom", activeView !== "terminal" && "hidden")}>
             <div className="h-full relative rounded-xl overflow-hidden">
               {/* Gradient border effect */}
               <div className="absolute inset-0 rounded-xl p-[1px] bg-gradient-to-br from-primary/30 via-transparent to-accent/30">
@@ -1797,6 +1862,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             onSessionStatus={setSessionStatusIndicator}
                             onSessionProgress={setSessionProgress}
                             onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
+                            onPeerMessageCreated={handlePeerMessageCreated}
                           />
                         </div>
                       );
@@ -1830,6 +1896,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             }}
                             onSessionStatus={setSessionStatusIndicator}
                             onSessionProgress={setSessionProgress}
+                            onPeerMessageCreated={handlePeerMessageCreated}
                           />
                         </div>
                       );
@@ -1872,6 +1939,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           }}
                           onSessionStatus={setSessionStatusIndicator}
                           onSessionProgress={setSessionProgress}
+                          onPeerMessageCreated={handlePeerMessageCreated}
                         />
                       </div>
                     );
@@ -1880,6 +1948,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               </div>
             </div>
           </div>
+
+          {/* Peer Chat Room — visible when chat view is active */}
+          <div className={cn("flex-1 overflow-hidden", activeView !== "chat" && "hidden")}>
+            <PeerChatRoom
+              folderId={activeProject.folderId}
+              folderName={getFolderName(activeProject.folderId)}
+            />
+          </div>
+          </>
         )}
       </div>
 
