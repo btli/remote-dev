@@ -1206,22 +1206,24 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
 
-    // Fire-and-forget: apply auto-title and broadcast if successful
-    import("@/services/agent-title-service")
-      .then(async (AgentTitleService) => {
-        const result = await AgentTitleService.tryApplyAutoTitle(sessionId);
-        if (!result.applied || !result.title || !result.userId) return;
+    try {
+      const AgentTitleService = await import("@/services/agent-title-service");
+      const result = await AgentTitleService.tryApplyAutoTitle(sessionId);
 
+      if (result.applied && result.title && result.userId) {
         broadcastToUser(result.userId, {
           type: "session_renamed",
           sessionId,
           name: result.title,
           claudeSessionId: result.claudeSessionId,
         });
-      })
-      .catch((err) => agentStatusLog.error("Auto-title failed", { error: String(err), sessionId }));
+      }
 
-    sendJson(res, 200, { success: true });
+      sendJson(res, 200, { applied: result.applied, title: result.title ?? null });
+    } catch (err) {
+      agentStatusLog.error("Auto-title failed", { error: String(err), sessionId });
+      sendJson(res, 200, { applied: false });
+    }
     return true;
   }
 
@@ -1265,33 +1267,21 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         body: msgBody as string,
       });
 
-      // Look up sender name and folder owner for scoped broadcast
-      const senderSession = await import("@/db").then(async ({ db }) => {
-        const { eq } = await import("drizzle-orm");
-        const { terminalSessions: ts } = await import("@/db/schema");
-        return db.query.terminalSessions.findFirst({
-          where: eq(ts.id, fromSessionId as string),
-          columns: { name: true, folderId: true, userId: true },
-        });
+      broadcastToUser(result.userId, {
+        type: "peer_message_created",
+        folderId: result.folderId,
+        message: {
+          id: result.messageId,
+          fromSessionId,
+          fromSessionName: result.senderName,
+          toSessionId: toSessionId ?? null,
+          body: result.resolvedBody,
+          isUserMessage: false,
+          createdAt: result.createdAt,
+        },
       });
 
-      if (senderSession?.folderId && senderSession.userId) {
-        broadcastToUser(senderSession.userId, {
-          type: "peer_message_created",
-          folderId: senderSession.folderId,
-          message: {
-            id: result.messageId,
-            fromSessionId,
-            fromSessionName: senderSession.name,
-            toSessionId: toSessionId ?? null,
-            body: msgBody,
-            isUserMessage: false,
-            createdAt: new Date().toISOString(),
-          },
-        });
-      }
-
-      sendJson(res, 200, result);
+      sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
     } catch (err) {
       peerLog.error("Failed to send peer message", { error: String(err) });
       sendJson(res, 500, { error: String(err) });

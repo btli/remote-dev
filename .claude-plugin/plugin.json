@@ -7,5 +7,6 @@
     "url": "https://github.com/btli/remote-dev"
   },
   "repository": "https://github.com/btli/remote-dev",
-  "keywords": ["terminal", "tmux", "agents", "worktree", "orchestration"]
+  "keywords": ["terminal", "tmux", "agents", "worktree", "orchestration"],
+  "hooks": "hooks/hooks.json"
 }

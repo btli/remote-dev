@@ -12,6 +12,37 @@ const log = createLogger("PeerService");
 
 const MAX_MESSAGE_LENGTH = 8192;
 
+/**
+ * Resolve @name mentions in message body to @<sid:UUID> tokens.
+ * Looks up peer names in the given folder (case-insensitive, longest match first).
+ * Already-tokenized mentions (@<sid:UUID>) are left untouched.
+ */
+async function resolveMentionsInBody(body: string, folderId: string): Promise<string> {
+  if (!body.includes("@")) return body;
+
+  // Get all agent/loop sessions in the folder
+  const peers = await db.query.terminalSessions.findMany({
+    where: and(
+      eq(terminalSessions.folderId, folderId),
+      inArray(terminalSessions.terminalType, ["agent", "loop"]),
+      inArray(terminalSessions.status, ["active", "suspended"]),
+    ),
+    columns: { id: true, name: true },
+  });
+
+  if (peers.length === 0) return body;
+
+  // Sort longest name first for greedy matching
+  const sorted = [...peers].sort((a, b) => b.name.length - a.name.length);
+  const escaped = sorted.map((p) => p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(`@(${escaped.join("|")})(?=\\s|$|[.,;!?])`, "gi");
+
+  return body.replace(pattern, (_match, name: string) => {
+    const peer = sorted.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    return peer ? `@<sid:${peer.id}>` : _match;
+  });
+}
+
 export interface PeerInfo {
   sessionId: string;
   name: string;
@@ -86,6 +117,15 @@ function toMessageRow(row: {
   };
 }
 
+export interface SendMessageResult {
+  messageId: string;
+  resolvedBody: string;
+  senderName: string;
+  folderId: string;
+  userId: string;
+  createdAt: string;
+}
+
 /**
  * Send a message to a specific peer or broadcast to all peers in the folder.
  */
@@ -93,7 +133,7 @@ export async function sendMessage(params: {
   fromSessionId: string;
   toSessionId?: string;
   body: string;
-}): Promise<{ messageId: string }> {
+}): Promise<SendMessageResult> {
   const { fromSessionId, toSessionId, body } = params;
 
   if (body.length > MAX_MESSAGE_LENGTH) {
@@ -102,10 +142,10 @@ export async function sendMessage(params: {
 
   const sender = await db.query.terminalSessions.findFirst({
     where: eq(terminalSessions.id, fromSessionId),
-    columns: { folderId: true, name: true },
+    columns: { folderId: true, name: true, userId: true },
   });
 
-  if (!sender?.folderId) {
+  if (!sender?.folderId || !sender.userId) {
     throw new Error("Sender session not found or has no folder");
   }
 
@@ -121,6 +161,8 @@ export async function sendMessage(params: {
   }
 
   const messageId = crypto.randomUUID();
+  const now = new Date();
+  const resolvedBody = await resolveMentionsInBody(body, sender.folderId);
 
   await db.insert(agentPeerMessages).values({
     id: messageId,
@@ -128,7 +170,8 @@ export async function sendMessage(params: {
     fromSessionId,
     fromSessionName: sender.name,
     toSessionId: toSessionId ?? null,
-    body,
+    body: resolvedBody,
+    createdAt: now,
   });
 
   log.debug("Peer message sent", {
@@ -138,7 +181,14 @@ export async function sendMessage(params: {
     folderId: sender.folderId,
   });
 
-  return { messageId };
+  return {
+    messageId,
+    resolvedBody,
+    senderName: sender.name,
+    folderId: sender.folderId,
+    userId: sender.userId,
+    createdAt: now.toISOString(),
+  };
 }
 
 /**
@@ -243,31 +293,24 @@ export async function sendUserMessage(params: {
 
   const messageId = crypto.randomUUID();
   const now = new Date();
+  const resolvedBody = await resolveMentionsInBody(body, folderId);
 
-  await db.insert(agentPeerMessages).values({
+  const row = {
     id: messageId,
     folderId,
     fromSessionId: null,
     fromSessionName: fromName,
     toSessionId: null,
-    body,
+    body: resolvedBody,
     isUserMessage: true,
     createdAt: now,
-  });
+  };
+
+  await db.insert(agentPeerMessages).values(row);
 
   log.debug("User message sent", { messageId, folderId, fromName });
 
-  const message: PeerMessage = {
-    id: messageId,
-    fromSessionId: null,
-    fromSessionName: fromName,
-    toSessionId: null,
-    body,
-    isUserMessage: true,
-    createdAt: now.toISOString(),
-  };
-
-  return { messageId, message };
+  return { messageId, message: toMessageRow(row) };
 }
 
 /**

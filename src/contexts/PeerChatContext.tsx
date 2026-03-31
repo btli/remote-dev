@@ -23,9 +23,14 @@ import {
 import { usePreferencesContext } from "./PreferencesContext";
 import type { PeerChatMessage, PeerChatAgent } from "@/types/peer-chat";
 
+/** Map from session ID → current display name, built from active peers. */
+export type PeerNameMap = ReadonlyMap<string, string>;
+
 interface PeerChatContextValue {
   messages: PeerChatMessage[];
   peers: PeerChatAgent[];
+  /** Resolves session IDs to current display names. */
+  peerNameMap: PeerNameMap;
   unreadCount: number;
   loading: boolean;
   sendMessage: (body: string) => Promise<void>;
@@ -145,22 +150,25 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
   const sendMessage = useCallback(async (body: string) => {
     if (!folderId || !body.trim()) return;
 
+    const trimmedBody = body.trim();
+
     const optimistic: PeerChatMessage = {
       id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       fromSessionId: null,
       fromSessionName: "You",
       toSessionId: null,
-      body: body.trim(),
+      body: trimmedBody,
       isUserMessage: true,
       createdAt: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
 
     try {
+      // Server handles @name → @<sid:UUID> mention resolution authoritatively
       const resp = await fetch("/api/peers/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderId, body: body.trim() }),
+        body: JSON.stringify({ folderId, body: trimmedBody }),
       });
 
       if (resp.ok) {
@@ -186,10 +194,22 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
     await Promise.all([fetchMessages(), fetchPeers()]);
   }, [fetchMessages, fetchPeers]);
 
+  // Build session ID → current name map from active peers.
+  // When a peer is renamed, the peers list updates and the map rebuilds,
+  // causing all message bubbles to show the new name instantly.
+  const peerNameMap = useMemo<PeerNameMap>(() => {
+    const map = new Map<string, string>();
+    for (const peer of peers) {
+      map.set(peer.sessionId, peer.name);
+    }
+    return map;
+  }, [peers]);
+
   const value = useMemo<PeerChatContextValue>(
     () => ({
       messages,
       peers,
+      peerNameMap,
       unreadCount,
       loading,
       sendMessage,
@@ -198,7 +218,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
       markChatInactive,
       refresh,
     }),
-    [messages, peers, unreadCount, loading, sendMessage, addMessage, markAllRead, markChatInactive, refresh]
+    [messages, peers, peerNameMap, unreadCount, loading, sendMessage, addMessage, markAllRead, markChatInactive, refresh]
   );
 
   return (

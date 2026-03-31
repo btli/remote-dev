@@ -19,7 +19,7 @@ interface PeerChatRoomProps {
 }
 
 export function PeerChatRoom({ folderId, folderName }: PeerChatRoomProps) {
-  const { messages, peers, loading, sendMessage, markAllRead } = usePeerChatContext();
+  const { messages, peers, peerNameMap, loading, sendMessage, markAllRead } = usePeerChatContext();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isUserScrolled, setIsUserScrolled] = useState(false);
@@ -91,7 +91,7 @@ export function PeerChatRoom({ folderId, folderName }: PeerChatRoomProps) {
         )}
 
         {messages.map((msg) => (
-          <PeerMessageBubble key={msg.id} message={msg} />
+          <PeerMessageBubble key={msg.id} message={msg} peerNameMap={peerNameMap} />
         ))}
 
         {/* Scroll anchor */}

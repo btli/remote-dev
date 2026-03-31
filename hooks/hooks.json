@@ -1,5 +1,5 @@
 {
-  "description": "Remote Dev agent hooks for status reporting and task sync",
+  "description": "Remote Dev agent hooks for status reporting, peer messaging, and task sync",
   "hooks": {
     "PreToolUse": [
       {
@@ -66,6 +66,17 @@
             "type": "command",
             "command": "rdv hook claude stop",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rdv hook claude session-end",
+            "timeout": 10
           }
         ]
       }
