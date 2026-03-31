@@ -1227,6 +1227,82 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // POST /internal/agent-title/set?sessionId=xxx&title=yyy — manually set agent session title (kebab-case)
+  if (pathname === "/internal/agent-title/set" && req.method === "POST") {
+    const sessionId = query.sessionId as string;
+    const title = query.title as string;
+
+    if (!sessionId || !title) {
+      sendJson(res, 400, { error: "Missing sessionId or title parameter" });
+      return true;
+    }
+
+    // Validate kebab-case: lowercase letters and hyphens, 3-5 hyphen-separated words
+    const kebabWords = title.split("-");
+    if (
+      !/^[a-z]+(-[a-z]+)*$/.test(title) ||
+      kebabWords.length < 3 ||
+      kebabWords.length > 5
+    ) {
+      sendJson(res, 400, {
+        error: "Title must be kebab-case (lowercase letters and hyphens) with 3-5 words",
+      });
+      return true;
+    }
+
+    try {
+      const [{ db }, { terminalSessions }, { eq }, { safeJsonParse }] = await Promise.all([
+        import("@/db"),
+        import("@/db/schema"),
+        import("drizzle-orm"),
+        import("@/lib/utils"),
+      ]);
+
+      const session = await db.query.terminalSessions.findFirst({
+        where: eq(terminalSessions.id, sessionId),
+        columns: { id: true, name: true, userId: true, typeMetadata: true },
+      });
+
+      if (!session) {
+        sendJson(res, 404, { error: "Session not found" });
+        return true;
+      }
+
+      const meta = safeJsonParse<Record<string, unknown>>(session.typeMetadata, {});
+
+      // Append current name to titleHistory before overwriting (capped at 10)
+      const history = Array.isArray(meta.titleHistory) ? [...meta.titleHistory] : [];
+      if (session.name) {
+        history.push(session.name);
+        if (history.length > 10) history.splice(0, history.length - 10);
+      }
+      meta.titleHistory = history;
+      meta.titleLocked = true;
+
+      await db
+        .update(terminalSessions)
+        .set({
+          name: title,
+          typeMetadata: JSON.stringify(meta),
+          updatedAt: new Date(),
+        })
+        .where(eq(terminalSessions.id, sessionId));
+
+      broadcastToUser(session.userId, {
+        type: "session_renamed",
+        sessionId,
+        name: title,
+      });
+
+      agentStatusLog.info("Agent session title set manually", { sessionId, title });
+      sendJson(res, 200, { applied: true, title });
+    } catch (err) {
+      agentStatusLog.error("Failed to set agent title", { error: String(err), sessionId });
+      sendJson(res, 500, { error: "Failed to set title" });
+    }
+    return true;
+  }
+
   // ═══ Peer communication endpoints ═════════════════════════════════════════
 
   // GET /internal/peers/list?sessionId=xxx
