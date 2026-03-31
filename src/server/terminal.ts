@@ -1265,18 +1265,18 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         body: msgBody as string,
       });
 
-      // Look up sender name for broadcast
+      // Look up sender name and folder owner for scoped broadcast
       const senderSession = await import("@/db").then(async ({ db }) => {
         const { eq } = await import("drizzle-orm");
         const { terminalSessions: ts } = await import("@/db/schema");
         return db.query.terminalSessions.findFirst({
           where: eq(ts.id, fromSessionId as string),
-          columns: { name: true, folderId: true },
+          columns: { name: true, folderId: true, userId: true },
         });
       });
 
-      if (senderSession?.folderId) {
-        broadcastToClients({
+      if (senderSession?.folderId && senderSession.userId) {
+        broadcastToUser(senderSession.userId, {
           type: "peer_message_created",
           folderId: senderSession.folderId,
           message: {
@@ -1343,19 +1343,19 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
-  // POST /internal/peers/broadcast { folderId, message }
+  // POST /internal/peers/broadcast { userId, folderId, message }
   // Used by Next.js API routes to broadcast peer messages to WebSocket clients
   if (pathname === "/internal/peers/broadcast" && req.method === "POST") {
     const payload = await parseRequestJson(req, res);
     if (!payload) return true;
 
-    const { folderId, message } = payload;
-    if (!folderId || !message) {
-      sendJson(res, 400, { error: "Missing folderId or message" });
+    const { userId, folderId, message } = payload;
+    if (!userId || !folderId || !message) {
+      sendJson(res, 400, { error: "Missing userId, folderId, or message" });
       return true;
     }
 
-    broadcastToClients({
+    broadcastToUser(userId as string, {
       type: "peer_message_created",
       folderId,
       message,

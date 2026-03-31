@@ -103,6 +103,7 @@ export function PeerChatProvider({ children }: PeerChatProviderProps) {
     setMessages([]);
     setPeers([]);
     setUnreadCount(0);
+    chatActiveRef.current = false;
     fetchMessages();
     fetchPeers();
   }, [folderId, fetchMessages, fetchPeers]);

@@ -390,10 +390,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handlePeerMessageCreated = useCallback(
-    (_folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => {
-      peerChat.addMessage(message);
+    (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => {
+      // Only add messages for the active folder (ignore cross-folder broadcasts)
+      if (folderId === activeProject.folderId) {
+        peerChat.addMessage(message);
+      }
     },
-    [peerChat.addMessage]
+    [peerChat.addMessage, activeProject.folderId]
   );
 
   // Handle server-pushed session rename (auto-title from .jsonl)

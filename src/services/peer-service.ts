@@ -164,6 +164,7 @@ export async function pollMessages(
       fromSessionName: agentPeerMessages.fromSessionName,
       toSessionId: agentPeerMessages.toSessionId,
       body: agentPeerMessages.body,
+      isUserMessage: agentPeerMessages.isUserMessage,
       createdAt: agentPeerMessages.createdAt,
     })
     .from(agentPeerMessages)

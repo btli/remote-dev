@@ -74,13 +74,13 @@ export const POST = withApiAuth(async (request, { userId }) => {
       body,
     });
 
-    // Broadcast to all WebSocket clients via terminal server
+    // Broadcast to folder owner's WebSocket clients via terminal server
     try {
       const baseUrl = resolveTerminalServerUrl();
       await fetch(`${baseUrl}/internal/peers/broadcast`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderId, message }),
+        body: JSON.stringify({ userId, folderId, message }),
       });
     } catch (err) {
       log.warn("Failed to broadcast peer message", { error: String(err) });
