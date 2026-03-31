@@ -57,17 +57,14 @@ enum HookCommand {
 
 // ── Bash inspection ─────────────────────────────────────────────────
 
-/// Result of inspecting a PreToolUse Bash payload.
+/// Result of inspecting a PreToolUse Bash payload for git push to main/master.
 struct BashInspection {
     command: String,
-    #[allow(dead_code)]
-    is_git_commit: bool,
-    #[allow(dead_code)]
-    is_git_push: bool,
     targets_main: bool,
 }
 
 /// Inspect a pre-parsed PreToolUse payload for Bash commands of interest.
+/// Returns `None` if the payload is not a Bash tool call or has no command.
 fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
     let tool_name = payload.get("tool_name")?.as_str()?;
     if tool_name != "Bash" {
@@ -78,17 +75,12 @@ fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
         .get("command")?
         .as_str()?
         .to_string();
-    let is_git_commit = command.contains("git commit") || command.contains("git-commit");
     let is_git_push = command.contains("git push") || command.contains("git-push");
     let targets_main = is_git_push
-        && match extract_branch_from_push(&command) {
-            Some(ref b) => b == "main" || b == "master",
-            None => false, // bare push with no explicit branch — don't fire
-        };
+        && extract_branch_from_push(&command)
+            .map_or(false, |b| b == "main" || b == "master");
     Some(BashInspection {
         command,
-        is_git_commit,
-        is_git_push,
         targets_main,
     })
 }
@@ -102,9 +94,8 @@ fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
 async fn try_apply_auto_title(client: &Client) {
     const MAX_ATTEMPTS: u32 = 10;
 
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+    let Some(sid) = client.session_id() else {
+        return;
     };
 
     let sentinel = std::path::PathBuf::from(format!("/tmp/rdv-autotitle-{sid}"));
@@ -169,9 +160,8 @@ fn strip_mention_tokens(body: &str) -> String {
 /// Report an agent activity status to the terminal server.
 /// Silently returns if no session ID is available.
 async fn report_status(client: &Client, status: &str) {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+    let Some(sid) = client.session_id() else {
+        return;
     };
     let query = [("sessionId", sid), ("status", status)];
     if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
@@ -191,12 +181,13 @@ fn is_connection_error(err: &dyn std::error::Error) -> bool {
 
 // ── Peer digest ─────────────────────────────────────────────────────
 
+const PEER_HEADER: &str = "\u{2500}\u{2500} Peers \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+const PEER_FOOTER: &str = "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+
 /// Print a compact peer status table and any new messages to stderr.
-/// Replaces the old `check_peer_messages` function with richer output.
 async fn print_peer_digest(client: &Client) {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+    let Some(sid) = client.session_id() else {
+        return;
     };
 
     // Fetch peers
@@ -223,7 +214,7 @@ async fn print_peer_digest(client: &Client) {
     if let Ok(resp) = &peers_result {
         if let Some(peers) = resp.get("peers").and_then(|v| v.as_array()) {
             if !peers.is_empty() {
-                eprintln!("\u{2500}\u{2500} Peers \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+                eprintln!("{PEER_HEADER}");
                 for peer in peers {
                     let name = peer.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
                     let status = peer
@@ -240,7 +231,7 @@ async fn print_peer_digest(client: &Client) {
                         eprintln!("  {name} [{status}]: {summary}");
                     }
                 }
-                eprintln!("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
+                eprintln!("{PEER_FOOTER}");
             }
         }
     }
@@ -289,9 +280,8 @@ fn extract_branch_from_push(command: &str) -> Option<String> {
 
 /// Fire-and-forget broadcast when git push to main/master detected.
 async fn broadcast_git_push_to_peers(client: &Client, command: &str) {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+    let Some(sid) = client.session_id() else {
+        return;
     };
     let branch = extract_branch_from_push(command).unwrap_or_else(|| "main".to_string());
     let body = format!("pushed to {branch} \u{2014} you may need to rebase");
@@ -301,9 +291,8 @@ async fn broadcast_git_push_to_peers(client: &Client, command: &str) {
 
 /// Broadcast session start once per session (sentinel at /tmp/rdv-peer-start-{sid}).
 async fn broadcast_session_start(client: &Client) {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+    let Some(sid) = client.session_id() else {
+        return;
     };
     let sentinel = format!("/tmp/rdv-peer-start-{sid}");
     if std::fs::metadata(&sentinel).is_ok() {
@@ -345,10 +334,8 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
 
     let operation = if is_git_push { "push" } else { "commit" };
 
-    // Need session ID to look up folder
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return false,
+    let Some(sid) = client.session_id() else {
+        return false;
     };
 
     // Get the session's folder ID
@@ -363,9 +350,8 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
         Err(_) => return false,
     };
 
-    let folder_id = match &session.folder_id {
-        Some(id) => id,
-        None => return false,
+    let Some(ref folder_id) = session.folder_id else {
+        return false;
     };
 
     // Read git identity from environment (set by session-service)
@@ -378,8 +364,6 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
 
     // Always call the guard API — the server determines if the folder is sensitive
     // even when no identity env vars are set (which is the most dangerous case)
-
-    // Call the git-guard API
     let guard_payload = json!({
         "proposedName": proposed_name,
         "proposedEmail": proposed_email,
@@ -429,9 +413,8 @@ async fn handle_stop(
     agent: Option<String>,
     reason: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return Ok(()),
+    let Some(sid) = client.session_id() else {
+        return Ok(());
     };
 
     // Clear peer summary (fire-and-forget)
@@ -470,18 +453,16 @@ async fn handle_stop(
     let stop_blocked = match &check_result {
         Ok(val) => {
             let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            if !msg.is_empty() {
+            if msg.is_empty() {
+                false
+            } else {
                 println!("{msg}");
                 true
-            } else {
-                false
             }
         }
         Err(e) => {
             eprintln!("warning: failed to check tasks: {e}");
-            println!(
-                "Unable to verify task completion. Please run TaskList to check your tasks before stopping."
-            );
+            println!("Unable to verify task completion. Please run TaskList to check your tasks before stopping.");
             true
         }
     };
@@ -575,9 +556,8 @@ pub async fn run(
             handle_stop(client, agent, reason).await?;
         }
         HookCommand::Notify { event, body } => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => return Ok(()),
+            let Some(sid) = client.session_id() else {
+                return Ok(());
             };
 
             let payload = json!({

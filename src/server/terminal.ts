@@ -1274,9 +1274,8 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       const history = Array.isArray(meta.titleHistory) ? [...meta.titleHistory] : [];
       if (session.name) {
         history.push(session.name);
-        if (history.length > 10) history.splice(0, history.length - 10);
       }
-      meta.titleHistory = history;
+      meta.titleHistory = history.slice(-10);
       meta.titleLocked = true;
 
       await db

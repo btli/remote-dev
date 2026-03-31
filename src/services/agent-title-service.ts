@@ -137,9 +137,9 @@ export async function tryApplyAutoTitle(
     const csTime = new Date(cs.timestamp).getTime();
     return csTime >= sessionCreatedMs;
   });
-  // Fall back to the newest file if no candidates match (clock skew, etc.)
+  // Pick the oldest candidate (closest to session start); fall back to newest file on clock skew
   const claudeSession = candidates.length > 0
-    ? candidates[candidates.length - 1] // oldest match (closest to session creation)
+    ? candidates[candidates.length - 1]
     : claudeSessions[0];
 
   if (!claudeSession.firstUserMessage) {
