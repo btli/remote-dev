@@ -2,7 +2,7 @@
  * AgentTitleService — Intelligent auto-titling for agent sessions.
  *
  * Reads the Claude Code .jsonl session file to extract the first user message,
- * derives a 2–3 word title, and updates the session name + stores the stable
+ * derives a 3–5 word kebab-case title, and updates the session name + stores the stable
  * Claude session UUID in typeMetadata. Idempotent: runs at most once per session.
  */
 
@@ -15,7 +15,12 @@ import { listSessions } from "@/services/claude-session-service";
 
 const log = createLogger("AgentTitleService");
 
-const MAX_TITLE_WORDS = 3;
+const MAX_TITLE_WORDS = 5;
+
+const STOP_WORDS = new Set([
+  "the", "a", "an", "is", "to", "for", "in", "of", "with",
+  "and", "or", "but", "not", "it", "its", "this", "that",
+]);
 
 export interface AutoTitleResult {
   applied: boolean;
@@ -25,8 +30,8 @@ export interface AutoTitleResult {
 }
 
 /**
- * Derive a short 2–3 word title from a user message.
- * Strips command prefixes, slash commands, and punctuation.
+ * Derive a short 3–5 word kebab-case title from a user message.
+ * Strips command prefixes, slash commands, stop words, and punctuation.
  */
 export function deriveShortTitle(message: string): string | null {
   // Take first line only
@@ -42,14 +47,20 @@ export function deriveShortTitle(message: string): string | null {
   // Strip leading articles/filler words
   text = text.replace(/^(please|can you|could you|i want to|i need to|let's|lets)\s+/i, "");
 
+  // Strip common stop words to make titles more meaningful
+  const allWords = text.split(/\s+/).filter(Boolean);
+  const meaningful = allWords.filter((w) => !STOP_WORDS.has(w.toLowerCase()));
+  // Fall back to original words if all were stop words
+  const wordPool = meaningful.length > 0 ? meaningful : allWords;
+
   // Take first N words
-  const words = text.split(/\s+/).filter(Boolean).slice(0, MAX_TITLE_WORDS);
+  const words = wordPool.slice(0, MAX_TITLE_WORDS);
   if (words.length === 0) return null;
 
-  // Lowercase, remove trailing punctuation from last word
+  // Lowercase, kebab-case, remove trailing punctuation from last word
   const title = words
     .map((w) => w.toLowerCase())
-    .join(" ")
+    .join("-")
     .replace(/[.,;:!?]+$/, "");
 
   return title || null;
