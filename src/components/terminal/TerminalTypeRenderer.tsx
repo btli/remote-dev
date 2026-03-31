@@ -55,6 +55,8 @@ interface TerminalTypeRendererProps {
   onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
   /** Called when session progress is updated or cleared */
   onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
+  /** Called when a peer message is created (broadcast from terminal server) */
+  onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
 }
 
 export function TerminalTypeRenderer({
@@ -81,6 +83,7 @@ export function TerminalTypeRenderer({
   onNotification,
   onSessionStatus,
   onSessionProgress,
+  onPeerMessageCreated,
 }: TerminalTypeRendererProps) {
   const { getAgentActivityStatus } = useSessionContext();
   const activityStatus = getAgentActivityStatus(session.id);
@@ -154,6 +157,7 @@ export function TerminalTypeRenderer({
         onNotification={onNotification}
         onSessionStatus={onSessionStatus}
         onSessionProgress={onSessionProgress}
+        onPeerMessageCreated={onPeerMessageCreated}
         onOutput={onOutput}
         onDimensionsChange={onDimensionsChange}
       />

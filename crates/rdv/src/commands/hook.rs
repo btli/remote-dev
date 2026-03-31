@@ -39,8 +39,7 @@ enum HookCommand {
         body: Option<String>,
     },
     /// Handle SessionEnd hook: report session ended
-    SessionEnd {
-    },
+    SessionEnd,
     /// Validate that all hooks can reach the server and are functional
     Validate,
     /// Unified handler for Claude Code lifecycle hooks (cmux-compatible)
@@ -58,23 +57,69 @@ enum HookCommand {
 
 /// Try to apply an auto-title to the agent session from its .jsonl file.
 /// Fire-and-forget: never blocks the hook, silently ignores errors.
-/// Uses a tmpfile sentinel so it fires at most once per session lifetime.
+/// Uses a tmpfile sentinel so it only fires until a title is successfully applied.
+/// The sentinel stores an attempt counter; gives up after MAX_ATTEMPTS tries.
 async fn try_apply_auto_title(client: &Client) {
+    const MAX_ATTEMPTS: u32 = 10;
+
     let sid = match client.session_id() {
         Some(s) => s,
         None => return,
     };
 
-    // Sentinel: skip if we've already attempted for this session
     let sentinel = std::path::PathBuf::from(format!("/tmp/rdv-autotitle-{sid}"));
-    if sentinel.exists() {
+
+    // Read sentinel: "done" means title was applied; a number tracks attempts
+    let sentinel_value = std::fs::read_to_string(&sentinel).unwrap_or_default();
+    let trimmed = sentinel_value.trim();
+
+    if trimmed == "done" {
         return;
     }
-    // Create sentinel before firing request (best-effort)
-    let _ = std::fs::write(&sentinel, "");
+
+    let attempts: u32 = trimmed.parse().unwrap_or(0);
+    if attempts >= MAX_ATTEMPTS {
+        return;
+    }
+
+    let _ = std::fs::write(&sentinel, (attempts + 1).to_string());
 
     let query = [("sessionId", sid)];
-    let _ = client.post_empty_with_query("/internal/agent-title", &query).await;
+    let result: Result<serde_json::Value, _> =
+        client.post_empty_with_query("/internal/agent-title", &query).await;
+
+    if let Ok(val) = result {
+        if val.get("applied").and_then(|v| v.as_bool()).unwrap_or(false) {
+            let _ = std::fs::write(&sentinel, "done");
+        }
+    }
+}
+
+/// Replace `@<sid:UUID>` mention tokens with `@<short-id>` for human-readable output.
+fn strip_mention_tokens(body: &str) -> String {
+    const PREFIX: &str = "@<sid:";
+    const SUFFIX: char = '>';
+    const UUID_LEN: usize = 36; // e.g. 550e8400-e29b-41d4-a716-446655440000
+
+    let mut result = String::with_capacity(body.len());
+    let mut rest = body;
+
+    while let Some(start) = rest.find(PREFIX) {
+        result.push_str(&rest[..start]);
+        let after_prefix = &rest[start + PREFIX.len()..];
+        if after_prefix.len() >= UUID_LEN + 1 && after_prefix.as_bytes()[UUID_LEN] == SUFFIX as u8 {
+            // Replace with @<first-8-chars-of-uuid>
+            result.push('@');
+            result.push_str(&after_prefix[..8]);
+            rest = &after_prefix[UUID_LEN + 1..];
+        } else {
+            // Not a valid token, keep the prefix literal
+            result.push_str(PREFIX);
+            rest = after_prefix;
+        }
+    }
+    result.push_str(rest);
+    result
 }
 
 /// Report an agent activity status to the terminal server.
@@ -312,9 +357,11 @@ async fn check_peer_messages(client: &Client) {
         let from = msg.get("fromSessionName")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let body = msg.get("body")
+        let raw_body = msg.get("body")
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        // Strip @<sid:UUID> mention tokens → @<short-id> for readable stderr output
+        let body = strip_mention_tokens(raw_body);
         let is_broadcast = msg.get("toSessionId")
             .map_or(true, |v| v.is_null());
         let target = if is_broadcast { " (broadcast)" } else { "" };
@@ -381,7 +428,7 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             });
             let _ = client.post_json("/internal/notify", &payload).await;
         }
-        HookCommand::SessionEnd {} => {
+        HookCommand::SessionEnd => {
             report_status(client, "ended").await;
         }
         HookCommand::Validate => {

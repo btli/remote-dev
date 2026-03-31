@@ -4,6 +4,7 @@ import { eq, and, desc, isNull, inArray, count } from "drizzle-orm";
 import type { NotificationEvent, CreateNotificationInput } from "@/types/notification";
 import type { PushNotificationGateway } from "@/application/ports/PushNotificationGateway";
 import type { PushTokenRepository } from "@/application/ports/PushTokenRepository";
+import { resolveTerminalServerUrl } from "@/lib/terminal-server-url";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("NotificationService");
@@ -174,15 +175,6 @@ export async function broadcastDismissed(opts: { userId: string; ids?: string[];
   } catch (err) {
     log.warn("Failed to broadcast notification dismissed", { error: String(err) });
   }
-}
-
-function resolveTerminalServerUrl(): string {
-  const socketPath = process.env.RDV_TERMINAL_SOCKET;
-  if (socketPath) {
-    return `http://unix:${socketPath}:`;
-  }
-  const port = process.env.RDV_TERMINAL_PORT ?? process.env.TERMINAL_PORT ?? "6002";
-  return `http://127.0.0.1:${port}`;
 }
 
 function mapRow(row: typeof notificationEvents.$inferSelect): NotificationEvent {

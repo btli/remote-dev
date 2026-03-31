@@ -12,6 +12,37 @@ const log = createLogger("PeerService");
 
 const MAX_MESSAGE_LENGTH = 8192;
 
+/**
+ * Resolve @name mentions in message body to @<sid:UUID> tokens.
+ * Looks up peer names in the given folder (case-insensitive, longest match first).
+ * Already-tokenized mentions (@<sid:UUID>) are left untouched.
+ */
+async function resolveMentionsInBody(body: string, folderId: string): Promise<string> {
+  if (!body.includes("@")) return body;
+
+  // Get all agent/loop sessions in the folder
+  const peers = await db.query.terminalSessions.findMany({
+    where: and(
+      eq(terminalSessions.folderId, folderId),
+      inArray(terminalSessions.terminalType, ["agent", "loop"]),
+      inArray(terminalSessions.status, ["active", "suspended"]),
+    ),
+    columns: { id: true, name: true },
+  });
+
+  if (peers.length === 0) return body;
+
+  // Sort longest name first for greedy matching
+  const sorted = [...peers].sort((a, b) => b.name.length - a.name.length);
+  const escaped = sorted.map((p) => p.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(`@(${escaped.join("|")})(?=\\s|$|[.,;!?])`, "gi");
+
+  return body.replace(pattern, (_match, name: string) => {
+    const peer = sorted.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    return peer ? `@<sid:${peer.id}>` : _match;
+  });
+}
+
 export interface PeerInfo {
   sessionId: string;
   name: string;
@@ -28,6 +59,7 @@ export interface PeerMessage {
   fromSessionName: string;
   toSessionId: string | null;
   body: string;
+  isUserMessage: boolean;
   createdAt: string;
 }
 
@@ -48,35 +80,8 @@ export async function getPeers(
     return [];
   }
 
-  const peers = await db.query.terminalSessions.findMany({
-    where: and(
-      eq(terminalSessions.folderId, session.folderId),
-      inArray(terminalSessions.terminalType, ["agent", "loop"]),
-      inArray(terminalSessions.status, ["active", "suspended"]),
-    ),
-    columns: {
-      id: true,
-      name: true,
-      agentProvider: true,
-      agentActivityStatus: true,
-      typeMetadata: true,
-    },
-  });
-
-  return peers
-    .filter((p) => p.id !== sessionId)
-    .map((p) => {
-      const agentMeta = parseAgentMeta(p.typeMetadata);
-      return {
-        sessionId: p.id,
-        name: p.name,
-        agentProvider: p.agentProvider,
-        agentActivityStatus: p.agentActivityStatus,
-        peerSummary: agentMeta.peerSummary,
-        claudeSessionId: agentMeta.claudeSessionId,
-        isConnected: isConnectedFn ? isConnectedFn(p.id) : false,
-      };
-    });
+  const allPeers = await getFolderPeers(session.folderId, isConnectedFn);
+  return allPeers.filter((p) => p.sessionId !== sessionId);
 }
 
 /** Extract agent metadata fields from typeMetadata JSON. */
@@ -91,6 +96,36 @@ function parseAgentMeta(typeMetadata: string | null): {
   };
 }
 
+/** Convert a DB message row to a PeerMessage. */
+function toMessageRow(row: {
+  id: string;
+  fromSessionId: string | null;
+  fromSessionName: string;
+  toSessionId: string | null;
+  body: string;
+  isUserMessage?: boolean | null;
+  createdAt: Date | string | number;
+}): PeerMessage {
+  return {
+    id: row.id,
+    fromSessionId: row.fromSessionId,
+    fromSessionName: row.fromSessionName,
+    toSessionId: row.toSessionId,
+    body: row.body,
+    isUserMessage: row.isUserMessage ?? false,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+  };
+}
+
+export interface SendMessageResult {
+  messageId: string;
+  resolvedBody: string;
+  senderName: string;
+  folderId: string;
+  userId: string;
+  createdAt: string;
+}
+
 /**
  * Send a message to a specific peer or broadcast to all peers in the folder.
  */
@@ -98,7 +133,7 @@ export async function sendMessage(params: {
   fromSessionId: string;
   toSessionId?: string;
   body: string;
-}): Promise<{ messageId: string }> {
+}): Promise<SendMessageResult> {
   const { fromSessionId, toSessionId, body } = params;
 
   if (body.length > MAX_MESSAGE_LENGTH) {
@@ -107,10 +142,10 @@ export async function sendMessage(params: {
 
   const sender = await db.query.terminalSessions.findFirst({
     where: eq(terminalSessions.id, fromSessionId),
-    columns: { folderId: true, name: true },
+    columns: { folderId: true, name: true, userId: true },
   });
 
-  if (!sender?.folderId) {
+  if (!sender?.folderId || !sender.userId) {
     throw new Error("Sender session not found or has no folder");
   }
 
@@ -126,6 +161,8 @@ export async function sendMessage(params: {
   }
 
   const messageId = crypto.randomUUID();
+  const now = new Date();
+  const resolvedBody = await resolveMentionsInBody(body, sender.folderId);
 
   await db.insert(agentPeerMessages).values({
     id: messageId,
@@ -133,7 +170,8 @@ export async function sendMessage(params: {
     fromSessionId,
     fromSessionName: sender.name,
     toSessionId: toSessionId ?? null,
-    body,
+    body: resolvedBody,
+    createdAt: now,
   });
 
   log.debug("Peer message sent", {
@@ -143,7 +181,14 @@ export async function sendMessage(params: {
     folderId: sender.folderId,
   });
 
-  return { messageId };
+  return {
+    messageId,
+    resolvedBody,
+    senderName: sender.name,
+    folderId: sender.folderId,
+    userId: sender.userId,
+    createdAt: now.toISOString(),
+  };
 }
 
 /**
@@ -162,13 +207,14 @@ export async function pollMessages(
     return [];
   }
 
-  const messages = await db
+  const rows = await db
     .select({
       id: agentPeerMessages.id,
       fromSessionId: agentPeerMessages.fromSessionId,
       fromSessionName: agentPeerMessages.fromSessionName,
       toSessionId: agentPeerMessages.toSessionId,
       body: agentPeerMessages.body,
+      isUserMessage: agentPeerMessages.isUserMessage,
       createdAt: agentPeerMessages.createdAt,
     })
     .from(agentPeerMessages)
@@ -190,14 +236,7 @@ export async function pollMessages(
     )
     .orderBy(agentPeerMessages.createdAt);
 
-  return messages.map((m) => ({
-    id: m.id,
-    fromSessionId: m.fromSessionId,
-    fromSessionName: m.fromSessionName,
-    toSessionId: m.toSessionId,
-    body: m.body,
-    createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : String(m.createdAt),
-  }));
+  return rows.map(toMessageRow);
 }
 
 /**
@@ -235,4 +274,111 @@ export async function cleanupOldMessages(): Promise<void> {
     .where(sql`${agentPeerMessages.createdAt} < ${cutoff.getTime()}`);
 
   log.debug("Peer message cleanup complete");
+}
+
+/**
+ * Send a message from the user (not from an agent session).
+ * Inserts directly with fromSessionId=null and isUserMessage=true.
+ */
+export async function sendUserMessage(params: {
+  folderId: string;
+  fromName: string;
+  body: string;
+}): Promise<{ messageId: string; message: PeerMessage }> {
+  const { folderId, fromName, body } = params;
+
+  if (body.length > MAX_MESSAGE_LENGTH) {
+    throw new Error(`Message exceeds maximum length of ${MAX_MESSAGE_LENGTH} characters`);
+  }
+
+  const messageId = crypto.randomUUID();
+  const now = new Date();
+  const resolvedBody = await resolveMentionsInBody(body, folderId);
+
+  const row = {
+    id: messageId,
+    folderId,
+    fromSessionId: null,
+    fromSessionName: fromName,
+    toSessionId: null,
+    body: resolvedBody,
+    isUserMessage: true,
+    createdAt: now,
+  };
+
+  await db.insert(agentPeerMessages).values(row);
+
+  log.debug("User message sent", { messageId, folderId, fromName });
+
+  return { messageId, message: toMessageRow(row) };
+}
+
+/**
+ * List all messages in a folder (for the chat room UI).
+ * Unlike pollMessages, this is not session-scoped — it returns the full conversation.
+ */
+export async function listFolderMessages(
+  folderId: string,
+  limit: number = 200
+): Promise<PeerMessage[]> {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const rows = await db
+    .select({
+      id: agentPeerMessages.id,
+      fromSessionId: agentPeerMessages.fromSessionId,
+      fromSessionName: agentPeerMessages.fromSessionName,
+      toSessionId: agentPeerMessages.toSessionId,
+      body: agentPeerMessages.body,
+      isUserMessage: agentPeerMessages.isUserMessage,
+      createdAt: agentPeerMessages.createdAt,
+    })
+    .from(agentPeerMessages)
+    .where(
+      and(
+        eq(agentPeerMessages.folderId, folderId),
+        gt(agentPeerMessages.createdAt, cutoff)
+      )
+    )
+    .orderBy(agentPeerMessages.createdAt)
+    .limit(limit);
+
+  return rows.map(toMessageRow);
+}
+
+/**
+ * List active agent peers in a folder (without requiring a calling session ID).
+ * Used by the chat room UI's tab bar to show agent activity dots.
+ */
+export async function getFolderPeers(
+  folderId: string,
+  isConnectedFn?: (id: string) => boolean
+): Promise<PeerInfo[]> {
+  const peers = await db.query.terminalSessions.findMany({
+    where: and(
+      eq(terminalSessions.folderId, folderId),
+      inArray(terminalSessions.terminalType, ["agent", "loop"]),
+      inArray(terminalSessions.status, ["active", "suspended"]),
+    ),
+    columns: {
+      id: true,
+      name: true,
+      agentProvider: true,
+      agentActivityStatus: true,
+      typeMetadata: true,
+    },
+  });
+
+  return peers.map((p) => {
+    const agentMeta = parseAgentMeta(p.typeMetadata);
+    return {
+      sessionId: p.id,
+      name: p.name,
+      agentProvider: p.agentProvider,
+      agentActivityStatus: p.agentActivityStatus,
+      peerSummary: agentMeta.peerSummary,
+      claudeSessionId: agentMeta.claudeSessionId,
+      isConnected: isConnectedFn ? isConnectedFn(p.id) : false,
+    };
+  });
 }

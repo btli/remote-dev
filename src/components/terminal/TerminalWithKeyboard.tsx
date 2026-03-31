@@ -55,6 +55,8 @@ interface TerminalWithKeyboardProps {
   onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
   /** Called when session progress is updated or cleared */
   onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
+  /** Called when a peer message is created (broadcast from terminal server) */
+  onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
 }
 
 export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
@@ -84,6 +86,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onNotification,
   onSessionStatus,
   onSessionProgress,
+  onPeerMessageCreated,
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
@@ -174,6 +177,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         onNotification={onNotification}
         onSessionStatus={onSessionStatus}
         onSessionProgress={onSessionProgress}
+        onPeerMessageCreated={onPeerMessageCreated}
         onScrollStateChange={setIsTerminalScrolledUp}
       />
     </ErrorBoundary>

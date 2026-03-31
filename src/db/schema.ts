@@ -1651,6 +1651,9 @@ export const agentPeerMessages = sqliteTable(
       onDelete: "set null",
     }),
     body: text("body").notNull(),
+    isUserMessage: integer("is_user_message", { mode: "boolean" })
+      .notNull()
+      .default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),

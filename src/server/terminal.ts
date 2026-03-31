@@ -1206,22 +1206,24 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
 
-    // Fire-and-forget: apply auto-title and broadcast if successful
-    import("@/services/agent-title-service")
-      .then(async (AgentTitleService) => {
-        const result = await AgentTitleService.tryApplyAutoTitle(sessionId);
-        if (!result.applied || !result.title || !result.userId) return;
+    try {
+      const AgentTitleService = await import("@/services/agent-title-service");
+      const result = await AgentTitleService.tryApplyAutoTitle(sessionId);
 
+      if (result.applied && result.title && result.userId) {
         broadcastToUser(result.userId, {
           type: "session_renamed",
           sessionId,
           name: result.title,
           claudeSessionId: result.claudeSessionId,
         });
-      })
-      .catch((err) => agentStatusLog.error("Auto-title failed", { error: String(err), sessionId }));
+      }
 
-    sendJson(res, 200, { success: true });
+      sendJson(res, 200, { applied: result.applied, title: result.title ?? null });
+    } catch (err) {
+      agentStatusLog.error("Auto-title failed", { error: String(err), sessionId });
+      sendJson(res, 200, { applied: false });
+    }
     return true;
   }
 
@@ -1264,7 +1266,22 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         toSessionId: toSessionId as string | undefined,
         body: msgBody as string,
       });
-      sendJson(res, 200, result);
+
+      broadcastToUser(result.userId, {
+        type: "peer_message_created",
+        folderId: result.folderId,
+        message: {
+          id: result.messageId,
+          fromSessionId,
+          fromSessionName: result.senderName,
+          toSessionId: toSessionId ?? null,
+          body: result.resolvedBody,
+          isUserMessage: false,
+          createdAt: result.createdAt,
+        },
+      });
+
+      sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
     } catch (err) {
       peerLog.error("Failed to send peer message", { error: String(err) });
       sendJson(res, 500, { error: String(err) });
@@ -1313,6 +1330,27 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       peerLog.error("Failed to set peer summary", { error: String(err) });
       sendJson(res, 500, { error: "Failed to set summary" });
     }
+    return true;
+  }
+
+  // POST /internal/peers/broadcast { userId, folderId, message }
+  // Used by Next.js API routes to broadcast peer messages to WebSocket clients
+  if (pathname === "/internal/peers/broadcast" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+
+    const { userId, folderId, message } = payload;
+    if (!userId || !folderId || !message) {
+      sendJson(res, 400, { error: "Missing userId, folderId, or message" });
+      return true;
+    }
+
+    broadcastToUser(userId as string, {
+      type: "peer_message_created",
+      folderId,
+      message,
+    });
+    sendJson(res, 200, { ok: true });
     return true;
   }
 
