@@ -68,7 +68,7 @@ import { dismissToastsForSession } from "@/lib/notification-toast";
 import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { FolderTabBar } from "@/components/peers/FolderTabBar";
 import { PeerChatRoom } from "@/components/peers/PeerChatRoom";
-import type { ActiveView } from "@/types/peer-chat";
+import type { ActiveView, PeerChatMessage } from "@/types/peer-chat";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -390,7 +390,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handlePeerMessageCreated = useCallback(
-    (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => {
+    (folderId: string, message: PeerChatMessage) => {
       // Only add messages for the active folder (ignore cross-folder broadcasts)
       if (folderId === activeProject.folderId) {
         peerChat.addMessage(message);
