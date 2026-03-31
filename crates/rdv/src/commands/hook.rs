@@ -81,9 +81,10 @@ fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
     let is_git_commit = command.contains("git commit") || command.contains("git-commit");
     let is_git_push = command.contains("git push") || command.contains("git-push");
     let targets_main = is_git_push
-        && (command.contains(" main")
-            || command.contains(" master")
-            || !command.split_whitespace().any(|w| w.contains('/')));
+        && match extract_branch_from_push(&command) {
+            Some(ref b) => b == "main" || b == "master",
+            None => false, // bare push with no explicit branch — don't fire
+        };
     Some(BashInspection {
         command,
         is_git_commit,

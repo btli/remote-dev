@@ -57,11 +57,11 @@ export function deriveShortTitle(message: string): string | null {
   const words = wordPool.slice(0, MAX_TITLE_WORDS);
   if (words.length === 0) return null;
 
-  // Lowercase, kebab-case, remove trailing punctuation from last word
+  // Lowercase, strip non-alpha chars, kebab-case
   const title = words
-    .map((w) => w.toLowerCase())
-    .join("-")
-    .replace(/[.,;:!?]+$/, "");
+    .map((w) => w.toLowerCase().replace(/[^a-z]/g, ""))
+    .filter(Boolean)
+    .join("-");
 
   return title || null;
 }
