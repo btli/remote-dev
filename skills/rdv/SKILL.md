@@ -33,9 +33,29 @@ rdv session exec <session-id> "echo hello"
 rdv session close <session-id>
 ```
 
+## Session Naming
+
+**IMPORTANT: Set a descriptive title for your session as one of your first actions** so peers can identify your work:
+
+```bash
+rdv session title fix-auth-token-refresh
+rdv session title implement-payment-webhook
+rdv session title debug-memory-leak-api
+```
+
+**Rules:**
+- 3-5 words, hyphen-separated (kebab-case)
+- Lowercase letters and hyphens only
+- Describe the work, not the agent (e.g. "add-user-pagination" not "my-session-3")
+- Set this within your first few tool uses
+
+If you don't call `rdv session title`, the system auto-generates a title from your first message — but prefer setting it explicitly for clarity.
+
 ## Starting Parallel Agents
 
 Launch a new agent session in a folder (uses the folder's configured agent provider):
+
+**IMPORTANT: Always use worktrees when spawning subagents or working in agent teams.** Worktrees provide branch isolation that prevents merge conflicts between parallel agents working on the same codebase.
 
 ```bash
 # Start agent in a folder
@@ -253,4 +273,12 @@ rdv session spawn <my-session-id> --agent-provider claude --name "backend-work"
 rdv session spawn <my-session-id> --agent-provider claude --name "frontend-work"
 rdv session children <my-session-id>   # Monitor child sessions
 rdv notification list --unread         # Check for notifications
+```
+
+### 6. Coordinate with peer agents
+```bash
+rdv session title implement-auth-flow     # Name your session first
+rdv peer list                             # See what other agents are working on
+rdv peer send --broadcast "rebased on main, ready for integration"
+rdv peer summary "finishing OAuth implementation, will push to main soon"
 ```
