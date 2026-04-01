@@ -53,13 +53,13 @@ export function deriveShortTitle(message: string): string | null {
   // Fall back to original words if all were stop words
   const wordPool = meaningful.length > 0 ? meaningful : allWords;
 
-  // Take first N words
+  // Take first N words, require at least 2 for a meaningful title
   const words = wordPool.slice(0, MAX_TITLE_WORDS);
-  if (words.length === 0) return null;
+  if (words.length < 2) return null;
 
-  // Lowercase, strip non-alpha chars, kebab-case
+  // Lowercase, strip non-alphanumeric chars, kebab-case
   const title = words
-    .map((w) => w.toLowerCase().replace(/[^a-z]/g, ""))
+    .map((w) => w.toLowerCase().replace(/[^a-z0-9]/g, ""))
     .filter(Boolean)
     .join("-");
 

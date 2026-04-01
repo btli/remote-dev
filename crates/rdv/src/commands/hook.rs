@@ -57,13 +57,13 @@ enum HookCommand {
 
 // ── Bash inspection ─────────────────────────────────────────────────
 
-/// Result of inspecting a PreToolUse Bash payload for git push to main/master.
+/// Result of inspecting a Bash tool-use payload for git push to main/master.
 struct BashInspection {
     command: String,
     targets_main: bool,
 }
 
-/// Inspect a pre-parsed PreToolUse payload for Bash commands of interest.
+/// Inspect a parsed tool-use payload for Bash commands of interest.
 /// Returns `None` if the payload is not a Bash tool call or has no command.
 fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
     let tool_name = payload.get("tool_name")?.as_str()?;
@@ -76,9 +76,10 @@ fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
         .as_str()?
         .to_string();
     let is_git_push = command.contains("git push") || command.contains("git-push");
+    // If no explicit branch (bare `git push` or `git push origin`), assume it may target main
     let targets_main = is_git_push
         && extract_branch_from_push(&command)
-            .map_or(false, |b| b == "main" || b == "master");
+            .map_or(true, |b| b == "main" || b == "master");
     Some(BashInspection {
         command,
         targets_main,
@@ -283,8 +284,10 @@ async fn broadcast_git_push_to_peers(client: &Client, command: &str) {
     let Some(sid) = client.session_id() else {
         return;
     };
-    let branch = extract_branch_from_push(command).unwrap_or_else(|| "main".to_string());
-    let body = format!("pushed to {branch} \u{2014} you may need to rebase");
+    let body = match extract_branch_from_push(command) {
+        Some(branch) => format!("pushed to {branch} \u{2014} you may need to rebase"),
+        None => "pushed (branch unspecified) \u{2014} you may need to rebase".to_string(),
+    };
     let payload = json!({ "fromSessionId": sid, "body": body });
     let _ = client.post_json("/internal/peers/messages/send", &payload).await;
 }
@@ -536,15 +539,20 @@ pub async fn run(
             if check_git_identity_guard(client, &payload).await {
                 std::process::exit(2);
             }
+        }
+        HookCommand::PostToolUse => {
+            // Read stdin, parse as JSON to check for Bash git push
+            let mut buf = Vec::new();
+            let _ = std::io::stdin().read_to_end(&mut buf);
+            let payload: serde_json::Value =
+                serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
 
+            // Broadcast to peers after successful git push to main/master
             if let Some(inspection) = inspect_bash_payload(&payload) {
                 if inspection.targets_main {
                     broadcast_git_push_to_peers(client, &inspection.command).await;
                 }
             }
-        }
-        HookCommand::PostToolUse => {
-            sync_todos_from_stdin(client).await?;
         }
         HookCommand::PreCompact => {
             report_status(client, "compacting").await;
@@ -634,7 +642,8 @@ pub async fn run(
             match event.as_str() {
                 "session-start" | "active" | "prompt-submit" => {
                     report_status(client, "running").await;
-                    print_peer_digest(client).await;
+                    // Peer digest is handled by PreToolUse (Bash matcher) to avoid
+                    // duplicate output — the "" matcher fires on ALL tools including Bash.
                     broadcast_session_start(client).await;
                     try_apply_auto_title(client).await;
                 }

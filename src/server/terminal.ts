@@ -1237,15 +1237,15 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
 
-    // Validate kebab-case: lowercase letters and hyphens, 3-5 hyphen-separated words
+    // Validate kebab-case: lowercase letters, digits, and hyphens, 3-5 hyphen-separated words
     const kebabWords = title.split("-");
     if (
-      !/^[a-z]+(-[a-z]+)*$/.test(title) ||
+      !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(title) ||
       kebabWords.length < 3 ||
       kebabWords.length > 5
     ) {
       sendJson(res, 400, {
-        error: "Title must be kebab-case (lowercase letters and hyphens) with 3-5 words",
+        error: "Title must be kebab-case (lowercase letters, digits, and hyphens) with 3-5 words",
       });
       return true;
     }

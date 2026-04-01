@@ -166,9 +166,9 @@ pub async fn run(args: SessionArgs, client: &Client, human: bool) -> Result<(), 
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         SessionCommand::Title { title } => {
-            // Validate kebab-case: lowercase ascii + hyphens only
-            if !title.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
-                return Err("title must be kebab-case (lowercase letters and hyphens only)".into());
+            // Validate kebab-case: lowercase ascii, digits, and hyphens only
+            if !title.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+                return Err("title must be kebab-case (lowercase letters, digits, and hyphens only)".into());
             }
             // Validate 3-5 hyphen-separated words
             let word_count = title.split('-').count();
