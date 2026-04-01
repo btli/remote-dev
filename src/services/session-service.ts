@@ -56,6 +56,26 @@ async function resolveGitCredentialEnv(
 }
 
 /**
+ * Resolve ccflare proxy env for Claude agent sessions.
+ * Returns ANTHROPIC_BASE_URL pointing at the local proxy when running.
+ */
+async function resolveCcflareEnv(agentProvider: string): Promise<Record<string, string>> {
+  if (agentProvider !== "claude") return {};
+  try {
+    const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+    if (ccflareProcessManager.isRunning()) {
+      const port = ccflareProcessManager.getPort();
+      if (port) {
+        return { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
+      }
+    }
+  } catch {
+    // ccflare not available
+  }
+  return {};
+}
+
+/**
  * Resolve folder-level git identity override env vars (pseudonymous commits).
  */
 async function resolveFolderGitIdentityEnv(
@@ -350,23 +370,9 @@ export async function createSession(
     log.error("Failed to resolve GitHub account env", { sessionId, error: String(error) });
   }
 
-  // Inject ANTHROPIC_BASE_URL for Claude agent sessions when ccflare proxy is running
-  let ccflareEnv: Record<string, string> = {};
-  if (isAgentSession && effectiveAgentProvider === "claude") {
-    try {
-      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
-      if (ccflareProcessManager.isRunning()) {
-        const port = ccflareProcessManager.getPort();
-        if (port) {
-          ccflareEnv = {
-            ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
-          };
-        }
-      }
-    } catch {
-      // ccflare not available, skip
-    }
-  }
+  const ccflareEnv = isAgentSession
+    ? await resolveCcflareEnv(effectiveAgentProvider)
+    : {};
 
   // File and browser sessions don't need tmux — they're pure UI
   if (input.terminalType !== "file" && input.terminalType !== "browser") {
@@ -954,21 +960,7 @@ export async function resumeSession(
       const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!session.profileId);
       const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.folderId);
 
-      // Inject ccflare proxy URL for Claude agent sessions on resume
-      let ccflareEnv: Record<string, string> = {};
-      if (agentProvider === "claude") {
-        try {
-          const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
-          if (ccflareProcessManager.isRunning()) {
-            const port = ccflareProcessManager.getPort();
-            if (port) {
-              ccflareEnv = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
-            }
-          }
-        } catch {
-          // ccflare not available
-        }
-      }
+      const ccflareEnv = await resolveCcflareEnv(agentProvider);
 
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
         ...ccflareEnv,

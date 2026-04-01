@@ -59,27 +59,18 @@ class CcflareProcessManager {
       // Not found or not executable locally
     }
 
-    this.cachedBinaryPath = null;
+    // Don't cache negative result — binary may be installed later
     return null;
   }
 
-  /**
-   * Get the PID file path.
-   */
   private getPidFilePath(): string {
     return join(getServerDir(), "ccflare.pid");
   }
 
-  /**
-   * Get the better-ccflare database path.
-   */
   private getDbPath(): string {
     return join(getCcflareDir(), "better-ccflare.db");
   }
 
-  /**
-   * Ensure required directories exist.
-   */
   private ensureDirectories(): void {
     const serverDir = getServerDir();
     if (!existsSync(serverDir)) {
@@ -91,16 +82,10 @@ class CcflareProcessManager {
     }
   }
 
-  /**
-   * Write the PID to the PID file.
-   */
   private writePid(pid: number): void {
     writeFileSync(this.getPidFilePath(), pid.toString());
   }
 
-  /**
-   * Read the PID from the PID file.
-   */
   private readPid(): number | null {
     try {
       const pid = parseInt(readFileSync(this.getPidFilePath(), "utf-8").trim(), 10);
@@ -140,23 +125,34 @@ class CcflareProcessManager {
   /**
    * Clean up any stale PID file from a previous run.
    */
-  private cleanupStalePid(): void {
+  private async cleanupStalePid(): Promise<void> {
     const pid = this.readPid();
     if (pid === null) return;
 
     if (!this.isProcessAlive(pid)) {
       log.info("Cleaning up stale PID file", { stalePid: pid });
       this.removePid();
-    } else {
-      // Kill orphaned process to avoid duplicate instances
-      log.warn("Killing orphaned ccflare process from previous session", { pid });
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Already gone
-      }
-      this.removePid();
+      return;
     }
+
+    // Kill orphaned process and wait for it to release the port
+    log.warn("Killing orphaned ccflare process from previous session", { pid });
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      this.removePid();
+      return;
+    }
+
+    const deadline = Date.now() + GRACEFUL_SHUTDOWN_MS;
+    while (Date.now() < deadline && this.isProcessAlive(pid)) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (this.isProcessAlive(pid)) {
+      log.warn("Force killing orphaned ccflare process", { pid });
+      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+    this.removePid();
   }
 
   /**
@@ -179,7 +175,7 @@ class CcflareProcessManager {
 
     try {
       this.ensureDirectories();
-      this.cleanupStalePid();
+      await this.cleanupStalePid();
 
       const binaryPath = this.resolveBinaryPath();
       if (!binaryPath) {
@@ -264,9 +260,23 @@ class CcflareProcessManager {
   private async waitForReady(): Promise<void> {
     const deadline = Date.now() + READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if (await this.healthCheck()) {
-        log.debug("Ccflare proxy ready");
+      if (this.process === null) {
+        log.warn("Ccflare process exited before becoming ready");
         return;
+      }
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
+        const response = await fetch(`http://${DEFAULT_HOST}:${this.port}/health`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (response.ok) {
+          log.debug("Ccflare proxy ready");
+          return;
+        }
+      } catch {
+        // Not ready yet
       }
       await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
     }

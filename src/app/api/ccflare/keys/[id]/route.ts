@@ -39,7 +39,11 @@ export const PATCH = withAuth(async (_request, { userId, params }) => {
     const updated = await CcflareService.toggleApiKeyPause(userId, keyId);
     return NextResponse.json(updated);
   } catch (error) {
-    log.error("Failed to toggle ccflare key pause", { error: String(error), keyId: params?.id });
+    const msg = String(error);
+    if (msg.includes("not found")) {
+      return errorResponse("API key not found", 404, "NOT_FOUND");
+    }
+    log.error("Failed to toggle ccflare key pause", { error: msg, keyId: params?.id });
     return errorResponse("Failed to toggle ccflare key pause", 500);
   }
 });
