@@ -422,7 +422,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         });
       }
     },
-    [activeProject.folderId, channelCtx]
+    [activeProject.folderId, channelCtx.addMessage]
   );
 
   const handleThreadReplyCreated = useCallback(
@@ -442,7 +442,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         });
       }
     },
-    [activeProject.folderId, channelCtx]
+    [activeProject.folderId, channelCtx.addThreadReply]
   );
 
   const handleChannelCreated = useCallback(
@@ -451,7 +451,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         channelCtx.addChannel(channel);
       }
     },
-    [activeProject.folderId, channelCtx]
+    [activeProject.folderId, channelCtx.addChannel]
   );
 
   // Handle server-pushed session rename (auto-title from .jsonl)

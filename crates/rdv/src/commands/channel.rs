@@ -165,30 +165,52 @@ pub async fn run(
             }
         }
         ChannelCommand::Messages { channel, limit } => {
-            // First, list channels to resolve name to ID
-            let query = [("sessionId", sid)];
-            let list_resp: ChannelListResponse = client
-                .get_with_query("/internal/channels/list", &query)
+            #[derive(Deserialize)]
+            struct MessagesResponse {
+                messages: Vec<ChannelMessageInfo>,
+            }
+
+            #[derive(Deserialize, Serialize)]
+            struct ChannelMessageInfo {
+                #[serde(rename = "fromSessionName")]
+                from_session_name: String,
+                body: String,
+                #[serde(rename = "createdAt")]
+                created_at: String,
+                #[serde(rename = "replyCount")]
+                reply_count: u32,
+            }
+
+            let limit_str = limit.to_string();
+            let resp: MessagesResponse = client
+                .get_with_query(
+                    "/internal/channels/messages",
+                    &[
+                        ("sessionId", sid),
+                        ("channelName", channel.as_str()),
+                        ("limit", limit_str.as_str()),
+                    ],
+                )
                 .await?;
 
-            let channel_id = list_resp
-                .groups
-                .iter()
-                .flat_map(|g| &g.channels)
-                .find(|c| c.name == channel)
-                .map(|c| c.id.clone())
-                .ok_or_else(|| format!("Channel '{}' not found", channel))?;
-
-            // Use the API endpoint for messages
-            // Since internal endpoints don't have a messages-by-channel endpoint,
-            // we need to use the Next.js API. For now, return the channel info.
-            // The MCP tools handle message reading; CLI users can use the MCP tools.
-            let _ = limit;
             if human {
-                println!("Channel #{channel} (id: {})", &channel_id[..8]);
-                println!("Use 'rdv peer messages' or the MCP read_channel tool to read messages.");
+                if resp.messages.is_empty() {
+                    println!("No messages in #{channel}.");
+                } else {
+                    for msg in &resp.messages {
+                        let thread = if msg.reply_count > 0 {
+                            format!(" ({} replies)", msg.reply_count)
+                        } else {
+                            String::new()
+                        };
+                        println!(
+                            "[{}] {}{}: {}",
+                            msg.created_at, msg.from_session_name, thread, msg.body
+                        );
+                    }
+                }
             } else {
-                println!("{}", json!({"channelId": channel_id, "channelName": channel}));
+                println!("{}", serde_json::to_string_pretty(&resp.messages)?);
             }
         }
     }

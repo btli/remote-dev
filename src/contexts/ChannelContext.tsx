@@ -18,6 +18,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import { usePreferencesContext } from "./PreferencesContext";
@@ -71,6 +72,8 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
 
   const [groups, setGroups] = useState<ChannelGroup[]>([]);
   const [activeChannelId, setActiveChannelIdState] = useState<string | null>(null);
+  const activeChannelIdRef = useRef(activeChannelId);
+  activeChannelIdRef.current = activeChannelId;
   const [messagesByChannel, setMessagesByChannel] = useState<Map<string, ChannelMessage[]>>(
     new Map()
   );
@@ -429,8 +432,8 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
         ...g,
         channels: g.channels.map((c) => {
           if (c.id !== message.channelId) return c;
-          // Don't count user's own messages as unread
           if (message.isUserMessage) return c;
+          if (c.id === activeChannelIdRef.current) return c; // currently viewing
           return { ...c, unreadCount: c.unreadCount + 1 };
         }),
       }))

@@ -430,7 +430,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case "read_channel": {
-        const { channel_name, limit: _limit } = (args || {}) as {
+        const { channel_name, limit: rawLimit } = (args || {}) as {
           channel_name: string;
           limit?: number;
         };
@@ -438,33 +438,35 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           return textResult("Error: channel_name is required");
         }
 
-        // First list channels to resolve name to ID
-        const listResp = await callInternal(
-          `/internal/channels/list?sessionId=${SESSION_ID}`,
+        const limit = rawLimit ? Math.min(Math.max(1, rawLimit), 50) : 20;
+
+        const resp = await callInternal(
+          `/internal/channels/messages?sessionId=${SESSION_ID}&channelName=${encodeURIComponent(channel_name)}&limit=${limit}`,
           "GET"
         );
-        if (listResp.status !== 200) {
-          return textResult(`Error listing channels: ${JSON.stringify(listResp.data)}`);
-        }
 
-        const allGroups = (listResp.data.groups as Array<Record<string, unknown>>) || [];
-        let channelId: string | undefined;
-        for (const g of allGroups) {
-          const channels = (g.channels as Array<Record<string, unknown>>) || [];
-          const found = channels.find((c) => c.name === channel_name);
-          if (found) {
-            channelId = found.id as string;
-            break;
-          }
-        }
-
-        if (!channelId) {
+        if (resp.status === 404) {
           return textResult(`Channel '${channel_name}' not found. Use list_channels to see available channels.`);
         }
+        if (resp.status !== 200) {
+          return textResult(`Error: ${JSON.stringify(resp.data)}`);
+        }
 
-        // Note: We can't directly call the Next.js API route from the MCP server.
-        // For now, return channel info. Messages are visible in the chat UI.
-        return textResult(`Channel #${channel_name} found (id: ${channelId}). Messages are available in the chat UI. Use send_to_channel to post messages.`);
+        const messages = (resp.data.messages as Array<Record<string, unknown>>) || [];
+        if (messages.length === 0) {
+          return textResult(`No messages in #${channel_name}.`);
+        }
+
+        const msgList = messages
+          .map((m) => {
+            const from = m.fromSessionName || m.fromSessionId || "unknown";
+            const time = m.createdAt ? new Date(m.createdAt as string).toLocaleString() : "";
+            const thread = (m.replyCount as number) > 0 ? ` (${m.replyCount} replies)` : "";
+            return `**${from}** [${time}]${thread}:\n${m.body}`;
+          })
+          .join("\n\n---\n\n");
+
+        return textResult(`#${channel_name} — ${messages.length} message(s):\n\n${msgList}`);
       }
 
       default:

@@ -365,8 +365,6 @@ export async function listFolderMessages(
   folderId: string,
   limit: number = 200
 ): Promise<PeerMessage[]> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
   const rows = await db
     .select({
       id: agentPeerMessages.id,
@@ -378,16 +376,12 @@ export async function listFolderMessages(
       createdAt: agentPeerMessages.createdAt,
     })
     .from(agentPeerMessages)
-    .where(
-      and(
-        eq(agentPeerMessages.folderId, folderId),
-        gt(agentPeerMessages.createdAt, cutoff)
-      )
-    )
-    .orderBy(agentPeerMessages.createdAt)
+    .where(eq(agentPeerMessages.folderId, folderId))
+    .orderBy(desc(agentPeerMessages.createdAt))
     .limit(limit);
 
-  return rows.map(toMessageRow);
+  // Reverse to chronological order
+  return rows.reverse().map(toMessageRow);
 }
 
 /**

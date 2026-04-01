@@ -1601,6 +1601,53 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // GET /internal/channels/messages?sessionId=xxx&channelName=yyy&limit=20
+  if (pathname === "/internal/channels/messages" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    const channelName = query.channelName as string;
+    const limit = Math.min(Math.max(1, parseInt(query.limit as string || "20", 10) || 20), 50);
+
+    if (!sessionId || !channelName) {
+      sendJson(res, 400, { error: "Missing sessionId or channelName" });
+      return true;
+    }
+
+    try {
+      const { terminalSessions, channels: channelsTable } = await import("@/db/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const { db } = await import("@/db");
+      const session = await db.query.terminalSessions.findFirst({
+        where: eq(terminalSessions.id, sessionId),
+        columns: { folderId: true },
+      });
+      if (!session?.folderId) {
+        sendJson(res, 404, { error: "Session not found or has no folder" });
+        return true;
+      }
+
+      // Resolve channel name to ID
+      const ch = await db.query.channels.findFirst({
+        where: and(
+          eq(channelsTable.folderId, session.folderId),
+          eq(channelsTable.name, channelName)
+        ),
+        columns: { id: true },
+      });
+      if (!ch) {
+        sendJson(res, 404, { error: `Channel '${channelName}' not found` });
+        return true;
+      }
+
+      const PeerService = await import("@/services/peer-service");
+      const messages = await PeerService.listChannelMessages(ch.id, { limit });
+      sendJson(res, 200, { channelId: ch.id, messages });
+    } catch (err) {
+      peerLog.error("Failed to read channel messages", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to read channel messages" });
+    }
+    return true;
+  }
+
   // --- end cmux parity endpoints ---
 
   if (!pathname?.startsWith("/internal/scheduler/")) {
