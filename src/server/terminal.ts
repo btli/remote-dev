@@ -1345,6 +1345,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       broadcastToUser(result.userId, {
         type: "peer_message_created",
         folderId: result.folderId,
+        channelId: result.channelId ?? null,
         message: {
           id: result.messageId,
           fromSessionId,
@@ -1352,6 +1353,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           toSessionId: toSessionId ?? null,
           body: result.resolvedBody,
           isUserMessage: false,
+          channelId: result.channelId ?? null,
+          parentMessageId: null,
+          replyCount: 0,
           createdAt: result.createdAt,
         },
       });
@@ -1420,9 +1424,12 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
 
+    const eventType = (payload.type as string) || "peer_message_created";
     broadcastToUser(userId as string, {
-      type: "peer_message_created",
+      type: eventType,
       folderId,
+      channelId: payload.channelId ?? null,
+      parentMessageId: payload.parentMessageId ?? null,
       message,
     });
     sendJson(res, 200, { ok: true });
@@ -1438,6 +1445,158 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     } catch (err) {
       peerLog.error("Failed to cleanup peer messages", { error: String(err) });
       sendJson(res, 500, { error: "Failed to cleanup" });
+    }
+    return true;
+  }
+
+  // ═══ Channel endpoints ════════════════════════════════════════════════════
+
+  // GET /internal/channels/list?sessionId=xxx
+  if (pathname === "/internal/channels/list" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+
+    try {
+      const { terminalSessions } = await import("@/db/schema");
+      const { eq } = await import("drizzle-orm");
+      const { db } = await import("@/db");
+      const session = await db.query.terminalSessions.findFirst({
+        where: eq(terminalSessions.id, sessionId),
+        columns: { folderId: true, userId: true },
+      });
+      if (!session?.folderId || !session.userId) {
+        sendJson(res, 404, { error: "Session not found or has no folder" });
+        return true;
+      }
+
+      const ChannelService = await import("@/services/channel-service");
+      const groups = await ChannelService.listChannelGroups(session.folderId, session.userId);
+      sendJson(res, 200, { groups });
+    } catch (err) {
+      peerLog.error("Failed to list channels", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to list channels" });
+    }
+    return true;
+  }
+
+  // POST /internal/channels/create { fromSessionId, name, topic?, displayName? }
+  if (pathname === "/internal/channels/create" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+
+    const { fromSessionId, name, topic, displayName } = payload;
+    if (!fromSessionId || !name) {
+      sendJson(res, 400, { error: "Missing fromSessionId or name" });
+      return true;
+    }
+
+    try {
+      const { terminalSessions } = await import("@/db/schema");
+      const { eq } = await import("drizzle-orm");
+      const { db } = await import("@/db");
+      const session = await db.query.terminalSessions.findFirst({
+        where: eq(terminalSessions.id, fromSessionId as string),
+        columns: { folderId: true, userId: true },
+      });
+      if (!session?.folderId || !session.userId) {
+        sendJson(res, 404, { error: "Session not found or has no folder" });
+        return true;
+      }
+
+      const ChannelService = await import("@/services/channel-service");
+      const channel = await ChannelService.createChannel({
+        folderId: session.folderId,
+        name: name as string,
+        displayName: displayName as string | undefined,
+        topic: topic as string | undefined,
+        createdBySessionId: fromSessionId as string,
+      });
+
+      // Broadcast channel creation to UI
+      broadcastToUser(session.userId, {
+        type: "channel_created",
+        folderId: session.folderId,
+        channel,
+      });
+
+      sendJson(res, 201, { channel });
+    } catch (err) {
+      peerLog.error("Failed to create channel", { error: String(err) });
+      sendJson(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  // POST /internal/channels/send { fromSessionId, channelId?, channelName?, body, parentMessageId? }
+  if (pathname === "/internal/channels/send" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+
+    const { fromSessionId, channelId, channelName, body: msgBody, parentMessageId } = payload;
+    if (!fromSessionId || !msgBody) {
+      sendJson(res, 400, { error: "Missing fromSessionId or body" });
+      return true;
+    }
+
+    try {
+      let resolvedChannelId = channelId as string | undefined;
+
+      // Resolve channel name to ID if needed
+      if (!resolvedChannelId && channelName) {
+        const { terminalSessions, channels: channelsTable } = await import("@/db/schema");
+        const { eq, and } = await import("drizzle-orm");
+        const { db } = await import("@/db");
+        const session = await db.query.terminalSessions.findFirst({
+          where: eq(terminalSessions.id, fromSessionId as string),
+          columns: { folderId: true },
+        });
+        if (session?.folderId) {
+          const ch = await db.query.channels.findFirst({
+            where: and(
+              eq(channelsTable.folderId, session.folderId),
+              eq(channelsTable.name, channelName as string)
+            ),
+            columns: { id: true },
+          });
+          resolvedChannelId = ch?.id;
+        }
+      }
+
+      const PeerService = await import("@/services/peer-service");
+      const result = await PeerService.sendMessage({
+        fromSessionId: fromSessionId as string,
+        body: msgBody as string,
+        channelId: resolvedChannelId,
+        parentMessageId: parentMessageId as string | undefined,
+      });
+
+      const eventType = parentMessageId ? "thread_reply_created" : "channel_message_created";
+      broadcastToUser(result.userId, {
+        type: eventType,
+        folderId: result.folderId,
+        channelId: result.channelId ?? resolvedChannelId ?? null,
+        parentMessageId: parentMessageId ?? null,
+        message: {
+          id: result.messageId,
+          fromSessionId,
+          fromSessionName: result.senderName,
+          toSessionId: null,
+          body: result.resolvedBody,
+          isUserMessage: false,
+          channelId: result.channelId ?? resolvedChannelId ?? null,
+          parentMessageId: parentMessageId ?? null,
+          replyCount: 0,
+          createdAt: result.createdAt,
+        },
+      });
+
+      sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
+    } catch (err) {
+      peerLog.error("Failed to send channel message", { error: String(err) });
+      sendJson(res, 500, { error: String(err) });
     }
     return true;
   }
