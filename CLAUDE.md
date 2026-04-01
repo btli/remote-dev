@@ -59,6 +59,7 @@ bun run db:seed      # Seed authorized users
 bun run db:migrate-agents  # One-time agent session migration
 bun run db:migrate-github-accounts  # Backfill GitHub account metadata from existing OAuth accounts
 bun run db:migrate-profile-gitconfigs  # Add [credential] section to existing profile .gitconfig files
+bun run db:migrate-channels  # Migrate existing messages to channels
 ```
 
 ## Logging (NON-NEGOTIABLE)
@@ -226,6 +227,10 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv hook validate` | Validate hooks: check connectivity + auto-repair |
 | `rdv status` | System dashboard |
 | `rdv context` | Show current session context |
+| `rdv channel list` | List channels in project folder |
+| `rdv channel create` | Create new channel |
+| `rdv channel send` | Send message to channel |
+| `rdv channel messages` | Read channel messages |
 
 **Server Discovery (env vars):**
 - `RDV_SESSION_ID` — Current session UUID
@@ -327,6 +332,9 @@ src/
 | `project_task` | Project tasks with priority, labels, subtasks, dependencies, and due dates |
 | `task_dependency` | Junction table for task blocked-by relationships |
 | `agent_peer_message` | Folder-scoped inter-agent messages with 24h TTL |
+| `channel_groups` | Channel group containers (e.g., "Channels", "Direct Messages") |
+| `channels` | Individual channels within groups |
+| `channel_read_state` | Per-user/channel unread tracking |
 
 ### Service Layer
 
@@ -357,6 +365,7 @@ Located in `src/services/`:
 | `NotificationService` | Notification CRUD, debounced creation, read/delete management |
 | `PeerService` | Folder-scoped inter-agent peer discovery and messaging |
 | `BrowserService` | Headless browser automation (navigate, click, type, screenshot) |
+| `ChannelService` | Channel/group lifecycle, unread tracking, migration support |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -410,6 +419,10 @@ Folder-scoped inter-agent messaging allows agents in the same project folder to 
 | `send_message` | Send direct or broadcast message to peers |
 | `check_messages` | Check for new messages since last poll |
 | `set_summary` | Set work summary visible to peers |
+| `list_channels` | List available channels in project folder |
+| `create_channel` | Create topic-specific channel |
+| `send_to_channel` | Send message to channel (GFM markdown) |
+| `read_channel` | Read messages from a channel |
 
 **Key Files:**
 | File | Purpose |
@@ -500,6 +513,11 @@ bun run test:coverage  # Run tests with coverage
 | `AgentProfileAppearanceSettings.tsx` | Per-profile theming with mode toggle and color schemes |
 | `TaskSidebar.tsx` | Right sidebar for project-scoped task tracking |
 | `TaskEditor.tsx` | Inline expandable task editor with subtasks, dependencies, and metadata |
+| `ChannelSidebar.tsx` | Right sidebar channel list for chat view |
+| `ChannelView.tsx` | Channel message view with auto-scroll |
+| `ChannelMessageRow.tsx` | GFM markdown message rendering |
+| `ThreadPanel.tsx` | Slide-in thread replies panel |
+| `CreateChannelModal.tsx` | Channel creation dialog |
 
 ### State Management
 
@@ -519,6 +537,7 @@ React Contexts in `src/contexts/`:
 | `GitHubAccountContext` | Multi-GitHub account state with folder bindings |
 | `TaskContext` | Project tasks state with folder-scoped CRUD |
 | `NotificationContext` | Notification state with toast integration and delete operations |
+| `ChannelContext` | Channel groups, messages, threads, unread tracking |
 
 **Preference Inheritance**: Default → User Settings → Folder Preferences
 
@@ -690,6 +709,17 @@ React Contexts in `src/contexts/`:
 - `GET /api/tasks/:id` - Get task details
 - `PATCH /api/tasks/:id` - Update task
 - `DELETE /api/tasks/:id` - Delete task
+
+### Channels
+- `GET /api/channels` - List channel groups with unread counts (requires `?folderId=`)
+- `POST /api/channels` - Create channel
+- `GET /api/channels/:channelId` - Get channel details
+- `DELETE /api/channels/:channelId` - Archive channel
+- `GET /api/channels/:channelId/messages` - List channel messages (paginated)
+- `POST /api/channels/:channelId/messages` - Send message to channel
+- `GET /api/channels/:channelId/messages/:messageId/thread` - Get thread replies
+- `POST /api/channels/:channelId/read` - Mark channel as read
+- `POST /api/channels/dm` - Find or create DM channel
 
 ## Quick Setup
 

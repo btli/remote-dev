@@ -57,6 +57,9 @@ interface TerminalTypeRendererProps {
   onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
   /** Called when a peer message is created (broadcast from terminal server) */
   onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelMessageCreated?: (folderId: string, channelId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onThreadReplyCreated?: (folderId: string, parentMessageId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelCreated?: (folderId: string, channel: import("@/types/channels").Channel) => void;
 }
 
 export function TerminalTypeRenderer({
@@ -84,6 +87,9 @@ export function TerminalTypeRenderer({
   onSessionStatus,
   onSessionProgress,
   onPeerMessageCreated,
+  onChannelMessageCreated,
+  onThreadReplyCreated,
+  onChannelCreated,
 }: TerminalTypeRendererProps) {
   const { getAgentActivityStatus } = useSessionContext();
   const activityStatus = getAgentActivityStatus(session.id);
@@ -158,6 +164,9 @@ export function TerminalTypeRenderer({
         onSessionStatus={onSessionStatus}
         onSessionProgress={onSessionProgress}
         onPeerMessageCreated={onPeerMessageCreated}
+        onChannelMessageCreated={onChannelMessageCreated}
+        onThreadReplyCreated={onThreadReplyCreated}
+        onChannelCreated={onChannelCreated}
         onOutput={onOutput}
         onDimensionsChange={onDimensionsChange}
       />

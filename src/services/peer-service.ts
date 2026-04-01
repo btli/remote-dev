@@ -4,7 +4,7 @@
 
 import { db } from "@/db";
 import { agentPeerMessages, terminalSessions } from "@/db/schema";
-import { eq, and, or, isNull, gt, inArray, sql } from "drizzle-orm";
+import { eq, and, or, isNull, gt, inArray, sql, desc } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import { safeJsonParse } from "@/lib/utils";
 
@@ -60,6 +60,9 @@ export interface PeerMessage {
   toSessionId: string | null;
   body: string;
   isUserMessage: boolean;
+  channelId: string | null;
+  parentMessageId: string | null;
+  replyCount: number;
   createdAt: string;
 }
 
@@ -104,6 +107,9 @@ function toMessageRow(row: {
   toSessionId: string | null;
   body: string;
   isUserMessage?: boolean | null;
+  channelId?: string | null;
+  parentMessageId?: string | null;
+  replyCount?: number | null;
   createdAt: Date | string | number;
 }): PeerMessage {
   return {
@@ -113,6 +119,9 @@ function toMessageRow(row: {
     toSessionId: row.toSessionId,
     body: row.body,
     isUserMessage: row.isUserMessage ?? false,
+    channelId: row.channelId ?? null,
+    parentMessageId: row.parentMessageId ?? null,
+    replyCount: row.replyCount ?? 0,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
 }
@@ -124,6 +133,7 @@ export interface SendMessageResult {
   folderId: string;
   userId: string;
   createdAt: string;
+  channelId: string | null;
 }
 
 /**
@@ -133,8 +143,10 @@ export async function sendMessage(params: {
   fromSessionId: string;
   toSessionId?: string;
   body: string;
+  channelId?: string;
+  parentMessageId?: string;
 }): Promise<SendMessageResult> {
-  const { fromSessionId, toSessionId, body } = params;
+  const { fromSessionId, toSessionId, body, channelId, parentMessageId } = params;
 
   if (body.length > MAX_MESSAGE_LENGTH) {
     throw new Error(`Message exceeds maximum length of ${MAX_MESSAGE_LENGTH} characters`);
@@ -148,6 +160,10 @@ export async function sendMessage(params: {
   if (!sender?.folderId || !sender.userId) {
     throw new Error("Sender session not found or has no folder");
   }
+
+  // Resolve channel — default to #general if not specified
+  const ChannelService = await import("@/services/channel-service");
+  const resolvedChannelId = channelId ?? await ChannelService.getGeneralChannelId(sender.folderId);
 
   if (toSessionId) {
     const recipient = await db.query.terminalSessions.findFirst({
@@ -171,8 +187,23 @@ export async function sendMessage(params: {
     fromSessionName: sender.name,
     toSessionId: toSessionId ?? null,
     body: resolvedBody,
+    channelId: resolvedChannelId,
+    parentMessageId: parentMessageId ?? null,
     createdAt: now,
   });
+
+  // Update channel message count
+  if (resolvedChannelId) {
+    await ChannelService.incrementChannelMessageCount(resolvedChannelId);
+  }
+
+  // If this is a thread reply, increment parent's reply count
+  if (parentMessageId) {
+    await db
+      .update(agentPeerMessages)
+      .set({ replyCount: sql`${agentPeerMessages.replyCount} + 1` })
+      .where(eq(agentPeerMessages.id, parentMessageId));
+  }
 
   log.debug("Peer message sent", {
     messageId,
@@ -188,6 +219,7 @@ export async function sendMessage(params: {
     folderId: sender.folderId,
     userId: sender.userId,
     createdAt: now.toISOString(),
+    channelId: resolvedChannelId,
   };
 }
 
@@ -265,15 +297,9 @@ export async function setSummary(
   log.debug("Peer summary updated", { sessionId, summary });
 }
 
-/** Delete peer messages older than 24 hours. */
+/** @deprecated Messages are now permanent. This function is a no-op. */
 export async function cleanupOldMessages(): Promise<void> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-  await db
-    .delete(agentPeerMessages)
-    .where(sql`${agentPeerMessages.createdAt} < ${cutoff.getTime()}`);
-
-  log.debug("Peer message cleanup complete");
+  log.debug("Peer message cleanup skipped (messages are permanent)");
 }
 
 /**
@@ -284,12 +310,17 @@ export async function sendUserMessage(params: {
   folderId: string;
   fromName: string;
   body: string;
+  channelId?: string;
+  parentMessageId?: string;
 }): Promise<{ messageId: string; message: PeerMessage }> {
-  const { folderId, fromName, body } = params;
+  const { folderId, fromName, body, channelId, parentMessageId } = params;
 
   if (body.length > MAX_MESSAGE_LENGTH) {
     throw new Error(`Message exceeds maximum length of ${MAX_MESSAGE_LENGTH} characters`);
   }
+
+  const ChannelService = await import("@/services/channel-service");
+  const resolvedChannelId = channelId ?? await ChannelService.getGeneralChannelId(folderId);
 
   const messageId = crypto.randomUUID();
   const now = new Date();
@@ -303,10 +334,23 @@ export async function sendUserMessage(params: {
     toSessionId: null,
     body: resolvedBody,
     isUserMessage: true,
+    channelId: resolvedChannelId,
+    parentMessageId: parentMessageId ?? null,
     createdAt: now,
   };
 
   await db.insert(agentPeerMessages).values(row);
+
+  if (resolvedChannelId) {
+    await ChannelService.incrementChannelMessageCount(resolvedChannelId);
+  }
+
+  if (parentMessageId) {
+    await db
+      .update(agentPeerMessages)
+      .set({ replyCount: sql`${agentPeerMessages.replyCount} + 1` })
+      .where(eq(agentPeerMessages.id, parentMessageId));
+  }
 
   log.debug("User message sent", { messageId, folderId, fromName });
 
@@ -321,8 +365,6 @@ export async function listFolderMessages(
   folderId: string,
   limit: number = 200
 ): Promise<PeerMessage[]> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
   const rows = await db
     .select({
       id: agentPeerMessages.id,
@@ -334,14 +376,79 @@ export async function listFolderMessages(
       createdAt: agentPeerMessages.createdAt,
     })
     .from(agentPeerMessages)
-    .where(
-      and(
-        eq(agentPeerMessages.folderId, folderId),
-        gt(agentPeerMessages.createdAt, cutoff)
-      )
-    )
-    .orderBy(agentPeerMessages.createdAt)
+    .where(eq(agentPeerMessages.folderId, folderId))
+    .orderBy(desc(agentPeerMessages.createdAt))
     .limit(limit);
+
+  // Reverse to chronological order
+  return rows.reverse().map(toMessageRow);
+}
+
+/**
+ * List messages in a specific channel (top-level only, no thread replies).
+ * Cursor-based pagination using `before` timestamp.
+ */
+export async function listChannelMessages(
+  channelId: string,
+  params: { before?: Date; limit?: number } = {}
+): Promise<PeerMessage[]> {
+  const limit = Math.min(Math.max(1, params.limit ?? 50), 200);
+
+  const conditions = [
+    eq(agentPeerMessages.channelId, channelId),
+    isNull(agentPeerMessages.parentMessageId), // top-level only
+  ];
+
+  if (params.before) {
+    conditions.push(sql`${agentPeerMessages.createdAt} < ${params.before.getTime()}`);
+  }
+
+  const rows = await db
+    .select({
+      id: agentPeerMessages.id,
+      fromSessionId: agentPeerMessages.fromSessionId,
+      fromSessionName: agentPeerMessages.fromSessionName,
+      toSessionId: agentPeerMessages.toSessionId,
+      body: agentPeerMessages.body,
+      isUserMessage: agentPeerMessages.isUserMessage,
+      channelId: agentPeerMessages.channelId,
+      parentMessageId: agentPeerMessages.parentMessageId,
+      replyCount: agentPeerMessages.replyCount,
+      createdAt: agentPeerMessages.createdAt,
+    })
+    .from(agentPeerMessages)
+    .where(and(...conditions))
+    .orderBy(desc(agentPeerMessages.createdAt))
+    .limit(limit);
+
+  // Reverse to chronological order
+  return rows.reverse().map(toMessageRow);
+}
+
+/**
+ * List replies to a specific message (thread).
+ */
+export async function listThreadReplies(
+  parentMessageId: string,
+  limit: number = 100
+): Promise<PeerMessage[]> {
+  const rows = await db
+    .select({
+      id: agentPeerMessages.id,
+      fromSessionId: agentPeerMessages.fromSessionId,
+      fromSessionName: agentPeerMessages.fromSessionName,
+      toSessionId: agentPeerMessages.toSessionId,
+      body: agentPeerMessages.body,
+      isUserMessage: agentPeerMessages.isUserMessage,
+      channelId: agentPeerMessages.channelId,
+      parentMessageId: agentPeerMessages.parentMessageId,
+      replyCount: agentPeerMessages.replyCount,
+      createdAt: agentPeerMessages.createdAt,
+    })
+    .from(agentPeerMessages)
+    .where(eq(agentPeerMessages.parentMessageId, parentMessageId))
+    .orderBy(agentPeerMessages.createdAt)
+    .limit(Math.min(limit, 500));
 
   return rows.map(toMessageRow);
 }

@@ -57,6 +57,9 @@ interface TerminalWithKeyboardProps {
   onSessionProgress?: (sessionId: string, progress: SessionProgress | null) => void;
   /** Called when a peer message is created (broadcast from terminal server) */
   onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelMessageCreated?: (folderId: string, channelId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onThreadReplyCreated?: (folderId: string, parentMessageId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelCreated?: (folderId: string, channel: import("@/types/channels").Channel) => void;
 }
 
 export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, TerminalWithKeyboardProps>(function TerminalWithKeyboard({
@@ -87,6 +90,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onSessionStatus,
   onSessionProgress,
   onPeerMessageCreated,
+  onChannelMessageCreated,
+  onThreadReplyCreated,
+  onChannelCreated,
 }, ref) {
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<TerminalRef>(null);
@@ -178,6 +184,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         onSessionStatus={onSessionStatus}
         onSessionProgress={onSessionProgress}
         onPeerMessageCreated={onPeerMessageCreated}
+        onChannelMessageCreated={onChannelMessageCreated}
+        onThreadReplyCreated={onThreadReplyCreated}
+        onChannelCreated={onChannelCreated}
         onScrollStateChange={setIsTerminalScrolledUp}
       />
     </ErrorBoundary>

@@ -68,6 +68,9 @@ interface TerminalProps {
   onSessionProgress?: (sessionId: string, progress: import("@/types/terminal-type").SessionProgress | null) => void;
   /** Called when a peer message is created (broadcast from terminal server) */
   onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelMessageCreated?: (folderId: string, channelId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onThreadReplyCreated?: (folderId: string, parentMessageId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelCreated?: (folderId: string, channel: import("@/types/channels").Channel) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
   /** Called when terminal scroll position changes between scrolled-up and at-bottom */
@@ -102,6 +105,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onSessionStatus,
   onSessionProgress,
   onPeerMessageCreated,
+  onChannelMessageCreated,
+  onThreadReplyCreated,
+  onChannelCreated,
   onOutput,
   onDimensionsChange,
   onScrollStateChange,
@@ -162,6 +168,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onSessionStatusRef = useRef(onSessionStatus);
   const onSessionProgressRef = useRef(onSessionProgress);
   const onPeerMessageCreatedRef = useRef(onPeerMessageCreated);
+  const onChannelMessageCreatedRef = useRef(onChannelMessageCreated);
+  const onThreadReplyCreatedRef = useRef(onThreadReplyCreated);
+  const onChannelCreatedRef = useRef(onChannelCreated);
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const onScrollStateChangeRef = useRef(onScrollStateChange);
@@ -202,6 +211,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onSessionStatusRef.current = onSessionStatus;
     onSessionProgressRef.current = onSessionProgress;
     onPeerMessageCreatedRef.current = onPeerMessageCreated;
+    onChannelMessageCreatedRef.current = onChannelMessageCreated;
+    onThreadReplyCreatedRef.current = onThreadReplyCreated;
+    onChannelCreatedRef.current = onChannelCreated;
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     onScrollStateChangeRef.current = onScrollStateChange;
@@ -217,7 +229,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onChannelMessageCreated, onThreadReplyCreated, onChannelCreated, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -663,6 +675,32 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 // Peer message broadcast — forward to chat room context
                 if (msg.folderId && msg.message) {
                   onPeerMessageCreatedRef.current?.(msg.folderId as string, msg.message);
+                }
+                break;
+              case "channel_message_created":
+                if (msg.folderId && msg.message) {
+                  onChannelMessageCreatedRef.current?.(
+                    msg.folderId as string,
+                    (msg.channelId as string) ?? "",
+                    msg.message
+                  );
+                }
+                break;
+              case "thread_reply_created":
+                if (msg.folderId && msg.message && msg.parentMessageId) {
+                  onThreadReplyCreatedRef.current?.(
+                    msg.folderId as string,
+                    msg.parentMessageId as string,
+                    msg.message
+                  );
+                }
+                break;
+              case "channel_created":
+                if (msg.folderId && msg.channel) {
+                  onChannelCreatedRef.current?.(
+                    msg.folderId as string,
+                    msg.channel as import("@/types/channels").Channel
+                  );
                 }
                 break;
               case "voice_ready":
