@@ -224,15 +224,14 @@ export async function listChannelGroups(
 
   const readStateMap = new Map(readStates.map((rs) => [rs.channelId, rs.lastReadAt]));
 
-  // Batch: get unread counts for channels that have been read
+  // Batch: count unread messages per channel since each channel's last-read timestamp
   const channelsWithReadState = allChannels
     .filter((c) => readStateMap.has(c.id))
     .map((c) => ({ id: c.id, lastReadAt: readStateMap.get(c.id)! }));
 
-  let unreadCountMap = new Map<string, number>();
+  const unreadCountMap = new Map<string, number>();
 
   if (channelsWithReadState.length > 0) {
-    // Single query: count unread messages per channel since last read
     const unreadRows = await db
       .select({
         channelId: agentPeerMessages.channelId,
@@ -260,13 +259,8 @@ export async function listChannelGroups(
 
   const channelsWithUnread = allChannels.map((ch) => {
     const lastReadAt = readStateMap.get(ch.id);
-    let unreadCount: number;
-    if (!lastReadAt) {
-      // Never read — all messages are unread
-      unreadCount = ch.messageCount;
-    } else {
-      unreadCount = unreadCountMap.get(ch.id) ?? 0;
-    }
+    // Never read → all messages are unread; otherwise use the batched count
+    const unreadCount = lastReadAt ? (unreadCountMap.get(ch.id) ?? 0) : ch.messageCount;
 
     return {
       id: ch.id,

@@ -36,7 +36,7 @@ export const DELETE = withApiAuth(async (_request, context) => {
     return NextResponse.json({ success: true });
   } catch (err) {
     if (err instanceof ChannelArchiveError) {
-      return errorResponse(String(err.message), 400);
+      return errorResponse(err.message, 400);
     }
     log.error("Failed to archive channel", { error: String(err) });
     return errorResponse("Failed to archive channel", 500);

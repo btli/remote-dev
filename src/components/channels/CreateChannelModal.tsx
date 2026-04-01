@@ -37,9 +37,9 @@ function slugify(value: string): string {
     .slice(0, 50);
 }
 
-/** Validates a channel name slug. */
+/** Validates a channel name slug (1-50 chars, alphanumeric/hyphens, no leading/trailing hyphen). */
 function isValidName(name: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{0,48}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+  return /^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/.test(name);
 }
 
 export function CreateChannelModal({ open, onClose }: CreateChannelModalProps) {

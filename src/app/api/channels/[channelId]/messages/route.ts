@@ -95,10 +95,6 @@ export const POST = withApiAuth(async (request, context) => {
 
     return NextResponse.json({ messageId, message }, { status: 201 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("exceeds maximum length")) {
-      return errorResponse(msg, 400);
-    }
     log.error("Failed to send channel message", { error: String(err) });
     return errorResponse("Failed to send message", 500);
   }

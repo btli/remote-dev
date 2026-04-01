@@ -217,8 +217,6 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChannelId, fetchMessages]);
 
-  const setActiveChannelId = setActiveChannelIdState;
-
   // ---------------------------------------------------------------------------
   // Send message
   // ---------------------------------------------------------------------------
@@ -454,7 +452,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     () => ({
       groups,
       activeChannelId,
-      setActiveChannelId,
+      setActiveChannelId: setActiveChannelIdState,
       activeChannelMessages,
       totalUnreadCount,
       loading,
@@ -473,7 +471,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     [
       groups,
       activeChannelId,
-      setActiveChannelId,
+      setActiveChannelIdState,
       activeChannelMessages,
       totalUnreadCount,
       loading,

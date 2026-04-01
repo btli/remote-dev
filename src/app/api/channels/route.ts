@@ -47,7 +47,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
     return NextResponse.json({ channel }, { status: 201 });
   } catch (err) {
     if (err instanceof ChannelValidationError) {
-      return errorResponse(String(err.message), 400);
+      return errorResponse(err.message, 400);
     }
     log.error("Failed to create channel", { error: String(err) });
     return errorResponse("Failed to create channel", 500);

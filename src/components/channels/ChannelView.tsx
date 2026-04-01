@@ -73,8 +73,6 @@ export function ChannelView({ folderId }: ChannelViewProps) {
     [sendMessage]
   );
 
-  const handleReplyClick = openThread;
-
   // No folder selected
   if (!folderId) {
     return (
@@ -145,7 +143,7 @@ export function ChannelView({ folderId }: ChannelViewProps) {
               key={msg.id}
               message={msg}
               peerNameMap={peerNameMap}
-              onReplyClick={handleReplyClick}
+              onReplyClick={openThread}
               isThreadReply={false}
             />
           ))}
