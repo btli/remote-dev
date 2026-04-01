@@ -84,6 +84,18 @@ async function startServer(): Promise<void> {
     log.error("Failed to start auto-update orchestrator", { error: String(error) });
   }
 
+  // Auto-start ccflare proxy if configured (non-blocking — readiness not needed until first session)
+  import("../services/ccflare-service.js")
+    .then(async (CcflareService) => {
+      const ccflareAutoConfig = await CcflareService.getAutoStartConfig();
+      if (ccflareAutoConfig) {
+        const { ccflareProcessManager } = await import("../services/ccflare-process-manager.js");
+        await ccflareProcessManager.start({ port: ccflareAutoConfig.port });
+        log.info("ccflare proxy started", { port: ccflareAutoConfig.port });
+      }
+    })
+    .catch((error) => log.error("Failed to auto-start ccflare", { error: String(error) }));
+
   async function shutdown(signal: string): Promise<void> {
     log.info("Shutdown signal received", { signal });
 
@@ -95,6 +107,13 @@ async function startServer(): Promise<void> {
       log.info("Scheduler stopped");
     } catch (error) {
       log.error("Error stopping scheduler", { error: String(error) });
+    }
+
+    try {
+      const { ccflareProcessManager } = await import("../services/ccflare-process-manager.js");
+      await ccflareProcessManager.stop();
+    } catch (error) {
+      log.error("Error stopping ccflare", { error: String(error) });
     }
 
     closeLogDatabase();

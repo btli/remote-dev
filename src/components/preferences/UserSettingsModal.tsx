@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Sparkles, Bell, ScrollText, Smartphone } from "lucide-react";
+import { Settings, Terminal, Palette, Folder, Pin, PinOff, Server, Sparkles, Bell, ScrollText, Smartphone, Network } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,7 @@ import { useFolderContext } from "@/contexts/FolderContext";
 import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appearance";
 import { TmuxSessionManager } from "@/components/tmux";
 import { AgentCLIStatusPanel } from "@/components/agents";
+import { CcflareSettingsPanel } from "@/components/ccflare/CcflareSettingsPanel";
 import { UpdateManager, LogViewer, MobileSetupPanel } from "@/components/system";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
@@ -178,6 +179,10 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             <TabsTrigger value="agents" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
               <Sparkles className="w-4 h-4 shrink-0" />
               <span className="hidden sm:inline">Agents</span>
+            </TabsTrigger>
+            <TabsTrigger value="proxy" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
+              <Network className="w-4 h-4 shrink-0" />
+              <span className="hidden sm:inline">Proxy</span>
             </TabsTrigger>
             <TabsTrigger value="project" className="!flex-none flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-md text-sm data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-sm">
               <Folder className="w-4 h-4 shrink-0" />
@@ -372,6 +377,10 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
 
           <TabsContent value="agents" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
             <AgentCLIStatusPanel />
+          </TabsContent>
+
+          <TabsContent value="proxy" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
+            <CcflareSettingsPanel />
           </TabsContent>
 
           <TabsContent value="project" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">

@@ -1769,3 +1769,59 @@ export const systemUpdateCache = sqliteTable("system_update_cache", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ccflare Proxy Configuration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * User-scoped ccflare proxy configuration (one row per user).
+ * Controls whether the proxy is enabled, auto-starts, and which port to use.
+ */
+export const ccflareConfig = sqliteTable("ccflare_config", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  autoStart: integer("auto_start", { mode: "boolean" }).notNull().default(true),
+  port: integer("port").notNull().default(8787),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * Anthropic API keys for ccflare load balancing.
+ * Keys are stored encrypted and synced to ccflare on startup.
+ */
+export const ccflareApiKeys = sqliteTable(
+  "ccflare_api_key",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    encryptedKey: text("encrypted_key").notNull(),
+    priority: integer("priority").notNull().default(0),
+    paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("ccflare_api_key_user_idx").on(table.userId),
+  ]
+);
