@@ -92,10 +92,18 @@ export const POST = withApiAuth(async (request, context) => {
     // Broadcast to folder owner's WebSocket clients via terminal server
     try {
       const baseUrl = resolveTerminalServerUrl();
+      const eventType = parentMessageId ? "thread_reply_created" : "channel_message_created";
       await fetch(`${baseUrl}/internal/peers/broadcast`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: context.userId, folderId: access.folderId, message }),
+        body: JSON.stringify({
+          userId: context.userId,
+          folderId: access.folderId,
+          channelId,
+          parentMessageId: parentMessageId ?? null,
+          message,
+          type: eventType,
+        }),
       });
     } catch (err) {
       log.warn("Failed to broadcast channel message", { error: String(err) });
