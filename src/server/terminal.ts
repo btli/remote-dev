@@ -1641,6 +1641,67 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // --- end cmux parity endpoints ---
 
+  // --- ccflare process manager endpoints ---
+
+  // POST /internal/ccflare/start — start the ccflare proxy process
+  if (pathname === "/internal/ccflare/start" && req.method === "POST") {
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const port = typeof payload.port === "number" ? payload.port : 8787;
+      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+      await ccflareProcessManager.start({ port });
+      sendJson(res, 200, ccflareProcessManager.getStatus());
+    } catch (err) {
+      internalLog.error("Failed to start ccflare", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to start ccflare" });
+    }
+    return true;
+  }
+
+  // POST /internal/ccflare/stop — stop the ccflare proxy process
+  if (pathname === "/internal/ccflare/stop" && req.method === "POST") {
+    try {
+      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+      await ccflareProcessManager.stop();
+      sendJson(res, 200, { success: true });
+    } catch (err) {
+      internalLog.error("Failed to stop ccflare", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to stop ccflare" });
+    }
+    return true;
+  }
+
+  // POST /internal/ccflare/restart — restart the ccflare proxy process
+  if (pathname === "/internal/ccflare/restart" && req.method === "POST") {
+    try {
+      const payload = await parseRequestJson(req, res);
+      if (!payload) return true;
+      const port = typeof payload.port === "number" ? payload.port : 8787;
+      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+      await ccflareProcessManager.restart({ port });
+      sendJson(res, 200, ccflareProcessManager.getStatus());
+    } catch (err) {
+      internalLog.error("Failed to restart ccflare", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to restart ccflare" });
+    }
+    return true;
+  }
+
+  // GET /internal/ccflare/status — get the ccflare proxy status
+  if (pathname === "/internal/ccflare/status" && req.method === "GET") {
+    try {
+      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+      sendJson(res, 200, ccflareProcessManager.getStatus());
+    } catch (err) {
+      internalLog.error("Failed to get ccflare status", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to get ccflare status" });
+    }
+    return true;
+  }
+
+  // --- end ccflare endpoints ---
+
   if (!pathname?.startsWith("/internal/scheduler/")) {
     return false;
   }

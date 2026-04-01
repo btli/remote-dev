@@ -202,6 +202,14 @@ export function getUpdateDownloadDir(): string {
 }
 
 /**
+ * Get the ccflare proxy data directory path.
+ * Stores ccflare's SQLite database and runtime files.
+ */
+export function getCcflareDir(): string {
+  return join(getDataDir(), "ccflare");
+}
+
+/**
  * Ensure the data directory and essential subdirectories exist.
  * Called during application startup.
  */
@@ -221,6 +229,7 @@ export function ensureDataDirectories(): void {
     getReleasesDir(),
     getDeployDir(),
     getBuildsDir(),
+    getCcflareDir(),
   ];
 
   for (const dir of dirs) {
@@ -291,6 +300,9 @@ export const AppPaths = {
   },
   get updateDownloadDir() {
     return getUpdateDownloadDir();
+  },
+  get ccflareDir() {
+    return getCcflareDir();
   },
   ensureDirectories: ensureDataDirectories,
 } as const;

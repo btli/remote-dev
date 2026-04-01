@@ -350,15 +350,34 @@ export async function createSession(
     log.error("Failed to resolve GitHub account env", { sessionId, error: String(error) });
   }
 
+  // Inject ANTHROPIC_BASE_URL for Claude agent sessions when ccflare proxy is running
+  let ccflareEnv: Record<string, string> = {};
+  if (isAgentSession && effectiveAgentProvider === "claude") {
+    try {
+      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+      if (ccflareProcessManager.isRunning()) {
+        const port = ccflareProcessManager.getPort();
+        if (port) {
+          ccflareEnv = {
+            ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}`,
+          };
+        }
+      }
+    } catch {
+      // ccflare not available, skip
+    }
+  }
+
   // File and browser sessions don't need tmux — they're pure UI
   if (input.terminalType !== "file" && input.terminalType !== "browser") {
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
     const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.folderId);
 
     // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately
-    // Precedence: profileEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
+    // Precedence: profileEnv < ccflareEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
     const initialEnv: Record<string, string> = {
       ...(profileEnv ?? {}),
+      ...ccflareEnv,
       ...(folderEnv ?? {}),
       ...folderGitIdentityEnv,
       ...gitCredentialEnv,

@@ -13,6 +13,7 @@ import { RecordingProvider } from "@/contexts/RecordingContext";
 import { TrashProvider } from "@/contexts/TrashContext";
 import { ScheduleProvider } from "@/contexts/ScheduleContext";
 import { SecretsProvider } from "@/contexts/SecretsContext";
+import { CcflareProvider } from "@/contexts/CcflareContext";
 import { ProfileProvider } from "@/contexts/ProfileContext";
 import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
@@ -118,6 +119,7 @@ export default async function Home() {
     <PreferencesProvider>
       <FolderProvider initialFolders={initialFolders} initialSessionFolders={sessionFoldersMap}>
         <SecretsProvider>
+          <CcflareProvider>
           <ProfileProvider>
             <TemplateProvider>
               <RecordingProvider>
@@ -163,6 +165,7 @@ export default async function Home() {
               </RecordingProvider>
             </TemplateProvider>
           </ProfileProvider>
+          </CcflareProvider>
         </SecretsProvider>
       </FolderProvider>
     </PreferencesProvider>
