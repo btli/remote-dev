@@ -46,17 +46,27 @@ import type {
 // Profile base directory - use centralized path configuration
 const getProfilesBaseDir = () => getProfilesDir();
 
-/** Provider config file definitions: provider name, directory, filename, display name */
+/** Provider config file definitions: provider name, directory, filename, display name, extra content */
 const PROVIDER_CONFIG_FILES: Array<{
   provider: AgentProvider;
   dir: string;
   filename: string;
   displayName: string;
+  extraSection?: string;
 }> = [
   { provider: "claude", dir: ".claude", filename: "CLAUDE.md", displayName: "Claude Code" },
   { provider: "codex", dir: ".codex", filename: "AGENTS.md", displayName: "OpenAI Codex" },
   { provider: "gemini", dir: ".gemini", filename: "GEMINI.md", displayName: "Gemini CLI" },
-  { provider: "opencode", dir: join(".config", "opencode"), filename: "OPENCODE.md", displayName: "OpenCode" },
+  {
+    provider: "opencode",
+    dir: join(".config", "opencode"),
+    filename: "OPENCODE.md",
+    displayName: "OpenCode",
+    extraSection: `## Provider Configuration
+
+OpenCode supports multiple AI providers. Configure your preferred provider in settings.
+`,
+  },
 ];
 
 /** RDV quick-reference section injected into all provider config files */
@@ -388,6 +398,7 @@ ${credentialSection}`;
   for (const cfg of PROVIDER_CONFIG_FILES) {
     if (provider !== "all" && provider !== cfg.provider) continue;
 
+    const extra = cfg.extraSection ? `\n${cfg.extraSection}\n` : "";
     const content = `# ${cfg.filename}
 
 Global configuration for ${cfg.displayName} in this profile.
@@ -395,7 +406,7 @@ Global configuration for ${cfg.displayName} in this profile.
 ## Project Guidelines
 
 Add your project-specific instructions here.
-
+${extra}
 ${RDV_QUICK_REFERENCE}`;
     await writeFile(join(configDir, cfg.dir, cfg.filename), content);
   }

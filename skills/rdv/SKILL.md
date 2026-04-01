@@ -278,9 +278,11 @@ rdv hook notify <event>      # Send notification (e.g. task_complete, error)
 rdv hook session-end         # Report "ended" status
 rdv hook validate            # Validate hook connectivity + auto-repair
 
-# Unified Claude Code handler (recommended for hooks.json)
+# Unified handler (alternative to individual commands above)
 rdv hook claude <event>      # Events: active, stop, notification, compacting,
                              #         post-tool-use, session-end
+                             # Aliases: session-start, idle, notify,
+                             #          prompt-submit, task-sync
 ```
 
 ---
