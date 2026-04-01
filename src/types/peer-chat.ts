@@ -14,6 +14,9 @@ export interface PeerChatMessage {
   body: string;
   isUserMessage: boolean;
   createdAt: string; // ISO string
+  channelId: string | null;
+  parentMessageId: string | null;
+  replyCount: number;
 }
 
 /** Info about an active agent peer. Subset of PeerInfo from PeerService. */

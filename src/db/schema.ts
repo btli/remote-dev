@@ -10,6 +10,7 @@ import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 import type { AppearanceMode, ColorSchemeCategory, ColorSchemeId } from "@/types/appearance";
 import type { TaskPriority, TaskStatus, TaskSource } from "@/types/task";
 import type { NotificationType } from "@/types/notification";
+import type { ChannelType } from "@/types/channels";
 
 export const users = sqliteTable("user", {
   id: text("id")
@@ -1654,6 +1655,9 @@ export const agentPeerMessages = sqliteTable(
     isUserMessage: integer("is_user_message", { mode: "boolean" })
       .notNull()
       .default(false),
+    channelId: text("channel_id").references(() => channels.id, { onDelete: "set null" }),
+    parentMessageId: text("parent_message_id"),
+    replyCount: integer("reply_count").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1661,6 +1665,94 @@ export const agentPeerMessages = sqliteTable(
   (table) => [
     index("peer_message_folder_created_idx").on(table.folderId, table.createdAt),
     index("peer_message_to_session_idx").on(table.toSessionId),
+    index("peer_message_channel_created_idx").on(table.channelId, table.createdAt),
+    index("peer_message_parent_idx").on(table.parentMessageId),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Chat Channel Groups (folder-scoped organizational containers)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const channelGroups = sqliteTable(
+  "channel_group",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    folderId: text("folder_id")
+      .notNull()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    position: integer("position").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("channel_group_folder_idx").on(table.folderId),
+    uniqueIndex("channel_group_folder_name_idx").on(table.folderId, table.name),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Chat Channels (message rooms within groups)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const channels = sqliteTable(
+  "channel",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    folderId: text("folder_id")
+      .notNull()
+      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => channelGroups.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    displayName: text("display_name").notNull(),
+    type: text("type").$type<ChannelType>().notNull().default("public"),
+    topic: text("topic"),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    createdBySessionId: text("created_by_session_id"),
+    lastMessageAt: integer("last_message_at", { mode: "timestamp_ms" }),
+    messageCount: integer("message_count").notNull().default(0),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("channel_folder_idx").on(table.folderId),
+    index("channel_group_idx").on(table.groupId),
+    uniqueIndex("channel_folder_name_idx").on(table.folderId, table.name),
+  ]
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Channel Read State (per-user unread tracking)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const channelReadState = sqliteTable(
+  "channel_read_state",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lastReadMessageId: text("last_read_message_id"),
+    lastReadAt: integer("last_read_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    uniqueIndex("channel_read_state_unique_idx").on(table.channelId, table.userId),
+    index("channel_read_state_user_idx").on(table.userId),
   ]
 );
 
