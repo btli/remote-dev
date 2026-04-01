@@ -69,6 +69,10 @@ import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { FolderTabBar } from "@/components/peers/FolderTabBar";
 import { PeerChatRoom } from "@/components/peers/PeerChatRoom";
 import type { ActiveView, PeerChatMessage } from "@/types/peer-chat";
+import { ChannelSidebar } from "@/components/channels/ChannelSidebar";
+import { ChannelView } from "@/components/channels/ChannelView";
+import { CreateChannelModal } from "@/components/channels/CreateChannelModal";
+import { useChannelContext } from "@/contexts/ChannelContext";
 
 // Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
 const TerminalWithKeyboard = dynamic(
@@ -185,6 +189,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [activeView, setActiveView] = useState<ActiveView>("terminal");
   const peerChat = usePeerChatContext();
+  const channelCtx = useChannelContext();
+  const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
   const isMobile = useMobile();
   const isPWA = usePWA();
   // Use useSyncExternalStore for localStorage values to avoid hydration mismatches
@@ -397,6 +403,55 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       }
     },
     [peerChat.addMessage, activeProject.folderId]
+  );
+
+  const handleChannelMessageCreated = useCallback(
+    (folderId: string, channelId: string, message: PeerChatMessage) => {
+      if (folderId === activeProject.folderId) {
+        channelCtx.addMessage({
+          id: message.id,
+          channelId: message.channelId ?? channelId,
+          fromSessionId: message.fromSessionId,
+          fromSessionName: message.fromSessionName,
+          toSessionId: message.toSessionId,
+          body: message.body,
+          isUserMessage: message.isUserMessage,
+          parentMessageId: message.parentMessageId,
+          replyCount: message.replyCount,
+          createdAt: message.createdAt,
+        });
+      }
+    },
+    [activeProject.folderId, channelCtx]
+  );
+
+  const handleThreadReplyCreated = useCallback(
+    (folderId: string, parentMessageId: string, message: PeerChatMessage) => {
+      if (folderId === activeProject.folderId && parentMessageId) {
+        channelCtx.addThreadReply(parentMessageId, {
+          id: message.id,
+          channelId: message.channelId ?? "",
+          fromSessionId: message.fromSessionId,
+          fromSessionName: message.fromSessionName,
+          toSessionId: message.toSessionId,
+          body: message.body,
+          isUserMessage: message.isUserMessage,
+          parentMessageId: message.parentMessageId,
+          replyCount: message.replyCount,
+          createdAt: message.createdAt,
+        });
+      }
+    },
+    [activeProject.folderId, channelCtx]
+  );
+
+  const handleChannelCreated = useCallback(
+    (folderId: string, channel: import("@/types/channels").Channel) => {
+      if (folderId === activeProject.folderId) {
+        channelCtx.addChannel(channel);
+      }
+    },
+    [activeProject.folderId, channelCtx]
   );
 
   // Handle server-pushed session rename (auto-title from .jsonl)
@@ -1714,7 +1769,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             agentSessions={folderAgentSessions}
             activeSessionId={activeSessionId}
             onAgentTabClick={handleAgentTabClick}
-            chatUnreadCount={peerChat.unreadCount}
+            chatUnreadCount={channelCtx.totalUnreadCount}
           />
         )}
 
@@ -1866,6 +1921,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             onSessionProgress={setSessionProgress}
                             onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
                             onPeerMessageCreated={handlePeerMessageCreated}
+                            onChannelMessageCreated={handleChannelMessageCreated}
+                            onThreadReplyCreated={handleThreadReplyCreated}
+                            onChannelCreated={handleChannelCreated}
                           />
                         </div>
                       );
@@ -1900,6 +1958,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             onSessionStatus={setSessionStatusIndicator}
                             onSessionProgress={setSessionProgress}
                             onPeerMessageCreated={handlePeerMessageCreated}
+                            onChannelMessageCreated={handleChannelMessageCreated}
+                            onThreadReplyCreated={handleThreadReplyCreated}
+                            onChannelCreated={handleChannelCreated}
                           />
                         </div>
                       );
@@ -1943,6 +2004,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onSessionStatus={setSessionStatusIndicator}
                           onSessionProgress={setSessionProgress}
                           onPeerMessageCreated={handlePeerMessageCreated}
+                          onChannelMessageCreated={handleChannelMessageCreated}
+                          onThreadReplyCreated={handleThreadReplyCreated}
+                          onChannelCreated={handleChannelCreated}
                         />
                       </div>
                     );
@@ -1952,9 +2016,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             </div>
           </div>
 
-          {/* Peer Chat Room — visible when chat view is active */}
+          {/* Channel View — visible when chat view is active */}
           <div className={cn("flex-1 overflow-hidden", activeView !== "chat" && "hidden")}>
-            <PeerChatRoom
+            <ChannelView
               folderId={activeProject.folderId}
               folderName={getFolderName(activeProject.folderId)}
             />
@@ -1963,13 +2027,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         )}
       </div>
 
-      {/* Right sidebar - Task Tracker + Schedules */}
-      <TaskSidebar
-        githubRepoId={taskSidebarRepoId}
-        onViewIssue={handleViewIssueByNumber}
-        onViewPR={handleViewPRByNumber}
-        scheduleTargetSessionId={scheduleTargetSessionId}
-        onScheduleTargetConsumed={() => setScheduleTargetSessionId(null)}
+      {/* Right sidebar — Channel list (chat) or Task tracker (terminal) */}
+      <div className={cn(activeView === "chat" && "hidden")}>
+        <TaskSidebar
+          githubRepoId={taskSidebarRepoId}
+          onViewIssue={handleViewIssueByNumber}
+          onViewPR={handleViewPRByNumber}
+          scheduleTargetSessionId={scheduleTargetSessionId}
+          onScheduleTargetConsumed={() => setScheduleTargetSessionId(null)}
+        />
+      </div>
+      {activeView === "chat" && activeProject.folderId && (
+        <ChannelSidebar onCreateChannel={() => setIsCreateChannelOpen(true)} />
+      )}
+
+      <CreateChannelModal
+        open={isCreateChannelOpen}
+        onClose={() => setIsCreateChannelOpen(false)}
       />
 
       {/* New Session Wizard */}
