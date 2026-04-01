@@ -25,6 +25,8 @@ const log = createLogger("CcflareProcess");
 
 const GRACEFUL_SHUTDOWN_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
+const READY_POLL_INTERVAL_MS = 200;
+const READY_TIMEOUT_MS = 10000;
 const DEFAULT_HOST = "127.0.0.1";
 
 class CcflareProcessManager {
@@ -248,9 +250,29 @@ class CcflareProcessManager {
           log.warn("stderr", { output: text });
         }
       });
+
+      // Wait for proxy to be ready before returning
+      await this.waitForReady();
     } finally {
       this.starting = false;
     }
+  }
+
+  /**
+   * Poll the health endpoint until the proxy is accepting connections.
+   */
+  private async waitForReady(): Promise<void> {
+    const deadline = Date.now() + READY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (await this.healthCheck()) {
+        log.debug("Ccflare proxy ready");
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
+    }
+    log.warn("Ccflare proxy did not become ready within timeout", {
+      timeoutMs: READY_TIMEOUT_MS,
+    });
   }
 
   /**

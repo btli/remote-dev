@@ -286,7 +286,7 @@ export function CcflareSettingsPanel() {
           <div>
             <Label className="text-foreground">Enable proxy</Label>
             <p className="text-xs text-muted-foreground">
-              Route Anthropic API requests through the proxy
+              Route Claude agent sessions through the proxy. Per-folder opt-out: set <code className="text-[10px] bg-muted px-1 rounded">ANTHROPIC_BASE_URL</code> in folder environment variables.
             </p>
           </div>
           <Switch

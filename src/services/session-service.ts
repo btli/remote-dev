@@ -954,7 +954,24 @@ export async function resumeSession(
       const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!session.profileId);
       const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.folderId);
 
+      // Inject ccflare proxy URL for Claude agent sessions on resume
+      let ccflareEnv: Record<string, string> = {};
+      if (agentProvider === "claude") {
+        try {
+          const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+          if (ccflareProcessManager.isRunning()) {
+            const port = ccflareProcessManager.getPort();
+            if (port) {
+              ccflareEnv = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
+            }
+          }
+        } catch {
+          // ccflare not available
+        }
+      }
+
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
+        ...ccflareEnv,
         ...folderGitIdentityEnv,
         ...gitCredentialEnv,
         ...ghAccountEnv,
