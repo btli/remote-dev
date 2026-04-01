@@ -7,7 +7,7 @@
  * Validates the name and calls createChannel from ChannelContext on submit.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, type ChangeEvent } from "react";
 import { useChannelContext } from "@/contexts/ChannelContext";
 import {
   Dialog,
@@ -53,20 +53,14 @@ export function CreateChannelModal({ open, onClose }: CreateChannelModalProps) {
   const slugifiedName = slugify(nameInput);
   const nameIsValid = slugifiedName.length > 0 && isValidName(slugifiedName);
 
-  const handleNameChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setNameInput(e.target.value);
-      setError(null);
-    },
-    []
-  );
+  function handleNameChange(e: ChangeEvent<HTMLInputElement>): void {
+    setNameInput(e.target.value);
+    setError(null);
+  }
 
-  const handleTopicChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      setTopic(e.target.value);
-    },
-    []
-  );
+  function handleTopicChange(e: ChangeEvent<HTMLInputElement>): void {
+    setTopic(e.target.value);
+  }
 
   const handleCreate = useCallback(async () => {
     if (!nameIsValid || isCreating) return;

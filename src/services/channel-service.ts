@@ -11,6 +11,7 @@ import {
   channels,
   channelReadState,
   agentPeerMessages,
+  sessionFolders,
 } from "@/db/schema";
 import { eq, and, sql, gt, isNull } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
@@ -269,6 +270,49 @@ export async function verifyChannelInFolder(
     columns: { id: true },
   });
   return !!ch;
+}
+
+// ─── Access Checks (shared by API routes) ────────────────────────────────────
+
+/**
+ * Verify the user owns the folder containing a channel.
+ * Returns the folderId on success, or null if the channel doesn't exist
+ * or the user doesn't own the folder.
+ */
+export async function verifyChannelAccess(
+  channelId: string,
+  userId: string
+): Promise<{ folderId: string } | null> {
+  const channel = await getChannel(channelId);
+  if (!channel) return null;
+
+  const folder = await db.query.sessionFolders.findFirst({
+    where: and(
+      eq(sessionFolders.id, channel.folderId),
+      eq(sessionFolders.userId, userId)
+    ),
+    columns: { id: true },
+  });
+  if (!folder) return null;
+
+  return { folderId: channel.folderId };
+}
+
+/**
+ * Verify the user owns the given folder.
+ */
+export async function verifyFolderOwnership(
+  folderId: string,
+  userId: string
+): Promise<boolean> {
+  const folder = await db.query.sessionFolders.findFirst({
+    where: and(
+      eq(sessionFolders.id, folderId),
+      eq(sessionFolders.userId, userId)
+    ),
+    columns: { id: true },
+  });
+  return !!folder;
 }
 
 /**

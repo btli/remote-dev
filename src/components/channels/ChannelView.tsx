@@ -20,7 +20,7 @@ interface ChannelViewProps {
   folderName: string | null;
 }
 
-export function ChannelView({ folderId, folderName: _folderName }: ChannelViewProps) {
+export function ChannelView({ folderId }: ChannelViewProps) {
   const {
     groups,
     activeChannelId,
@@ -38,13 +38,9 @@ export function ChannelView({ folderId, folderName: _folderName }: ChannelViewPr
   const [isUserScrolled, setIsUserScrolled] = useState(false);
 
   // Find the active channel metadata
-  const activeChannel = (() => {
-    for (const group of groups) {
-      const ch = group.channels.find((c) => c.id === activeChannelId);
-      if (ch) return ch;
-    }
-    return null;
-  })();
+  const activeChannel = groups
+    .flatMap((g) => g.channels)
+    .find((c) => c.id === activeChannelId) ?? null;
 
   // Auto-scroll to bottom when new messages arrive (unless user scrolled up)
   useEffect(() => {
@@ -77,12 +73,7 @@ export function ChannelView({ folderId, folderName: _folderName }: ChannelViewPr
     [sendMessage]
   );
 
-  const handleReplyClick = useCallback(
-    (messageId: string) => {
-      openThread(messageId);
-    },
-    [openThread]
-  );
+  const handleReplyClick = openThread;
 
   // No folder selected
   if (!folderId) {

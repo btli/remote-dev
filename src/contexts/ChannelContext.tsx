@@ -20,9 +20,46 @@ import {
   useMemo,
   useRef,
   type ReactNode,
+  type Dispatch,
+  type SetStateAction,
 } from "react";
 import { usePreferencesContext } from "./PreferencesContext";
 import type { ChannelGroup, Channel, ChannelMessage } from "@/types/channels";
+
+// ---------------------------------------------------------------------------
+// Map update helpers — reduces duplication in optimistic update logic
+// ---------------------------------------------------------------------------
+
+type MapSetter<V> = Dispatch<SetStateAction<Map<string, V[]>>>;
+
+/** Replace an optimistic message with the server version, or remove it if already present. */
+function reconcileOptimistic(
+  setter: MapSetter<ChannelMessage>,
+  key: string,
+  optimisticId: string,
+  serverMsg: ChannelMessage
+): void {
+  setter((prev) => {
+    const current = prev.get(key) ?? [];
+    if (current.some((m) => m.id === serverMsg.id)) {
+      // Server message already arrived via WebSocket — just remove the optimistic one
+      return new Map(prev).set(key, current.filter((m) => m.id !== optimisticId));
+    }
+    return new Map(prev).set(key, current.map((m) => (m.id === optimisticId ? serverMsg : m)));
+  });
+}
+
+/** Remove an optimistic message (on error). */
+function removeOptimistic(
+  setter: MapSetter<ChannelMessage>,
+  key: string,
+  optimisticId: string
+): void {
+  setter((prev) => {
+    const current = prev.get(key) ?? [];
+    return new Map(prev).set(key, current.filter((m) => m.id !== optimisticId));
+  });
+}
 
 interface ChannelContextValue {
   groups: ChannelGroup[];
@@ -148,9 +185,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [folderId, fetchChannels]);
 
-  const refreshChannels = useCallback(async () => {
-    await fetchChannels();
-  }, [fetchChannels]);
+  const refreshChannels = fetchChannels;
 
   // ---------------------------------------------------------------------------
   // Message fetching for the active channel
@@ -180,9 +215,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChannelId, fetchMessages]);
 
-  const setActiveChannelId = useCallback((id: string | null) => {
-    setActiveChannelIdState(id);
-  }, []);
+  const setActiveChannelId = setActiveChannelIdState;
 
   // ---------------------------------------------------------------------------
   // Send message
@@ -208,19 +241,16 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
         createdAt: new Date().toISOString(),
       };
 
-      if (parentMessageId) {
-        // Optimistic thread reply
-        setThreadMessages((prev) => {
-          const current = prev.get(parentMessageId) ?? [];
-          return new Map(prev).set(parentMessageId, [...current, optimistic]);
-        });
-      } else {
-        // Optimistic channel message
-        setMessagesByChannel((prev) => {
-          const current = prev.get(targetChannelId) ?? [];
-          return new Map(prev).set(targetChannelId, [...current, optimistic]);
-        });
-      }
+      // Determine which map and key to use for optimistic updates
+      const [setter, key] = parentMessageId
+        ? [setThreadMessages, parentMessageId] as const
+        : [setMessagesByChannel, targetChannelId] as const;
+
+      // Add optimistic message
+      setter((prev) => {
+        const current = prev.get(key) ?? [];
+        return new Map(prev).set(key, [...current, optimistic]);
+      });
 
       try {
         const resp = await fetch(
@@ -235,77 +265,13 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
         if (resp.ok) {
           const data = await resp.json();
           if (data.message) {
-            const serverMsg: ChannelMessage = data.message;
-
-            if (parentMessageId) {
-              setThreadMessages((prev) => {
-                const current = prev.get(parentMessageId) ?? [];
-                if (current.some((m) => m.id === serverMsg.id)) {
-                  return new Map(prev).set(
-                    parentMessageId,
-                    current.filter((m) => m.id !== optimistic.id)
-                  );
-                }
-                return new Map(prev).set(
-                  parentMessageId,
-                  current.map((m) => (m.id === optimistic.id ? serverMsg : m))
-                );
-              });
-            } else {
-              setMessagesByChannel((prev) => {
-                const current = prev.get(targetChannelId) ?? [];
-                if (current.some((m) => m.id === serverMsg.id)) {
-                  return new Map(prev).set(
-                    targetChannelId,
-                    current.filter((m) => m.id !== optimistic.id)
-                  );
-                }
-                return new Map(prev).set(
-                  targetChannelId,
-                  current.map((m) => (m.id === optimistic.id ? serverMsg : m))
-                );
-              });
-            }
+            reconcileOptimistic(setter, key, optimistic.id, data.message);
           }
         } else {
-          // Remove optimistic on error
-          if (parentMessageId) {
-            setThreadMessages((prev) => {
-              const current = prev.get(parentMessageId) ?? [];
-              return new Map(prev).set(
-                parentMessageId,
-                current.filter((m) => m.id !== optimistic.id)
-              );
-            });
-          } else {
-            setMessagesByChannel((prev) => {
-              const current = prev.get(targetChannelId) ?? [];
-              return new Map(prev).set(
-                targetChannelId,
-                current.filter((m) => m.id !== optimistic.id)
-              );
-            });
-          }
+          removeOptimistic(setter, key, optimistic.id);
         }
       } catch {
-        // Remove optimistic on network error
-        if (parentMessageId) {
-          setThreadMessages((prev) => {
-            const current = prev.get(parentMessageId) ?? [];
-            return new Map(prev).set(
-              parentMessageId,
-              current.filter((m) => m.id !== optimistic.id)
-            );
-          });
-        } else {
-          setMessagesByChannel((prev) => {
-            const current = prev.get(targetChannelId) ?? [];
-            return new Map(prev).set(
-              targetChannelId,
-              current.filter((m) => m.id !== optimistic.id)
-            );
-          });
-        }
+        removeOptimistic(setter, key, optimistic.id);
       }
     },
     [activeChannelId]

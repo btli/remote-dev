@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, type ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Bot, User, MessageSquare } from "lucide-react";
@@ -68,32 +68,27 @@ export function ChannelMessageRow({
   onReplyClick,
   isThreadReply = false,
 }: ChannelMessageRowProps) {
-  const [isHovered, setIsHovered] = useState(false);
   const processedBody = preprocessBodyForMarkdown(message.body, peerNameMap);
 
   const senderName = message.isUserMessage ? "You" : message.fromSessionName;
   const timestamp = formatTime(message.createdAt);
 
-  const avatarElement = message.isUserMessage ? (
-    <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
-      <User className="w-3.5 h-3.5 text-blue-400" />
-    </div>
-  ) : (
-    <div className="flex-shrink-0 w-7 h-7 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center">
-      <Bot className="w-3.5 h-3.5 text-primary" />
-    </div>
-  );
-
   return (
     <div
-      className={`group relative flex items-start gap-3 px-4 py-1.5 rounded-lg transition-colors ${
-        isHovered ? "bg-white/5" : "bg-transparent"
-      } ${isThreadReply ? "pl-6" : ""}`}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      className={`group relative flex items-start gap-3 px-4 py-1.5 rounded-lg transition-colors hover:bg-white/5 ${isThreadReply ? "pl-6" : ""}`}
     >
       {/* Avatar */}
-      <div className="mt-0.5">{avatarElement}</div>
+      <div className="mt-0.5">
+        {message.isUserMessage ? (
+          <div className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
+            <User className="w-3.5 h-3.5 text-blue-400" />
+          </div>
+        ) : (
+          <div className="flex-shrink-0 w-7 h-7 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center">
+            <Bot className="w-3.5 h-3.5 text-primary" />
+          </div>
+        )}
+      </div>
 
       {/* Message content */}
       <div className="flex-1 min-w-0">
@@ -210,8 +205,8 @@ export function ChannelMessageRow({
       </div>
 
       {/* Hover action: Reply button */}
-      {!isThreadReply && isHovered && (
-        <div className="absolute right-3 top-1.5 flex items-center gap-1">
+      {!isThreadReply && (
+        <div className="absolute right-3 top-1.5 hidden group-hover:flex items-center gap-1">
           <button
             onClick={() => onReplyClick?.(message.id)}
             className="flex items-center gap-1 px-2 py-1 rounded-md bg-card border border-border text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"

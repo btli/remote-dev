@@ -1451,6 +1451,31 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // ═══ Channel endpoints ════════════════════════════════════════════════════
 
+  /** Look up a session's folderId and userId by session ID. */
+  async function getSessionFolderContext(sessionId: string): Promise<{ folderId: string; userId: string } | null> {
+    const { terminalSessions } = await import("@/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const { db } = await import("@/db");
+    const session = await db.query.terminalSessions.findFirst({
+      where: eq(terminalSessions.id, sessionId),
+      columns: { folderId: true, userId: true },
+    });
+    if (!session?.folderId || !session.userId) return null;
+    return { folderId: session.folderId, userId: session.userId };
+  }
+
+  /** Resolve a channel name to its ID within a folder. */
+  async function resolveChannelName(folderId: string, channelName: string): Promise<string | undefined> {
+    const { channels: channelsTable } = await import("@/db/schema");
+    const { eq, and } = await import("drizzle-orm");
+    const { db } = await import("@/db");
+    const ch = await db.query.channels.findFirst({
+      where: and(eq(channelsTable.folderId, folderId), eq(channelsTable.name, channelName)),
+      columns: { id: true },
+    });
+    return ch?.id;
+  }
+
   // GET /internal/channels/list?sessionId=xxx
   if (pathname === "/internal/channels/list" && req.method === "GET") {
     const sessionId = query.sessionId as string;
@@ -1460,20 +1485,14 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     }
 
     try {
-      const { terminalSessions } = await import("@/db/schema");
-      const { eq } = await import("drizzle-orm");
-      const { db } = await import("@/db");
-      const session = await db.query.terminalSessions.findFirst({
-        where: eq(terminalSessions.id, sessionId),
-        columns: { folderId: true, userId: true },
-      });
-      if (!session?.folderId || !session.userId) {
+      const ctx = await getSessionFolderContext(sessionId);
+      if (!ctx) {
         sendJson(res, 404, { error: "Session not found or has no folder" });
         return true;
       }
 
       const ChannelService = await import("@/services/channel-service");
-      const groups = await ChannelService.listChannelGroups(session.folderId, session.userId);
+      const groups = await ChannelService.listChannelGroups(ctx.folderId, ctx.userId);
       sendJson(res, 200, { groups });
     } catch (err) {
       peerLog.error("Failed to list channels", { error: String(err) });
@@ -1494,31 +1513,24 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     }
 
     try {
-      const { terminalSessions } = await import("@/db/schema");
-      const { eq } = await import("drizzle-orm");
-      const { db } = await import("@/db");
-      const session = await db.query.terminalSessions.findFirst({
-        where: eq(terminalSessions.id, fromSessionId as string),
-        columns: { folderId: true, userId: true },
-      });
-      if (!session?.folderId || !session.userId) {
+      const ctx = await getSessionFolderContext(fromSessionId as string);
+      if (!ctx) {
         sendJson(res, 404, { error: "Session not found or has no folder" });
         return true;
       }
 
       const ChannelService = await import("@/services/channel-service");
       const channel = await ChannelService.createChannel({
-        folderId: session.folderId,
+        folderId: ctx.folderId,
         name: name as string,
         displayName: displayName as string | undefined,
         topic: topic as string | undefined,
         createdBySessionId: fromSessionId as string,
       });
 
-      // Broadcast channel creation to UI
-      broadcastToUser(session.userId, {
+      broadcastToUser(ctx.userId, {
         type: "channel_created",
-        folderId: session.folderId,
+        folderId: ctx.folderId,
         channel,
       });
 
@@ -1546,22 +1558,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
       // Resolve channel name to ID if needed
       if (!resolvedChannelId && channelName) {
-        const { terminalSessions, channels: channelsTable } = await import("@/db/schema");
-        const { eq, and } = await import("drizzle-orm");
-        const { db } = await import("@/db");
-        const session = await db.query.terminalSessions.findFirst({
-          where: eq(terminalSessions.id, fromSessionId as string),
-          columns: { folderId: true },
-        });
-        if (session?.folderId) {
-          const ch = await db.query.channels.findFirst({
-            where: and(
-              eq(channelsTable.folderId, session.folderId),
-              eq(channelsTable.name, channelName as string)
-            ),
-            columns: { id: true },
-          });
-          resolvedChannelId = ch?.id;
+        const ctx = await getSessionFolderContext(fromSessionId as string);
+        if (ctx) {
+          resolvedChannelId = await resolveChannelName(ctx.folderId, channelName as string);
         }
       }
 
@@ -1574,10 +1573,11 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       });
 
       const eventType = parentMessageId ? "thread_reply_created" : "channel_message_created";
+      const effectiveChannelId = result.channelId ?? resolvedChannelId ?? null;
       broadcastToUser(result.userId, {
         type: eventType,
         folderId: result.folderId,
-        channelId: result.channelId ?? resolvedChannelId ?? null,
+        channelId: effectiveChannelId,
         parentMessageId: parentMessageId ?? null,
         message: {
           id: result.messageId,
@@ -1586,7 +1586,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           toSessionId: null,
           body: result.resolvedBody,
           isUserMessage: false,
-          channelId: result.channelId ?? resolvedChannelId ?? null,
+          channelId: effectiveChannelId,
           parentMessageId: parentMessageId ?? null,
           replyCount: 0,
           createdAt: result.createdAt,
@@ -1613,34 +1613,21 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     }
 
     try {
-      const { terminalSessions, channels: channelsTable } = await import("@/db/schema");
-      const { eq, and } = await import("drizzle-orm");
-      const { db } = await import("@/db");
-      const session = await db.query.terminalSessions.findFirst({
-        where: eq(terminalSessions.id, sessionId),
-        columns: { folderId: true },
-      });
-      if (!session?.folderId) {
+      const ctx = await getSessionFolderContext(sessionId);
+      if (!ctx) {
         sendJson(res, 404, { error: "Session not found or has no folder" });
         return true;
       }
 
-      // Resolve channel name to ID
-      const ch = await db.query.channels.findFirst({
-        where: and(
-          eq(channelsTable.folderId, session.folderId),
-          eq(channelsTable.name, channelName)
-        ),
-        columns: { id: true },
-      });
-      if (!ch) {
+      const channelDbId = await resolveChannelName(ctx.folderId, channelName);
+      if (!channelDbId) {
         sendJson(res, 404, { error: `Channel '${channelName}' not found` });
         return true;
       }
 
       const PeerService = await import("@/services/peer-service");
-      const messages = await PeerService.listChannelMessages(ch.id, { limit });
-      sendJson(res, 200, { channelId: ch.id, messages });
+      const messages = await PeerService.listChannelMessages(channelDbId, { limit });
+      sendJson(res, 200, { channelId: channelDbId, messages });
     } catch (err) {
       peerLog.error("Failed to read channel messages", { error: String(err) });
       sendJson(res, 500, { error: "Failed to read channel messages" });

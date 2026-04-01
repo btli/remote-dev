@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { db } from "@/db";
-import { sessionFolders, users } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import * as ChannelService from "@/services/channel-service";
 import * as PeerService from "@/services/peer-service";
 import { resolveTerminalServerUrl } from "@/lib/terminal-server-url";
@@ -10,32 +10,12 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/channels/[channelId]/messages");
 
-/** Verify the user owns the folder that contains this channel. */
-async function verifyChannelAccess(
-  channelId: string,
-  userId: string
-): Promise<{ folderId: string } | null> {
-  const channel = await ChannelService.getChannel(channelId);
-  if (!channel) return null;
-
-  const folder = await db.query.sessionFolders.findFirst({
-    where: and(
-      eq(sessionFolders.id, channel.folderId),
-      eq(sessionFolders.userId, userId)
-    ),
-    columns: { id: true },
-  });
-  if (!folder) return null;
-
-  return { folderId: channel.folderId };
-}
-
 // GET /api/channels/:channelId/messages?before=&limit=
 export const GET = withApiAuth(async (request, context) => {
   try {
     const channelId = context.params!.channelId;
 
-    const access = await verifyChannelAccess(channelId, context.userId);
+    const access = await ChannelService.verifyChannelAccess(channelId, context.userId);
     if (!access) {
       return errorResponse("Channel not found", 404);
     }
@@ -61,7 +41,7 @@ export const POST = withApiAuth(async (request, context) => {
   try {
     const channelId = context.params!.channelId;
 
-    const access = await verifyChannelAccess(channelId, context.userId);
+    const access = await ChannelService.verifyChannelAccess(channelId, context.userId);
     if (!access) {
       return errorResponse("Channel not found", 404);
     }

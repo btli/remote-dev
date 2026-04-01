@@ -405,44 +405,39 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [peerChat.addMessage, activeProject.folderId]
   );
 
+  /** Convert a PeerChatMessage to a ChannelMessage, filling in channelId. */
+  const toChannelMessage = useCallback(
+    (msg: PeerChatMessage, fallbackChannelId: string): import("@/types/channels").ChannelMessage => ({
+      id: msg.id,
+      channelId: msg.channelId ?? fallbackChannelId,
+      fromSessionId: msg.fromSessionId,
+      fromSessionName: msg.fromSessionName,
+      toSessionId: msg.toSessionId,
+      body: msg.body,
+      isUserMessage: msg.isUserMessage,
+      parentMessageId: msg.parentMessageId,
+      replyCount: msg.replyCount,
+      createdAt: msg.createdAt,
+    }),
+    []
+  );
+
   const handleChannelMessageCreated = useCallback(
     (folderId: string, channelId: string, message: PeerChatMessage) => {
       if (folderId === activeProject.folderId) {
-        channelCtx.addMessage({
-          id: message.id,
-          channelId: message.channelId ?? channelId,
-          fromSessionId: message.fromSessionId,
-          fromSessionName: message.fromSessionName,
-          toSessionId: message.toSessionId,
-          body: message.body,
-          isUserMessage: message.isUserMessage,
-          parentMessageId: message.parentMessageId,
-          replyCount: message.replyCount,
-          createdAt: message.createdAt,
-        });
+        channelCtx.addMessage(toChannelMessage(message, channelId));
       }
     },
-    [activeProject.folderId, channelCtx.addMessage]
+    [activeProject.folderId, channelCtx.addMessage, toChannelMessage]
   );
 
   const handleThreadReplyCreated = useCallback(
     (folderId: string, parentMessageId: string, message: PeerChatMessage) => {
       if (folderId === activeProject.folderId && parentMessageId) {
-        channelCtx.addThreadReply(parentMessageId, {
-          id: message.id,
-          channelId: message.channelId ?? "",
-          fromSessionId: message.fromSessionId,
-          fromSessionName: message.fromSessionName,
-          toSessionId: message.toSessionId,
-          body: message.body,
-          isUserMessage: message.isUserMessage,
-          parentMessageId: message.parentMessageId,
-          replyCount: message.replyCount,
-          createdAt: message.createdAt,
-        });
+        channelCtx.addThreadReply(parentMessageId, toChannelMessage(message, ""));
       }
     },
-    [activeProject.folderId, channelCtx.addThreadReply]
+    [activeProject.folderId, channelCtx.addThreadReply, toChannelMessage]
   );
 
   const handleChannelCreated = useCallback(
