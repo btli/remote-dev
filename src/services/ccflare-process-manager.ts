@@ -208,6 +208,11 @@ class CcflareProcessManager {
       // Attach error/exit listeners immediately to prevent unhandled ENOENT
       child.on("error", (err: Error) => {
         log.error("Ccflare process error", { error: String(err) });
+        // Clear cached binary path on exec errors so it re-resolves
+        // (e.g., after postinstall replaces the binary for the current platform)
+        if ((err as NodeJS.ErrnoException).code === "ENOEXEC" || (err as NodeJS.ErrnoException).code === "ENOENT") {
+          this.cachedBinaryPath = undefined;
+        }
         this.resetState();
       });
 
