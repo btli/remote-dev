@@ -57,6 +57,11 @@ enum SessionCommand {
         /// Session ID
         id: String,
     },
+    /// Set session title (kebab-case, 3-5 words)
+    Title {
+        /// Kebab-case title (e.g. "fix-oauth-token-refresh")
+        title: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -157,6 +162,31 @@ pub async fn run(args: SessionArgs, client: &Client, human: bool) -> Result<(), 
         SessionCommand::GitStatus { id } => {
             let result: serde_json::Value = client
                 .get(&format!("/api/sessions/{id}/git-status"))
+                .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        SessionCommand::Title { title } => {
+            // Validate kebab-case: lowercase ascii, digits, and hyphens only
+            if !title.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+                return Err("title must be kebab-case (lowercase letters, digits, and hyphens only)".into());
+            }
+            // Validate 3-5 hyphen-separated words
+            let word_count = title.split('-').count();
+            if word_count < 3 || word_count > 5 {
+                return Err("title must have 3-5 hyphen-separated words".into());
+            }
+            // Ensure no empty segments (e.g. leading/trailing/double hyphens)
+            if title.split('-').any(|w| w.is_empty()) {
+                return Err("title must not have empty segments (no leading, trailing, or double hyphens)".into());
+            }
+
+            let sid = client
+                .session_id()
+                .ok_or("RDV_SESSION_ID not set — run inside an agent session")?;
+
+            let query = [("sessionId", sid), ("title", title.as_str())];
+            let result: serde_json::Value = client
+                .post_empty_with_query("/internal/agent-title/set", &query)
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

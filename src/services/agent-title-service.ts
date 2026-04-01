@@ -2,7 +2,7 @@
  * AgentTitleService — Intelligent auto-titling for agent sessions.
  *
  * Reads the Claude Code .jsonl session file to extract the first user message,
- * derives a 2–3 word title, and updates the session name + stores the stable
+ * derives a 3–5 word kebab-case title, and updates the session name + stores the stable
  * Claude session UUID in typeMetadata. Idempotent: runs at most once per session.
  */
 
@@ -15,7 +15,12 @@ import { listSessions } from "@/services/claude-session-service";
 
 const log = createLogger("AgentTitleService");
 
-const MAX_TITLE_WORDS = 3;
+const MAX_TITLE_WORDS = 5;
+
+const STOP_WORDS = new Set([
+  "the", "a", "an", "is", "to", "for", "in", "of", "with",
+  "and", "or", "but", "not", "it", "its", "this", "that",
+]);
 
 export interface AutoTitleResult {
   applied: boolean;
@@ -25,8 +30,8 @@ export interface AutoTitleResult {
 }
 
 /**
- * Derive a short 2–3 word title from a user message.
- * Strips command prefixes, slash commands, and punctuation.
+ * Derive a short 3–5 word kebab-case title from a user message.
+ * Strips command prefixes, slash commands, stop words, and punctuation.
  */
 export function deriveShortTitle(message: string): string | null {
   // Take first line only
@@ -42,15 +47,21 @@ export function deriveShortTitle(message: string): string | null {
   // Strip leading articles/filler words
   text = text.replace(/^(please|can you|could you|i want to|i need to|let's|lets)\s+/i, "");
 
-  // Take first N words
-  const words = text.split(/\s+/).filter(Boolean).slice(0, MAX_TITLE_WORDS);
-  if (words.length === 0) return null;
+  // Strip common stop words to make titles more meaningful
+  const allWords = text.split(/\s+/).filter(Boolean);
+  const meaningful = allWords.filter((w) => !STOP_WORDS.has(w.toLowerCase()));
+  // Fall back to original words if all were stop words
+  const wordPool = meaningful.length > 0 ? meaningful : allWords;
 
-  // Lowercase, remove trailing punctuation from last word
+  // Take first N words, require at least 2 for a meaningful title
+  const words = wordPool.slice(0, MAX_TITLE_WORDS);
+  if (words.length < 2) return null;
+
+  // Lowercase, strip non-alphanumeric chars, kebab-case
   const title = words
-    .map((w) => w.toLowerCase())
-    .join(" ")
-    .replace(/[.,;:!?]+$/, "");
+    .map((w) => w.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter(Boolean)
+    .join("-");
 
   return title || null;
 }
@@ -126,9 +137,9 @@ export async function tryApplyAutoTitle(
     const csTime = new Date(cs.timestamp).getTime();
     return csTime >= sessionCreatedMs;
   });
-  // Fall back to the newest file if no candidates match (clock skew, etc.)
+  // Pick the oldest candidate (closest to session start); fall back to newest file on clock skew
   const claudeSession = candidates.length > 0
-    ? candidates[candidates.length - 1] // oldest match (closest to session creation)
+    ? candidates[candidates.length - 1]
     : claudeSessions[0];
 
   if (!claudeSession.firstUserMessage) {

@@ -55,6 +55,39 @@ enum HookCommand {
     },
 }
 
+// ── Bash inspection ─────────────────────────────────────────────────
+
+/// Result of inspecting a Bash tool-use payload for git push to main/master.
+struct BashInspection {
+    command: String,
+    targets_main: bool,
+}
+
+/// Inspect a parsed tool-use payload for Bash commands of interest.
+/// Returns `None` if the payload is not a Bash tool call or has no command.
+fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
+    let tool_name = payload.get("tool_name")?.as_str()?;
+    if tool_name != "Bash" {
+        return None;
+    }
+    let command = payload
+        .get("tool_input")?
+        .get("command")?
+        .as_str()?
+        .to_string();
+    let is_git_push = command.contains("git push") || command.contains("git-push");
+    // If no explicit branch (bare `git push` or `git push origin`), assume it may target main
+    let targets_main = is_git_push
+        && extract_branch_from_push(&command)
+            .map_or(true, |b| b == "main" || b == "master");
+    Some(BashInspection {
+        command,
+        targets_main,
+    })
+}
+
+// ── Auto-title ──────────────────────────────────────────────────────
+
 /// Try to apply an auto-title to the agent session from its .jsonl file.
 /// Fire-and-forget: never blocks the hook, silently ignores errors.
 /// Uses a tmpfile sentinel so it only fires until a title is successfully applied.
@@ -62,9 +95,8 @@ enum HookCommand {
 async fn try_apply_auto_title(client: &Client) {
     const MAX_ATTEMPTS: u32 = 10;
 
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+    let Some(sid) = client.session_id() else {
+        return;
     };
 
     let sentinel = std::path::PathBuf::from(format!("/tmp/rdv-autotitle-{sid}"));
@@ -95,6 +127,8 @@ async fn try_apply_auto_title(client: &Client) {
     }
 }
 
+// ── Mention token stripping ─────────────────────────────────────────
+
 /// Replace `@<sid:UUID>` mention tokens with `@<short-id>` for human-readable output.
 fn strip_mention_tokens(body: &str) -> String {
     const PREFIX: &str = "@<sid:";
@@ -122,12 +156,13 @@ fn strip_mention_tokens(body: &str) -> String {
     result
 }
 
+// ── Status reporting ────────────────────────────────────────────────
+
 /// Report an agent activity status to the terminal server.
 /// Silently returns if no session ID is available.
 async fn report_status(client: &Client, status: &str) {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+    let Some(sid) = client.session_id() else {
+        return;
     };
     let query = [("sessionId", sid), ("status", status)];
     if let Err(e) = client.post_empty_with_query("/internal/agent-status", &query).await {
@@ -145,89 +180,144 @@ fn is_connection_error(err: &dyn std::error::Error) -> bool {
         || msg.contains("timed out")
 }
 
-/// Handle agent stop: report idle, check incomplete tasks, notify if proceeding.
-/// Returns Ok(()) early if no session ID is available.
-async fn handle_stop(client: &Client, agent: Option<String>, reason: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return Ok(()),
+// ── Peer digest ─────────────────────────────────────────────────────
+
+const PEER_HEADER: &str = "\u{2500}\u{2500} Peers \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+const PEER_FOOTER: &str = "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
+
+/// Print a compact peer status table and any new messages to stderr.
+async fn print_peer_digest(client: &Client) {
+    let Some(sid) = client.session_id() else {
+        return;
     };
 
-    // Report idle status (fire-and-forget, don't block on it)
-    let idle_query = [("sessionId", sid), ("status", "idle")];
-    let idle_future = client.post_empty_with_query("/internal/agent-status", &idle_query);
+    // Fetch peers
+    let peer_query = [("sessionId", sid)];
+    let peers_result: Result<serde_json::Value, _> = client
+        .get_with_query("/internal/peers/list", &peer_query)
+        .await;
 
-    // Check tasks with single retry on connection failure
-    let check_query = [("sessionId", sid)];
-    let check_future = async {
-        let result = client.post_empty_with_query("/internal/agent-stop-check", &check_query).await;
-        match &result {
-            Err(e) if is_connection_error(e.as_ref()) => {
-                eprintln!("warning: stop-check connection failed, retrying in 500ms...");
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                client.post_empty_with_query("/internal/agent-stop-check", &check_query).await
+    // Fetch new messages using timestamp sentinel
+    let ts_file = format!("/tmp/rdv-peer-poll-{sid}");
+    let since = std::fs::read_to_string(&ts_file)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let msg_query = [("sessionId", sid), ("since", since.as_str())];
+    let messages_result: Result<serde_json::Value, _> = client
+        .get_with_query("/internal/peers/messages/poll", &msg_query)
+        .await;
+
+    // Always update timestamp to avoid re-processing on failure
+    let _ = std::fs::write(&ts_file, &now);
+
+    // Print peers section if there are peers
+    if let Ok(resp) = &peers_result {
+        if let Some(peers) = resp.get("peers").and_then(|v| v.as_array()) {
+            if !peers.is_empty() {
+                eprintln!("{PEER_HEADER}");
+                for peer in peers {
+                    let name = peer.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let status = peer
+                        .get("agentActivityStatus")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let summary = peer
+                        .get("peerSummary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if summary.is_empty() {
+                        eprintln!("  {name} [{status}]");
+                    } else {
+                        eprintln!("  {name} [{status}]: {summary}");
+                    }
+                }
+                eprintln!("{PEER_FOOTER}");
             }
-            _ => result,
         }
-    };
-
-    let (idle_result, check_result) = tokio::join!(idle_future, check_future);
-    if let Err(e) = idle_result {
-        eprintln!("warning: failed to report idle status: {e}");
     }
 
-    let stop_blocked = match &check_result {
-        Ok(val) => {
-            let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            if !msg.is_empty() {
-                println!("{msg}");
-                true
-            } else {
-                false
+    // Print new messages if any
+    if let Ok(resp) = messages_result {
+        if let Some(messages) = resp.get("messages").and_then(|v| v.as_array()) {
+            for msg in messages {
+                let from = msg
+                    .get("fromSessionName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let raw_body = msg.get("body").and_then(|v| v.as_str()).unwrap_or("");
+                let body = strip_mention_tokens(raw_body);
+                let is_broadcast = msg.get("toSessionId").map_or(true, |v| v.is_null());
+                let target = if is_broadcast { " (broadcast)" } else { "" };
+                eprintln!("\u{1f4e8} Peer message from {from}{target}: {body}");
             }
         }
-        Err(e) => {
-            eprintln!("warning: failed to check tasks: {e}");
-            println!("Unable to verify task completion. Please run TaskList to check your tasks before stopping.");
-            true
-        }
-    };
-
-    if !stop_blocked {
-        let title = match &agent {
-            Some(a) => format!("Agent stopped: {a}"),
-            None => "Agent stopped".to_string(),
-        };
-        let payload = json!({
-            "sessionId": sid,
-            "type": "agent_exited",
-            "title": title,
-            "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
-        });
-        let _ = client.post_json("/internal/notify", &payload).await;
     }
-
-    Ok(())
 }
 
+// ── Peer broadcasts ─────────────────────────────────────────────────
+
+/// Extract the branch name from a `git push` command string.
+/// Returns the remote-tracking branch if present, otherwise None.
+fn extract_branch_from_push(command: &str) -> Option<String> {
+    // Parse patterns like: git push origin main, git push origin feature/foo
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    // Find "push" in the args, then look for remote and branch
+    let push_idx = parts.iter().position(|&w| w == "push")?;
+    // Skip flags (starting with -)
+    let mut args_after_push = parts[push_idx + 1..]
+        .iter()
+        .filter(|w| !w.starts_with('-'));
+    let _remote = args_after_push.next()?; // e.g. "origin"
+    let branch = args_after_push.next()?; // e.g. "main"
+    // Handle refspec like "local:remote"
+    let branch_name = if let Some((_local, remote)) = branch.split_once(':') {
+        remote
+    } else {
+        branch
+    };
+    Some(branch_name.to_string())
+}
+
+/// Fire-and-forget broadcast when git push to main/master detected.
+async fn broadcast_git_push_to_peers(client: &Client, command: &str) {
+    let Some(sid) = client.session_id() else {
+        return;
+    };
+    let body = match extract_branch_from_push(command) {
+        Some(branch) => format!("pushed to {branch} \u{2014} you may need to rebase"),
+        None => "pushed (branch unspecified) \u{2014} you may need to rebase".to_string(),
+    };
+    let payload = json!({ "fromSessionId": sid, "body": body });
+    let _ = client.post_json("/internal/peers/messages/send", &payload).await;
+}
+
+/// Broadcast session start once per session (sentinel at /tmp/rdv-peer-start-{sid}).
+async fn broadcast_session_start(client: &Client) {
+    let Some(sid) = client.session_id() else {
+        return;
+    };
+    let sentinel = format!("/tmp/rdv-peer-start-{sid}");
+    if std::fs::metadata(&sentinel).is_ok() {
+        return;
+    }
+    let _ = std::fs::write(&sentinel, "1");
+    let payload = json!({ "fromSessionId": sid, "body": "session started" });
+    let _ = client.post_json("/internal/peers/messages/send", &payload).await;
+}
+
+// ── Git identity guard ──────────────────────────────────────────────
+
 /// Check if a git command in a sensitive folder would leak identity.
-/// Reads the PreToolUse payload from stdin, inspects for git commit/push commands,
+/// Accepts a pre-parsed PreToolUse payload, inspects for git commit/push commands,
 /// and calls the git-guard API to evaluate identity risk.
 /// Returns true if the tool use should be blocked.
-async fn check_git_identity_guard(client: &Client) -> bool {
-    // Read stdin to get the tool payload
-    let mut buf = Vec::new();
-    if std::io::stdin().read_to_end(&mut buf).is_err() {
-        return false;
-    }
-
-    let payload: serde_json::Value = match serde_json::from_slice(&buf) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-
+async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) -> bool {
     // Only check Bash tool calls
-    let tool_name = payload.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let tool_name = payload
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if tool_name != "Bash" {
         return false;
     }
@@ -247,10 +337,8 @@ async fn check_git_identity_guard(client: &Client) -> bool {
 
     let operation = if is_git_push { "push" } else { "commit" };
 
-    // Need session ID to look up folder
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return false,
+    let Some(sid) = client.session_id() else {
+        return false;
     };
 
     // Get the session's folder ID
@@ -265,9 +353,8 @@ async fn check_git_identity_guard(client: &Client) -> bool {
         Err(_) => return false,
     };
 
-    let folder_id = match &session.folder_id {
-        Some(id) => id,
-        None => return false,
+    let Some(ref folder_id) = session.folder_id else {
+        return false;
     };
 
     // Read git identity from environment (set by session-service)
@@ -280,8 +367,6 @@ async fn check_git_identity_guard(client: &Client) -> bool {
 
     // Always call the guard API — the server determines if the folder is sensitive
     // even when no identity env vars are set (which is the most dangerous case)
-
-    // Call the git-guard API
     let guard_payload = json!({
         "proposedName": proposed_name,
         "proposedEmail": proposed_email,
@@ -308,13 +393,13 @@ async fn check_git_identity_guard(client: &Client) -> bool {
     match result.risk.as_str() {
         "block" => {
             if let Some(reason) = &result.reason {
-                eprintln!("🛡️  Git identity guard: {reason}");
+                eprintln!("\u{1f6e1}\u{fe0f}  Git identity guard: {reason}");
             }
             true
         }
         "warn" => {
             if let Some(reason) = &result.reason {
-                eprintln!("⚠️  Git identity warning: {reason}");
+                eprintln!("\u{26a0}\u{fe0f}  Git identity warning: {reason}");
             }
             false
         }
@@ -322,52 +407,93 @@ async fn check_git_identity_guard(client: &Client) -> bool {
     }
 }
 
-/// Check for pending peer messages and print them to stderr.
-/// Persists the last poll timestamp to a file to avoid re-processing.
-async fn check_peer_messages(client: &Client) {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => return,
+// ── Stop handler ────────────────────────────────────────────────────
+
+/// Handle agent stop: report idle, check incomplete tasks, notify if proceeding.
+/// Returns Ok(()) early if no session ID is available.
+async fn handle_stop(
+    client: &Client,
+    agent: Option<String>,
+    reason: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(sid) = client.session_id() else {
+        return Ok(());
     };
 
-    let ts_file = format!("/tmp/rdv-peer-poll-{sid}");
-    let since = std::fs::read_to_string(&ts_file)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let query = [("sessionId", sid), ("since", since.as_str())];
-    let result: Result<serde_json::Value, _> = client
-        .get_with_query("/internal/peers/messages/poll", &query)
+    // Clear peer summary (fire-and-forget)
+    let clear_summary_payload = json!({ "sessionId": sid, "summary": "" });
+    let _ = client
+        .post_json("/internal/peers/summary", &clear_summary_payload)
         .await;
 
-    // Always update timestamp to avoid re-processing on failure
-    let _ = std::fs::write(&ts_file, &now);
+    // Report idle status (fire-and-forget, don't block on it)
+    let idle_query = [("sessionId", sid), ("status", "idle")];
+    let idle_future = client.post_empty_with_query("/internal/agent-status", &idle_query);
 
-    let resp = match result {
-        Ok(v) => v,
-        Err(_) => return,
+    // Check tasks with single retry on connection failure
+    let check_query = [("sessionId", sid)];
+    let check_future = async {
+        let result = client
+            .post_empty_with_query("/internal/agent-stop-check", &check_query)
+            .await;
+        match &result {
+            Err(e) if is_connection_error(e.as_ref()) => {
+                eprintln!("warning: stop-check connection failed, retrying in 500ms...");
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                client
+                    .post_empty_with_query("/internal/agent-stop-check", &check_query)
+                    .await
+            }
+            _ => result,
+        }
     };
 
-    let messages = match resp.get("messages").and_then(|v| v.as_array()) {
-        Some(msgs) if !msgs.is_empty() => msgs,
-        _ => return,
-    };
-
-    for msg in messages {
-        let from = msg.get("fromSessionName")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let raw_body = msg.get("body")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        // Strip @<sid:UUID> mention tokens → @<short-id> for readable stderr output
-        let body = strip_mention_tokens(raw_body);
-        let is_broadcast = msg.get("toSessionId")
-            .map_or(true, |v| v.is_null());
-        let target = if is_broadcast { " (broadcast)" } else { "" };
-        eprintln!("📨 Peer message from {from}{target}: {body}");
+    let (idle_result, check_result) = tokio::join!(idle_future, check_future);
+    if let Err(e) = idle_result {
+        eprintln!("warning: failed to report idle status: {e}");
     }
+
+    let stop_blocked = match &check_result {
+        Ok(val) => {
+            let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            if msg.is_empty() {
+                false
+            } else {
+                println!("{msg}");
+                true
+            }
+        }
+        Err(e) => {
+            eprintln!("warning: failed to check tasks: {e}");
+            println!("Unable to verify task completion. Please run TaskList to check your tasks before stopping.");
+            true
+        }
+    };
+
+    if !stop_blocked {
+        let title = match &agent {
+            Some(a) => format!("Agent stopped: {a}"),
+            None => "Agent stopped".to_string(),
+        };
+        let payload = json!({
+            "sessionId": sid,
+            "type": "agent_exited",
+            "title": title,
+            "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
+        });
+        let _ = client.post_json("/internal/notify", &payload).await;
+
+        // Broadcast "finished work" to peers
+        let finished_payload = json!({ "fromSessionId": sid, "body": "finished work" });
+        let _ = client
+            .post_json("/internal/peers/messages/send", &finished_payload)
+            .await;
+    }
+
+    Ok(())
 }
+
+// ── Todo sync ───────────────────────────────────────────────────────
 
 /// Sync task/todo data from stdin to the terminal server.
 /// Drains stdin even if no session ID is available to prevent blocking the caller.
@@ -390,20 +516,43 @@ async fn sync_todos_from_stdin(client: &Client) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Box<dyn std::error::Error>> {
+// ── Main handler ────────────────────────────────────────────────────
+
+pub async fn run(
+    args: HookArgs,
+    client: &Client,
+    _human: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         HookCommand::PreToolUse => {
             report_status(client, "running").await;
-            // Check for peer messages (non-blocking, best-effort)
-            check_peer_messages(client).await;
-            // Try to auto-title the session from Claude Code's .jsonl (idempotent)
+            print_peer_digest(client).await;
+            broadcast_session_start(client).await;
             try_apply_auto_title(client).await;
-            if check_git_identity_guard(client).await {
+
+            // Read stdin once into a buffer, parse as JSON
+            let mut buf = Vec::new();
+            let _ = std::io::stdin().read_to_end(&mut buf);
+            let payload: serde_json::Value =
+                serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
+
+            if check_git_identity_guard(client, &payload).await {
                 std::process::exit(2);
             }
         }
         HookCommand::PostToolUse => {
-            sync_todos_from_stdin(client).await?;
+            // Read stdin, parse as JSON to check for Bash git push
+            let mut buf = Vec::new();
+            let _ = std::io::stdin().read_to_end(&mut buf);
+            let payload: serde_json::Value =
+                serde_json::from_slice(&buf).unwrap_or(serde_json::Value::Null);
+
+            // Broadcast to peers after successful git push to main/master
+            if let Some(inspection) = inspect_bash_payload(&payload) {
+                if inspection.targets_main {
+                    broadcast_git_push_to_peers(client, &inspection.command).await;
+                }
+            }
         }
         HookCommand::PreCompact => {
             report_status(client, "compacting").await;
@@ -415,9 +564,8 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             handle_stop(client, agent, reason).await?;
         }
         HookCommand::Notify { event, body } => {
-            let sid = match client.session_id() {
-                Some(s) => s,
-                None => return Ok(()),
+            let Some(sid) = client.session_id() else {
+                return Ok(());
             };
 
             let payload = json!({
@@ -450,7 +598,10 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
             // Check 2: Terminal server reachable (agent-status endpoint)
             let terminal_check = if let Some(s) = sid {
                 let query = [("sessionId", s), ("status", "running")];
-                match client.post_empty_with_query("/internal/agent-status", &query).await {
+                match client
+                    .post_empty_with_query("/internal/agent-status", &query)
+                    .await
+                {
                     Ok(_) => json!({ "check": "terminal_server", "status": "ok" }),
                     Err(e) => {
                         all_ok = false;
@@ -483,11 +634,17 @@ pub async fn run(args: HookArgs, client: &Client, _human: bool) -> Result<(), Bo
                 std::process::exit(1);
             }
         }
-        HookCommand::Claude { event, agent, reason } => {
+        HookCommand::Claude {
+            event,
+            agent,
+            reason,
+        } => {
             match event.as_str() {
                 "session-start" | "active" | "prompt-submit" => {
                     report_status(client, "running").await;
-                    check_peer_messages(client).await;
+                    // Peer digest is handled by PreToolUse (Bash matcher) to avoid
+                    // duplicate output — the "" matcher fires on ALL tools including Bash.
+                    broadcast_session_start(client).await;
                     try_apply_auto_title(client).await;
                 }
                 "stop" | "idle" => {
