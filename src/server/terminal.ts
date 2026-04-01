@@ -1562,6 +1562,10 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         if (ctx) {
           resolvedChannelId = await resolveChannelName(ctx.folderId, channelName as string);
         }
+        if (!resolvedChannelId) {
+          sendJson(res, 404, { error: `Channel '${channelName}' not found` });
+          return true;
+        }
       }
 
       const PeerService = await import("@/services/peer-service");

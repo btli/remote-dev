@@ -58,6 +58,20 @@ export const POST = withApiAuth(async (request, context) => {
     }
     if (body.length > 8192) return errorResponse("Message body exceeds maximum length of 8192 characters", 400);
 
+    // Validate parentMessageId belongs to this channel
+    if (parentMessageId) {
+      const { agentPeerMessages } = await import("@/db/schema");
+      const { eq: eqOp, and: andOp } = await import("drizzle-orm");
+      const parent = await db.query.agentPeerMessages.findFirst({
+        where: andOp(
+          eqOp(agentPeerMessages.id, parentMessageId),
+          eqOp(agentPeerMessages.channelId, channelId)
+        ),
+        columns: { id: true },
+      });
+      if (!parent) return errorResponse("Parent message not found in this channel", 400);
+    }
+
     // Look up user's display name
     const user = await db.query.users.findFirst({
       where: eq(users.id, context.userId),

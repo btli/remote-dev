@@ -37,6 +37,16 @@ export const POST = withApiAuth(async (request, { userId }) => {
     });
     if (!fromSession) return errorResponse("fromSessionId not found or not owned by user", 403);
 
+    // Verify targetSessionId exists in the same folder
+    const targetSession = await db.query.terminalSessions.findFirst({
+      where: and(
+        eq(terminalSessions.id, targetSessionId),
+        eq(terminalSessions.folderId, folderId)
+      ),
+      columns: { id: true },
+    });
+    if (!targetSession) return errorResponse("Target session not found in this folder", 404);
+
     const channel = await ChannelService.findOrCreateDmChannel(
       folderId,
       fromSessionId,

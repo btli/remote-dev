@@ -257,10 +257,34 @@ export async function listChannelGroups(
     }
   }
 
+  // For never-read channels, count only top-level messages (not thread replies)
+  const neverReadIds = allChannels.filter((c) => !readStateMap.has(c.id)).map((c) => c.id);
+  const neverReadCountMap = new Map<string, number>();
+  if (neverReadIds.length > 0) {
+    const neverReadRows = await db
+      .select({
+        channelId: agentPeerMessages.channelId,
+        count: sql<number>`count(*)`,
+      })
+      .from(agentPeerMessages)
+      .where(
+        and(
+          inArray(agentPeerMessages.channelId, neverReadIds),
+          isNull(agentPeerMessages.parentMessageId)
+        )
+      )
+      .groupBy(agentPeerMessages.channelId);
+    for (const row of neverReadRows) {
+      if (row.channelId) neverReadCountMap.set(row.channelId, row.count);
+    }
+  }
+
   const channelsWithUnread = allChannels.map((ch) => {
     const lastReadAt = readStateMap.get(ch.id);
-    // Never read → all messages are unread; otherwise use the batched count
-    const unreadCount = lastReadAt ? (unreadCountMap.get(ch.id) ?? 0) : ch.messageCount;
+    // Never read → count top-level messages only; otherwise use the batched count
+    const unreadCount = lastReadAt
+      ? (unreadCountMap.get(ch.id) ?? 0)
+      : (neverReadCountMap.get(ch.id) ?? 0);
 
     return {
       id: ch.id,
@@ -416,11 +440,13 @@ export async function findOrCreateDmChannel(
 
 /**
  * Mark a channel as read for a user up to a specific message.
+ * Pass messageCreatedAt to use the message's actual timestamp instead of now.
  */
 export async function markChannelRead(
   channelId: string,
   userId: string,
-  messageId: string
+  messageId: string,
+  messageCreatedAt?: Date
 ) {
   // Verify message belongs to this channel
   const message = await db.query.agentPeerMessages.findFirst({
@@ -428,21 +454,21 @@ export async function markChannelRead(
       eq(agentPeerMessages.id, messageId),
       eq(agentPeerMessages.channelId, channelId)
     ),
-    columns: { id: true },
+    columns: { id: true, createdAt: true },
   });
   if (!message) {
     throw new Error("Message does not belong to this channel");
   }
 
-  const now = new Date();
+  const lastReadAt = messageCreatedAt ?? message.createdAt ?? new Date();
 
   // Upsert read state
   await db
     .insert(channelReadState)
-    .values({ channelId, userId, lastReadMessageId: messageId, lastReadAt: now })
+    .values({ channelId, userId, lastReadMessageId: messageId, lastReadAt })
     .onConflictDoUpdate({
       target: [channelReadState.channelId, channelReadState.userId],
-      set: { lastReadMessageId: messageId, lastReadAt: now },
+      set: { lastReadMessageId: messageId, lastReadAt },
     });
 }
 

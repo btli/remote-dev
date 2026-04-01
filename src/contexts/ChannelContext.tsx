@@ -342,18 +342,16 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
   const createChannel = useCallback(
     async (name: string, topic?: string) => {
       if (!folderId) return;
-      try {
-        const resp = await fetch("/api/channels", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ folderId, name, topic }),
-        });
-        if (resp.ok) {
-          await fetchChannels();
-        }
-      } catch {
-        // Silently fail
+      const resp = await fetch("/api/channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId, name, topic }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error || "Failed to create channel");
       }
+      await fetchChannels();
     },
     [folderId, fetchChannels]
   );
@@ -412,6 +410,17 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
       if (!current) return prev;
       if (current.some((m) => m.id === message.id)) return prev;
       return new Map(prev).set(parentId, [...current, message]);
+    });
+    // Also bump parent's replyCount in messagesByChannel
+    setMessagesByChannel((prev) => {
+      const channelMsgs = prev.get(message.channelId);
+      if (!channelMsgs) return prev;
+      return new Map(prev).set(
+        message.channelId,
+        channelMsgs.map((m) =>
+          m.id === parentId ? { ...m, replyCount: m.replyCount + 1 } : m
+        )
+      );
     });
   }, []);
 

@@ -47,6 +47,20 @@ async function main() {
       .set({ messageCount: count })
       .where(eq(channels.id, generalChannelId));
 
+    // Backfill lastMessageAt
+    const lastMsgResult = await db
+      .select({ maxCreatedAt: sql<number>`max(${agentPeerMessages.createdAt})` })
+      .from(agentPeerMessages)
+      .where(eq(agentPeerMessages.channelId, generalChannelId));
+
+    const maxCreatedAt = lastMsgResult[0]?.maxCreatedAt;
+    if (maxCreatedAt) {
+      await db
+        .update(channels)
+        .set({ lastMessageAt: new Date(maxCreatedAt) })
+        .where(eq(channels.id, generalChannelId));
+    }
+
     console.log(`  Folder ${folderId}: assigned messages to #general (${count} total)`);
     migrated++;
   }
