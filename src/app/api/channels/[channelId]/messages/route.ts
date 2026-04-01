@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { db } from "@/db";
-import { users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { agentPeerMessages, users } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import * as ChannelService from "@/services/channel-service";
 import * as PeerService from "@/services/peer-service";
 import { resolveTerminalServerUrl } from "@/lib/terminal-server-url";
@@ -60,12 +60,10 @@ export const POST = withApiAuth(async (request, context) => {
 
     // Validate parentMessageId belongs to this channel
     if (parentMessageId) {
-      const { agentPeerMessages } = await import("@/db/schema");
-      const { eq: eqOp, and: andOp } = await import("drizzle-orm");
       const parent = await db.query.agentPeerMessages.findFirst({
-        where: andOp(
-          eqOp(agentPeerMessages.id, parentMessageId),
-          eqOp(agentPeerMessages.channelId, channelId)
+        where: and(
+          eq(agentPeerMessages.id, parentMessageId),
+          eq(agentPeerMessages.channelId, channelId)
         ),
         columns: { id: true },
       });

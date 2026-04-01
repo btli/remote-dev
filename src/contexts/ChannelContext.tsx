@@ -61,6 +61,22 @@ function removeOptimistic(
   });
 }
 
+/** Increment a parent message's replyCount in the channel message map. */
+function incrementParentReplyCount(
+  setter: MapSetter<ChannelMessage>,
+  channelId: string,
+  parentId: string
+): void {
+  setter((prev) => {
+    const msgs = prev.get(channelId);
+    if (!msgs) return prev;
+    return new Map(prev).set(
+      channelId,
+      msgs.map((m) => (m.id === parentId ? { ...m, replyCount: m.replyCount + 1 } : m))
+    );
+  });
+}
+
 interface ChannelContextValue {
   groups: ChannelGroup[];
   activeChannelId: string | null;
@@ -370,18 +386,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
         return new Map(prev).set(message.parentMessageId!, [...current, message]);
       });
       // Also increment replyCount on the parent in messagesByChannel
-      setMessagesByChannel((prev) => {
-        const msgs = prev.get(message.channelId);
-        if (!msgs) return prev;
-        return new Map(prev).set(
-          message.channelId,
-          msgs.map((m) =>
-            m.id === message.parentMessageId
-              ? { ...m, replyCount: m.replyCount + 1 }
-              : m
-          )
-        );
-      });
+      incrementParentReplyCount(setMessagesByChannel, message.channelId, message.parentMessageId!);
     } else {
       setMessagesByChannel((prev) => {
         const current = prev.get(message.channelId) ?? [];
@@ -412,16 +417,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
       return new Map(prev).set(parentId, [...current, message]);
     });
     // Also bump parent's replyCount in messagesByChannel
-    setMessagesByChannel((prev) => {
-      const channelMsgs = prev.get(message.channelId);
-      if (!channelMsgs) return prev;
-      return new Map(prev).set(
-        message.channelId,
-        channelMsgs.map((m) =>
-          m.id === parentId ? { ...m, replyCount: m.replyCount + 1 } : m
-        )
-      );
-    });
+    incrementParentReplyCount(setMessagesByChannel, message.channelId, parentId);
   }, []);
 
   const addChannel = useCallback((channel: Channel) => {

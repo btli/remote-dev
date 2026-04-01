@@ -440,15 +440,14 @@ export async function findOrCreateDmChannel(
 
 /**
  * Mark a channel as read for a user up to a specific message.
- * Pass messageCreatedAt to use the message's actual timestamp instead of now.
+ * Uses the message's actual createdAt timestamp for consistency.
  */
 export async function markChannelRead(
   channelId: string,
   userId: string,
-  messageId: string,
-  messageCreatedAt?: Date
+  messageId: string
 ) {
-  // Verify message belongs to this channel
+  // Verify message belongs to this channel and get its timestamp
   const message = await db.query.agentPeerMessages.findFirst({
     where: and(
       eq(agentPeerMessages.id, messageId),
@@ -460,7 +459,7 @@ export async function markChannelRead(
     throw new Error("Message does not belong to this channel");
   }
 
-  const lastReadAt = messageCreatedAt ?? message.createdAt ?? new Date();
+  const lastReadAt = message.createdAt ?? new Date();
 
   // Upsert read state
   await db
