@@ -113,8 +113,8 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
     try {
       const response = await fetch("/api/ccflare/keys");
       if (!response.ok) return;
-      const data: CcflareApiKey[] = await response.json();
-      setKeys(data);
+      const data = await response.json();
+      setKeys(data.keys ?? data);
     } catch {
       // Silently handle
     }

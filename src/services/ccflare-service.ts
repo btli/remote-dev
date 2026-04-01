@@ -428,6 +428,7 @@ async function registerKeyWithCcflare(
   const dbPath = ccflareProcessManager.getDatabasePath();
 
   try {
+    // Pass API key via env to avoid exposure in process listing
     await execFileAsync(
       binaryPath,
       [
@@ -437,13 +438,12 @@ async function registerKeyWithCcflare(
         "claude-api",
         "--priority",
         String(priority),
-        "--api-key",
-        apiKey,
       ],
       {
         env: {
           ...process.env,
           BETTER_CCFLARE_DB_PATH: dbPath,
+          ANTHROPIC_API_KEY: apiKey,
         } as NodeJS.ProcessEnv,
         timeout: 10000,
       }

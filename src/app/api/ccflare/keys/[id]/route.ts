@@ -15,7 +15,10 @@ export const DELETE = withAuth(async (_request, { userId, params }) => {
       return errorResponse("Key ID is required", 400, "ID_REQUIRED");
     }
 
-    await CcflareService.removeApiKey(userId, keyId);
+    const deleted = await CcflareService.removeApiKey(userId, keyId);
+    if (!deleted) {
+      return errorResponse("API key not found", 404, "NOT_FOUND");
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     log.error("Failed to remove ccflare key", { error: String(error), keyId: params?.id });

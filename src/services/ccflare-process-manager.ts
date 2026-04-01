@@ -33,12 +33,15 @@ class CcflareProcessManager {
   private startTime: number | null = null;
   private starting = false;
   private stopping = false;
+  private cachedBinaryPath: string | null | undefined = undefined;
 
   /**
    * Resolve the path to the better-ccflare binary.
    * Prefers the local node_modules/.bin version, falls back to PATH.
    */
   private resolveBinaryPath(): string | null {
+    if (this.cachedBinaryPath !== undefined) return this.cachedBinaryPath;
+
     // Try local node_modules first
     const localPath = join(
       process.cwd(),
@@ -48,13 +51,14 @@ class CcflareProcessManager {
     );
     try {
       accessSync(localPath, constants.X_OK);
+      this.cachedBinaryPath = localPath;
       return localPath;
     } catch {
       // Not found or not executable locally
     }
 
-    // Fallback: assume it's in PATH
-    return "better-ccflare";
+    this.cachedBinaryPath = null;
+    return null;
   }
 
   /**
@@ -142,9 +146,14 @@ class CcflareProcessManager {
       log.info("Cleaning up stale PID file", { stalePid: pid });
       this.removePid();
     } else {
-      log.warn("Found running ccflare process from previous session", {
-        pid,
-      });
+      // Kill orphaned process to avoid duplicate instances
+      log.warn("Killing orphaned ccflare process from previous session", { pid });
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // Already gone
+      }
+      this.removePid();
     }
   }
 
@@ -198,31 +207,10 @@ class CcflareProcessManager {
         detached: false,
       } as import("node:child_process").SpawnOptions);
 
-      if (!child.pid) {
-        throw new Error("Failed to spawn ccflare process — no PID assigned");
-      }
-
-      this.process = child;
-      this.port = port;
-      this.startTime = Date.now();
-      this.writePid(child.pid);
-
-      log.info("Ccflare process spawned", { pid: child.pid, port });
-
-      // Pipe stdout to structured logger
-      child.stdout?.on("data", (data: Buffer) => {
-        const text = data.toString().trim();
-        if (text) {
-          log.debug("stdout", { output: text });
-        }
-      });
-
-      // Pipe stderr to structured logger
-      child.stderr?.on("data", (data: Buffer) => {
-        const text = data.toString().trim();
-        if (text) {
-          log.warn("stderr", { output: text });
-        }
+      // Attach error/exit listeners immediately to prevent unhandled ENOENT
+      child.on("error", (err: Error) => {
+        log.error("Ccflare process error", { error: String(err) });
+        this.resetState();
       });
 
       // Handle process exit
@@ -235,9 +223,30 @@ class CcflareProcessManager {
         this.resetState();
       });
 
-      child.on("error", (err: Error) => {
-        log.error("Ccflare process error", { error: String(err) });
-        this.resetState();
+      if (!child.pid) {
+        throw new Error("Failed to spawn ccflare process — no PID assigned");
+      }
+
+      this.process = child;
+      this.port = port;
+      this.startTime = Date.now();
+      this.writePid(child.pid);
+
+      log.info("Ccflare process spawned", { pid: child.pid, port });
+
+      // Pipe stdout/stderr to structured logger
+      child.stdout?.on("data", (data: Buffer) => {
+        const text = data.toString().trim();
+        if (text) {
+          log.debug("stdout", { output: text });
+        }
+      });
+
+      child.stderr?.on("data", (data: Buffer) => {
+        const text = data.toString().trim();
+        if (text) {
+          log.warn("stderr", { output: text });
+        }
       });
     } finally {
       this.starting = false;
