@@ -13,11 +13,25 @@ import {
   agentPeerMessages,
   sessionFolders,
 } from "@/db/schema";
-import { eq, and, sql, gt, isNull } from "drizzle-orm";
+import { eq, and, sql, gt, isNull, inArray } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import type { ChannelType } from "@/types/channels";
 
 const log = createLogger("ChannelService");
+
+export class ChannelValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChannelValidationError";
+  }
+}
+
+export class ChannelArchiveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChannelArchiveError";
+  }
+}
 
 const CHANNEL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,49}$/;
 const DEFAULT_GROUP_NAME = "Channels";
@@ -44,7 +58,14 @@ export async function ensureFolderChannels(
       where: eq(channels.id, cached.id),
       columns: { groupId: true },
     });
-    if (ch) return { groupId: ch.groupId, generalChannelId: cached.id };
+    if (ch) {
+      // Refresh cache expiry
+      cached.expiresAt = Date.now() + CACHE_TTL_MS;
+      return { groupId: ch.groupId, generalChannelId: cached.id };
+    } else {
+      // Channel was deleted — evict stale cache
+      generalChannelCache.delete(folderId);
+    }
   }
 
   // Upsert the default group
@@ -128,7 +149,7 @@ export async function createChannel(params: CreateChannelParams) {
   const { folderId, name, topic, type = "public", createdBySessionId } = params;
 
   if (!CHANNEL_NAME_RE.test(name)) {
-    throw new Error(
+    throw new ChannelValidationError(
       `Invalid channel name "${name}". Must be 1-50 chars, lowercase alphanumeric and hyphens, starting with alphanumeric.`
     );
   }
@@ -183,62 +204,85 @@ export async function listChannelGroups(
     orderBy: channels.createdAt,
   });
 
-  // Get read states for this user
+  // Batch: get read states for all channels in one query
   const channelIds = allChannels.map((c) => c.id);
   const readStates =
     channelIds.length > 0
-      ? await db.query.channelReadState.findMany({
-          where: and(
-            eq(channelReadState.userId, userId),
-            sql`${channelReadState.channelId} IN (${sql.join(
-              channelIds.map((id) => sql`${id}`),
-              sql`, `
-            )})`
-          ),
-        })
-      : [];
-
-  const readStateMap = new Map(readStates.map((rs) => [rs.channelId, rs]));
-
-  // Compute unread counts per channel
-  const channelsWithUnread = await Promise.all(
-    allChannels.map(async (ch) => {
-      const rs = readStateMap.get(ch.id);
-      let unreadCount = 0;
-
-      if (rs?.lastReadAt) {
-        const result = await db
-          .select({ count: sql<number>`count(*)` })
-          .from(agentPeerMessages)
+      ? await db
+          .select({
+            channelId: channelReadState.channelId,
+            lastReadAt: channelReadState.lastReadAt,
+          })
+          .from(channelReadState)
           .where(
             and(
-              eq(agentPeerMessages.channelId, ch.id),
-              isNull(agentPeerMessages.parentMessageId),
-              gt(agentPeerMessages.createdAt, rs.lastReadAt)
+              eq(channelReadState.userId, userId),
+              inArray(channelReadState.channelId, channelIds)
             )
-          );
-        unreadCount = result[0]?.count ?? 0;
-      } else {
-        // Never read — count all messages
-        unreadCount = ch.messageCount;
-      }
+          )
+      : [];
 
-      return {
-        id: ch.id,
-        folderId: ch.folderId,
-        groupId: ch.groupId,
-        name: ch.name,
-        displayName: ch.displayName,
-        type: ch.type as ChannelType,
-        topic: ch.topic,
-        isDefault: ch.isDefault,
-        lastMessageAt: ch.lastMessageAt?.toISOString() ?? null,
-        messageCount: ch.messageCount,
-        unreadCount,
-        createdAt: ch.createdAt.toISOString(),
-      };
-    })
-  );
+  const readStateMap = new Map(readStates.map((rs) => [rs.channelId, rs.lastReadAt]));
+
+  // Batch: get unread counts for channels that have been read
+  const channelsWithReadState = allChannels
+    .filter((c) => readStateMap.has(c.id))
+    .map((c) => ({ id: c.id, lastReadAt: readStateMap.get(c.id)! }));
+
+  let unreadCountMap = new Map<string, number>();
+
+  if (channelsWithReadState.length > 0) {
+    // Single query: count unread messages per channel since last read
+    const unreadRows = await db
+      .select({
+        channelId: agentPeerMessages.channelId,
+        count: sql<number>`count(*)`,
+      })
+      .from(agentPeerMessages)
+      .where(
+        sql`${agentPeerMessages.channelId} IN (${sql.join(
+          channelsWithReadState.map((c) => sql`${c.id}`),
+          sql`, `
+        )}) AND ${agentPeerMessages.parentMessageId} IS NULL AND (${sql.join(
+          channelsWithReadState.map(
+            (c) =>
+              sql`(${agentPeerMessages.channelId} = ${c.id} AND ${agentPeerMessages.createdAt} > ${c.lastReadAt.getTime()})`
+          ),
+          sql` OR `
+        )})`
+      )
+      .groupBy(agentPeerMessages.channelId);
+
+    for (const row of unreadRows) {
+      if (row.channelId) unreadCountMap.set(row.channelId, row.count);
+    }
+  }
+
+  const channelsWithUnread = allChannels.map((ch) => {
+    const lastReadAt = readStateMap.get(ch.id);
+    let unreadCount: number;
+    if (!lastReadAt) {
+      // Never read — all messages are unread
+      unreadCount = ch.messageCount;
+    } else {
+      unreadCount = unreadCountMap.get(ch.id) ?? 0;
+    }
+
+    return {
+      id: ch.id,
+      folderId: ch.folderId,
+      groupId: ch.groupId,
+      name: ch.name,
+      displayName: ch.displayName,
+      type: ch.type as ChannelType,
+      topic: ch.topic,
+      isDefault: ch.isDefault,
+      lastMessageAt: ch.lastMessageAt?.toISOString() ?? null,
+      messageCount: ch.messageCount,
+      unreadCount,
+      createdAt: ch.createdAt.toISOString(),
+    };
+  });
 
   return groups.map((g) => ({
     id: g.id,
@@ -384,6 +428,18 @@ export async function markChannelRead(
   userId: string,
   messageId: string
 ) {
+  // Verify message belongs to this channel
+  const message = await db.query.agentPeerMessages.findFirst({
+    where: and(
+      eq(agentPeerMessages.id, messageId),
+      eq(agentPeerMessages.channelId, channelId)
+    ),
+    columns: { id: true },
+  });
+  if (!message) {
+    throw new Error("Message does not belong to this channel");
+  }
+
   const now = new Date();
 
   // Upsert read state
@@ -405,7 +461,7 @@ export async function archiveChannel(channelId: string) {
     columns: { isDefault: true },
   });
   if (ch?.isDefault) {
-    throw new Error("Cannot archive the default channel");
+    throw new ChannelArchiveError("Cannot archive the default channel");
   }
 
   await db

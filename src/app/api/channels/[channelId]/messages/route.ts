@@ -25,8 +25,11 @@ export const GET = withApiAuth(async (request, context) => {
     const limitParam = searchParams.get("limit");
 
     const before = beforeParam ? new Date(beforeParam) : undefined;
+    if (before && isNaN(before.getTime())) {
+      return errorResponse("Invalid before date parameter", 400);
+    }
     const rawLimit = parseInt(limitParam ?? "50", 10);
-    const limit = Number.isNaN(rawLimit) ? 50 : rawLimit;
+    const limit = Number.isNaN(rawLimit) ? 50 : Math.min(Math.max(1, rawLimit), 200);
 
     const messages = await PeerService.listChannelMessages(channelId, { before, limit });
     return NextResponse.json({ messages });
@@ -53,6 +56,7 @@ export const POST = withApiAuth(async (request, context) => {
     if (!body) {
       return errorResponse("body is required", 400);
     }
+    if (body.length > 8192) return errorResponse("Message body exceeds maximum length of 8192 characters", 400);
 
     // Look up user's display name
     const user = await db.query.users.findFirst({

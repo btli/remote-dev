@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as ChannelService from "@/services/channel-service";
+import { db } from "@/db";
+import { terminalSessions } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/channels/dm");
@@ -23,6 +26,16 @@ export const POST = withApiAuth(async (request, { userId }) => {
     if (!(await ChannelService.verifyFolderOwnership(folderId, userId))) {
       return errorResponse("Folder not found", 404);
     }
+
+    // Verify fromSessionId belongs to this user
+    const fromSession = await db.query.terminalSessions.findFirst({
+      where: and(
+        eq(terminalSessions.id, fromSessionId),
+        eq(terminalSessions.userId, userId)
+      ),
+      columns: { id: true },
+    });
+    if (!fromSession) return errorResponse("fromSessionId not found or not owned by user", 403);
 
     const channel = await ChannelService.findOrCreateDmChannel(
       folderId,

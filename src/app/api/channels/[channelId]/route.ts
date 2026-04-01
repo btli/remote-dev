@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import * as ChannelService from "@/services/channel-service";
+import { ChannelArchiveError } from "@/services/channel-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/channels/[channelId]");
@@ -34,9 +35,8 @@ export const DELETE = withApiAuth(async (_request, context) => {
     await ChannelService.archiveChannel(channelId);
     return NextResponse.json({ success: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("Cannot archive the default channel")) {
-      return errorResponse(msg, 400);
+    if (err instanceof ChannelArchiveError) {
+      return errorResponse(String(err.message), 400);
     }
     log.error("Failed to archive channel", { error: String(err) });
     return errorResponse("Failed to archive channel", 500);

@@ -117,6 +117,8 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
   const [threadMessages, setThreadMessages] = useState<Map<string, ChannelMessage[]>>(new Map());
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const threadMessagesRef = useRef(threadMessages);
+  threadMessagesRef.current = threadMessages;
 
   // ---------------------------------------------------------------------------
   // Channel group fetching
@@ -310,7 +312,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     async (messageId: string) => {
       setOpenThreadId(messageId);
       // Fetch thread replies if not cached
-      if (!threadMessages.has(messageId)) {
+      if (!threadMessagesRef.current.has(messageId)) {
         try {
           const channelId = activeChannelId;
           if (!channelId) return;
@@ -328,7 +330,7 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
         }
       }
     },
-    [activeChannelId, threadMessages]
+    [activeChannelId]
   );
 
   const closeThread = useCallback(() => {

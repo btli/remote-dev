@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import * as ChannelService from "@/services/channel-service";
+import { ChannelValidationError } from "@/services/channel-service";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/channels");
@@ -45,9 +46,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
     const channel = await ChannelService.createChannel({ folderId, name, topic });
     return NextResponse.json({ channel }, { status: 201 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("Invalid channel name")) {
-      return errorResponse(msg, 400);
+    if (err instanceof ChannelValidationError) {
+      return errorResponse(String(err.message), 400);
     }
     log.error("Failed to create channel", { error: String(err) });
     return errorResponse("Failed to create channel", 500);
