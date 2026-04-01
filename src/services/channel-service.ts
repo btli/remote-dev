@@ -12,7 +12,7 @@ import {
   channelReadState,
   agentPeerMessages,
 } from "@/db/schema";
-import { eq, and, sql, desc, gt, isNull } from "drizzle-orm";
+import { eq, and, sql, gt, isNull } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import type { ChannelType } from "@/types/channels";
 

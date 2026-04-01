@@ -33,7 +33,7 @@ async function verifyChannelAccess(
 // GET /api/channels/:channelId/messages?before=&limit=
 export const GET = withApiAuth(async (request, context) => {
   try {
-    const { channelId } = await context.params;
+    const channelId = context.params!.channelId;
 
     const access = await verifyChannelAccess(channelId, context.userId);
     if (!access) {
@@ -59,7 +59,7 @@ export const GET = withApiAuth(async (request, context) => {
 // POST /api/channels/:channelId/messages — send message { body, parentMessageId? }
 export const POST = withApiAuth(async (request, context) => {
   try {
-    const { channelId } = await context.params;
+    const channelId = context.params!.channelId;
 
     const access = await verifyChannelAccess(channelId, context.userId);
     if (!access) {

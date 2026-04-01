@@ -29,7 +29,7 @@ async function verifyChannelAccess(
 // GET /api/channels/:channelId — get channel details
 export const GET = withApiAuth(async (_request, context) => {
   try {
-    const { channelId } = await context.params;
+    const channelId = context.params!.channelId;
 
     if (!(await verifyChannelAccess(channelId, context.userId))) {
       return errorResponse("Channel not found", 404);
@@ -46,7 +46,7 @@ export const GET = withApiAuth(async (_request, context) => {
 // DELETE /api/channels/:channelId — archive channel
 export const DELETE = withApiAuth(async (_request, context) => {
   try {
-    const { channelId } = await context.params;
+    const channelId = context.params!.channelId;
 
     if (!(await verifyChannelAccess(channelId, context.userId))) {
       return errorResponse("Channel not found", 404);

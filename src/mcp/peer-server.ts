@@ -430,7 +430,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
 
       case "read_channel": {
-        const { channel_name, limit: rawLimit } = (args || {}) as {
+        const { channel_name, limit: _limit } = (args || {}) as {
           channel_name: string;
           limit?: number;
         };

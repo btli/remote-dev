@@ -11,7 +11,7 @@ const MENTION_RE = /@<sid:([0-9a-f-]{36})>/g;
 
 interface ChannelMessageRowProps {
   message: ChannelMessage;
-  peerNameMap: Map<string, string>;
+  peerNameMap: ReadonlyMap<string, string>;
   onReplyClick?: (messageId: string) => void;
   isThreadReply?: boolean;
 }
@@ -48,57 +48,13 @@ function formatTime(isoString: string): string {
 }
 
 /**
- * Pre-process message body to replace @<sid:UUID> mention tokens with
- * displayable text. Returns a version of the body where mentions are replaced
- * with @name (or @shortId) so ReactMarkdown can render them as plain text.
- * Also returns a map of placeholder → ReactNode for inline rendering.
- */
-function buildMentionSegments(
-  body: string,
-  peerNameMap: Map<string, string>
-): ReactNode {
-  const matches = Array.from(body.matchAll(MENTION_RE));
-  if (matches.length === 0) return body;
-
-  const parts: ReactNode[] = [];
-  let lastIndex = 0;
-
-  for (const match of matches) {
-    const matchIndex = match.index!;
-    if (matchIndex > lastIndex) {
-      parts.push(body.slice(lastIndex, matchIndex));
-    }
-
-    const sessionId = match[1];
-    const name = peerNameMap.get(sessionId);
-    parts.push(
-      <span
-        key={`mention-${matchIndex}`}
-        className="text-primary font-medium"
-        title={name ? `Session: ${sessionId}` : `Unknown session: ${sessionId}`}
-      >
-        @{name ?? sessionId.slice(0, 8)}
-      </span>
-    );
-
-    lastIndex = matchIndex + match[0].length;
-  }
-
-  if (lastIndex < body.length) {
-    parts.push(body.slice(lastIndex));
-  }
-
-  return <>{parts}</>;
-}
-
-/**
  * Replace mention tokens in a string with a plain-text representation so
  * ReactMarkdown can safely parse the body without the custom token syntax
  * interfering with markdown parsing.
  */
 function preprocessBodyForMarkdown(
   body: string,
-  peerNameMap: Map<string, string>
+  peerNameMap: ReadonlyMap<string, string>
 ): string {
   return body.replace(MENTION_RE, (_match, sessionId) => {
     const name = peerNameMap.get(sessionId);
@@ -170,18 +126,17 @@ export function ChannelMessageRow({
                   {children}
                 </a>
               ),
-              code: ({ className, children, ...props }) => {
+              code: ({ className, children }: { className?: string; children?: ReactNode }) => {
                 const isInline = !className;
                 return isInline ? (
                   <code
                     className="bg-white/10 px-1 py-0.5 rounded text-sm font-mono"
-                    {...props}
                   >
                     {children}
                   </code>
                 ) : (
                   <pre className="bg-black/30 p-3 rounded-lg overflow-x-auto my-2">
-                    <code className={`${className ?? ""} font-mono`} {...props}>
+                    <code className={`${className ?? ""} font-mono`}>
                       {children}
                     </code>
                   </pre>

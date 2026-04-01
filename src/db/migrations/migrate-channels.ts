@@ -9,7 +9,7 @@
 
 import { db } from "@/db";
 import { agentPeerMessages, channels } from "@/db/schema";
-import { eq, isNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import * as ChannelService from "@/services/channel-service";
 
 async function main() {

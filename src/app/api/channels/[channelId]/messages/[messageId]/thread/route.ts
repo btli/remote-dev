@@ -30,7 +30,8 @@ async function verifyChannelAccess(
 // GET /api/channels/:channelId/messages/:messageId/thread?limit=100
 export const GET = withApiAuth(async (request, context) => {
   try {
-    const { channelId, messageId } = await context.params;
+    const channelId = context.params!.channelId;
+    const messageId = context.params!.messageId;
 
     if (!(await verifyChannelAccess(channelId, context.userId))) {
       return errorResponse("Channel not found", 404);

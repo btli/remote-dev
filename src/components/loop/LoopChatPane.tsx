@@ -63,6 +63,9 @@ interface LoopChatPaneProps {
     state: "running" | "exited" | "restarting" | "closed"
   ) => void;
   onPeerMessageCreated?: (folderId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelMessageCreated?: (folderId: string, channelId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onThreadReplyCreated?: (folderId: string, parentMessageId: string, message: import("@/types/peer-chat").PeerChatMessage) => void;
+  onChannelCreated?: (folderId: string, channel: import("@/types/channels").Channel) => void;
 }
 
 export function LoopChatPane({
@@ -83,6 +86,9 @@ export function LoopChatPane({
   onSessionClose,
   onAgentStateChange,
   onPeerMessageCreated,
+  onChannelMessageCreated,
+  onThreadReplyCreated,
+  onChannelCreated,
 }: LoopChatPaneProps) {
   const { getAgentActivityStatus } = useSessionContext();
   const activityStatus = getAgentActivityStatus(session.id);
@@ -339,6 +345,9 @@ export function LoopChatPane({
             onSessionStatus={onSessionStatus}
             onSessionProgress={onSessionProgress}
             onPeerMessageCreated={onPeerMessageCreated}
+            onChannelMessageCreated={onChannelMessageCreated}
+            onThreadReplyCreated={onThreadReplyCreated}
+            onChannelCreated={onChannelCreated}
           />
         </TerminalDrawer>
       </div>

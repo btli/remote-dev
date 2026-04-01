@@ -20,7 +20,7 @@ interface ChannelViewProps {
   folderName: string | null;
 }
 
-export function ChannelView({ folderId, folderName }: ChannelViewProps) {
+export function ChannelView({ folderId, folderName: _folderName }: ChannelViewProps) {
   const {
     groups,
     activeChannelId,
