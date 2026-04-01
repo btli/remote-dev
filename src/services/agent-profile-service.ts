@@ -336,16 +336,58 @@ export async function initializeProfileDirectory(
 ${credentialSection}`;
   await writeFile(join(configDir, ".gitconfig"), gitConfig);
 
+  // Shared RDV quick-reference injected into all provider config files
+  const rdvSection = `
+## Remote Dev Environment
+
+You are running inside a **Remote Dev** session. The \`rdv\` CLI is available for
+interacting with sessions, tasks, peers, worktrees, and more.
+
+**Start here:**
+\`\`\`bash
+rdv context          # Discover your session ID, folder, and project path
+rdv task list        # Check assigned tasks
+\`\`\`
+
+**Environment variables** (set automatically):
+- \`RDV_SESSION_ID\` -- Your session UUID
+- \`RDV_TERMINAL_PORT\` -- Terminal server port
+- \`RDV_API_PORT\` -- API server port
+- \`RDV_API_KEY\` -- Bearer token for API auth
+
+**Quick reference:**
+| Command | Description |
+|---------|-------------|
+| \`rdv session list\` | List all sessions |
+| \`rdv session exec <id> "cmd"\` | Run command in another session |
+| \`rdv agent start <folder-id>\` | Start a parallel agent session |
+| \`rdv agent stop <id>\` | Stop an agent session |
+| \`rdv teams launch --count N\` | Launch N coordinated agents |
+| \`rdv teams wait <parent-id>\` | Wait for child agents to finish |
+| \`rdv worktree create --repo . --branch <name>\` | Create git worktree |
+| \`rdv worktree cleanup\` | Clean up worktree, branches, and session |
+| \`rdv task create "title"\` | Create a task |
+| \`rdv task complete <id>\` | Mark task done |
+| \`rdv peer list\` | List peer agents in same folder |
+| \`rdv peer send "message"\` | Broadcast to peers |
+| \`rdv send text <id> "text"\` | Send text to another session PTY |
+| \`rdv screen <id> --human\` | View another session's screen |
+| \`rdv notification list --unread\` | Check notifications |
+| \`rdv status --human\` | System dashboard |
+
+Run \`rdv --help\` or \`rdv <command> --help\` for full documentation.
+`;
+
   // Create default CLAUDE.md if Claude provider
   if (provider === "all" || provider === "claude") {
     const claudeMd = `# CLAUDE.md
 
-This is the global configuration file for Claude Code in this profile.
+Global configuration for Claude Code in this profile.
 
 ## Project Guidelines
 
 Add your project-specific instructions here.
-`;
+${rdvSection}`;
     await writeFile(join(configDir, ".claude", "CLAUDE.md"), claudeMd);
   }
 
@@ -353,12 +395,12 @@ Add your project-specific instructions here.
   if (provider === "all" || provider === "codex") {
     const agentsMd = `# AGENTS.md
 
-This is the global configuration file for OpenAI Codex in this profile.
+Global configuration for OpenAI Codex in this profile.
 
 ## Project Guidelines
 
 Add your project-specific instructions here.
-`;
+${rdvSection}`;
     await writeFile(join(configDir, ".codex", "AGENTS.md"), agentsMd);
   }
 
@@ -366,12 +408,12 @@ Add your project-specific instructions here.
   if (provider === "all" || provider === "gemini") {
     const geminiMd = `# GEMINI.md
 
-This is the global configuration file for Gemini CLI in this profile.
+Global configuration for Gemini CLI in this profile.
 
 ## Project Guidelines
 
 Add your project-specific instructions here.
-`;
+${rdvSection}`;
     await writeFile(join(configDir, ".gemini", "GEMINI.md"), geminiMd);
   }
 
@@ -379,16 +421,12 @@ Add your project-specific instructions here.
   if (provider === "all" || provider === "opencode") {
     const opencodeMd = `# OPENCODE.md
 
-This is the global configuration file for OpenCode in this profile.
+Global configuration for OpenCode in this profile.
 
 ## Project Guidelines
 
 Add your project-specific instructions here.
-
-## Provider Configuration
-
-OpenCode supports multiple AI providers. Configure your preferred provider in settings.
-`;
+${rdvSection}`;
     await writeFile(join(configDir, ".config", "opencode", "OPENCODE.md"), opencodeMd);
   }
 }
