@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Chat channels and groups: Slack/Discord-style channel organization for peer chat
+- Channel groups: "Channels" (default) and "Direct Messages" organizational containers
+- Default `#general` channel auto-created per project folder
+- Users and agents can create new channels via UI, rdv CLI, and MCP tools
+- Slack-style thread support: inline reply counts, slide-in thread panel
+- Full GFM markdown rendering in chat messages (headers, code blocks, links, tables)
+- Channel sidebar replaces task sidebar when chat view is active
+- DB-backed per-user unread tracking with `channel_read_state` table
+- New rdv CLI commands: `rdv channel list`, `rdv channel create`, `rdv channel send`, `rdv channel messages`
+- New MCP tools: `list_channels`, `create_channel`, `send_to_channel`, `read_channel`
+- Permanent message persistence (removed 24h TTL)
+- Channel migration script: `bun run db:migrate-channels`
 - **RDV skill documentation**: Comprehensive rewrite of `skills/rdv/SKILL.md` covering all CLI commands — teams orchestration, terminal I/O (`send`, `screen`), session UI (`set-status`, `set-progress`, `log`), system management, and tmux compatibility layer. Organized into 13 categories with practical workflow examples.
 - **Auto-inject RDV context into agent profiles**: All agent config files (CLAUDE.md, AGENTS.md, GEMINI.md, OPENCODE.md) now include an RDV quick-reference section with environment variables, a 16-command reference table, and a pointer to `rdv --help`. Agents spawned by Remote Dev immediately know about rdv capabilities without manual setup or plugin installation.
 - **Intelligent agent session titles**: Agent sessions are now auto-titled with a 2-3 word summary derived from the first user message in the Claude Code `.jsonl` session file. Titles are applied once via `rdv` hooks and broadcast to all connected clients in real-time. Manual rename locks the title. The stable Claude session UUID is stored in `typeMetadata` and surfaced in peer discovery for richer agent-to-agent context.
@@ -26,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Peer messages now scoped to channels (existing messages migrated to #general)
+- Right sidebar dynamically swaps between task tracker and channel list based on active view
 - Agent session auto-titles now use kebab-case format (e.g., "fix-login-bug" instead of "fix login bug")
 - Auto-title stop-word stripping produces more meaningful titles (e.g., "fix-login-bug" instead of "fix-the-login")
 - PreToolUse hook now shows full peer status digest (agent names, activity status, work summaries) alongside new messages
