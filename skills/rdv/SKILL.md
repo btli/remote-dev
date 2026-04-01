@@ -149,7 +149,7 @@ rdv peer list                                    # List peer agents in same fold
 rdv peer send "I finished the API layer" --to <session-id>   # Direct message
 rdv peer send "Starting integration tests"       # Broadcast to all peers
 rdv peer messages                                # Check for new messages
-rdv peer messages --since "2024-01-01T00:00:00Z" # Messages since timestamp
+rdv peer messages --since "2025-01-01T00:00:00Z" # Messages since timestamp
 rdv peer summary "Working on auth module"        # Set work summary visible to peers
 ```
 
