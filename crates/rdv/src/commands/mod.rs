@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod browser;
+pub mod channel;
 pub mod context;
 pub mod folder;
 pub mod hook;
