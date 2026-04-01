@@ -142,15 +142,26 @@ rdv task sync                                         # Sync PostToolUse JSON fr
 
 ## 6. Peer Communication
 
-Communicate with other agents in the same project folder:
+Messages arrive automatically via push notifications and the PreToolUse hook — no polling needed.
 
+**Receiving messages:** Peer messages, channel messages, and @mentions are pushed to you in real-time. Direct messages and @mentions are prioritized. You'll see them between tool calls or as MCP push notifications.
+
+**Responding (MCP tools — inline, no shell needed):**
+- `send_message` — Reply to a peer (session ID from hook output/notification). Omit `to_session_id` to broadcast.
+- `send_to_channel` — Post to a channel. Supports GFM markdown and threading via `reply_to`.
+- `set_summary` — Update your work status visible to peers.
+
+**Discovery and history (rdv CLI):**
 ```bash
 rdv peer list                                    # List peer agents in same folder
 rdv peer send "I finished the API layer" --to <session-id>   # Direct message
 rdv peer send "Starting integration tests"       # Broadcast to all peers
 rdv peer messages                                # Check for new messages
-rdv peer messages --since "2025-01-01T00:00:00Z" # Messages since timestamp
 rdv peer summary "Working on auth module"        # Set work summary visible to peers
+rdv channel list                                 # List channels in project folder
+rdv channel messages general                     # Read channel messages
+rdv channel send general "Rebased on main"       # Send to channel
+rdv channel create auth-refactor                 # Create a new channel
 ```
 
 ---

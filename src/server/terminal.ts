@@ -200,6 +200,37 @@ function broadcastToUser(userId: string, data: Record<string, unknown>): void {
   }
 }
 
+// Cached module references for MCP push (avoids repeated dynamic import overhead)
+let _mcpPush: typeof import("@/server/mcp-push") | null = null;
+let _peerService: typeof import("@/services/peer-service") | null = null;
+
+async function getMcpPush() {
+  return (_mcpPush ??= await import("@/server/mcp-push"));
+}
+async function getPeerService() {
+  return (_peerService ??= await import("@/services/peer-service"));
+}
+
+/** Push an MCP event to a single peer session (fire-and-forget). */
+function pushMcpEventToPeer(sessionId: string, event: import("@/server/mcp-push").McpPushEvent): void {
+  getMcpPush().then(({ pushToMcpServer }) => pushToMcpServer(sessionId, event)).catch(() => {});
+}
+
+/** Push an MCP event to all folder peers except the sender (fire-and-forget). */
+async function pushMcpEventToFolderPeers(
+  folderId: string,
+  fromSessionId: string,
+  buildEvent: (peerId: string) => import("@/server/mcp-push").McpPushEvent,
+): Promise<void> {
+  const { pushToMcpServer } = await getMcpPush();
+  const PeerService = await getPeerService();
+  const peers = await PeerService.getFolderPeers(folderId);
+  for (const peer of peers) {
+    if (peer.sessionId === fromSessionId) continue;
+    pushToMcpServer(peer.sessionId, buildEvent(peer.sessionId));
+  }
+}
+
 /** Whether a terminal type has agent-like behavior (exit handling, restart, voice). */
 function isAgentTerminalType(type: string): boolean {
   return type === "agent" || type === "loop";
@@ -278,6 +309,14 @@ function cleanupConnection(connectionId: string): void {
         claudeSessionMap.delete(claudeId);
       }
     }
+    // Clean up MCP socket cache entry if the MCP server has exited.
+    // Don't destroy live sockets — the MCP server outlives browser connections.
+    getMcpPush().then(({ closeMcpSocket, getMcpSocketPath }) => {
+      const fs = require("node:fs");
+      try { fs.accessSync(getMcpSocketPath(conn.sessionId)); } catch {
+        closeMcpSocket(conn.sessionId);
+      }
+    }).catch(() => {});
   } else if (sessionPrimaryConnection.get(conn.sessionId) === connectionId) {
     // Promote another connection to primary for resize control
     const nextPrimary = connSet.values().next().value;
@@ -1360,6 +1399,26 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         },
       });
 
+      // Push to MCP server sockets (fire-and-forget)
+      const senderSid = String(fromSessionId);
+      const mcpEvent: import("@/server/mcp-push").McpPushEvent = {
+        type: "peer_message",
+        messageId: result.messageId,
+        fromSessionId: senderSid,
+        fromSessionName: result.senderName,
+        toSessionId: toSessionId ? String(toSessionId) : null,
+        body: result.resolvedBody,
+        channelId: result.channelId ?? null,
+        channelName: null,
+        parentMessageId: null,
+        createdAt: result.createdAt,
+      };
+      if (toSessionId) {
+        pushMcpEventToPeer(String(toSessionId), mcpEvent);
+      } else {
+        pushMcpEventToFolderPeers(result.folderId, senderSid, () => mcpEvent).catch(() => {});
+      }
+
       sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
     } catch (err) {
       peerLog.error("Failed to send peer message", { error: String(err) });
@@ -1596,6 +1655,41 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           createdAt: result.createdAt,
         },
       });
+
+      // Push to MCP server sockets for channel messages (fire-and-forget)
+      const mentionRe = /@<sid:([0-9a-f-]{36})>/g;
+      const mentions = new Set<string>();
+      let mentionMatch: RegExpExecArray | null;
+      while ((mentionMatch = mentionRe.exec(result.resolvedBody)) !== null) {
+        mentions.add(mentionMatch[1]);
+      }
+      const chSenderSid = String(fromSessionId);
+      // Resolve channel name for the push event — may be null if sent by channelId only
+      let resolvedChannelName = channelName ? String(channelName) : null;
+      if (!resolvedChannelName && effectiveChannelId) {
+        try {
+          const { channels: channelsTable } = await import("@/db/schema");
+          const { eq } = await import("drizzle-orm");
+          const { db } = await import("@/db");
+          const ch = await db.query.channels.findFirst({
+            where: eq(channelsTable.id, effectiveChannelId),
+            columns: { name: true },
+          });
+          if (ch) resolvedChannelName = ch.name;
+        } catch { /* non-critical, name will be null in push */ }
+      }
+      pushMcpEventToFolderPeers(result.folderId, chSenderSid, (peerId) => ({
+        type: mentions.has(peerId) ? "mention" : "channel_message",
+        messageId: result.messageId,
+        fromSessionId: chSenderSid,
+        fromSessionName: result.senderName,
+        toSessionId: null,
+        body: result.resolvedBody,
+        channelId: effectiveChannelId,
+        channelName: resolvedChannelName,
+        parentMessageId: parentMessageId ? String(parentMessageId) : null,
+        createdAt: result.createdAt,
+      })).catch(() => {});
 
       sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
     } catch (err) {

@@ -838,8 +838,11 @@ export async function installAgentHooks(
   if ("remote-dev" in mcpServers) {
     delete mcpServers["remote-dev"];
   }
+  if ("rdv-peers" in mcpServers) {
+    delete mcpServers["rdv-peers"];
+  }
 
-  // Register rdv-peers MCP server for inter-agent communication.
+  // Register rdv MCP server for inter-agent communication and push notifications.
   // RDV env vars must be passed explicitly since MCP servers spawned by Claude Code
   // don't inherit the tmux session environment.
   const peerServerPath = join(import.meta.dirname, "..", "mcp", "peer-server.ts");
@@ -848,7 +851,7 @@ export async function installAgentHooks(
   for (const key of rdvKeys) {
     if (rdvEnv?.[key]) peerMcpEnv[key] = rdvEnv[key];
   }
-  mcpServers["rdv-peers"] = {
+  mcpServers["rdv"] = {
     command: "node",
     args: ["--import", "tsx/esm", peerServerPath],
     env: peerMcpEnv,
@@ -873,14 +876,15 @@ export async function installAgentHooks(
   await cleanStaleMcpJson(join(configDir, ".claude", ".mcp.json"));
 }
 
-/** Remove stale "remote-dev" entry from an .mcp.json file if present. */
+/** Remove stale MCP server entries from an .mcp.json file if present. */
 async function cleanStaleMcpJson(mcpJsonPath: string): Promise<void> {
   try {
     const raw = await readFile(mcpJsonPath, "utf-8");
     const parsed = JSON.parse(raw);
     const servers = parsed?.mcpServers as Record<string, unknown> | undefined;
-    if (!servers || !("remote-dev" in servers)) return;
-    delete servers["remote-dev"];
+    if (!servers || (!("remote-dev" in servers) && !("rdv-peers" in servers))) return;
+    if ("remote-dev" in servers) delete servers["remote-dev"];
+    if ("rdv-peers" in servers) delete servers["rdv-peers"];
     if (Object.keys(servers).length === 0) {
       // File only had our entry — remove it entirely by writing empty object
       await writeFile(mcpJsonPath, "{}\n");

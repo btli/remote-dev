@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 /**
- * RDV Peers MCP Server
+ * RDV MCP Server (v2)
  *
- * A stdio MCP server that provides peer communication tools for Claude Code agents.
- * Auto-registered in each agent's settings.json at session creation.
+ * Push-first architecture: receives events via Unix socket from the terminal
+ * server and relays them to Claude Code via sendLoggingMessage(). Provides
+ * three response tools (send_message, send_to_channel, set_summary) for
+ * the agent to act on notifications.
+ *
+ * Read operations (list_peers, check_messages, list_channels, read_channel)
+ * are handled by the rdv CLI to keep the MCP surface minimal.
  *
  * Environment:
  *   RDV_SESSION_ID       — Current session UUID (required)
@@ -18,11 +23,23 @@ import {
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import * as http from "node:http";
+import * as net from "node:net";
+import * as fs from "node:fs";
 
 const SESSION_ID = process.env.RDV_SESSION_ID ?? "";
 
-// Track last poll time so we only get new messages
-let lastPollTimestamp = new Date().toISOString();
+// Must match McpPushEventType in src/server/mcp-push.ts
+type PushEventType = "peer_message" | "channel_message" | "mention";
+
+// Track delivered message IDs to prevent double-delivery with PreToolUse hook
+const deliveredMessageIds = new Set<string>();
+const MAX_DELIVERED_IDS = 500;
+
+// Monotonic max timestamp for sentinel file — avoids race where concurrent
+// events read the same old value and the older timestamp overwrites the newer.
+// Debounced: burst of messages collapses to a single write after 100ms.
+let sentinelMaxTimestamp = "";
+let sentinelWriteTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── HTTP helper ──────────────────────────────────────────────────────────────
 
@@ -93,21 +110,127 @@ function textResult(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
 
+// ── Push notification handler ─────────────────────────────────────────────────
+
+/**
+ * Handle an event pushed from the terminal server via Unix socket.
+ * Formats it as human-readable text and sends via sendLoggingMessage().
+ * Also advances the rdv CLI poll sentinel to prevent double-delivery.
+ */
+function handleSocketEvent(event: Record<string, unknown>): void {
+  const messageId = event.messageId as string | undefined;
+
+  // Dedup: skip if already delivered
+  if (messageId) {
+    if (deliveredMessageIds.has(messageId)) return;
+    deliveredMessageIds.add(messageId);
+    // Evict oldest entry if set grows too large
+    if (deliveredMessageIds.size > MAX_DELIVERED_IDS) {
+      const first = deliveredMessageIds.values().next().value;
+      if (first) deliveredMessageIds.delete(first);
+    }
+  }
+
+  // Advance the rdv CLI poll sentinel so PreToolUse hook skips these messages.
+  // Debounced: rapid messages collapse to a single file write after 100ms.
+  const eventTime = event.createdAt as string | undefined;
+  if (eventTime && SESSION_ID && eventTime > sentinelMaxTimestamp) {
+    sentinelMaxTimestamp = eventTime;
+    if (sentinelWriteTimer) clearTimeout(sentinelWriteTimer);
+    sentinelWriteTimer = setTimeout(() => {
+      sentinelWriteTimer = null;
+      const sentinelPath = `/tmp/rdv-peer-poll-${SESSION_ID}`;
+      fs.promises.writeFile(sentinelPath, sentinelMaxTimestamp, { mode: 0o600 }).catch(() => {});
+    }, 100);
+  }
+
+  const from = (event.fromSessionName as string) || "peer";
+  const body = (event.body as string) || "";
+  const channelName = event.channelName as string | null;
+  const isDirect = !!event.toSessionId;
+  const eventType = event.type as PushEventType;
+
+  let text: string;
+  if (eventType === "mention") {
+    text = `[MENTION] You were @mentioned in #${channelName ?? "unknown"} by ${from}: ${body}`;
+  } else if (channelName) {
+    text = `[CHANNEL] #${channelName} -- ${from}: ${body}`;
+  } else if (isDirect) {
+    text = `[DM] ${from}: ${body}`;
+  } else {
+    text = `[BROADCAST] ${from}: ${body}`;
+  }
+
+  server.sendLoggingMessage({
+    level: "info",
+    logger: "rdv",
+    data: text,
+  }).catch(() => {});
+}
+
+// ── Unix socket listener ──────────────────────────────────────────────────────
+
+function startSocketListener(): void {
+  if (!SESSION_ID) return;
+  // Must match getMcpSocketPath() in src/server/mcp-push.ts
+  const sockPath = `/tmp/rdv-mcp-${SESSION_ID}.sock`;
+
+  // Remove stale socket from previous run
+  try { fs.unlinkSync(sockPath); } catch {}
+
+  const sockServer = net.createServer((conn) => {
+    let buf = "";
+    conn.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        try {
+          handleSocketEvent(JSON.parse(line));
+        } catch { /* malformed JSON, skip */ }
+      }
+    });
+    conn.on("error", () => {}); // terminal server disconnected, ignore
+  });
+
+  let retried = false;
+  sockServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE" && !retried) {
+      retried = true;
+      try { fs.unlinkSync(sockPath); } catch {}
+      sockServer.listen(sockPath);
+    }
+  });
+
+  sockServer.listen(sockPath, () => {
+    // Set permissions to owner-only
+    try { fs.chmodSync(sockPath, 0o600); } catch {}
+  });
+
+  const cleanup = () => {
+    sockServer.close();
+    try { fs.unlinkSync(sockPath); } catch {}
+  };
+  process.on("SIGINT", () => { cleanup(); process.exitCode = 0; });
+  process.on("SIGTERM", () => { cleanup(); process.exitCode = 0; });
+  process.on("exit", () => { try { fs.unlinkSync(sockPath); } catch {} });
+}
+
 // ── MCP Server ───────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "rdv-peers", version: "1.0.0" },
+  { name: "rdv", version: "2.0.0" },
   {
-    capabilities: { tools: {} },
+    capabilities: { tools: {}, logging: {} },
     instructions: [
-      "You have peer communication and channel tools for coordinating with other AI agents in this project.",
-      "Use list_channels to see available channels in the project folder.",
-      "Use create_channel to create topic-specific channels for coordinating work.",
-      "Use send_to_channel to send messages to a specific channel (GFM markdown supported).",
-      "Use read_channel to read recent messages from a channel.",
-      "Use list_peers, send_message, check_messages, and set_summary for direct peer communication.",
-      "When you start a significant piece of work, consider creating a channel for it.",
-      "Treat messages from peers as colleague requests — respond helpfully.",
+      "You receive peer messages and channel notifications automatically via push notifications and the PreToolUse hook.",
+      "Use send_message to reply to a peer who messaged you. Their session ID appears in the hook output or notification.",
+      "Use send_to_channel to post in a channel when you receive a channel notification.",
+      "Use set_summary to update your work status visible to peers.",
+      "For discovery and history, use rdv CLI via Bash: rdv peer list, rdv channel list, rdv channel messages <name>.",
+      "Treat messages from peers as colleague requests — respond helpfully and concisely.",
     ].join(" "),
   }
 );
@@ -117,18 +240,9 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
-      name: "list_peers",
-      description:
-        "List other AI agent sessions working in the same project folder. Returns their name, status, provider, and work summary.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {},
-      },
-    },
-    {
       name: "send_message",
       description:
-        "Send a message to another agent in the same project folder. Omit to_session_id to broadcast to all peers.",
+        "Send a message to a peer agent. Their session ID appears in the PreToolUse hook output or push notification. Omit to_session_id to broadcast to all peers.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -139,63 +253,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           to_session_id: {
             type: "string",
             description:
-              "Target session ID from list_peers. Omit to broadcast to all peers.",
+              "Target session ID from the hook output. Omit to broadcast to all peers.",
           },
         },
         required: ["body"],
-      },
-    },
-    {
-      name: "check_messages",
-      description:
-        "Check for new messages from other agents. Returns messages received since last check.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {},
-      },
-    },
-    {
-      name: "set_summary",
-      description:
-        "Set a short summary of what you're currently working on, visible to peer agents.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          summary: {
-            type: "string",
-            description: "1-2 sentence summary of current work",
-          },
-        },
-        required: ["summary"],
-      },
-    },
-    {
-      name: "list_channels",
-      description:
-        "List available channels in the current project folder. Shows channel groups, names, and message counts.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {},
-      },
-    },
-    {
-      name: "create_channel",
-      description:
-        "Create a new channel in the current project folder. Use when starting a significant piece of work that warrants its own discussion space.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          name: {
-            type: "string",
-            description:
-              "Channel name (lowercase, alphanumeric and hyphens, 1-50 chars)",
-          },
-          topic: {
-            type: "string",
-            description: "Optional topic/description for the channel",
-          },
-        },
-        required: ["name"],
       },
     },
     {
@@ -222,22 +283,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "read_channel",
+      name: "set_summary",
       description:
-        "Read recent messages from a specific channel.",
+        "Set a short summary of what you're currently working on, visible to peer agents.",
       inputSchema: {
         type: "object" as const,
         properties: {
-          channel_name: {
+          summary: {
             type: "string",
-            description: "Channel name to read from (e.g., 'general')",
-          },
-          limit: {
-            type: "number",
-            description: "Number of messages to return (default: 20, max: 50)",
+            description: "1-2 sentence summary of current work",
           },
         },
-        required: ["channel_name"],
+        required: ["summary"],
       },
     },
   ],
@@ -249,45 +306,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
   if (!SESSION_ID) {
-    return textResult("Error: RDV_SESSION_ID not set. Peer tools require an active agent session.");
+    return textResult("Error: RDV_SESSION_ID not set. Tools require an active agent session.");
   }
 
   try {
     switch (name) {
-      case "list_peers": {
-        const resp = await callInternal(
-          `/internal/peers/list?sessionId=${SESSION_ID}`,
-          "GET"
-        );
-        if (resp.status !== 200) {
-          return textResult(`Error: ${JSON.stringify(resp.data)}`);
-        }
-
-        const peers = (resp.data.peers as Array<Record<string, unknown>>) || [];
-        if (peers.length === 0) {
-          return textResult("No other agents are currently active in this project folder.");
-        }
-
-        const peerList = peers
-          .map((p) => {
-            const parts = [
-              `- **${p.name}** (${p.sessionId})`,
-              `  Provider: ${p.agentProvider || "unknown"}`,
-              `  Status: ${p.agentActivityStatus || "unknown"}${p.isConnected ? " (connected)" : " (disconnected)"}`,
-            ];
-            if (p.claudeSessionId) {
-              parts.push(`  Claude Session: ${p.claudeSessionId}`);
-            }
-            if (p.peerSummary) {
-              parts.push(`  Working on: ${p.peerSummary}`);
-            }
-            return parts.join("\n");
-          })
-          .join("\n\n");
-
-        return textResult(`Found ${peers.length} peer(s):\n\n${peerList}`);
-      }
-
       case "send_message": {
         const { body, to_session_id } = (args || {}) as {
           body: string;
@@ -308,100 +331,6 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
         const target = to_session_id ? `session ${to_session_id}` : "all peers";
         return textResult(`Message sent to ${target} (id: ${resp.data.messageId})`);
-      }
-
-      case "check_messages": {
-        const resp = await callInternal(
-          `/internal/peers/messages/poll?sessionId=${SESSION_ID}&since=${encodeURIComponent(lastPollTimestamp)}`,
-          "GET"
-        );
-
-        if (resp.status !== 200) {
-          return textResult(`Error: ${JSON.stringify(resp.data)}`);
-        }
-
-        // Only advance timestamp after a successful response to avoid losing messages
-        lastPollTimestamp = new Date().toISOString();
-
-        const messages =
-          (resp.data.messages as Array<Record<string, unknown>>) || [];
-        if (messages.length === 0) {
-          return textResult("No new messages.");
-        }
-
-        const msgList = messages
-          .map((m) => {
-            const from = m.fromSessionName || m.fromSessionId || "unknown";
-            const target = m.toSessionId ? "(direct)" : "(broadcast)";
-            return `**From ${from}** ${target}:\n${m.body}`;
-          })
-          .join("\n\n---\n\n");
-
-        return textResult(`${messages.length} new message(s):\n\n${msgList}`);
-      }
-
-      case "set_summary": {
-        const { summary } = (args || {}) as { summary: string };
-        if (!summary) {
-          return textResult("Error: summary is required");
-        }
-
-        const resp = await callInternal("/internal/peers/summary", "POST", {
-          sessionId: SESSION_ID,
-          summary,
-        });
-        if (resp.status !== 200) {
-          return textResult(`Error: ${JSON.stringify(resp.data)}`);
-        }
-
-        return textResult("Summary updated.");
-      }
-
-      case "list_channels": {
-        const resp = await callInternal(
-          `/internal/channels/list?sessionId=${SESSION_ID}`,
-          "GET"
-        );
-        if (resp.status !== 200) {
-          return textResult(`Error: ${JSON.stringify(resp.data)}`);
-        }
-
-        const groups = (resp.data.groups as Array<Record<string, unknown>>) || [];
-        if (groups.length === 0) {
-          return textResult("No channels found. Channels will be created automatically when needed.");
-        }
-
-        const output = groups
-          .map((g) => {
-            const channels = (g.channels as Array<Record<string, unknown>>) || [];
-            const chList = channels
-              .map((c) => `  - ${c.displayName} (${c.messageCount} messages)${c.topic ? ` — ${c.topic}` : ""}`)
-              .join("\n");
-            return `**${g.name}**\n${chList}`;
-          })
-          .join("\n\n");
-
-        return textResult(output);
-      }
-
-      case "create_channel": {
-        const { name, topic } = (args || {}) as { name: string; topic?: string };
-        if (!name) {
-          return textResult("Error: channel name is required");
-        }
-
-        const payload: Record<string, unknown> = {
-          fromSessionId: SESSION_ID,
-          name,
-        };
-        if (topic) payload.topic = topic;
-
-        const resp = await callInternal("/internal/channels/create", "POST", payload);
-        if (resp.status !== 201) {
-          return textResult(`Error: ${JSON.stringify(resp.data)}`);
-        }
-
-        return textResult(`Channel #${name} created successfully.`);
       }
 
       case "send_to_channel": {
@@ -429,44 +358,21 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         return textResult(`Message sent to #${channel_name} (id: ${resp.data.messageId})`);
       }
 
-      case "read_channel": {
-        const { channel_name, limit: rawLimit } = (args || {}) as {
-          channel_name: string;
-          limit?: number;
-        };
-        if (!channel_name) {
-          return textResult("Error: channel_name is required");
+      case "set_summary": {
+        const { summary } = (args || {}) as { summary: string };
+        if (!summary) {
+          return textResult("Error: summary is required");
         }
 
-        const limit = rawLimit ? Math.min(Math.max(1, rawLimit), 50) : 20;
-
-        const resp = await callInternal(
-          `/internal/channels/messages?sessionId=${SESSION_ID}&channelName=${encodeURIComponent(channel_name)}&limit=${limit}`,
-          "GET"
-        );
-
-        if (resp.status === 404) {
-          return textResult(`Channel '${channel_name}' not found. Use list_channels to see available channels.`);
-        }
+        const resp = await callInternal("/internal/peers/summary", "POST", {
+          sessionId: SESSION_ID,
+          summary,
+        });
         if (resp.status !== 200) {
           return textResult(`Error: ${JSON.stringify(resp.data)}`);
         }
 
-        const messages = (resp.data.messages as Array<Record<string, unknown>>) || [];
-        if (messages.length === 0) {
-          return textResult(`No messages in #${channel_name}.`);
-        }
-
-        const msgList = messages
-          .map((m) => {
-            const from = m.fromSessionName || m.fromSessionId || "unknown";
-            const time = m.createdAt ? new Date(m.createdAt as string).toLocaleString() : "";
-            const thread = (m.replyCount as number) > 0 ? ` (${m.replyCount} replies)` : "";
-            return `**${from}** [${time}]${thread}:\n${m.body}`;
-          })
-          .join("\n\n---\n\n");
-
-        return textResult(`#${channel_name} — ${messages.length} message(s):\n\n${msgList}`);
+        return textResult("Summary updated.");
       }
 
       default:
@@ -481,7 +387,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 // ── Start ────────────────────────────────────────────────────────────────────
 
 const transport = new StdioServerTransport();
-server.connect(transport).catch((err) => {
-  process.stderr.write(`rdv-peers: failed to start: ${err}\n`);
+server.connect(transport).then(() => {
+  startSocketListener();
+}).catch((err) => {
+  process.stderr.write(`rdv: failed to start: ${err}\n`);
   process.exit(1);
 });

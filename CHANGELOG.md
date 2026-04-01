@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **MCP server renamed from `rdv-peers` to `rdv` (v2.0.0)**: Slimmed tool set from 8 to 3 response-only tools (`send_message`, `send_to_channel`, `set_summary`). Read operations moved to rdv CLI. Stale `rdv-peers` entries auto-cleaned from settings.json and .mcp.json.
+- **Real-time MCP push notifications**: Agents receive peer messages, channel messages, and @mentions instantly via Unix socket push from the terminal server, relayed through `sendLoggingMessage()`. PreToolUse hook remains as reliable fallback with dedup via sentinel file.
 - Peer messages now scoped to channels (existing messages migrated to #general)
 - Right sidebar dynamically swaps between task tracker and channel list based on active view
 - Agent session auto-titles now use kebab-case format (e.g., "fix-login-bug" instead of "fix login bug")

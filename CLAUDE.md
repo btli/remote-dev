@@ -404,39 +404,38 @@ Remote Dev supports multiple AI coding agents with unified management:
 
 ### Agent Peer Communication
 
-Folder-scoped inter-agent messaging allows agents in the same project folder to discover each other and coordinate work.
+Folder-scoped inter-agent messaging allows agents in the same project folder to discover each other and coordinate work. Push-first architecture: messages arrive instantly via MCP push notifications, with PreToolUse hook as a reliable fallback.
 
 **Architecture:**
-- `rdv-peers` MCP server auto-registered in each agent's `settings.json` at session creation
-- MCP server (stdio transport) talks to terminal server's `/internal/peers/*` endpoints
-- Messages stored in `agent_peer_messages` SQLite table with 24h cleanup
-- PreToolUse hook checks for pending messages and delivers them automatically
+- `rdv` MCP server (v2) auto-registered in each agent's `settings.json` at session creation
+- Terminal server pushes events via Unix socket (`/tmp/rdv-mcp-{sessionId}.sock`) to MCP server
+- MCP server relays events to Claude Code via `sendLoggingMessage()` push notifications
+- PreToolUse hook polls for messages as fallback (dedup via sentinel file)
+- Messages stored in `agent_peer_messages` SQLite table with channel support
+- Read operations (list peers, read channels) handled by `rdv` CLI
 
-**MCP Tools:**
+**MCP Tools (response only — read operations via rdv CLI):**
 | Tool | Description |
 |------|-------------|
-| `list_peers` | Discover other agents in the same project folder |
 | `send_message` | Send direct or broadcast message to peers |
-| `check_messages` | Check for new messages since last poll |
+| `send_to_channel` | Send message to channel (GFM markdown, threading) |
 | `set_summary` | Set work summary visible to peers |
-| `list_channels` | List available channels in project folder |
-| `create_channel` | Create topic-specific channel |
-| `send_to_channel` | Send message to channel (GFM markdown) |
-| `read_channel` | Read messages from a channel |
 
 **Key Files:**
 | File | Purpose |
 |------|---------|
-| `src/mcp/peer-server.ts` | Standalone MCP stdio server |
+| `src/mcp/peer-server.ts` | MCP stdio server with push notification relay |
+| `src/server/mcp-push.ts` | Terminal-server-side Unix socket push manager |
 | `src/services/peer-service.ts` | DB operations for peer messaging |
 | `crates/rdv/src/commands/peer.rs` | `rdv peer` CLI for non-MCP agents |
 
 **Internal API:**
 - `GET /internal/peers/list?sessionId=` — List peers in same folder
-- `POST /internal/peers/messages/send` — Send message
+- `POST /internal/peers/messages/send` — Send message (+ MCP socket push)
 - `GET /internal/peers/messages/poll?sessionId=&since=` — Poll new messages
 - `POST /internal/peers/summary` — Set work summary
 - `POST /internal/peers/cleanup` — Clean old messages
+- `POST /internal/channels/send` — Send channel message (+ MCP socket push)
 
 ### Electron Desktop App
 
