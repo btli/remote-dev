@@ -72,6 +72,10 @@ export const PATCH = withAuth(async (request, { userId }) => {
     "pinnedFolderId",
     "autoFollowActiveSession",
     "notificationsEnabled",
+    "beadsSidebarCollapsed",
+    "beadsSidebarWidth",
+    "beadsClosedRetentionDays",
+    "beadsSectionExpanded",
   ];
 
   const filteredUpdates: Record<string, unknown> = {};

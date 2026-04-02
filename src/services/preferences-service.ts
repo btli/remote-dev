@@ -18,6 +18,8 @@ import type {
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
 import type { PortValidationResult } from "@/types/environment";
+import { BEADS_SECTION_EXPAND_DEFAULTS, type BeadsSectionExpandDefaults } from "@/types/preferences";
+import { safeJsonParse } from "@/lib/utils";
 import { PreferencesServiceError } from "@/lib/errors";
 import {
   DEFAULT_PREFERENCES,
@@ -98,10 +100,18 @@ export async function updateUserSettings(
   // Ensure settings exist first
   await getUserSettings(userId);
 
+  // Serialize beadsSectionExpanded to JSON string for TEXT column
+  const dbUpdates: Record<string, unknown> = { ...updates };
+  if (updates.beadsSectionExpanded !== undefined) {
+    dbUpdates.beadsSectionExpanded = updates.beadsSectionExpanded
+      ? JSON.stringify(updates.beadsSectionExpanded)
+      : null;
+  }
+
   const [updated] = await db
     .update(userSettings)
     .set({
-      ...updates,
+      ...dbUpdates,
       updatedAt: new Date(),
     })
     .where(eq(userSettings.userId, userId))
@@ -488,6 +498,13 @@ function mapDbUserSettings(
     pinnedFolderId: db.pinnedFolderId,
     autoFollowActiveSession: db.autoFollowActiveSession ?? true,
     notificationsEnabled: db.notificationsEnabled ?? true,
+    beadsSidebarCollapsed: db.beadsSidebarCollapsed ?? true,
+    beadsSidebarWidth: db.beadsSidebarWidth ?? 320,
+    beadsClosedRetentionDays: db.beadsClosedRetentionDays ?? 7,
+    beadsSectionExpanded: safeJsonParse<BeadsSectionExpandDefaults>(
+      db.beadsSectionExpanded,
+      BEADS_SECTION_EXPAND_DEFAULTS
+    ),
     createdAt: new Date(db.createdAt),
     updatedAt: new Date(db.updatedAt),
   };

@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useBeadsContext } from "@/contexts/BeadsContext";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import {
   ChevronRight,
   ChevronDown,
@@ -207,18 +208,73 @@ function BeadsIssueRow({ issue, onSelect }: BeadsIssueRowProps) {
 }
 
 export function BeadsSidebar() {
-  const { issues, stats, loading, error, projectPath, refreshIssues } =
-    useBeadsContext();
+  const {
+    issues, stats, loading, error, projectPath, refreshIssues,
+    beadsSidebarCollapsed: dbCollapsed,
+    beadsSidebarWidth: dbWidth,
+    beadsSectionExpanded: dbSectionExpanded,
+  } = useBeadsContext();
+  const { updateUserSettings } = usePreferencesContext();
 
-  // Sidebar state (lazy-init from localStorage, SSR-safe)
-  const [collapsed, setCollapsed] = useState(getStoredCollapsed);
-  const [width, setWidth] = useState(getStoredWidth);
+  // Sidebar state — localStorage for instant rendering, DB defaults for first use
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window !== "undefined" && localStorage.getItem("beads-sidebar-collapsed") !== null) {
+      return getStoredCollapsed();
+    }
+    return dbCollapsed;
+  });
+  const [width, setWidth] = useState(() => {
+    if (typeof window !== "undefined" && localStorage.getItem("beads-sidebar-width") !== null) {
+      return getStoredWidth();
+    }
+    return dbWidth;
+  });
 
-  // Section expand state
-  const [readyExpanded, setReadyExpanded] = useState(true);
-  const [inProgressExpanded, setInProgressExpanded] = useState(true);
-  const [openExpanded, setOpenExpanded] = useState(true);
-  const [closedExpanded, setClosedExpanded] = useState(false);
+  // Sync DB settings → local state when changed via Settings page
+  useEffect(() => {
+    setCollapsed(dbCollapsed);
+    setStoredCollapsed(dbCollapsed);
+  }, [dbCollapsed]);
+
+  useEffect(() => {
+    setWidth(dbWidth);
+    setStoredWidth(dbWidth);
+  }, [dbWidth]);
+
+  // Section expand state — seed from DB settings
+  const [readyExpanded, setReadyExpanded] = useState(dbSectionExpanded.ready);
+  const [inProgressExpanded, setInProgressExpanded] = useState(dbSectionExpanded.inProgress);
+  const [openExpanded, setOpenExpanded] = useState(dbSectionExpanded.open);
+  const [closedExpanded, setClosedExpanded] = useState(dbSectionExpanded.closed);
+
+  // Sync section expand state when changed via Settings page
+  useEffect(() => {
+    setReadyExpanded(dbSectionExpanded.ready);
+    setInProgressExpanded(dbSectionExpanded.inProgress);
+    setOpenExpanded(dbSectionExpanded.open);
+    setClosedExpanded(dbSectionExpanded.closed);
+  }, [dbSectionExpanded]);
+
+  // Persist section expand changes to DB (current values read via refs to avoid stale closures)
+  const sectionExpandRef = useRef({ readyExpanded, inProgressExpanded, openExpanded, closedExpanded });
+  useEffect(() => {
+    sectionExpandRef.current = { readyExpanded, inProgressExpanded, openExpanded, closedExpanded };
+  });
+
+  const persistSectionExpanded = useCallback(
+    (key: "ready" | "inProgress" | "open" | "closed", value: boolean) => {
+      const cur = sectionExpandRef.current;
+      updateUserSettings({
+        beadsSectionExpanded: {
+          ready: key === "ready" ? value : cur.readyExpanded,
+          inProgress: key === "inProgress" ? value : cur.inProgressExpanded,
+          open: key === "open" ? value : cur.openExpanded,
+          closed: key === "closed" ? value : cur.closedExpanded,
+        },
+      });
+    },
+    [updateUserSettings]
+  );
 
   // Selected issue for detail view
   const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null);
@@ -307,6 +363,7 @@ export function BeadsSidebar() {
       const handleMouseUp = () => {
         resizeRef.current = null;
         setStoredWidth(latestWidthRef.current);
+        updateUserSettings({ beadsSidebarWidth: latestWidthRef.current });
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
       };
@@ -314,15 +371,16 @@ export function BeadsSidebar() {
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [width]
+    [width, updateUserSettings]
   );
 
-  // Toggle collapse
+  // Toggle collapse — persist to localStorage + DB
   const toggleCollapsed = useCallback(() => {
     const next = !collapsed;
     setStoredCollapsed(next);
     setCollapsed(next);
-  }, [collapsed]);
+    updateUserSettings({ beadsSidebarCollapsed: next });
+  }, [collapsed, updateUserSettings]);
 
   // Navigate to a different issue from the detail view (e.g. clicking a dependency)
   const handleNavigateToIssue = useCallback(
@@ -484,7 +542,7 @@ export function BeadsSidebar() {
                     title="Ready"
                     count={readyIssues.length}
                     expanded={readyExpanded}
-                    onToggle={() => setReadyExpanded(!readyExpanded)}
+                    onToggle={() => { setReadyExpanded(!readyExpanded); persistSectionExpanded("ready", !readyExpanded); }}
                   />
                   {readyExpanded && (
                     <div className="space-y-0.5 px-1">
@@ -513,9 +571,10 @@ export function BeadsSidebar() {
                     title="In Progress"
                     count={inProgressIssues.length}
                     expanded={inProgressExpanded}
-                    onToggle={() =>
-                      setInProgressExpanded(!inProgressExpanded)
-                    }
+                    onToggle={() => {
+                      setInProgressExpanded(!inProgressExpanded);
+                      persistSectionExpanded("inProgress", !inProgressExpanded);
+                    }}
                   />
                   {inProgressExpanded && (
                     <div className="space-y-0.5 px-1">
@@ -544,7 +603,7 @@ export function BeadsSidebar() {
                     title="Open"
                     count={openIssues.length}
                     expanded={openExpanded}
-                    onToggle={() => setOpenExpanded(!openExpanded)}
+                    onToggle={() => { setOpenExpanded(!openExpanded); persistSectionExpanded("open", !openExpanded); }}
                   />
                   {openExpanded && (
                     <div className="space-y-0.5 px-1">
@@ -573,7 +632,7 @@ export function BeadsSidebar() {
                     title="Closed"
                     count={closedIssues.length}
                     expanded={closedExpanded}
-                    onToggle={() => setClosedExpanded(!closedExpanded)}
+                    onToggle={() => { setClosedExpanded(!closedExpanded); persistSectionExpanded("closed", !closedExpanded); }}
                   />
                   {closedExpanded && (
                     <div className="space-y-0.5 px-1">

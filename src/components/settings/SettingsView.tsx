@@ -9,6 +9,7 @@ import {
   Network,
   Fingerprint,
   KeyRound,
+  Circle,
   Server,
   ScrollText,
   Smartphone,
@@ -50,6 +51,9 @@ const LogsSection = lazy(() =>
 const MobileSection = lazy(() =>
   import("./sections/MobileSection").then((m) => ({ default: m.MobileSection }))
 );
+const BeadsSection = lazy(() =>
+  import("./sections/BeadsSection").then((m) => ({ default: m.BeadsSection }))
+);
 
 export type SettingsSection =
   | "terminal"
@@ -59,6 +63,7 @@ export type SettingsSection =
   | "proxy"
   | "profiles"
   | "secrets"
+  | "beads"
   | "system"
   | "logs"
   | "mobile";
@@ -78,6 +83,7 @@ const NAV_ITEMS: (NavItem | "divider")[] = [
   "divider",
   { id: "profiles", label: "Profiles", icon: Fingerprint },
   { id: "secrets", label: "Secrets", icon: KeyRound },
+  { id: "beads", label: "Beads", icon: Circle },
   "divider",
   { id: "system", label: "System", icon: Server },
   { id: "logs", label: "Logs", icon: ScrollText },
@@ -133,6 +139,8 @@ export function SettingsView({ onClose, initialSection }: SettingsViewProps) {
         return <SystemSection />;
       case "logs":
         return <LogsSection />;
+      case "beads":
+        return <BeadsSection />;
       case "mobile":
         return <MobileSection />;
     }

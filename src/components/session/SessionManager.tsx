@@ -1517,9 +1517,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      {/* Sidebar - inline layout: pushes content over when expanded on mobile */}
+      {/* Sidebar - inline layout: pushes content over when expanded on mobile; hidden in settings */}
       <div
-        className={isPWA && isMobile ? "pt-safe-top" : undefined}
+        className={cn(
+          isPWA && isMobile ? "pt-safe-top" : undefined,
+          activeView === "settings" && "hidden"
+        )}
         onClick={() => {
           // On mobile, clicking the collapsed sidebar expands it
           if (isMobile && !isMobileSidebarOpen) {
@@ -1593,7 +1596,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isPWA && isMobile && "pt-safe-top"
       )}>
         {/* Mobile header bar */}
-        {isMobile && activeSessions.length > 0 && (
+        {isMobile && activeSessions.length > 0 && activeView !== "settings" && (
           <div className="flex items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
             {mobileEditingName !== null ? (
               <input
@@ -1638,8 +1641,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
         )}
 
-        {/* Folder tab bar — Terminal / Chat Room / Agent tabs */}
-        {activeSessions.length > 0 && folderAgentSessions.length > 0 && (
+        {/* Folder tab bar — Terminal / Chat Room / Agent tabs (hidden in settings) */}
+        {activeSessions.length > 0 && folderAgentSessions.length > 0 && activeView !== "settings" && (
           <FolderTabBar
             activeView={activeView}
             onViewChange={handleViewChange}

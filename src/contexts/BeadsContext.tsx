@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { BeadsIssue, BeadsStats } from "@/types/beads";
+import type { BeadsSectionExpandDefaults } from "@/types/preferences";
 import { usePreferencesContext } from "./PreferencesContext";
 
 /** Hydrate date strings from API response into Date objects */
@@ -50,6 +51,11 @@ interface BeadsContextValue {
   refreshIssues: () => Promise<void>;
   /** Debounced refresh for event-driven updates (WebSocket broadcasts). */
   debouncedRefresh: () => void;
+  /** User's beads sidebar settings */
+  beadsSidebarCollapsed: boolean;
+  beadsSidebarWidth: number;
+  beadsClosedRetentionDays: number;
+  beadsSectionExpanded: BeadsSectionExpandDefaults;
 }
 
 const BeadsContext = createContext<BeadsContextValue | null>(null);
@@ -66,13 +72,26 @@ interface BeadsProviderProps {
   children: ReactNode;
 }
 
+const DEFAULT_SECTION_EXPANDED: BeadsSectionExpandDefaults = {
+  ready: true,
+  inProgress: true,
+  open: true,
+  closed: false,
+};
+
 export function BeadsProvider({ children }: BeadsProviderProps) {
   const [issues, setIssues] = useState<BeadsIssue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { currentPreferences } = usePreferencesContext();
+  const { currentPreferences, userSettings } = usePreferencesContext();
   const projectPath = currentPreferences.defaultWorkingDirectory || null;
+
+  // Beads display settings from user preferences
+  const beadsSidebarCollapsed = userSettings?.beadsSidebarCollapsed ?? true;
+  const beadsSidebarWidth = userSettings?.beadsSidebarWidth ?? 320;
+  const beadsClosedRetentionDays = userSettings?.beadsClosedRetentionDays ?? 7;
+  const beadsSectionExpanded = userSettings?.beadsSectionExpanded ?? DEFAULT_SECTION_EXPANDED;
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -107,7 +126,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
 
       const encodedPath = encodeURIComponent(projectPath);
 
-      const issuesRes = await fetch(`/api/beads?projectPath=${encodedPath}`, {
+      const issuesRes = await fetch(`/api/beads?projectPath=${encodedPath}&retentionDays=${beadsClosedRetentionDays}`, {
         signal: controller.signal,
       });
 
@@ -128,7 +147,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
         setLoading(false);
       }
     }
-  }, [projectPath]);
+  }, [projectPath, beadsClosedRetentionDays]);
 
   // Debounced refresh for coalescing rapid WebSocket events
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -178,8 +197,13 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
       projectPath,
       refreshIssues,
       debouncedRefresh,
+      beadsSidebarCollapsed,
+      beadsSidebarWidth,
+      beadsClosedRetentionDays,
+      beadsSectionExpanded,
     }),
-    [issues, computedStats, loading, error, projectPath, refreshIssues, debouncedRefresh]
+    [issues, computedStats, loading, error, projectPath, refreshIssues, debouncedRefresh,
+     beadsSidebarCollapsed, beadsSidebarWidth, beadsClosedRetentionDays, beadsSectionExpanded]
   );
 
   return (

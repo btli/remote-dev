@@ -108,6 +108,13 @@ export const userSettings = sqliteTable("user_settings", {
   notificationsEnabled: integer("notifications_enabled", { mode: "boolean" })
     .notNull()
     .default(true),
+  // Beads issue tracker sidebar settings
+  beadsSidebarCollapsed: integer("beads_sidebar_collapsed", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  beadsSidebarWidth: integer("beads_sidebar_width").default(320),
+  beadsClosedRetentionDays: integer("beads_closed_retention_days").default(7),
+  beadsSectionExpanded: text("beads_section_expanded"), // JSON: { ready, inProgress, open, closed }
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

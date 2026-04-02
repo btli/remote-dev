@@ -82,7 +82,9 @@ function mapIssue(
   dependencies: BeadsDependency[],
   dependents: BeadsDependency[]
 ): BeadsIssue {
-  const metadata = safeJsonParse<Record<string, unknown>>(row.metadata, {});
+  const metadata = typeof row.metadata === "object" && row.metadata !== null
+    ? (row.metadata as Record<string, unknown>)
+    : safeJsonParse<Record<string, unknown>>(row.metadata, {});
 
   return {
     id: row.id,
@@ -146,18 +148,34 @@ function mapEvent(row: EventRow): BeadsEvent {
 export interface GetIssuesOptions {
   status?: BeadsStatus;
   issueType?: BeadsIssueType;
+  closedRetentionDays?: number;
 }
 
 export async function getIssues(
   projectPath: string,
   opts?: GetIssuesOptions
 ): Promise<BeadsIssue[]> {
-  let sql = `SELECT * FROM issues WHERE 1=1`;
+  const retentionDays = opts?.closedRetentionDays ?? 7;
+  const cutoff = new Date(Date.now() - retentionDays * 86400_000)
+    .toISOString()
+    .replace("T", " ")
+    .replace("Z", "");
   const params: (string | number | null)[] = [];
 
+  // When an explicit status filter is provided, skip the retention cutoff —
+  // the caller wants exactly that status set (e.g. all closed issues).
+  let sql: string;
   if (opts?.status) {
-    sql += ` AND status = ?`;
+    sql = `SELECT * FROM issues WHERE status = ?`;
     params.push(opts.status);
+  } else {
+    // Default: non-closed + recently closed + epics (always shown)
+    sql = `SELECT * FROM issues WHERE (
+      status != 'closed'
+      OR (status = 'closed' AND closed_at >= ?)
+      OR issue_type = 'epic'
+    )`;
+    params.push(cutoff);
   }
   if (opts?.issueType) {
     sql += ` AND issue_type = ?`;
@@ -166,26 +184,83 @@ export async function getIssues(
 
   sql += ` ORDER BY created_at DESC`;
 
-  const issues = await beadsQuery<IssueRow>(projectPath, sql, params);
+  let issues = await beadsQuery<IssueRow>(projectPath, sql, params);
+
+  // Include children of any epics in the result set
+  const epicIds = issues
+    .filter((i) => i.issue_type === "epic")
+    .map((i) => i.id);
+  if (epicIds.length > 0) {
+    const issueIdSet = new Set(issues.map((i) => i.id));
+    const ph = epicIds.map(() => "?").join(",");
+    const childDeps = await beadsQuery<DependencyRow>(
+      projectPath,
+      `SELECT * FROM dependencies WHERE type = 'child-of' AND depends_on_id IN (${ph})`,
+      epicIds
+    );
+    const missingChildIds = childDeps
+      .map((d) => d.issue_id)
+      .filter((id) => !issueIdSet.has(id));
+
+    if (missingChildIds.length > 0) {
+      const childPh = missingChildIds.map(() => "?").join(",");
+      // Apply the same filters the caller specified so we don't
+      // reintroduce issues that were intentionally excluded.
+      let childSql = `SELECT * FROM issues WHERE id IN (${childPh})`;
+      const childParams: (string | number | null)[] = [...missingChildIds];
+      if (opts?.status) {
+        childSql += ` AND status = ?`;
+        childParams.push(opts.status);
+      }
+      if (opts?.issueType) {
+        childSql += ` AND issue_type = ?`;
+        childParams.push(opts.issueType);
+      }
+      const childIssues = await beadsQuery<IssueRow>(
+        projectPath,
+        childSql,
+        childParams
+      );
+      issues = [...issues, ...childIssues];
+    }
+  }
 
   if (issues.length === 0) return [];
 
   const issueIds = issues.map((i) => i.id);
-  const placeholders = issueIds.map(() => "?").join(",");
 
-  // Batch-load labels and dependencies
-  const [labels, deps] = await Promise.all([
-    beadsQuery<LabelRow>(
-      projectPath,
-      `SELECT issue_id, label FROM labels WHERE issue_id IN (${placeholders})`,
-      issueIds
-    ),
-    beadsQuery<DependencyRow>(
-      projectPath,
-      `SELECT * FROM dependencies WHERE issue_id IN (${placeholders}) OR depends_on_id IN (${placeholders})`,
-      [...issueIds, ...issueIds]
-    ),
-  ]);
+  // Batch-load labels and dependencies in chunks to avoid dolt choking on
+  // large IN (...) clauses with hundreds of prepared-statement placeholders.
+  const CHUNK_SIZE = 50;
+  const labels: LabelRow[] = [];
+  const deps: DependencyRow[] = [];
+  const seenDepKeys = new Set<string>();
+
+  for (let i = 0; i < issueIds.length; i += CHUNK_SIZE) {
+    const chunk = issueIds.slice(i, i + CHUNK_SIZE);
+    const ph = chunk.map(() => "?").join(",");
+    const [labelChunk, depChunk] = await Promise.all([
+      beadsQuery<LabelRow>(
+        projectPath,
+        `SELECT issue_id, label FROM labels WHERE issue_id IN (${ph})`,
+        chunk
+      ),
+      beadsQuery<DependencyRow>(
+        projectPath,
+        `SELECT * FROM dependencies WHERE issue_id IN (${ph}) OR depends_on_id IN (${ph})`,
+        [...chunk, ...chunk]
+      ),
+    ]);
+    labels.push(...labelChunk);
+    // Deduplicate dependency rows that span chunk boundaries
+    for (const d of depChunk) {
+      const key = `${d.issue_id}:${d.depends_on_id}:${d.type}`;
+      if (!seenDepKeys.has(key)) {
+        seenDepKeys.add(key);
+        deps.push(d);
+      }
+    }
+  }
 
   // Group labels by issue
   const labelMap = new Map<string, string[]>();

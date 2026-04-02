@@ -67,9 +67,29 @@ export interface UserSettings {
   pinnedFolderId: string | null;
   autoFollowActiveSession: boolean;
   notificationsEnabled: boolean;
+  // Beads issue tracker sidebar settings
+  beadsSidebarCollapsed: boolean;
+  beadsSidebarWidth: number | null;
+  beadsClosedRetentionDays: number | null;
+  beadsSectionExpanded: BeadsSectionExpandDefaults | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+/** Default expand states for BeadsSidebar sections */
+export interface BeadsSectionExpandDefaults {
+  ready: boolean;
+  inProgress: boolean;
+  open: boolean;
+  closed: boolean;
+}
+
+export const BEADS_SECTION_EXPAND_DEFAULTS: BeadsSectionExpandDefaults = {
+  ready: true,
+  inProgress: true,
+  open: true,
+  closed: false,
+};
 
 /**
  * Folder-level preference overrides stored in database
@@ -160,6 +180,11 @@ export interface UpdateUserSettingsInput {
   pinnedFolderId?: string | null;
   autoFollowActiveSession?: boolean;
   notificationsEnabled?: boolean;
+  // Beads issue tracker sidebar settings
+  beadsSidebarCollapsed?: boolean;
+  beadsSidebarWidth?: number | null;
+  beadsClosedRetentionDays?: number | null;
+  beadsSectionExpanded?: BeadsSectionExpandDefaults | null;
 }
 
 /**
