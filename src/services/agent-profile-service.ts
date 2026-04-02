@@ -363,50 +363,36 @@ export async function initializeProfileDirectory(
   profileId: string,
   provider: AgentProvider
 ): Promise<void> {
+  const fs = await import("node:fs/promises");
   const configDir = join(getProfilesBaseDir(), profileId);
 
   // Create base directories
-  const dirs = [
-    configDir,
-    join(configDir, ".ssh"),
-    join(configDir, ".config"),
-  ];
+  const dirs = [configDir, `${configDir}/.ssh`, `${configDir}/.config`];
 
-  // Add provider-specific directories
+  // Build provider-specific directory and file paths upfront.
+  // Template literals prevent Turbopack from tracing path.join() patterns
+  // that otherwise match 24k+ project files and trigger build warnings.
+  const filesToWrite: Array<{ path: string; content: string }> = [];
+
   for (const cfg of PROVIDER_CONFIG_FILES) {
-    if (provider === "all" || provider === cfg.provider) {
-      dirs.push(join(configDir, cfg.dir));
-    }
+    if (provider !== "all" && provider !== cfg.provider) continue;
+    dirs.push(`${configDir}/${cfg.dir}`);
+    filesToWrite.push({
+      path: `${configDir}/${cfg.dir}/${cfg.filename}`,
+      content: `# ${cfg.filename}\n\nGlobal configuration for ${cfg.displayName} in this profile.\n\n## Project Guidelines\n\nAdd your project-specific instructions here.\n${cfg.extraSection ? `\n${cfg.extraSection}\n` : ""}${RDV_QUICK_REFERENCE}`,
+    });
   }
 
-  // Create directories
   for (const dir of dirs) {
-    await mkdir(dir, { recursive: true });
+    await fs.mkdir(dir, { recursive: true });
   }
 
   // Create default .gitconfig with credential helper to suppress macOS keychain prompts
   const credentialSection = await getCredentialSection();
-  const gitConfig = `[user]
-\tname =
-\temail =
-${credentialSection}`;
-  await writeFile(join(configDir, ".gitconfig"), gitConfig);
+  await fs.writeFile(`${configDir}/.gitconfig`, `[user]\n\tname =\n\temail =\n${credentialSection}`);
 
-  // Create default config files for each matching provider
-  for (const cfg of PROVIDER_CONFIG_FILES) {
-    if (provider !== "all" && provider !== cfg.provider) continue;
-
-    const extra = cfg.extraSection ? `\n${cfg.extraSection}\n` : "";
-    const content = `# ${cfg.filename}
-
-Global configuration for ${cfg.displayName} in this profile.
-
-## Project Guidelines
-
-Add your project-specific instructions here.
-${extra}
-${RDV_QUICK_REFERENCE}`;
-    await writeFile(join(configDir, cfg.dir, cfg.filename), content);
+  for (const f of filesToWrite) {
+    await fs.writeFile(f.path, f.content);
   }
 }
 

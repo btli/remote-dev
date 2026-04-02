@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   serverExternalPackages: ["@libsql/client", "mysql2"],
+  outputFileTracingExcludes: {
+    "*": [".agents/**", ".claude/**", ".claude-plugin/**"],
+  },
   turbopack: {
     root: process.cwd(),
   },
