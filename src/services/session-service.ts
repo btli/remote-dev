@@ -378,9 +378,15 @@ export async function createSession(
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
     const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.folderId);
 
+    // Claude Code agent defaults (lowest precedence — overridable via profile/folder env)
+    const claudeAgentDefaults: Record<string, string> = isAgentSession && effectiveAgentProvider === "claude" && input.terminalType !== "loop"
+      ? { CLAUDE_CODE_NO_FLICKER: "1" }
+      : {};
+
     // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately
-    // Precedence: profileEnv < ccflareEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
+    // Precedence: claudeAgentDefaults < profileEnv < ccflareEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
     const initialEnv: Record<string, string> = {
+      ...claudeAgentDefaults,
       ...(profileEnv ?? {}),
       ...ccflareEnv,
       ...(folderEnv ?? {}),
