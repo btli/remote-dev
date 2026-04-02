@@ -1,9 +1,11 @@
-import { createPool, type Pool, type RowDataPacket } from "mysql2/promise";
+import { createConnection, type Connection, type RowDataPacket } from "mysql2/promise";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("BeadsDB");
+
+const QUERY_TIMEOUT_MS = 8000;
 
 /** Read the Dolt server port for a project from its .beads/dolt-server.port file. */
 function getDoltPort(projectPath: string): number {
@@ -32,27 +34,41 @@ function getDatabaseName(projectPath: string): string {
   return basename.toLowerCase().replace(/[^a-z0-9]/g, "_");
 }
 
-const _pools = new Map<string, Pool>();
-
-export function getBeadsPool(projectPath: string): Pool {
-  const existing = _pools.get(projectPath);
-  if (existing) return existing;
-
+/** Create a short-lived connection, execute a query, and close it immediately.
+ *  Avoids idle persistent connections that trigger dolt CPU spin bugs. */
+async function connectAndExecute<T extends RowDataPacket>(
+  projectPath: string,
+  sql: string,
+  params: (string | number | null)[]
+): Promise<T[]> {
   const port = getDoltPort(projectPath);
   const database = getDatabaseName(projectPath);
-  log.info("Creating Dolt connection pool", { port, database, projectPath });
-  const pool = createPool({
-    host: "127.0.0.1",
-    port,
-    database,
-    user: "root",
-    password: "",
-    connectionLimit: 5,
-    waitForConnections: true,
-    connectTimeout: 5000,
-  });
-  _pools.set(projectPath, pool);
-  return pool;
+
+  let conn: Connection | null = null;
+  try {
+    conn = await createConnection({
+      host: "127.0.0.1",
+      port,
+      database,
+      user: "root",
+      password: "",
+      connectTimeout: 5000,
+    });
+    const [rows] = await conn.query<T[]>(sql, params);
+    return rows;
+  } finally {
+    if (conn) {
+      conn.end().catch(() => {});
+    }
+  }
+}
+
+class QueryTimeoutError extends Error {
+  code = "QUERY_TIMEOUT";
+  constructor() {
+    super(`Dolt query timed out after ${QUERY_TIMEOUT_MS}ms`);
+    this.name = "QueryTimeoutError";
+  }
 }
 
 export async function beadsQuery<T extends RowDataPacket>(
@@ -60,15 +76,22 @@ export async function beadsQuery<T extends RowDataPacket>(
   sql: string,
   params: (string | number | null)[] = []
 ): Promise<T[]> {
-  const pool = getBeadsPool(projectPath);
-  const [rows] = await pool.execute<T[]>(sql, params);
-  return rows;
+  return Promise.race([
+    connectAndExecute<T>(projectPath, sql, params),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new QueryTimeoutError()), QUERY_TIMEOUT_MS)
+    ),
+  ]);
+}
+
+// Legacy export — kept for backward compatibility but no longer pool-backed
+export function getBeadsPool(_projectPath: string): never {
+  throw new Error("getBeadsPool is removed — use beadsQuery directly");
 }
 
 export async function isBeadsAvailable(projectPath: string): Promise<boolean> {
   try {
-    const pool = getBeadsPool(projectPath);
-    await pool.query("SELECT 1");
+    await beadsQuery(projectPath, "SELECT 1");
     return true;
   } catch {
     return false;
