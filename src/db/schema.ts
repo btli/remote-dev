@@ -1,7 +1,6 @@
 import { sqliteTable, text, integer, real, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
-import type { SplitDirection } from "@/types/split";
 import type { CIStatusState, PRState } from "@/types/github-stats";
 import type { ScheduleType, ScheduleStatus, ExecutionStatus } from "@/types/schedule";
 import type { AgentProvider, AgentConfigType, MCPTransport } from "@/types/agent";
@@ -337,27 +336,6 @@ export const folderSecretsConfig = sqliteTable(
   ]
 );
 
-// Split groups for terminal split panes
-export const splitGroups = sqliteTable(
-  "split_group",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    direction: text("direction").$type<SplitDirection>().notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [index("split_group_user_idx").on(table.userId)]
-);
-
 // Session templates for reusable configurations
 export const sessionTemplates = sqliteTable(
   "session_template",
@@ -490,12 +468,6 @@ export const terminalSessions = sqliteTable(
     agentActivityStatus: text("agent_activity_status"),
     // Plugin-specific metadata (JSON string)
     typeMetadata: text("type_metadata"),
-    // Split group membership (independent from folder)
-    splitGroupId: text("split_group_id").references(() => splitGroups.id, {
-      onDelete: "set null",
-    }),
-    splitOrder: integer("split_order").notNull().default(0),
-    splitSize: real("split_size").default(0.5),
     // Parent session for team orchestration (child sessions spawned by a parent)
     parentSessionId: text("parent_session_id"),
     orchestratorRole: text("orchestrator_role").$type<"parent" | "child">(),
@@ -515,7 +487,6 @@ export const terminalSessions = sqliteTable(
   (table) => [
     index("terminal_session_user_status_idx").on(table.userId, table.status),
     index("terminal_session_user_order_idx").on(table.userId, table.tabOrder),
-    index("terminal_session_split_group_idx").on(table.splitGroupId),
     // Composite index for filtering sessions by folder (used in folder views)
     index("terminal_session_user_folder_idx").on(table.userId, table.folderId),
     // Index for filtering by terminal type

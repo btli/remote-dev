@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Split pane feature (split groups, split pane layouts, split API endpoints, keyboard shortcuts)
+
 ### Added
 
 - Chat channels and groups: Slack/Discord-style channel organization for peer chat

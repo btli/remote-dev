@@ -41,9 +41,6 @@ export interface SessionProps {
   // Plugin-specific metadata
   typeMetadata: Record<string, unknown> | null;
   parentSessionId: string | null;
-  splitGroupId: string | null;
-  splitOrder: number;
-  splitSize: number;
   pinned: boolean;
   tabOrder: number;
   lastActivityAt: Date;
@@ -116,9 +113,6 @@ export class Session {
       agentActivityStatus: null,
       typeMetadata: props.typeMetadata ?? null,
       parentSessionId: null,
-      splitGroupId: null,
-      splitOrder: 0,
-      splitSize: 100,
       pinned: false,
       tabOrder: props.tabOrder ?? 0,
       lastActivityAt: now,
@@ -217,18 +211,6 @@ export class Session {
 
   get parentSessionId(): string | null {
     return this.props.parentSessionId;
-  }
-
-  get splitGroupId(): string | null {
-    return this.props.splitGroupId;
-  }
-
-  get splitOrder(): number {
-    return this.props.splitOrder;
-  }
-
-  get splitSize(): number {
-    return this.props.splitSize;
   }
 
   get pinned(): boolean {
@@ -354,27 +336,6 @@ export class Session {
   }
 
   /**
-   * Add to a split group.
-   */
-  addToSplit(splitGroupId: string, order: number, size: number): Session {
-    return this.withUpdates({ splitGroupId, splitOrder: order, splitSize: size });
-  }
-
-  /**
-   * Remove from split group.
-   */
-  removeFromSplit(): Session {
-    return this.withUpdates({ splitGroupId: null, splitOrder: 0, splitSize: 100 });
-  }
-
-  /**
-   * Update split size.
-   */
-  setSplitSize(size: number): Session {
-    return this.withUpdates({ splitSize: size });
-  }
-
-  /**
    * Pin this session to the top of its folder.
    */
   pin(): Session {
@@ -469,11 +430,6 @@ export class Session {
     return this.props.worktreeBranch !== null;
   }
 
-  /** Check if session is in a split group */
-  isInSplit(): boolean {
-    return this.props.splitGroupId !== null;
-  }
-
   /** Check if session is pinned to top of its folder */
   isPinned(): boolean {
     return this.props.pinned;
@@ -508,9 +464,6 @@ export class Session {
       this.agentExitCode === other.agentExitCode &&
       this.agentRestartCount === other.agentRestartCount &&
       this.parentSessionId === other.parentSessionId &&
-      this.splitGroupId === other.splitGroupId &&
-      this.splitOrder === other.splitOrder &&
-      this.splitSize === other.splitSize &&
       this.pinned === other.pinned &&
       this.tabOrder === other.tabOrder
     );

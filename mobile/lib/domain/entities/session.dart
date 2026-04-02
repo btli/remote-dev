@@ -25,9 +25,6 @@ class Session {
   final AgentActivityStatus? agentActivityStatus;
   final Map<String, dynamic>? typeMetadata;
   final String? parentSessionId;
-  final String? splitGroupId;
-  final int splitOrder;
-  final double splitSize;
   final SessionStatus status;
   final bool pinned;
   final int tabOrder;
@@ -54,9 +51,6 @@ class Session {
     this.agentActivityStatus,
     this.typeMetadata,
     this.parentSessionId,
-    this.splitGroupId,
-    this.splitOrder = 0,
-    this.splitSize = 1.0,
     required this.status,
     this.pinned = false,
     this.tabOrder = 0,
@@ -86,9 +80,6 @@ class Session {
     DateTime? agentExitedAt,
     int? agentRestartCount,
     AgentActivityStatus? agentActivityStatus,
-    String? splitGroupId,
-    int? splitOrder,
-    double? splitSize,
     bool? pinned,
     int? tabOrder,
     DateTime? lastActivityAt,
@@ -113,9 +104,6 @@ class Session {
       agentActivityStatus: agentActivityStatus ?? this.agentActivityStatus,
       typeMetadata: typeMetadata,
       parentSessionId: parentSessionId,
-      splitGroupId: splitGroupId ?? this.splitGroupId,
-      splitOrder: splitOrder ?? this.splitOrder,
-      splitSize: splitSize ?? this.splitSize,
       status: status ?? this.status,
       pinned: pinned ?? this.pinned,
       tabOrder: tabOrder ?? this.tabOrder,

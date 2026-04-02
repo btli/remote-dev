@@ -14,7 +14,6 @@ A modern web-based terminal interface for local development, featuring multi-ses
 - **Session Folders** - Organize sessions into hierarchical folders with preference inheritance
 - **Session Templates** - Save and reuse session configurations
 - **Session Recording** - Record and playback terminal sessions
-- **Split Panes** - Split terminals horizontally or vertically
 - **GitHub Integration** - Connect your GitHub account, browse repositories, and clone with one click
 - **Git Worktrees** - Create isolated worktrees for feature branches automatically
 - **Agent API** - Programmatic access via API keys for automation and coding agents

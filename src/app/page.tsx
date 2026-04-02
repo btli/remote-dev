@@ -9,7 +9,6 @@ import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
-import { SplitProvider } from "@/contexts/SplitContext";
 import { TemplateProvider } from "@/contexts/TemplateContext";
 import { RecordingProvider } from "@/contexts/RecordingContext";
 import { TrashProvider } from "@/contexts/TrashContext";
@@ -106,9 +105,6 @@ export default async function Home() {
     agentActivityStatus: s.agentActivityStatus ?? null,
     typeMetadata: s.typeMetadata ? JSON.parse(s.typeMetadata) : null,
     parentSessionId: s.parentSessionId ?? null,
-    splitGroupId: s.splitGroupId,
-    splitOrder: s.splitOrder,
-    splitSize: s.splitSize ?? 0.5,
     status: s.status as "active" | "suspended" | "closed" | "trashed",
     pinned: s.pinned ?? false,
     tabOrder: s.tabOrder,
@@ -129,7 +125,6 @@ export default async function Home() {
                 <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
                   <GitHubIssuesProvider>
                     <SessionProvider initialSessions={initialSessions}>
-                      <SplitProvider>
                         <TrashProvider>
                           <PortProvider>
                             <ScheduleProvider>
@@ -159,7 +154,6 @@ export default async function Home() {
                             </ScheduleProvider>
                           </PortProvider>
                         </TrashProvider>
-                      </SplitProvider>
                     </SessionProvider>
                   </GitHubIssuesProvider>
                 </GitHubStatsProvider>

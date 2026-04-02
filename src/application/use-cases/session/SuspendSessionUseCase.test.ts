@@ -31,7 +31,6 @@ describe("SuspendSessionUseCase", () => {
       count: vi.fn(),
       findByIds: vi.fn(),
       findByFolder: vi.fn(),
-      findBySplitGroup: vi.fn(),
       save: vi.fn().mockImplementation((session: Session) =>
         Promise.resolve(session)
       ),

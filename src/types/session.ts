@@ -52,10 +52,6 @@ export interface TerminalSession {
   typeMetadata: Record<string, unknown> | null;
   // Parent session for team orchestration
   parentSessionId: string | null;
-  // Split group membership (independent from folder)
-  splitGroupId: string | null;
-  splitOrder: number;
-  splitSize: number;
   status: SessionStatus;
   pinned: boolean;
   tabOrder: number;

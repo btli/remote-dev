@@ -12,7 +12,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Terminal,
   GitBranch,
-  Layout,
   Globe,
   Clock,
   Shield,
@@ -28,11 +27,6 @@ const FEATURES = [
     icon: GitBranch,
     title: "Git Worktree Support",
     description: "Isolate branches in separate working directories",
-  },
-  {
-    icon: Layout,
-    title: "Split Pane Layouts",
-    description: "Run multiple terminals side-by-side",
   },
   {
     icon: Globe,

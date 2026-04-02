@@ -16,8 +16,6 @@ export interface SessionFilters {
   status?: SessionStatus | SessionStatus[];
   /** Filter by folder ID (null = root sessions) */
   folderId?: string | null;
-  /** Filter by split group ID */
-  splitGroupId?: string | null;
   /** Filter by project path */
   projectPath?: string;
   /** Filter sessions with worktrees */
@@ -63,11 +61,6 @@ export interface SessionRepository {
    * Find sessions in a folder.
    */
   findByFolder(folderId: string, userId: string): Promise<Session[]>;
-
-  /**
-   * Find sessions in a split group.
-   */
-  findBySplitGroup(splitGroupId: string, userId: string): Promise<Session[]>;
 
   /**
    * Save a session (insert or update).

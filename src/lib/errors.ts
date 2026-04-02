@@ -96,16 +96,6 @@ export class SecretsServiceError extends ServiceError {
   }
 }
 
-export class SplitServiceError extends ServiceError {
-  constructor(
-    message: string,
-    code: string,
-    public readonly splitGroupId?: string
-  ) {
-    super(message, code, splitGroupId);
-  }
-}
-
 export class TrashServiceError extends ServiceError {
   constructor(
     message: string,

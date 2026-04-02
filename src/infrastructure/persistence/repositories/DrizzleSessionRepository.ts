@@ -50,7 +50,7 @@ export class DrizzleSessionRepository
 
     // Apply filters
     if (options?.filters) {
-      const { status, folderId, splitGroupId, hasWorktree } = options.filters;
+      const { status, folderId, hasWorktree } = options.filters;
 
       if (status) {
         const statusValues = Array.isArray(status) ? status : [status];
@@ -67,14 +67,6 @@ export class DrizzleSessionRepository
           conditions.push(isNull(terminalSessions.folderId));
         } else {
           conditions.push(eq(terminalSessions.folderId, folderId));
-        }
-      }
-
-      if (splitGroupId !== undefined) {
-        if (splitGroupId === null) {
-          conditions.push(isNull(terminalSessions.splitGroupId));
-        } else {
-          conditions.push(eq(terminalSessions.splitGroupId, splitGroupId));
         }
       }
 
@@ -107,7 +99,7 @@ export class DrizzleSessionRepository
     const conditions = [eq(terminalSessions.userId, userId)];
 
     if (filters) {
-      const { status, folderId, splitGroupId, hasWorktree } = filters;
+      const { status, folderId, hasWorktree } = filters;
 
       if (status) {
         const statusValues = Array.isArray(status) ? status : [status];
@@ -124,14 +116,6 @@ export class DrizzleSessionRepository
           conditions.push(isNull(terminalSessions.folderId));
         } else {
           conditions.push(eq(terminalSessions.folderId, folderId));
-        }
-      }
-
-      if (splitGroupId !== undefined) {
-        if (splitGroupId === null) {
-          conditions.push(isNull(terminalSessions.splitGroupId));
-        } else {
-          conditions.push(eq(terminalSessions.splitGroupId, splitGroupId));
         }
       }
 
@@ -174,19 +158,6 @@ export class DrizzleSessionRepository
   async findByFolder(folderId: string, userId: string): Promise<Session[]> {
     return this.findByUser(userId, {
       filters: { folderId },
-      orderBy: { field: "tabOrder", direction: "asc" },
-    });
-  }
-
-  /**
-   * Find sessions in a split group.
-   */
-  async findBySplitGroup(
-    splitGroupId: string,
-    userId: string
-  ): Promise<Session[]> {
-    return this.findByUser(userId, {
-      filters: { splitGroupId },
       orderBy: { field: "tabOrder", direction: "asc" },
     });
   }

@@ -216,15 +216,6 @@ class RemoteDevClient {
     );
   }
 
-  // ── Splits ────────────────────────────────────────────────────────────
-
-  Future<List<Map<String, dynamic>>> listSplits() async {
-    final response = await _request(() => _dio.get('/api/splits'));
-    final splits =
-        response['splits'] as List? ?? response['items'] as List? ?? [];
-    return splits.cast<Map<String, dynamic>>();
-  }
-
   // ── Auth ──────────────────────────────────────────────────────────────
 
   /// Exchange a CF Access token for an API key (mobile auth flow).

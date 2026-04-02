@@ -5,7 +5,6 @@ import {
   X, Plus, Terminal, Settings,
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch, MessageCircle,
   PanelLeftClose, PanelLeft,
-  SplitSquareHorizontal, SplitSquareVertical, Minus,
   GitPullRequest, CircleDot, Clock, KeyRound, Fingerprint, Network,
   Pin, PinOff, History,
 } from "lucide-react";
@@ -37,7 +36,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useSplitContext } from "@/contexts/SplitContext";
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
@@ -354,13 +352,6 @@ export function Sidebar({
       touchDragRef.current = { ...INITIAL_TOUCH_DRAG };
     };
   }, []);
-
-  // Split context for managing split groups
-  const {
-    createSplit,
-    removeFromSplit,
-    getSplitForSession,
-  } = useSplitContext();
 
   // Schedule context for showing schedule indicators on session rows
   const { getSchedulesForSession } = useScheduleContext();
@@ -1463,40 +1454,6 @@ export function Sidebar({
             </ContextMenuItem>
           )}
           <ContextMenuSeparator />
-          {/* Split options */}
-          {(() => {
-            const splitGroup = getSplitForSession(session.id);
-            if (splitGroup) {
-              // Session is in a split - show unsplit option
-              return (
-                <ContextMenuItem
-                  onClick={() => removeFromSplit(session.id)}
-                >
-                  <Minus className="w-3.5 h-3.5 mr-2" />
-                  Unsplit
-                </ContextMenuItem>
-              );
-            } else {
-              // Session is not in a split - show split options
-              return (
-                <>
-                  <ContextMenuItem
-                    onClick={() => createSplit(session.id, "horizontal")}
-                  >
-                    <SplitSquareHorizontal className="w-3.5 h-3.5 mr-2" />
-                    Split Horizontal
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => createSplit(session.id, "vertical")}
-                  >
-                    <SplitSquareVertical className="w-3.5 h-3.5 mr-2" />
-                    Split Vertical
-                  </ContextMenuItem>
-                </>
-              );
-            }
-          })()}
-          <ContextMenuSeparator />
           <ContextMenuItem
             onClick={() => handleSessionCloseRequest(session)}
             className="text-destructive focus:text-destructive"
@@ -1518,8 +1475,7 @@ export function Sidebar({
   };
 
   /**
-   * Renders sessions with split group handling and optional tree line support.
-   * Consolidates duplicate logic from folder and root session rendering.
+   * Renders sessions with optional tree line support.
    */
   const renderSessionsWithSplits = (
     sessionsToRender: TerminalSession[],
@@ -1532,130 +1488,29 @@ export function Sidebar({
       trashCount?: number; // To determine if session is last (trash comes after)
     }
   ): React.ReactNode[] => {
-    const { folderId, depth, indentStyle, treeLineLeft, trashCount = 0 } = options;
-    const renderedSessionIds = new Set<string>();
+    const { folderId, depth, treeLineLeft, trashCount = 0 } = options;
     const elements: React.ReactNode[] = [];
 
-    // Build list of elements to render (for determining last item)
-    const itemsToRender: { type: 'session' | 'split'; session?: TerminalSession; splitGroup?: unknown }[] = [];
-    sessionsToRender.forEach((session) => {
-      if (renderedSessionIds.has(session.id)) return;
-      const splitGroup = getSplitForSession(session.id);
-      if (splitGroup) {
-        const splitSessions = splitGroup.sessions
-          .sort((a, b) => a.splitOrder - b.splitOrder)
-          .map((ss) => sessions.find((s) => s.id === ss.sessionId))
-          .filter((s): s is TerminalSession => {
-            if (!s) return false;
-            return folderId !== null ? s.folderId === folderId : !s.folderId;
-          });
-        splitSessions.forEach((s) => renderedSessionIds.add(s.id));
-        if (splitSessions.length > 0) {
-          itemsToRender.push({ type: 'split', splitGroup });
-        }
+    sessionsToRender.forEach((session, idx) => {
+      const isLastItem = trashCount === 0 && idx === sessionsToRender.length - 1;
+
+      // Wrap in tree-item if tree lines enabled
+      if (treeLineLeft !== undefined) {
+        elements.push(
+          <div
+            key={`tree-${session.id}`}
+            className="tree-item"
+            data-tree-last={isLastItem ? "true" : undefined}
+            style={{
+              '--tree-connector-left': `${treeLineLeft}px`,
+              '--tree-connector-width': '8px',
+            } as React.CSSProperties}
+          >
+            {renderSession(session, depth, folderId)}
+          </div>
+        );
       } else {
-        renderedSessionIds.add(session.id);
-        itemsToRender.push({ type: 'session', session });
-      }
-    });
-
-    // Reset for actual rendering
-    renderedSessionIds.clear();
-
-    sessionsToRender.forEach((session) => {
-      // Skip if already rendered as part of a split group
-      if (renderedSessionIds.has(session.id)) return;
-
-      const splitGroup = getSplitForSession(session.id);
-      const currentIndex = elements.length;
-      const isLastItem = trashCount === 0 && currentIndex === itemsToRender.length - 1;
-
-      if (splitGroup) {
-        // Render the entire split group
-        const splitSessions = splitGroup.sessions
-          .sort((a, b) => a.splitOrder - b.splitOrder)
-          .map((ss) => sessions.find((s) => s.id === ss.sessionId))
-          .filter((s): s is TerminalSession => {
-            if (!s) return false;
-            return folderId !== null ? s.folderId === folderId : !s.folderId;
-          });
-
-        // Mark all sessions in this split as rendered
-        splitSessions.forEach((s) => renderedSessionIds.add(s.id));
-
-        if (splitSessions.length > 0) {
-          const splitElement = (
-            <div
-              key={`split-${splitGroup.id}`}
-              style={indentStyle}
-              className={cn(
-                "relative",
-                splitGroup.direction === "horizontal"
-                  ? "border-l-2 border-primary/40 pl-1 space-y-0.5"
-                  : "flex items-stretch gap-1"
-              )}
-            >
-              {splitGroup.direction === "vertical" && (
-                <div className="absolute -top-0.5 left-0 right-0 flex items-center gap-0.5 text-[9px] text-primary/60">
-                  <SplitSquareVertical className="w-2.5 h-2.5" />
-                  <span>Split</span>
-                </div>
-              )}
-              {splitSessions.map((s, idx) => (
-                <div
-                  key={s.id}
-                  className={cn(
-                    splitGroup.direction === "vertical" && "flex-1 min-w-0",
-                    splitGroup.direction === "vertical" && idx > 0 && "border-l border-border"
-                  )}
-                >
-                  {renderSession(s, 0, folderId, true)}
-                </div>
-              ))}
-            </div>
-          );
-
-          // Wrap in tree-item if tree lines enabled
-          if (treeLineLeft !== undefined) {
-            elements.push(
-              <div
-                key={`tree-split-${splitGroup.id}`}
-                className="tree-item"
-                data-tree-last={isLastItem ? "true" : undefined}
-                style={{
-                  '--tree-connector-left': `${treeLineLeft}px`,
-                  '--tree-connector-width': '8px',
-                } as React.CSSProperties}
-              >
-                {splitElement}
-              </div>
-            );
-          } else {
-            elements.push(splitElement);
-          }
-        }
-      } else {
-        // Render as a regular session
-        renderedSessionIds.add(session.id);
-
-        // Wrap in tree-item if tree lines enabled
-        if (treeLineLeft !== undefined) {
-          elements.push(
-            <div
-              key={`tree-${session.id}`}
-              className="tree-item"
-              data-tree-last={isLastItem ? "true" : undefined}
-              style={{
-                '--tree-connector-left': `${treeLineLeft}px`,
-                '--tree-connector-width': '8px',
-              } as React.CSSProperties}
-            >
-              {renderSession(session, depth, folderId)}
-            </div>
-          );
-        } else {
-          elements.push(renderSession(session, depth, folderId));
-        }
+        elements.push(renderSession(session, depth, folderId));
       }
     });
 

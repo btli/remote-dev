@@ -57,9 +57,6 @@ describe("Session Entity", () => {
       expect(session.githubRepoId).toBeNull();
       expect(session.worktreeBranch).toBeNull();
       expect(session.folderId).toBeNull();
-      expect(session.splitGroupId).toBeNull();
-      expect(session.splitOrder).toBe(0);
-      expect(session.splitSize).toBe(100);
       expect(session.tabOrder).toBe(0);
     });
 
@@ -238,43 +235,6 @@ describe("Session Entity", () => {
         const removed = session.removeFromFolder();
 
         expect(removed.folderId).toBeNull();
-      });
-    });
-
-    describe("split operations", () => {
-      it("adds session to split group", () => {
-        const session = Session.create({ userId: "u1", name: "Test" });
-        const inSplit = session.addToSplit("split-123", 1, 50);
-
-        expect(inSplit.splitGroupId).toBe("split-123");
-        expect(inSplit.splitOrder).toBe(1);
-        expect(inSplit.splitSize).toBe(50);
-        expect(inSplit.isInSplit()).toBe(true);
-      });
-
-      it("removes session from split group", () => {
-        const inSplit = Session.create({ userId: "u1", name: "Test" }).addToSplit(
-          "split-123",
-          1,
-          50
-        );
-        const removed = inSplit.removeFromSplit();
-
-        expect(removed.splitGroupId).toBeNull();
-        expect(removed.splitOrder).toBe(0);
-        expect(removed.splitSize).toBe(100);
-        expect(removed.isInSplit()).toBe(false);
-      });
-
-      it("updates split size", () => {
-        const inSplit = Session.create({ userId: "u1", name: "Test" }).addToSplit(
-          "split-123",
-          1,
-          50
-        );
-        const resized = inSplit.setSplitSize(75);
-
-        expect(resized.splitSize).toBe(75);
       });
     });
 

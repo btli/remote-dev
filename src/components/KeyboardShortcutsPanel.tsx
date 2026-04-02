@@ -34,13 +34,6 @@ const SHORTCUTS: ShortcutCategory[] = [
     ],
   },
   {
-    name: "Split Panes",
-    shortcuts: [
-      { keys: "⌘D", description: "Split horizontally" },
-      { keys: "⌘⇧D", description: "Split vertically" },
-    ],
-  },
-  {
     name: "Terminal",
     shortcuts: [
       { keys: "⌘F", description: "Search in terminal" },

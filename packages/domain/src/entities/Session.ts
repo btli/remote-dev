@@ -36,9 +36,6 @@ export interface SessionProps {
   agentRestartCount: number;
   agentActivityStatus: string | null;
   typeMetadata: Record<string, unknown> | null;
-  splitGroupId: string | null;
-  splitOrder: number;
-  splitSize: number;
   tabOrder: number;
   lastActivityAt: Date;
   createdAt: Date;
@@ -104,9 +101,6 @@ export class Session {
       agentRestartCount: 0,
       agentActivityStatus: null,
       typeMetadata: props.typeMetadata ?? null,
-      splitGroupId: null,
-      splitOrder: 0,
-      splitSize: 100,
       tabOrder: props.tabOrder ?? 0,
       lastActivityAt: now,
       createdAt: now,
@@ -197,18 +191,6 @@ export class Session {
     return this.props.typeMetadata;
   }
 
-  get splitGroupId(): string | null {
-    return this.props.splitGroupId;
-  }
-
-  get splitOrder(): number {
-    return this.props.splitOrder;
-  }
-
-  get splitSize(): number {
-    return this.props.splitSize;
-  }
-
   get tabOrder(): number {
     return this.props.tabOrder;
   }
@@ -291,18 +273,6 @@ export class Session {
     return this.withUpdates({ lastActivityAt: new Date() });
   }
 
-  addToSplit(splitGroupId: string, order: number, size: number): Session {
-    return this.withUpdates({ splitGroupId, splitOrder: order, splitSize: size });
-  }
-
-  removeFromSplit(): Session {
-    return this.withUpdates({ splitGroupId: null, splitOrder: 0, splitSize: 100 });
-  }
-
-  setSplitSize(size: number): Session {
-    return this.withUpdates({ splitSize: size });
-  }
-
   // ─────────────────────────────────────────────────────────────────────────────
   // Agent State Methods
   // ─────────────────────────────────────────────────────────────────────────────
@@ -366,10 +336,6 @@ export class Session {
     return this.props.worktreeBranch !== null;
   }
 
-  isInSplit(): boolean {
-    return this.props.splitGroupId !== null;
-  }
-
   belongsTo(userId: string): boolean {
     return this.props.userId === userId;
   }
@@ -391,9 +357,6 @@ export class Session {
       this.agentExitState === other.agentExitState &&
       this.agentExitCode === other.agentExitCode &&
       this.agentRestartCount === other.agentRestartCount &&
-      this.splitGroupId === other.splitGroupId &&
-      this.splitOrder === other.splitOrder &&
-      this.splitSize === other.splitSize &&
       this.tabOrder === other.tabOrder
     );
   }

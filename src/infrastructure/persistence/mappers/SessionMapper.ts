@@ -37,9 +37,6 @@ export interface SessionDbRecord {
   agentActivityStatus: string | null;
   typeMetadata: string | null;
   parentSessionId: string | null;
-  splitGroupId: string | null;
-  splitOrder: number | null;
-  splitSize: number | null;
   status: string;
   pinned: boolean | number | null;
   tabOrder: number;
@@ -73,9 +70,6 @@ export interface SessionDbInsert {
   agentActivityStatus: string | null;
   typeMetadata: string | null;
   parentSessionId: string | null;
-  splitGroupId: string | null;
-  splitOrder: number;
-  splitSize: number;
   status: "active" | "suspended" | "closed" | "trashed";
   pinned: boolean;
   tabOrder: number;
@@ -110,9 +104,6 @@ export class SessionMapper {
       agentActivityStatus: record.agentActivityStatus ?? null,
       typeMetadata: record.typeMetadata ? JSON.parse(record.typeMetadata) : null,
       parentSessionId: record.parentSessionId ?? null,
-      splitGroupId: record.splitGroupId,
-      splitOrder: record.splitOrder ?? 0,
-      splitSize: record.splitSize ?? 100,
       pinned: !!record.pinned,
       tabOrder: record.tabOrder,
       lastActivityAt: toDate(record.lastActivityAt),
@@ -155,9 +146,6 @@ export class SessionMapper {
       agentActivityStatus: session.agentActivityStatus,
       typeMetadata: session.typeMetadata ? JSON.stringify(session.typeMetadata) : null,
       parentSessionId: session.parentSessionId,
-      splitGroupId: session.splitGroupId,
-      splitOrder: session.splitOrder,
-      splitSize: session.splitSize,
       // Cast is safe because SessionStatus.toString() only returns valid status values
       status: session.status.toString() as SessionDbInsert["status"],
       pinned: session.pinned,
@@ -192,9 +180,6 @@ export class SessionMapper {
     agentActivityStatus: string | null;
     typeMetadata: Record<string, unknown> | null;
     parentSessionId: string | null;
-    splitGroupId: string | null;
-    splitOrder: number;
-    splitSize: number;
     status: string;
     pinned: boolean;
     tabOrder: number;
@@ -222,9 +207,6 @@ export class SessionMapper {
       agentActivityStatus: session.agentActivityStatus,
       typeMetadata: session.typeMetadata,
       parentSessionId: session.parentSessionId,
-      splitGroupId: session.splitGroupId,
-      splitOrder: session.splitOrder,
-      splitSize: session.splitSize,
       status: session.status.toString(),
       pinned: session.pinned,
       tabOrder: session.tabOrder,

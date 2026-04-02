@@ -12,7 +12,6 @@ Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 
 - Session recording and playback
 - Session templates for reusable configurations
 - Hierarchical folder organization with preference inheritance
-- Split pane terminal layouts
 - **Multi-agent CLI support** (Claude Code, Codex, Gemini, OpenCode)
 - **Agent profiles** with isolated environments and per-profile theming
 - Modern glassmorphism UI with shadcn/ui components
@@ -318,7 +317,6 @@ src/
 | `session_template` | Reusable session configurations |
 | `session_recording` | Terminal session recordings |
 | `api_key` | API keys for programmatic access |
-| `split_group` | Split pane groups with direction |
 | `trash_item` | Polymorphic trash items with 30-day retention |
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
@@ -347,7 +345,6 @@ Located in `src/services/`:
 | `TemplateService` | Session template management |
 | `RecordingService` | Session recording storage |
 | `ApiKeyService` | API key management and validation |
-| `SplitService` | Split pane group management |
 | `TrashService` | Polymorphic trash management, cleanup scheduling |
 | `WorktreeTrashService` | Worktree-specific trash operations, restore logic |
 | `PortRegistryService` | Port allocation tracking and conflict detection |
@@ -488,9 +485,6 @@ bun run test:coverage  # Run tests with coverage
 | `Terminal.tsx` | xterm.js wrapper with WebSocket and recording support |
 | `TerminalWithKeyboard.tsx` | Terminal with mobile support: xterm.js rendering + native input bar on mobile |
 | `MobileInputBar.tsx` | Native textarea with autocorrect, voice dictation, and predictive text |
-| `SplitPane.tsx` | In-session split pane container (multiple terminals in one session) |
-| `SplitPaneLayout.tsx` | Cross-session split layout (multiple sessions side-by-side) |
-| `ResizeHandle.tsx` | Draggable resize handle for split panes |
 | `RecordingPlayer.tsx` | Playback recorded terminal sessions |
 | `Sidebar.tsx` | Session/folder tree with context menus |
 | `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
@@ -525,7 +519,6 @@ React Contexts in `src/contexts/`:
 | `PreferencesContext` | User settings + folder preferences with inheritance |
 | `TemplateContext` | Session templates state |
 | `RecordingContext` | Recording state management |
-| `SplitContext` | Split pane groups and active pane tracking |
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
 | `PortContext` | Port allocations, framework detection, monitoring |
@@ -550,9 +543,6 @@ React Contexts in `src/contexts/`:
 | `src/middleware.ts` | Route protection |
 | `src/db/schema.ts` | Drizzle schema definitions |
 | `src/services/*.ts` | Business logic services |
-| `src/contexts/SplitContext.tsx` | Split pane state management |
-| `src/services/split-service.ts` | Split pane operations |
-| `src/components/split/SplitPaneLayout.tsx` | Split layout component |
 | `crates/rdv/` | Rust CLI for agent interaction |
 | `src/lib/logger.ts` | Logger re-export (`createLogger` factory) |
 | `src/infrastructure/logging/AppLogger.ts` | Logger implementation (level gating, console + DB write) |
@@ -652,16 +642,6 @@ React Contexts in `src/contexts/`:
 
 ### Images
 - `POST /api/images` - Upload and save image
-
-### Splits
-- `GET /api/splits` - List user's split groups
-- `POST /api/splits` - Create new split from session
-- `GET /api/splits/:id` - Get split group details
-- `PATCH /api/splits/:id` - Update split direction
-- `DELETE /api/splits/:id` - Dissolve split group
-- `POST /api/splits/:id/sessions` - Add session to split
-- `DELETE /api/splits/:id/sessions` - Remove session from split
-- `PUT /api/splits/:id/layout` - Update pane sizes
 
 ### Trash
 - `GET /api/trash` - List trash items

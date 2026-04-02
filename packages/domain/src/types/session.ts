@@ -34,9 +34,6 @@ export interface TerminalSessionDTO {
   agentRestartCount: number;
   agentActivityStatus: string | null;
   typeMetadata: Record<string, unknown> | null;
-  splitGroupId: string | null;
-  splitOrder: number;
-  splitSize: number;
   status: SessionStatusType;
   tabOrder: number;
   lastActivityAt: Date;
