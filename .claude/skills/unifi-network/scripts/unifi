@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+#
+# UniFi Network Integration API CLI (LOCAL)
+# Interacts with UniFi Network controllers via the LOCAL Integration API v1
+# NOTE: This is NOT the cloud Site Manager API (api.ui.com) - this connects
+#       directly to your UDM/Cloud Key controller on your local network.
+#
+# Configuration:
+#   UNIFI_HOST            - Controller hostname/IP (default: 172.16.0.1)
+#   UNIFI_NETWORK_API_KEY - API key from Network > Settings > Integrations
+#   UNIFI_SITE_ID         - Site ID for site-scoped queries (use 'sites' command to list)
+#
+# Usage:
+#   unifi <command> [options]
+#
+# Global Commands:
+#   info           - Get controller system information
+#   sites          - List all sites
+#   pending        - List pending devices (not yet adopted)
+#   countries      - List country codes
+#   dpi-apps       - List DPI application categories
+#   dpi-categories - List DPI categories
+#
+# Site Commands (require --site or UNIFI_SITE_ID):
+#   devices        - List adopted devices
+#   device <id>    - Get device details
+#   device-stats <id> - Get device statistics
+#   device-tags    - List device tags
+#   clients        - List connected clients
+#   client <id>    - Get client details
+#   networks       - List networks
+#   network <id>   - Get network details
+#   wifi           - List WiFi broadcasts (SSIDs)
+#   wifi-detail <id> - Get WiFi broadcast details
+#   vouchers       - List hotspot vouchers
+#   firewall-zones - List firewall zones
+#   acl-rules      - List ACL rules
+#   traffic-lists  - List traffic matching lists
+#   wans           - List WAN interfaces
+#   vpn-servers    - List VPN servers
+#   vpn-tunnels    - List site-to-site VPN tunnels
+#   radius         - List RADIUS profiles
+#
+# Device Management (Standard API, no --site required):
+#   list-aps       - List all access points with MAC and state
+#   restart-ap <mac> - Restart a single AP by MAC address
+#   restart-all-aps  - Restart ALL access points (for IoT issues)
+#
+# Options:
+#   --host <host>    Override UNIFI_HOST
+#   --site <id>      Override UNIFI_SITE_ID
+#   --filter <expr>  Filter expression (see API docs)
+#   --limit <n>      Limit results (default: 25, max: 200)
+#   --offset <n>     Offset for pagination
+#   --raw            Output raw JSON (no jq formatting)
+#   --help           Show this help message
+#
+
+set -euo pipefail
+
+# Default configuration
+UNIFI_HOST="${UNIFI_HOST:-udm.joyful.house}"
+UNIFI_NETWORK_API_KEY="${UNIFI_NETWORK_API_KEY:-}"
+UNIFI_SITE_ID="${UNIFI_SITE_ID:-}"
+RAW_OUTPUT=false
+FILTER=""
+LIMIT=""
+OFFSET=""
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+error() { echo -e "${RED}Error:${NC} $1" >&2; exit 1; }
+info() { echo -e "${BLUE}Info:${NC} $1" >&2; }
+
+show_help() {
+    sed -n '/^# Usage:/,/^[^#]/p' "$0" | grep '^#' | sed 's/^# //' | sed 's/^#//'
+    exit 0
+}
+
+check_deps() {
+    command -v curl &> /dev/null || error "curl is required"
+    if ! command -v jq &> /dev/null && [ "$RAW_OUTPUT" = false ]; then
+        info "jq not found, using raw output"
+        RAW_OUTPUT=true
+    fi
+}
+
+check_api_key() {
+    if [ -z "$UNIFI_NETWORK_API_KEY" ]; then
+        error "UNIFI_NETWORK_API_KEY not set. Export it or retrieve from Phase:
+  export UNIFI_NETWORK_API_KEY=\$(phase secrets get UNIFI_NETWORK_API_KEY --app claude-code --env development | jq -r .value)"
+    fi
+}
+
+check_site_id() {
+    if [ -z "$UNIFI_SITE_ID" ]; then
+        error "Site ID required. Set UNIFI_SITE_ID or use --site <id>
+Use 'unifi sites' to list available sites"
+    fi
+}
+
+# Build query string from filter/limit/offset
+build_query() {
+    local query=""
+    [ -n "$FILTER" ] && query="${query:+$query&}filter=$FILTER"
+    [ -n "$LIMIT" ] && query="${query:+$query&}limit=$LIMIT"
+    [ -n "$OFFSET" ] && query="${query:+$query&}offset=$OFFSET"
+    echo "$query"
+}
+
+# Make API request
+api_request() {
+    local method="${1:-GET}"
+    local endpoint="$2"
+    local data="${3:-}"
+    local query
+    query=$(build_query)
+    local url="https://${UNIFI_HOST}/proxy/network/integration${endpoint}"
+    [ -n "$query" ] && url="${url}?${query}"
+
+    local curl_args=(-sk -X "$method" "$url"
+        -H "X-API-KEY: ${UNIFI_NETWORK_API_KEY}"
+        -H "Accept: application/json")
+
+    if [ -n "$data" ]; then
+        curl_args+=(-H "Content-Type: application/json" -d "$data")
+    fi
+
+    local response
+    response=$(curl "${curl_args[@]}" -w "\n%{http_code}" 2>/dev/null)
+    local http_code
+    http_code=$(echo "$response" | tail -n1)
+    local body
+    body=$(echo "$response" | sed '$d')
+
+    if [ "$http_code" -ge 400 ]; then
+        error "API request failed (HTTP $http_code): $body"
+    fi
+
+    if [ "$RAW_OUTPUT" = true ]; then
+        echo "$body"
+    else
+        echo "$body" | jq .
+    fi
+}
+
+# Global endpoints
+cmd_info() { api_request GET "/v1/info"; }
+cmd_sites() { api_request GET "/v1/sites"; }
+cmd_pending() { api_request GET "/v1/pending-devices"; }
+cmd_countries() { api_request GET "/v1/countries"; }
+cmd_dpi_apps() { api_request GET "/v1/dpi/applications"; }
+cmd_dpi_categories() { api_request GET "/v1/dpi/categories"; }
+
+# Site-scoped endpoints
+cmd_devices() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/devices"; }
+cmd_device() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/devices/$1"; }
+cmd_device_stats() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/devices/$1/statistics/latest"; }
+cmd_device_tags() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/device-tags"; }
+cmd_clients() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/clients"; }
+cmd_client() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/clients/$1"; }
+cmd_networks() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/networks"; }
+cmd_network() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/networks/$1"; }
+cmd_wifi() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/wifi/broadcasts"; }
+cmd_wifi_detail() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/wifi/broadcasts/$1"; }
+cmd_vouchers() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/hotspot/vouchers"; }
+cmd_firewall_zones() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/firewall/zones"; }
+cmd_acl_rules() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/acl-rules"; }
+cmd_traffic_lists() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/traffic-matching-lists"; }
+cmd_wans() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/wans"; }
+cmd_vpn_servers() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/vpn/servers"; }
+cmd_vpn_tunnels() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/vpn/site-to-site-tunnels"; }
+cmd_radius() { check_site_id; api_request GET "/v1/sites/${UNIFI_SITE_ID}/radius/profiles"; }
+
+# Standard API for device management (not Integration API)
+standard_api_request() {
+    local method="${1:-GET}"
+    local endpoint="$2"
+    local data="${3:-}"
+    local url="https://${UNIFI_HOST}/proxy/network/api/s/default${endpoint}"
+
+    local curl_args=(-sk -X "$method" "$url"
+        -H "X-API-KEY: ${UNIFI_NETWORK_API_KEY}"
+        -H "Accept: application/json")
+
+    if [ -n "$data" ]; then
+        curl_args+=(-H "Content-Type: application/json" -d "$data")
+    fi
+
+    local response
+    response=$(curl "${curl_args[@]}" 2>/dev/null)
+    echo "$response"
+}
+
+cmd_list_aps() {
+    local response
+    response=$(standard_api_request GET "/stat/device")
+    if [ "$RAW_OUTPUT" = true ]; then
+        echo "$response"
+    else
+        echo "$response" | jq -r '.data[] | select(.type == "uap") | "\(.name)\t\(.mac)\t\(.state)"'
+    fi
+}
+
+cmd_restart_ap() {
+    local mac="$1"
+    info "Restarting AP $mac..."
+    local response
+    response=$(standard_api_request POST "/cmd/devmgr" "{\"cmd\": \"restart\", \"mac\": \"$mac\"}")
+    if echo "$response" | jq -e '.meta.rc == "ok"' > /dev/null 2>&1; then
+        echo -e "${GREEN}OK${NC} - AP $mac restart initiated"
+    else
+        echo -e "${RED}FAILED${NC} - $response"
+    fi
+}
+
+cmd_restart_all_aps() {
+    info "Fetching AP list..."
+    local response
+    response=$(standard_api_request GET "/stat/device")
+    local aps
+    aps=$(echo "$response" | jq -r '.data[] | select(.type == "uap") | .mac')
+
+    for mac in $aps; do
+        local name
+        name=$(echo "$response" | jq -r --arg m "$mac" '.data[] | select(.mac == $m) | .name')
+        echo -n "  Restarting $name ($mac)... "
+        local result
+        result=$(standard_api_request POST "/cmd/devmgr" "{\"cmd\": \"restart\", \"mac\": \"$mac\"}")
+        if echo "$result" | jq -e '.meta.rc == "ok"' > /dev/null 2>&1; then
+            echo -e "${GREEN}OK${NC}"
+        else
+            echo -e "${RED}FAILED${NC}"
+        fi
+    done
+    echo "Done!"
+}
+
+# Parse arguments
+COMMAND=""
+COMMAND_ARG=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --host) UNIFI_HOST="$2"; shift 2 ;;
+        --site) UNIFI_SITE_ID="$2"; shift 2 ;;
+        --filter) FILTER="$2"; shift 2 ;;
+        --limit) LIMIT="$2"; shift 2 ;;
+        --offset) OFFSET="$2"; shift 2 ;;
+        --raw) RAW_OUTPUT=true; shift ;;
+        --help|-h) show_help ;;
+        info|sites|pending|countries|dpi-apps|dpi-categories|\
+        devices|device-tags|clients|networks|wifi|vouchers|\
+        firewall-zones|acl-rules|traffic-lists|wans|vpn-servers|vpn-tunnels|radius|\
+        list-aps|restart-all-aps)
+            COMMAND="$1"; shift ;;
+        device|device-stats|client|network|wifi-detail|restart-ap)
+            COMMAND="$1"
+            [ $# -lt 2 ] && error "$1 requires an ID argument"
+            COMMAND_ARG="$2"; shift 2 ;;
+        *) error "Unknown argument: $1. Use --help for usage." ;;
+    esac
+done
+
+# Main
+check_deps
+check_api_key
+
+case "$COMMAND" in
+    info) cmd_info ;;
+    sites) cmd_sites ;;
+    pending) cmd_pending ;;
+    countries) cmd_countries ;;
+    dpi-apps) cmd_dpi_apps ;;
+    dpi-categories) cmd_dpi_categories ;;
+    devices) cmd_devices ;;
+    device) cmd_device "$COMMAND_ARG" ;;
+    device-stats) cmd_device_stats "$COMMAND_ARG" ;;
+    device-tags) cmd_device_tags ;;
+    clients) cmd_clients ;;
+    client) cmd_client "$COMMAND_ARG" ;;
+    networks) cmd_networks ;;
+    network) cmd_network "$COMMAND_ARG" ;;
+    wifi) cmd_wifi ;;
+    wifi-detail) cmd_wifi_detail "$COMMAND_ARG" ;;
+    vouchers) cmd_vouchers ;;
+    firewall-zones) cmd_firewall_zones ;;
+    acl-rules) cmd_acl_rules ;;
+    traffic-lists) cmd_traffic_lists ;;
+    wans) cmd_wans ;;
+    vpn-servers) cmd_vpn_servers ;;
+    vpn-tunnels) cmd_vpn_tunnels ;;
+    radius) cmd_radius ;;
+    list-aps) cmd_list_aps ;;
+    restart-ap) cmd_restart_ap "$COMMAND_ARG" ;;
+    restart-all-aps) cmd_restart_all_aps ;;
+    "") error "No command specified. Use --help for usage." ;;
+    *) error "Unknown command: $COMMAND" ;;
+esac

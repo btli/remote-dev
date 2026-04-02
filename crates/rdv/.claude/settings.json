@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "remote-dev@remote-dev": true
+  },
+  "extraKnownMarketplaces": {
+    "remote-dev": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/bryanli/Projects/btli/remote-dev"
+      }
+    }
+  }
+}

@@ -1,0 +1,93 @@
+[
+  {
+    "url": "https://api.example.com/users",
+    "method": "GET",
+    "requestHeaders": {
+      "accept": "application/json",
+      "authorization": "Bearer token123"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "[{\"id\": 1, \"name\": \"Alice Johnson\", \"email\": \"alice@example.com\", \"role\": \"admin\"}, {\"id\": 2, \"name\": \"Bob Smith\", \"email\": \"bob@example.com\", \"role\": \"user\"}]"
+    }
+  },
+  {
+    "url": "https://api.example.com/users/1",
+    "method": "GET",
+    "requestHeaders": {
+      "accept": "application/json",
+      "authorization": "Bearer token123"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"id\": 1, \"name\": \"Alice Johnson\", \"email\": \"alice@example.com\", \"role\": \"admin\", \"createdAt\": \"2024-01-15T10:30:00Z\"}"
+    }
+  },
+  {
+    "url": "https://api.example.com/users",
+    "method": "POST",
+    "requestHeaders": {
+      "content-type": "application/json",
+      "authorization": "Bearer token123"
+    },
+    "postData": "{\"name\": \"Charlie Brown\", \"email\": \"charlie@example.com\", \"role\": \"user\"}",
+    "response": {
+      "status": 201,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"id\": 3, \"name\": \"Charlie Brown\", \"email\": \"charlie@example.com\", \"role\": \"user\", \"createdAt\": \"2024-10-24T14:20:00Z\"}"
+    }
+  },
+  {
+    "url": "https://api.example.com/users/2",
+    "method": "PUT",
+    "requestHeaders": {
+      "content-type": "application/json",
+      "authorization": "Bearer token123"
+    },
+    "postData": "{\"name\": \"Bob Smith Updated\", \"email\": \"bob.smith@example.com\"}",
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"id\": 2, \"name\": \"Bob Smith Updated\", \"email\": \"bob.smith@example.com\", \"role\": \"user\", \"updatedAt\": \"2024-10-24T14:25:00Z\"}"
+    }
+  },
+  {
+    "url": "https://api.example.com/posts?userId=1&limit=10&offset=0",
+    "method": "GET",
+    "requestHeaders": {
+      "accept": "application/json",
+      "authorization": "Bearer token123"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"total\": 25, \"limit\": 10, \"offset\": 0, \"posts\": [{\"id\": 101, \"title\": \"First Post\", \"content\": \"Hello world\", \"userId\": 1}, {\"id\": 102, \"title\": \"Second Post\", \"content\": \"Another post\", \"userId\": 1}]}"
+    }
+  },
+  {
+    "url": "https://api.example.com/posts/101/comments",
+    "method": "GET",
+    "requestHeaders": {
+      "accept": "application/json"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "[{\"id\": 1, \"postId\": 101, \"author\": \"Jane Doe\", \"text\": \"Great post!\", \"createdAt\": \"2024-10-20T09:15:00Z\"}, {\"id\": 2, \"postId\": 101, \"author\": \"John Smith\", \"text\": \"Thanks for sharing\", \"createdAt\": \"2024-10-21T11:30:00Z\"}]"
+    }
+  }
+]
