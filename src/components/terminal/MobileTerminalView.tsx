@@ -40,7 +40,7 @@ interface MobileTerminalViewProps {
   onOutput?: (data: string) => void;
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
-  onAgentTodosUpdated?: (sessionId: string) => void;
+  onBeadsIssuesUpdated?: (sessionId: string) => void;
   onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   onNotification?: (notification: Record<string, unknown>) => void;
   onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
@@ -183,7 +183,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
       onOutput,
       onSessionDelete,
       onAgentActivityStatus,
-      onAgentTodosUpdated,
+      onBeadsIssuesUpdated,
       onSessionRenamed,
       onNotification,
       onSessionStatus,
@@ -295,7 +295,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
       onAgentExited: handleAgentExited,
       onAgentRestarted: handleAgentRestarted,
       onAgentActivityStatus,
-      onAgentTodosUpdated,
+      onBeadsIssuesUpdated,
       onSessionRenamed,
       onNotification,
       onSessionStatus,

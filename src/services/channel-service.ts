@@ -72,7 +72,7 @@ export async function ensureFolderChannels(
   await db
     .insert(channelGroups)
     .values({ folderId, name: DEFAULT_GROUP_NAME, position: 0 })
-    .onConflictDoNothing();
+    .onConflictDoNothing({ target: [channelGroups.folderId, channelGroups.name] });
 
   const group = await db.query.channelGroups.findFirst({
     where: and(
@@ -97,7 +97,7 @@ export async function ensureFolderChannels(
       type: "public",
       isDefault: true,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing({ target: [channels.folderId, channels.name] });
 
   const general = await db.query.channels.findFirst({
     where: and(
@@ -399,7 +399,7 @@ export async function findOrCreateDmChannel(
   await db
     .insert(channelGroups)
     .values({ folderId, name: DM_GROUP_NAME, position: 100 })
-    .onConflictDoNothing();
+    .onConflictDoNothing({ target: [channelGroups.folderId, channelGroups.name] });
 
   const dmGroup = await db.query.channelGroups.findFirst({
     where: and(
@@ -420,7 +420,7 @@ export async function findOrCreateDmChannel(
       displayName: dmName, // Will be resolved to peer name at render time
       type: "dm",
     })
-    .onConflictDoNothing()
+    .onConflictDoNothing({ target: [channels.folderId, channels.name] })
     .returning();
 
   // Handle race condition: if onConflictDoNothing fired, re-query

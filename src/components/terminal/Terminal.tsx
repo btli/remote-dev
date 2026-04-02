@@ -56,8 +56,8 @@ interface TerminalProps {
   /** Called when agent activity status changes (from Claude Code hooks).
    *  Includes sessionId so broadcast messages correctly target the right session. */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
-  /** Called when agent TodoWrite tasks are synced (from PostToolUse hooks) */
-  onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when beads issues are updated */
+  onBeadsIssuesUpdated?: (sessionId: string) => void;
   /** Called when an agent session is auto-titled from its .jsonl file */
   onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   /** Called when a notification is broadcast from the terminal server */
@@ -99,7 +99,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onAgentExited,
   onAgentRestarted,
   onAgentActivityStatus,
-  onAgentTodosUpdated,
+  onBeadsIssuesUpdated,
   onSessionRenamed,
   onNotification,
   onSessionStatus,
@@ -162,7 +162,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onAgentExitedRef = useRef(onAgentExited);
   const onAgentRestartedRef = useRef(onAgentRestarted);
   const onAgentActivityStatusRef = useRef(onAgentActivityStatus);
-  const onAgentTodosUpdatedRef = useRef(onAgentTodosUpdated);
+  const onBeadsIssuesUpdatedRef = useRef(onBeadsIssuesUpdated);
   const onSessionRenamedRef = useRef(onSessionRenamed);
   const onNotificationRef = useRef(onNotification);
   const onSessionStatusRef = useRef(onSessionStatus);
@@ -205,7 +205,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onAgentExitedRef.current = onAgentExited;
     onAgentRestartedRef.current = onAgentRestarted;
     onAgentActivityStatusRef.current = onAgentActivityStatus;
-    onAgentTodosUpdatedRef.current = onAgentTodosUpdated;
+    onBeadsIssuesUpdatedRef.current = onBeadsIssuesUpdated;
     onSessionRenamedRef.current = onSessionRenamed;
     onNotificationRef.current = onNotification;
     onSessionStatusRef.current = onSessionStatus;
@@ -229,7 +229,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onChannelMessageCreated, onThreadReplyCreated, onChannelCreated, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onBeadsIssuesUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onChannelMessageCreated, onThreadReplyCreated, onChannelCreated, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -641,9 +641,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                 // Agent activity status from Claude Code hooks (broadcast — may be for any session)
                 onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
                 break;
-              case "agent_todos_updated":
-                // Agent TodoWrite tasks synced — refresh task list
-                onAgentTodosUpdatedRef.current?.(msg.sessionId);
+              case "beads_issues_updated":
+                // Beads issues updated — refresh sidebar
+                onBeadsIssuesUpdatedRef.current?.(msg.sessionId);
                 break;
               case "session_renamed":
                 // Agent session auto-titled from .jsonl first user message

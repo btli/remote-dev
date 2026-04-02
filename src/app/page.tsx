@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
 import { getAuthSession } from "@/lib/auth-utils";
@@ -19,7 +21,7 @@ import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
 import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
 import { PortProvider } from "@/contexts/PortContext";
 import { SessionMCPProvider } from "@/contexts/SessionMCPContext";
-import { TaskProvider } from "@/contexts/TaskContext";
+import { BeadsProvider } from "@/contexts/BeadsContext";
 import { GitHubAccountProvider } from "@/contexts/GitHubAccountContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { PeerChatProvider } from "@/contexts/PeerChatContext";
@@ -131,7 +133,7 @@ export default async function Home() {
                         <TrashProvider>
                           <PortProvider>
                             <ScheduleProvider>
-                              <TaskProvider>
+                              <BeadsProvider>
                                 <SessionMCPProvider>
                                   <NotificationProvider>
                                     <ChannelProvider>
@@ -153,7 +155,7 @@ export default async function Home() {
                                     </ChannelProvider>
                                   </NotificationProvider>
                                 </SessionMCPProvider>
-                              </TaskProvider>
+                              </BeadsProvider>
                             </ScheduleProvider>
                           </PortProvider>
                         </TrashProvider>

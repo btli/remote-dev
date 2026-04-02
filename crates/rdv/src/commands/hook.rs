@@ -170,16 +170,6 @@ async fn report_status(client: &Client, status: &str) {
     }
 }
 
-/// Check if an error is a connection-level failure (worth retrying).
-fn is_connection_error(err: &dyn std::error::Error) -> bool {
-    let msg = err.to_string().to_lowercase();
-    msg.contains("connection refused")
-        || msg.contains("connect error")
-        || msg.contains("connection reset")
-        || msg.contains("broken pipe")
-        || msg.contains("timed out")
-}
-
 // ── Peer digest ─────────────────────────────────────────────────────
 
 const PEER_HEADER: &str = "\u{2500}\u{2500} Peers \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}";
@@ -407,10 +397,65 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
     }
 }
 
+// ── Beads check ────────────────────────────────────────────────────
+
+/// Check if there are in-progress beads issues.
+/// Returns Some(message) if unfinished work found, None otherwise.
+async fn check_beads_unfinished() -> Option<String> {
+    // Check if .beads/ directory exists in current working directory
+    if !std::path::Path::new(".beads").exists() {
+        return None;
+    }
+
+    // Run bd list to check for in-progress issues
+    let output = match tokio::process::Command::new("bd")
+        .args(["list", "--status=in_progress", "--json", "--quiet"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => return None, // bd not available, skip check
+    };
+
+    if !output.status.success() {
+        return None; // bd command failed, don't block stop
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.trim();
+    if stdout.is_empty() || stdout == "[]" || stdout == "null" {
+        return None;
+    }
+
+    // Parse the JSON to get issue titles
+    if let Ok(issues) = serde_json::from_str::<Vec<serde_json::Value>>(stdout) {
+        if issues.is_empty() {
+            return None;
+        }
+        let mut msg = format!(
+            "You have {} in-progress beads issue(s) that should be completed or updated before stopping:\n\n",
+            issues.len()
+        );
+        for issue in &issues {
+            let id = issue.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let title = issue.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
+            msg.push_str(&format!("- [{id}] {title}\n"));
+        }
+        msg.push_str(
+            "\nPlease complete or close these issues with `bd close <id>`, then try stopping again.",
+        );
+        Some(msg)
+    } else {
+        None
+    }
+}
+
 // ── Stop handler ────────────────────────────────────────────────────
 
-/// Handle agent stop: report idle, check incomplete tasks, notify if proceeding.
+/// Handle agent stop: report idle, notify, broadcast to peers.
 /// Returns Ok(()) early if no session ID is available.
+/// If beads has in-progress issues, prints them to stdout (which tells Claude Code
+/// to continue working) and returns early without reporting idle.
 async fn handle_stop(
     client: &Client,
     agent: Option<String>,
@@ -420,100 +465,52 @@ async fn handle_stop(
         return Ok(());
     };
 
+    // Check for unfinished beads work before allowing stop
+    if let Some(msg) = check_beads_unfinished().await {
+        // Print to stdout — Claude Code will see this and continue instead of stopping
+        println!("{msg}");
+        // Still report running status since agent should continue
+        report_status(client, "running").await;
+        return Ok(());
+    }
+
     // Clear peer summary (fire-and-forget)
     let clear_summary_payload = json!({ "sessionId": sid, "summary": "" });
     let _ = client
         .post_json("/internal/peers/summary", &clear_summary_payload)
         .await;
 
-    // Report idle status (fire-and-forget, don't block on it)
+    // Report idle status
     let idle_query = [("sessionId", sid), ("status", "idle")];
-    let idle_future = client.post_empty_with_query("/internal/agent-status", &idle_query);
-
-    // Check tasks with single retry on connection failure
-    let check_query = [("sessionId", sid)];
-    let check_future = async {
-        let result = client
-            .post_empty_with_query("/internal/agent-stop-check", &check_query)
-            .await;
-        match &result {
-            Err(e) if is_connection_error(e.as_ref()) => {
-                eprintln!("warning: stop-check connection failed, retrying in 500ms...");
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                client
-                    .post_empty_with_query("/internal/agent-stop-check", &check_query)
-                    .await
-            }
-            _ => result,
-        }
-    };
-
-    let (idle_result, check_result) = tokio::join!(idle_future, check_future);
-    if let Err(e) = idle_result {
+    if let Err(e) = client.post_empty_with_query("/internal/agent-status", &idle_query).await {
         eprintln!("warning: failed to report idle status: {e}");
     }
 
-    let stop_blocked = match &check_result {
-        Ok(val) => {
-            let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            if msg.is_empty() {
-                false
-            } else {
-                println!("{msg}");
-                true
-            }
-        }
-        Err(e) => {
-            eprintln!("warning: failed to check tasks: {e}");
-            println!("Unable to verify task completion. Please run TaskList to check your tasks before stopping.");
-            true
-        }
+    // Send notification
+    let title = match &agent {
+        Some(a) => format!("Agent stopped: {a}"),
+        None => "Agent stopped".to_string(),
     };
+    let payload = json!({
+        "sessionId": sid,
+        "type": "agent_exited",
+        "title": title,
+        "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
+    });
+    let _ = client.post_json("/internal/notify", &payload).await;
 
-    if !stop_blocked {
-        let title = match &agent {
-            Some(a) => format!("Agent stopped: {a}"),
-            None => "Agent stopped".to_string(),
-        };
-        let payload = json!({
-            "sessionId": sid,
-            "type": "agent_exited",
-            "title": title,
-            "body": reason.unwrap_or_else(|| "Session ended normally".to_string()),
-        });
-        let _ = client.post_json("/internal/notify", &payload).await;
-
-        // Broadcast "finished work" to peers
-        let finished_payload = json!({ "fromSessionId": sid, "body": "finished work" });
-        let _ = client
-            .post_json("/internal/peers/messages/send", &finished_payload)
-            .await;
-    }
+    // Broadcast "finished work" to peers
+    let finished_payload = json!({ "fromSessionId": sid, "body": "finished work" });
+    let _ = client
+        .post_json("/internal/peers/messages/send", &finished_payload)
+        .await;
 
     Ok(())
 }
 
-// ── Todo sync ───────────────────────────────────────────────────────
-
-/// Sync task/todo data from stdin to the terminal server.
-/// Drains stdin even if no session ID is available to prevent blocking the caller.
-async fn sync_todos_from_stdin(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
-    let sid = match client.session_id() {
-        Some(s) => s,
-        None => {
-            let _ = std::io::stdin().read_to_end(&mut Vec::new());
-            return Ok(());
-        }
-    };
-    let mut buf = Vec::new();
-    std::io::stdin().read_to_end(&mut buf)?;
-    if let Err(e) = client
-        .post_raw_bytes(&format!("/internal/agent-todos?sessionId={sid}"), buf)
-        .await
-    {
-        eprintln!("warning: failed to sync tasks: {e}");
-    }
-    Ok(())
+/// Drain stdin to prevent blocking the calling process.
+fn drain_stdin() {
+    let _ = std::io::stdin().read_to_end(&mut Vec::new());
 }
 
 // ── Main handler ────────────────────────────────────────────────────
@@ -657,7 +654,8 @@ pub async fn run(
                     report_status(client, "compacting").await;
                 }
                 "post-tool-use" | "task-sync" => {
-                    sync_todos_from_stdin(client).await?;
+                    // Drain stdin to prevent blocking the caller (Claude Code pipes data)
+                    drain_stdin();
                 }
                 "session-end" => {
                     report_status(client, "ended").await;

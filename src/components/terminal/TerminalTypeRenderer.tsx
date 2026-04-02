@@ -45,8 +45,8 @@ interface TerminalTypeRendererProps {
   onAgentStateChange?: (sessionId: string, state: "running" | "exited" | "restarting" | "closed") => void;
   /** Called when agent activity status changes (from Claude Code hooks) */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
-  /** Called when agent TodoWrite tasks are synced */
-  onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when beads issues are updated */
+  onBeadsIssuesUpdated?: (sessionId: string) => void;
   /** Called when an agent session is auto-titled from its .jsonl file */
   onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   /** Called when a notification is broadcast from the terminal server */
@@ -81,7 +81,7 @@ export function TerminalTypeRenderer({
   onSessionClose,
   onAgentStateChange,
   onAgentActivityStatus,
-  onAgentTodosUpdated,
+  onBeadsIssuesUpdated,
   onSessionRenamed,
   onNotification,
   onSessionStatus,
@@ -158,7 +158,7 @@ export function TerminalTypeRenderer({
         onAgentExited={handleAgentExited}
         onAgentRestarted={handleAgentRestarted}
         onAgentActivityStatus={onAgentActivityStatus}
-        onAgentTodosUpdated={onAgentTodosUpdated}
+        onBeadsIssuesUpdated={onBeadsIssuesUpdated}
         onSessionRenamed={onSessionRenamed}
         onNotification={onNotification}
         onSessionStatus={onSessionStatus}
@@ -225,7 +225,7 @@ export function TerminalTypeRenderer({
           isActive={isActive}
           environmentVars={environmentVars}
           onAgentActivityStatus={onAgentActivityStatus}
-          onAgentTodosUpdated={onAgentTodosUpdated}
+          onBeadsIssuesUpdated={onBeadsIssuesUpdated}
           onNotification={onNotification}
           onSessionStatus={onSessionStatus}
           onSessionProgress={onSessionProgress}

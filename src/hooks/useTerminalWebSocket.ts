@@ -28,7 +28,7 @@ export interface UseTerminalWebSocketOptions {
   onAgentExited?: (exitCode: number | null, exitedAt: string) => void;
   onAgentRestarted?: () => void;
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
-  onAgentTodosUpdated?: (sessionId: string) => void;
+  onBeadsIssuesUpdated?: (sessionId: string) => void;
   onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   onNotification?: (notification: Record<string, unknown>) => void;
   onSessionStatus?: (sessionId: string, key: string, indicator: SessionStatusIndicator | null) => void;
@@ -76,7 +76,7 @@ export function useTerminalWebSocket({
   onAgentExited,
   onAgentRestarted,
   onAgentActivityStatus,
-  onAgentTodosUpdated,
+  onBeadsIssuesUpdated,
   onSessionRenamed,
   onNotification,
   onSessionStatus,
@@ -108,7 +108,7 @@ export function useTerminalWebSocket({
   const onAgentExitedRef = useRef(onAgentExited);
   const onAgentRestartedRef = useRef(onAgentRestarted);
   const onAgentActivityStatusRef = useRef(onAgentActivityStatus);
-  const onAgentTodosUpdatedRef = useRef(onAgentTodosUpdated);
+  const onBeadsIssuesUpdatedRef = useRef(onBeadsIssuesUpdated);
   const onSessionRenamedRef = useRef(onSessionRenamed);
   const onNotificationRef = useRef(onNotification);
   const onSessionStatusRef = useRef(onSessionStatus);
@@ -126,7 +126,7 @@ export function useTerminalWebSocket({
     onAgentExitedRef.current = onAgentExited;
     onAgentRestartedRef.current = onAgentRestarted;
     onAgentActivityStatusRef.current = onAgentActivityStatus;
-    onAgentTodosUpdatedRef.current = onAgentTodosUpdated;
+    onBeadsIssuesUpdatedRef.current = onBeadsIssuesUpdated;
     onSessionRenamedRef.current = onSessionRenamed;
     onNotificationRef.current = onNotification;
     onSessionStatusRef.current = onSessionStatus;
@@ -137,7 +137,7 @@ export function useTerminalWebSocket({
     environmentVarsRef.current = environmentVars;
   }, [
     onOutput, onStatusChange, onWebSocketReady, onSessionExit,
-    onAgentExited, onAgentRestarted, onAgentActivityStatus, onAgentTodosUpdated, onSessionRenamed,
+    onAgentExited, onAgentRestarted, onAgentActivityStatus, onBeadsIssuesUpdated, onSessionRenamed,
     onNotification, onSessionStatus, onSessionProgress, onStatusMessage,
     recordActivity, tmuxHistoryLimit, environmentVars,
   ]);
@@ -288,8 +288,8 @@ export function useTerminalWebSocket({
               onAgentActivityStatusRef.current?.(msg.sessionId, msg.status);
               break;
 
-            case "agent_todos_updated":
-              onAgentTodosUpdatedRef.current?.(msg.sessionId);
+            case "beads_issues_updated":
+              onBeadsIssuesUpdatedRef.current?.(msg.sessionId);
               break;
 
             case "session_renamed":

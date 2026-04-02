@@ -22,12 +22,13 @@ const log = createLogger("Auth");
  * and decrypt them when reading.
  */
 function createEncryptedAdapter(): Adapter {
-  const baseAdapter = DrizzleAdapter(db, {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- DrizzleAdapter types lag behind drizzle-orm
+  const baseAdapter = DrizzleAdapter(db as any, {
     usersTable: users,
     accountsTable: accounts,
     sessionsTable: sessions,
     verificationTokensTable: verificationTokens,
-  });
+  } as any);
 
   return {
     ...baseAdapter,

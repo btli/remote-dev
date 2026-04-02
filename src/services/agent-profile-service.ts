@@ -18,8 +18,9 @@ import {
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { mkdir, writeFile, readFile, access } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { encrypt, decryptSafe } from "@/lib/encryption";
 import { AgentProfileServiceError } from "@/lib/errors";
@@ -725,11 +726,7 @@ function curlForStatus(status: string): string {
  * - PreToolUse → status "running" (agent is executing a tool)
  * - PreCompact → status "compacting" (context window compaction in progress)
  * - Notification (permission/elicitation) → status "waiting" (needs user input)
- * - Stop → status "idle" + task completion check
  * - SessionEnd → status "ended" + optional learning analysis
- *
- * Task sync hooks:
- * - PostToolUse (matcher: "TaskCreate|TaskUpdate|TodoWrite") → syncs tasks to project_task table
  */
 export async function installAgentHooks(
   configDir: string,
@@ -767,35 +764,20 @@ export async function installAgentHooks(
     hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook notification", curlForStatus("waiting")), timeout: 5 }],
   };
 
-  // Stop hook: report idle + check for incomplete tasks.
-  // rdv task check handles both (reports idle and checks tasks in one call).
-  const stopCurlFallback =
-    CURL_ENV_PREAMBLE +
-    curlCmd('/internal/agent-status?sessionId=${RDV_SESSION_ID}&status=idle', '>/dev/null 2>&1') + ' & ' +
-    'TASK_MSG=$(' + curlCmd('/internal/agent-stop-check?sessionId=${RDV_SESSION_ID}', '-H "Accept: text/plain"') + '); ' +
-    '[ -n "$TASK_MSG" ] && printf "%s" "$TASK_MSG"';
-
+  // Stop hook: report idle + check for unfinished beads work
   const stopHook = {
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook stop", stopCurlFallback), timeout: 15 }],
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook claude stop", curlForStatus("idle")), timeout: 15 }],
+  };
+
+  // PostToolUse hook for Bash: git-push peer broadcast
+  const postToolUseBashHook = {
+    matcher: "Bash",
+    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook post-tool-use", "true"), timeout: 10 }],
   };
 
   // SessionEnd hook: report "ended" status + optional learning analysis
   const sessionEndHook = {
     hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook session-end", curlForStatus("ended")), timeout: 10 }],
-  };
-
-  // Task sync hook: reads PostToolUse JSON from stdin
-  const todoCurlFallback =
-    'INPUT=$(cat); ' + CURL_ENV_PREAMBLE +
-    curlCmd(
-      '/internal/agent-todos?sessionId=${RDV_SESSION_ID}',
-      '-H "Content-Type: application/json" -d @-',
-      'printf \'%s\' "$INPUT" | '
-    ) + ' || true';
-
-  const postToolUseTodoHook = {
-    matcher: "TaskCreate|TaskUpdate|TodoWrite",
-    hooks: [{ type: "command", command: rdvOrCurlCommand("rdv hook post-tool-use", todoCurlFallback), timeout: 10 }],
   };
 
   // Merge with existing hooks — replace any old RDV hooks (both rdv CLI and legacy curl)
@@ -819,7 +801,7 @@ export async function installAgentHooks(
     ...existingHooks,
     PreToolUse: [...withoutRdvHooks(existingPreToolUse, hookMarkers), preToolUseHook],
     PreCompact: [...withoutRdvHooks(existingPreCompact, hookMarkers), preCompactHook],
-    PostToolUse: [...withoutRdvHooks(existingPostToolUse, hookMarkers), postToolUseTodoHook],
+    PostToolUse: [...withoutRdvHooks(existingPostToolUse, hookMarkers), postToolUseBashHook],
     Notification: [...withoutRdvHooks(existingNotification, hookMarkers), notificationHook],
     Stop: [...withoutRdvHooks(existingStop, hookMarkers), stopHook],
     SessionEnd: [...withoutRdvHooks(existingSessionEnd, hookMarkers), sessionEndHook],
@@ -845,17 +827,21 @@ export async function installAgentHooks(
   // Register rdv MCP server for inter-agent communication and push notifications.
   // RDV env vars must be passed explicitly since MCP servers spawned by Claude Code
   // don't inherit the tmux session environment.
-  const peerServerPath = join(import.meta.dirname, "..", "mcp", "peer-server.ts");
+  const moduleDir = import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
+  const peerServerPath = join(moduleDir, "..", "mcp", "peer-server.ts");
   const rdvKeys = ["RDV_SESSION_ID", "RDV_TERMINAL_SOCKET", "RDV_TERMINAL_PORT"] as const;
   const peerMcpEnv: Record<string, string> = {};
   for (const key of rdvKeys) {
     if (rdvEnv?.[key]) peerMcpEnv[key] = rdvEnv[key];
   }
   mcpServers["rdv"] = {
-    command: "node",
-    args: ["--import", "tsx/esm", peerServerPath],
+    command: "npx",
+    args: ["tsx", peerServerPath],
     env: peerMcpEnv,
   };
+
+  // Register beads MCP server for issue tracking
+  mcpServers["beads"] = { command: "beads-mcp", args: [] };
 
   const updatedSettings = {
     ...existingSettings,

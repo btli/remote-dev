@@ -13,7 +13,7 @@ import { TrashModal } from "@/components/trash/TrashModal";
 import { ResumeSessionModal } from "./ResumeSessionModal";
 import { SettingsView, type SettingsSection } from "@/components/settings/SettingsView";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
-import { TaskSidebar } from "@/components/tasks/TaskSidebar";
+import { BeadsSidebar } from "@/components/beads/BeadsSidebar";
 import { IssuesModal } from "@/components/github/IssuesModal";
 import { PRsModal } from "@/components/github/PRsModal";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
@@ -28,7 +28,7 @@ import { useSplitContext } from "@/contexts/SplitContext";
 import { useTrashContext } from "@/contexts/TrashContext";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
 import { useSecretsContext } from "@/contexts/SecretsContext";
-import { useTaskContext } from "@/contexts/TaskContext";
+import { useBeadsContext } from "@/contexts/BeadsContext";
 import {
   getEnvironmentWithSecretsSync,
   prefetchSecretsForFolder,
@@ -373,7 +373,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // GitHub stats for repo badges on folders
   const { getRepositoryById } = useGitHubStats();
 
-  const { debouncedRefresh } = useTaskContext();
+  const { debouncedRefresh } = useBeadsContext();
   const { addNotification, registerJumpHandler, notifications, markRead, latestUnreadSessionId } = useNotificationContext();
 
   // Notification panel state
@@ -1925,7 +1925,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             isActive={session.id === activeSessionId}
                             environmentVars={getEnvironmentWithSecrets(folderId)}
                             onAgentActivityStatus={handleAgentActivityStatus}
-                            onAgentTodosUpdated={() => debouncedRefresh()}
+                            onBeadsIssuesUpdated={() => debouncedRefresh()}
                             onSessionRenamed={handleSessionRenamed}
                             onNotification={(notification) => {
                               addNotification(hydrateNotification(notification));
@@ -1963,7 +1963,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                             onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
                             onNavigateToSession={(id) => setActiveSession(id)}
                             onAgentActivityStatus={handleAgentActivityStatus}
-                            onAgentTodosUpdated={() => debouncedRefresh()}
+                            onBeadsIssuesUpdated={() => debouncedRefresh()}
                             onSessionRenamed={handleSessionRenamed}
                             onNotification={(notification) => {
                               addNotification(hydrateNotification(notification));
@@ -2009,7 +2009,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onSessionRestart={() => handleSessionRestart(session)}
                           onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
                           onAgentActivityStatus={handleAgentActivityStatus}
-                          onAgentTodosUpdated={() => debouncedRefresh()}
+                          onBeadsIssuesUpdated={() => debouncedRefresh()}
                           onSessionRenamed={handleSessionRenamed}
                           onNotification={(notification) => {
                             addNotification(hydrateNotification(notification));
@@ -2053,13 +2053,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
       {/* Right sidebar — Channel list (chat) or Task tracker (terminal), hidden in settings */}
       <div className={cn((activeView === "chat" || activeView === "settings") && "hidden")}>
-        <TaskSidebar
-          githubRepoId={taskSidebarRepoId}
-          onViewIssue={handleViewIssueByNumber}
-          onViewPR={handleViewPRByNumber}
-          scheduleTargetSessionId={scheduleTargetSessionId}
-          onScheduleTargetConsumed={() => setScheduleTargetSessionId(null)}
-        />
+        <BeadsSidebar />
       </div>
       {activeView === "chat" && activeProject.folderId && (
         <ChannelSidebar onCreateChannel={() => setIsCreateChannelOpen(true)} />

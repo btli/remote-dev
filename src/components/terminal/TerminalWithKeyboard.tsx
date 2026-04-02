@@ -45,8 +45,8 @@ interface TerminalWithKeyboardProps {
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
   /** Called when agent activity status changes (from Claude Code hooks) */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
-  /** Called when agent TodoWrite tasks are synced */
-  onAgentTodosUpdated?: (sessionId: string) => void;
+  /** Called when beads issues are updated */
+  onBeadsIssuesUpdated?: (sessionId: string) => void;
   /** Called when an agent session is auto-titled from its .jsonl file */
   onSessionRenamed?: (sessionId: string, name: string, claudeSessionId?: string) => void;
   /** Called when a notification is broadcast from the terminal server */
@@ -84,7 +84,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   onSessionRestart,
   onSessionDelete,
   onAgentActivityStatus,
-  onAgentTodosUpdated,
+  onBeadsIssuesUpdated,
   onSessionRenamed,
   onNotification,
   onSessionStatus,
@@ -178,7 +178,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         onOutput={onOutput}
         onDimensionsChange={onDimensionsChange}
         onAgentActivityStatus={onAgentActivityStatus}
-        onAgentTodosUpdated={onAgentTodosUpdated}
+        onBeadsIssuesUpdated={onBeadsIssuesUpdated}
         onSessionRenamed={onSessionRenamed}
         onNotification={onNotification}
         onSessionStatus={onSessionStatus}

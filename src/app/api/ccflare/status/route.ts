@@ -17,11 +17,27 @@ export const GET = withAuth(async (_request, { userId: _userId }) => {
     const resp = await fetch(`${baseUrl}/internal/ccflare/status`, {
       method: "GET",
     });
-    const data = await resp.json();
+
+    const text = await resp.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      log.warn("Non-JSON response from terminal server", { status: resp.status, body: text.slice(0, 100) });
+      // Terminal server returned non-JSON (e.g. "WebSocket endpoint only")
+      return NextResponse.json({
+        installed: false,
+        running: false,
+        port: null,
+        pid: null,
+        version: null,
+        uptime: null,
+      });
+    }
 
     if (!resp.ok) {
       return errorResponse(
-        data.error ?? "Failed to get ccflare status",
+        (data.error as string) ?? "Failed to get ccflare status",
         resp.status
       );
     }

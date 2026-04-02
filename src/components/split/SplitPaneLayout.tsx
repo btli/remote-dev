@@ -5,7 +5,7 @@ import type { SplitGroupWithSessions } from "@/types/split";
 import type { TerminalSession } from "@/types/session";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { useSessionContext } from "@/contexts/SessionContext";
-import { useTaskContext } from "@/contexts/TaskContext";
+import { useBeadsContext } from "@/contexts/BeadsContext";
 import { useNotificationContext, hydrateNotification } from "@/contexts/NotificationContext";
 import { ResizeHandle } from "./ResizeHandle";
 import { cn } from "@/lib/utils";
@@ -58,7 +58,7 @@ export function SplitPaneLayout({
   tmuxHistoryLimit,
 }: SplitPaneLayoutProps) {
   const { patchSessionLocal, setAgentActivityStatus, setSessionStatusIndicator, setSessionProgress } = useSessionContext();
-  const { debouncedRefresh } = useTaskContext();
+  const { debouncedRefresh } = useBeadsContext();
   const { addNotification } = useNotificationContext();
   const isHorizontal = splitGroup.direction === "horizontal";
 
@@ -167,7 +167,7 @@ export function SplitPaneLayout({
                 onAgentActivityStatus={(sid, status) =>
                   setAgentActivityStatus(sid, status as AgentActivityStatus)
                 }
-                onAgentTodosUpdated={() => debouncedRefresh()}
+                onBeadsIssuesUpdated={() => debouncedRefresh()}
                 onSessionRenamed={(sid, name, claudeSessionId) => {
                   const updates: Partial<TerminalSession> = { name };
                   if (claudeSessionId) {

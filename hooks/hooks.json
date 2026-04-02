@@ -1,5 +1,5 @@
 {
-  "description": "Remote Dev agent hooks for status reporting, peer messaging, and task sync",
+  "description": "Remote Dev agent hooks for status reporting and peer messaging",
   "hooks": {
     "PreToolUse": [
       {
@@ -49,16 +49,6 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "TaskCreate|TaskUpdate|TodoWrite",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "rdv hook claude post-tool-use",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -75,7 +65,7 @@
           {
             "type": "command",
             "command": "rdv hook claude stop",
-            "timeout": 15
+            "timeout": 10
           }
         ]
       }
