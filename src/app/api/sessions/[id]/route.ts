@@ -47,10 +47,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 
   if (body.name !== undefined) {
     updates.name = body.name;
-    // Lock the title so auto-rename doesn't overwrite a user-chosen name.
-    // Only relevant for agent sessions, but harmless on others — set unconditionally
-    // to avoid an extra DB lookup. The guard in tryApplyAutoTitle only checks
-    // titleLocked on agent sessions anyway.
+    // Lock the title so `rdv session title` won't overwrite a user-chosen name.
     updates.typeMetadataPatch = { titleLocked: true };
   }
   if (body.status !== undefined) updates.status = body.status as SessionStatus;

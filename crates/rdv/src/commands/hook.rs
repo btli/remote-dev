@@ -86,47 +86,6 @@ fn inspect_bash_payload(payload: &serde_json::Value) -> Option<BashInspection> {
     })
 }
 
-// ── Auto-title ──────────────────────────────────────────────────────
-
-/// Try to apply an auto-title to the agent session from its .jsonl file.
-/// Fire-and-forget: never blocks the hook, silently ignores errors.
-/// Uses a tmpfile sentinel so it only fires until a title is successfully applied.
-/// The sentinel stores an attempt counter; gives up after MAX_ATTEMPTS tries.
-async fn try_apply_auto_title(client: &Client) {
-    const MAX_ATTEMPTS: u32 = 10;
-
-    let Some(sid) = client.session_id() else {
-        return;
-    };
-
-    let sentinel = std::path::PathBuf::from(format!("/tmp/rdv-autotitle-{sid}"));
-
-    // Read sentinel: "done" means title was applied; a number tracks attempts
-    let sentinel_value = std::fs::read_to_string(&sentinel).unwrap_or_default();
-    let trimmed = sentinel_value.trim();
-
-    if trimmed == "done" {
-        return;
-    }
-
-    let attempts: u32 = trimmed.parse().unwrap_or(0);
-    if attempts >= MAX_ATTEMPTS {
-        return;
-    }
-
-    let _ = std::fs::write(&sentinel, (attempts + 1).to_string());
-
-    let query = [("sessionId", sid)];
-    let result: Result<serde_json::Value, _> =
-        client.post_empty_with_query("/internal/agent-title", &query).await;
-
-    if let Ok(val) = result {
-        if val.get("applied").and_then(|v| v.as_bool()).unwrap_or(false) {
-            let _ = std::fs::write(&sentinel, "done");
-        }
-    }
-}
-
 // ── Mention token stripping ─────────────────────────────────────────
 
 /// Replace `@<sid:UUID>` mention tokens with `@<short-id>` for human-readable output.
@@ -525,7 +484,6 @@ pub async fn run(
             report_status(client, "running").await;
             print_peer_digest(client).await;
             broadcast_session_start(client).await;
-            try_apply_auto_title(client).await;
 
             // Read stdin once into a buffer, parse as JSON
             let mut buf = Vec::new();
@@ -642,7 +600,6 @@ pub async fn run(
                     // Peer digest is handled by PreToolUse (Bash matcher) to avoid
                     // duplicate output — the "" matcher fires on ALL tools including Bash.
                     broadcast_session_start(client).await;
-                    try_apply_auto_title(client).await;
                 }
                 "stop" | "idle" => {
                     handle_stop(client, agent, reason).await?;

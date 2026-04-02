@@ -447,13 +447,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [activeProject.folderId, channelCtx.addChannel]
   );
 
-  // Handle server-pushed session rename (auto-title from .jsonl)
+  // Handle server-pushed session rename (from `rdv session title`)
   const handleSessionRenamed = useCallback(
     (sid: string, name: string, claudeSessionId?: string) => {
-      // Local-only update — the DB write already happened server-side
-      // in tryApplyAutoTitle. We just need the UI to reflect the new name.
+      // Local-only update — the DB write already happened server-side.
       // Do NOT call updateSession() here: that sends a PATCH which sets
-      // titleLocked=true, permanently preventing future auto-title updates.
+      // titleLocked=true, permanently preventing future title updates.
       const updates: Partial<TerminalSession> = { name };
       if (claudeSessionId) {
         const existing = sessionsRef.current.find((s) => s.id === sid);

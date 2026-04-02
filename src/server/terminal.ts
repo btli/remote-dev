@@ -1065,38 +1065,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
-  // ═══ Agent auto-title endpoint ═══════════════════════════════════════════
+  // ═══ Agent title endpoint ════════════════════════════════════════════
 
-  // POST /internal/agent-title?sessionId=xxx — auto-title an agent session from its .jsonl
-  if (pathname === "/internal/agent-title" && req.method === "POST") {
-    const sessionId = query.sessionId as string;
-    if (!sessionId) {
-      sendJson(res, 400, { error: "Missing sessionId parameter" });
-      return true;
-    }
-
-    try {
-      const AgentTitleService = await import("@/services/agent-title-service");
-      const result = await AgentTitleService.tryApplyAutoTitle(sessionId);
-
-      if (result.applied && result.title && result.userId) {
-        broadcastToUser(result.userId, {
-          type: "session_renamed",
-          sessionId,
-          name: result.title,
-          claudeSessionId: result.claudeSessionId,
-        });
-      }
-
-      sendJson(res, 200, { applied: result.applied, title: result.title ?? null });
-    } catch (err) {
-      agentStatusLog.error("Auto-title failed", { error: String(err), sessionId });
-      sendJson(res, 200, { applied: false });
-    }
-    return true;
-  }
-
-  // POST /internal/agent-title/set?sessionId=xxx&title=yyy — manually set agent session title (kebab-case)
+  // POST /internal/agent-title/set?sessionId=xxx&title=yyy — set agent session title (kebab-case)
   if (pathname === "/internal/agent-title/set" && req.method === "POST") {
     const sessionId = query.sessionId as string;
     const title = query.title as string;
