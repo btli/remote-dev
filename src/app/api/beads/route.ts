@@ -40,7 +40,13 @@ export const GET = withApiAuth(async (request, { userId }) => {
 
     return NextResponse.json(issues);
   } catch (err) {
-    log.error("getIssues failed", { error: String(err) });
+    const msg = String(err);
+    // Dolt server not running is expected — return empty rather than 500
+    if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) {
+      log.debug("Dolt server not reachable, returning empty issues", { error: msg });
+      return NextResponse.json([]);
+    }
+    log.error("getIssues failed", { error: msg });
     return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);
   }
 });
