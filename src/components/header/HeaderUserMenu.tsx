@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,31 +7,23 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserSettingsModal } from "@/components/preferences/UserSettingsModal";
 
 export function HeaderUserMenu() {
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setIsSettingsOpen(true)}
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Settings</TooltipContent>
-      </Tooltip>
-
-      <UserSettingsModal
-        open={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-      />
-    </>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() =>
+            window.dispatchEvent(new CustomEvent("open-settings"))
+          }
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Settings</TooltipContent>
+    </Tooltip>
   );
 }

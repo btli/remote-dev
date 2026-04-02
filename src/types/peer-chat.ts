@@ -30,4 +30,4 @@ export interface PeerChatAgent {
 }
 
 /** The active view in the folder tab bar. */
-export type ActiveView = "terminal" | "chat";
+export type ActiveView = "terminal" | "chat" | "settings";

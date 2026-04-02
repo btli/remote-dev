@@ -11,7 +11,7 @@ import { RecordingsModal } from "@/components/session/RecordingsModal";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
 import { ResumeSessionModal } from "./ResumeSessionModal";
-import { ProfilesModal } from "@/components/profiles/ProfilesModal";
+import { SettingsView, type SettingsSection } from "@/components/settings/SettingsView";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { TaskSidebar } from "@/components/tasks/TaskSidebar";
 import { IssuesModal } from "@/components/github/IssuesModal";
@@ -298,8 +298,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Schedule target session — passed to TaskSidebar to open schedule creation
   const [scheduleTargetSessionId, setScheduleTargetSessionId] = useState<string | null>(null);
 
-  // Profiles modal state
-  const [isProfilesModalOpen, setIsProfilesModalOpen] = useState(false);
+  // Settings view state
+  const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
+  const [settingsOpenCount, setSettingsOpenCount] = useState(0);
 
   // Port manager modal state
   const [isPortsModalOpen, setIsPortsModalOpen] = useState(false);
@@ -1489,6 +1490,18 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     return () => window.removeEventListener("notification-panel-toggle", handleToggle);
   }, []);
 
+  // Listen for open-settings event from Header gear button and Sidebar
+  useEffect(() => {
+    const handleOpenSettings = (e: Event) => {
+      const detail = (e as CustomEvent<{ section?: string }>).detail;
+      setSettingsInitialSection(detail?.section);
+      setSettingsOpenCount((c) => c + 1);
+      setActiveView("settings");
+    };
+    window.addEventListener("open-settings", handleOpenSettings);
+    return () => window.removeEventListener("open-settings", handleOpenSettings);
+  }, []);
+
   // Register session jump handler for toast "View session" actions
   useEffect(() => {
     registerJumpHandler(setActiveSession);
@@ -1622,6 +1635,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, [activeSessions, activeProject.folderId]);
 
   // Reset to terminal view when all agent sessions close (tab bar disappears)
+  // Only reset from "chat" — don't interrupt "settings" view
   useEffect(() => {
     if (folderAgentSessions.length === 0 && activeView === "chat") {
       setActiveView("terminal");
@@ -1696,7 +1710,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
             onSessionSchedule={handleScheduleSession}
-            onProfilesOpen={() => setIsProfilesModalOpen(true)}
+            onProfilesOpen={() =>
+              window.dispatchEvent(
+                new CustomEvent("open-settings", { detail: { section: "profiles" } })
+              )
+            }
             onPortsOpen={() => setIsPortsModalOpen(true)}
             onViewIssues={handleViewIssues}
             onViewPRs={handleViewPRs}
@@ -1768,8 +1786,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           />
         )}
 
-        {/* Empty state when no sessions */}
-        {!loading && activeSessions.length === 0 ? (
+        {/* Empty state when no sessions (unless settings view is active) */}
+        {!loading && activeSessions.length === 0 && activeView !== "settings" ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md mx-auto px-4">
               <div className="relative p-8 rounded-2xl bg-card/50 backdrop-blur-xl border border-border shadow-2xl">
@@ -2018,12 +2036,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               folderName={getFolderName(activeProject.folderId)}
             />
           </div>
+
+          {/* Settings View — conditionally rendered (no state to preserve, key handles remount) */}
+          {activeView === "settings" && (
+            <div className="flex-1 overflow-hidden">
+              <SettingsView
+                key={`settings-${settingsOpenCount}`}
+                onClose={() => setActiveView("terminal")}
+                initialSection={settingsInitialSection as SettingsSection | undefined}
+              />
+            </div>
+          )}
           </>
         )}
       </div>
 
-      {/* Right sidebar — Channel list (chat) or Task tracker (terminal) */}
-      <div className={cn(activeView === "chat" && "hidden")}>
+      {/* Right sidebar — Channel list (chat) or Task tracker (terminal), hidden in settings */}
+      <div className={cn((activeView === "chat" || activeView === "settings") && "hidden")}>
         <TaskSidebar
           githubRepoId={taskSidebarRepoId}
           onViewIssue={handleViewIssueByNumber}
@@ -2068,10 +2097,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onNewSession={handleOpenWizard}
         onQuickNewSession={handleQuickNewSession}
         onNewFolder={() => handleCreateFolder("New Folder")}
-        onOpenSettings={() => {
-          // Open settings modal (could be expanded in future)
-          console.log("Settings not yet implemented");
-        }}
+        onOpenSettings={() => setActiveView("settings")}
         onCloseActiveSession={
           activeSessionId
             ? () => handleCloseSession(activeSessionId)
@@ -2130,11 +2156,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onResume={handleResumeClaudeSession}
       />
 
-      {/* Profiles Modal */}
-      <ProfilesModal
-        open={isProfilesModalOpen}
-        onClose={() => setIsProfilesModalOpen(false)}
-      />
+      {/* Profiles: now in SettingsView */}
 
       {/* Port Manager Modal */}
       <PortManagerModal
