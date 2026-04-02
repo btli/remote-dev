@@ -14,4 +14,9 @@ const client = createClient({
   url: databaseUrl,
 });
 
+// Enable WAL mode and busy_timeout to prevent SQLITE_BUSY under concurrent writes
+client.execute("PRAGMA journal_mode = WAL").catch(() => {});
+client.execute("PRAGMA synchronous = NORMAL").catch(() => {});
+client.execute("PRAGMA busy_timeout = 5000").catch(() => {});
+
 export const db = drizzle(client, { schema });

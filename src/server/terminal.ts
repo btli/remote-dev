@@ -22,6 +22,18 @@ const internalLog = createLogger("InternalAPI");
 const ptyLog = createLogger("PtyControl");
 const peerLog = createLogger("PeerAPI");
 
+/** Retry an async operation up to maxRetries times with exponential backoff (for SQLITE_BUSY) */
+async function retryOnBusy<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= maxRetries || !String(err).includes("SQLITE_BUSY")) throw err;
+      await new Promise((r) => setTimeout(r, 50 * 2 ** attempt));
+    }
+  }
+}
+
 // Re-export for backwards compatibility with API routes
 export { generateWsToken } from "../lib/ws-token.js";
 
@@ -589,7 +601,9 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     // Persist to DB (fire-and-forget) so page refreshes restore the current activity state
     Promise.all([import("@/db"), import("@/db/schema"), import("drizzle-orm")])
       .then(([{ db }, { terminalSessions }, { eq }]) =>
-        db.update(terminalSessions).set({ agentActivityStatus: status }).where(eq(terminalSessions.id, sessionId))
+        retryOnBusy(() =>
+          db.update(terminalSessions).set({ agentActivityStatus: status }).where(eq(terminalSessions.id, sessionId))
+        )
       )
       .catch((err) => agentStatusLog.error("Failed to persist activity status", { error: String(err) }));
 

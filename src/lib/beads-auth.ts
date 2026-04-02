@@ -5,8 +5,9 @@
  * and has a valid beads installation.
  */
 
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { db } from "@/db";
 import { sessionFolders, folderPreferences, userSettings } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -29,12 +30,19 @@ export async function validateProjectPath(
   userId: string,
   projectPath: string
 ): Promise<string | null> {
+  // Expand tilde to home directory before resolving
+  let expandedPath = projectPath;
+  if (projectPath.startsWith("~/") || projectPath === "~") {
+    const home = homedir();
+    expandedPath = projectPath === "~" ? home : join(home, projectPath.slice(2));
+  }
+
   // Resolve to absolute canonical path
-  const resolved = resolve(projectPath);
+  const resolved = resolve(expandedPath);
 
   // Must have a .beads/ directory
   if (!existsSync(resolve(resolved, ".beads"))) {
-    log.warn("Project path has no .beads directory", { projectPath: resolved, userId });
+    log.debug("Project path has no .beads directory", { projectPath: resolved, userId });
     return null;
   }
 

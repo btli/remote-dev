@@ -552,7 +552,7 @@ export async function fetchBatchedStats(
         // The error object contains partial data for repos that succeeded.
         const gqlError = error as { data?: Record<string, GraphQLRepositoryStats | null> };
         if (gqlError.data) {
-          log.warn("Partial GraphQL failure in batch (some repos not found), processing available data", { batchStart: i });
+          log.debug("Partial GraphQL failure in batch (some repos not found), processing available data", { batchStart: i });
           response = gqlError.data;
         } else {
           throw error;
