@@ -1542,8 +1542,8 @@ export function Sidebar({
         )}
         {/* Header */}
         <div className={cn(
-          "flex items-center border-b border-border",
-          collapsed ? "justify-center px-1 py-2" : "justify-between px-3 py-2"
+          "flex items-center border-b border-border h-10 shrink-0",
+          collapsed ? "justify-center px-1" : "justify-between px-3"
         )}>
           {collapsed ? (
             // Collapsed header - just toggle button

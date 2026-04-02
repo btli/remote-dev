@@ -32,7 +32,7 @@ export function TabBar({
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex items-center gap-1 px-2 py-1.5 bg-background/50 backdrop-blur-md border-b border-border">
+      <div className="flex items-center gap-1 px-2 h-10 bg-background/50 backdrop-blur-md border-b border-border shrink-0">
         {/* Tabs */}
         <div className="flex items-center gap-1 flex-1 overflow-x-auto scrollbar-hide">
           {activeSessions.map((session) => {
