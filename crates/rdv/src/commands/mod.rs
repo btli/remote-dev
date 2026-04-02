@@ -12,7 +12,6 @@ pub mod send;
 pub mod session;
 pub mod status;
 pub mod system;
-pub mod task;
 pub mod teams;
 pub mod tmux_compat;
 pub mod worktree;

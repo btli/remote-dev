@@ -25,7 +25,6 @@ import { TerminalTypeRegistry } from "@/lib/terminal-plugins/registry";
 import { initializeBuiltInPlugins } from "@/lib/terminal-plugins/init";
 import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
-import { archiveSessionTodos } from "./agent-todo-sync";
 import { createApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
 import { ensureSoxShim } from "@/services/voice-shim-service";
@@ -1040,11 +1039,12 @@ export async function closeSession(
     log.error("Failed to clean up session gitconfig", { sessionId, error: String(error) });
   }
 
-  // Auto-archive completed agent tasks for this session
+  // Cancel open/in-progress agent tasks so they don't show as stale
   try {
-    await archiveSessionTodos(sessionId, userId);
+    const { cancelOpenAgentTasks } = await import("@/services/task-service");
+    await cancelOpenAgentTasks(sessionId, userId);
   } catch (error) {
-    log.error("Failed to archive agent tasks", { sessionId, error: String(error) });
+    log.error("Failed to cancel agent tasks", { sessionId, error: String(error) });
   }
 }
 

@@ -199,10 +199,6 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv agent start <folder-id>` | Start agent session using folder's preferred provider |
 | `rdv agent list` | List agent sessions |
 | `rdv worktree create` | Create git worktree |
-| `rdv task list` | List tasks for current session |
-| `rdv task create <title>` | Create task |
-| `rdv task check` | Check for incomplete tasks (used by stop hook) |
-| `rdv task sync` | Sync PostToolUse JSON from stdin |
 | `rdv notification list` | List notifications |
 | `rdv notification read` | Mark notifications as read |
 | `rdv notification delete` | Delete notifications |
@@ -254,7 +250,7 @@ Plugin structure for marketplace distribution:
 | `.claude-plugin/marketplace.json` | Marketplace config |
 | `skills/rdv/SKILL.md` | rdv CLI skill for agents |
 | `commands/rdv-status.md` | /rdv-status slash command |
-| `hooks/hooks.json` | Hook config for agent status/task sync |
+| `hooks/hooks.json` | Hook config for agent status |
 
 ### Clean Architecture (Domain Layer)
 

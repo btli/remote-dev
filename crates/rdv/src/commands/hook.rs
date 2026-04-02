@@ -15,13 +15,13 @@ pub struct HookArgs {
 enum HookCommand {
     /// Handle PreToolUse hook: report "running" status
     PreToolUse,
-    /// Handle PostToolUse hook: sync task/todo data from stdin
+    /// Handle PostToolUse hook: post-push peer broadcast
     PostToolUse,
     /// Handle PreCompact hook: report "compacting" status
     PreCompact,
     /// Handle Notification hook: report "waiting" status
     Notification,
-    /// Handle Stop hook: report idle status, check tasks, create notification
+    /// Handle Stop hook: report idle status, check beads, create notification
     Stop {
         /// Agent provider name (e.g. "claude", "codex")
         #[arg(long)]
@@ -32,7 +32,7 @@ enum HookCommand {
     },
     /// Send a notification for a lifecycle event
     Notify {
-        /// Event name (e.g. "task_complete", "error", "stalled")
+        /// Event name (e.g. "error", "stalled", "deployed")
         event: String,
         /// Optional message body
         #[arg(long)]
@@ -653,7 +653,7 @@ pub async fn run(
                 "compacting" => {
                     report_status(client, "compacting").await;
                 }
-                "post-tool-use" | "task-sync" => {
+                "post-tool-use" => {
                     // Drain stdin to prevent blocking the caller (Claude Code pipes data)
                     drain_stdin();
                 }

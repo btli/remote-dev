@@ -3,7 +3,7 @@ mod commands;
 mod config;
 
 use clap::Parser;
-use commands::{agent, browser, channel, context, folder, hook, indicator, notification, peer, screen, send, session, status, system, task, teams, tmux_compat, worktree};
+use commands::{agent, browser, channel, context, folder, hook, indicator, notification, peer, screen, send, session, status, system, teams, tmux_compat, worktree};
 
 #[derive(Parser)]
 #[command(name = "rdv", version, about = "CLI for Remote Dev terminal server")]
@@ -24,8 +24,6 @@ enum Command {
     Worktree(worktree::WorktreeArgs),
     /// Manage AI agent sessions
     Agent(agent::AgentArgs),
-    /// Manage project tasks
-    Task(task::TaskArgs),
     /// Manage folders
     Folder(folder::FolderArgs),
     /// Handle Claude Code lifecycle hooks (stop, notify, session-end)
@@ -74,7 +72,6 @@ async fn main() {
         Command::Session(args) => session::run(args, &client, cli.human).await,
         Command::Worktree(args) => worktree::run(args, &client, cli.human).await,
         Command::Agent(args) => agent::run(args, &client, cli.human).await,
-        Command::Task(args) => task::run(args, &client, cli.human).await,
         Command::Folder(args) => folder::run(args, &client, cli.human).await,
         Command::Hook(args) => hook::run(args, &client, cli.human).await,
         Command::Status(args) => status::run(args, &client, cli.human).await,

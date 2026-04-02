@@ -75,12 +75,11 @@ const RDV_QUICK_REFERENCE = `\
 ## Remote Dev Environment
 
 You are running inside a **Remote Dev** session. The \`rdv\` CLI is available for
-interacting with sessions, tasks, peers, worktrees, and more.
+interacting with sessions, peers, worktrees, and more.
 
 **Start here:**
 \`\`\`bash
 rdv context          # Discover your session ID, folder, and project path
-rdv task list        # Check assigned tasks
 \`\`\`
 
 **Environment variables** (set automatically):
@@ -100,8 +99,6 @@ rdv task list        # Check assigned tasks
 | \`rdv teams wait <parent-id>\` | Wait for child agents to finish |
 | \`rdv worktree create --repo . --branch <name>\` | Create git worktree |
 | \`rdv worktree cleanup\` | Clean up worktree, branches, and session |
-| \`rdv task create "title"\` | Create a task |
-| \`rdv task complete <id>\` | Mark task done |
 | \`rdv peer list\` | List peer agents in same folder |
 | \`rdv peer send "message"\` | Broadcast to peers |
 | \`rdv send text <id> "text"\` | Send text to another session PTY |

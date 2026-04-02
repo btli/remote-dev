@@ -1,6 +1,6 @@
 ---
 name: rdv
-description: Remote Dev CLI for managing terminal sessions, worktrees, agents, teams, tasks, and more. Use when you need to interact with Remote Dev.
+description: Remote Dev CLI for managing terminal sessions, worktrees, agents, teams, and more. Use when you need to interact with Remote Dev.
 ---
 
 # Remote Dev CLI (`rdv`)
@@ -124,23 +124,7 @@ rdv worktree cleanup --force   # Force cleanup (skip merge check)
 
 ---
 
-## 5. Task Management
-
-```bash
-rdv task list                                         # List tasks for current session
-rdv task create "Implement auth" --priority high      # Create a task
-rdv task create "Fix bug" --description "Details..."  # Create with description
-rdv task update <id> --status in_progress             # Update status (todo/in_progress/done/cancelled)
-rdv task update <id> --title "New title"              # Update title
-rdv task update <id> --priority urgent                # Update priority (low/medium/high/urgent)
-rdv task complete <id>                                # Mark task as done
-rdv task check                                        # Check incomplete tasks (used by stop hook)
-rdv task sync                                         # Sync PostToolUse JSON from stdin
-```
-
----
-
-## 6. Peer Communication
+## 5. Peer Communication
 
 Messages arrive automatically via push notifications and the PreToolUse hook — no polling needed.
 
@@ -166,7 +150,7 @@ rdv channel create auth-refactor                 # Create a new channel
 
 ---
 
-## 7. Browser Automation
+## 6. Browser Automation
 
 Control headless browser sessions:
 
@@ -183,7 +167,7 @@ rdv browser forward <session-id>
 
 ---
 
-## 8. Terminal I/O
+## 7. Terminal I/O
 
 ### Send Text & Keystrokes
 
@@ -212,7 +196,7 @@ rdv tmux <any-other-command>                       # Passes through to real tmux
 
 ---
 
-## 9. Session UI (Status, Progress, Log)
+## 8. Session UI (Status, Progress, Log)
 
 ### Status Indicators
 
@@ -243,7 +227,7 @@ Log levels: `debug`, `info` (default), `warn`, `error`.
 
 ---
 
-## 10. Notifications
+## 9. Notifications
 
 ```bash
 rdv notification list --unread                    # List unread notifications
@@ -256,7 +240,7 @@ rdv notification delete --all                     # Delete all
 
 ---
 
-## 11. System & Folders
+## 10. System & Folders
 
 ### Folders
 
@@ -274,7 +258,7 @@ rdv system update apply                           # Download and apply update (r
 
 ---
 
-## 12. Lifecycle Hooks
+## 11. Lifecycle Hooks
 
 Commands designed for Claude Code hook integration (usually called automatically):
 
@@ -298,12 +282,11 @@ rdv hook claude <event>      # Events: active, stop, notification, compacting,
 
 ---
 
-## 13. Common Workflows
+## 12. Common Workflows
 
 ### Discover context and start working
 ```bash
 rdv context                    # Learn your session info
-rdv task list                  # Check existing tasks
 ```
 
 ### Start a parallel agent for a subtask
