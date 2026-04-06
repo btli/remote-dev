@@ -6,6 +6,7 @@ import {
 } from "@/infrastructure/container";
 import { FolderPresenter } from "@/interface/presenters/FolderPresenter";
 import { EntityNotFoundError } from "@/domain/errors/DomainError";
+import { broadcastSidebarChanged } from "@/lib/broadcast";
 
 /**
  * GET /api/folders - Get all folders and session mappings for the current user
@@ -42,6 +43,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       name,
       parentId,
     });
+    broadcastSidebarChanged();
     return NextResponse.json(FolderPresenter.toResponse(folder), { status: 201 });
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

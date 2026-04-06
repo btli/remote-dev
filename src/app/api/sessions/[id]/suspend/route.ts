@@ -3,6 +3,7 @@ import { withAuth, errorResponse } from "@/lib/api";
 import { suspendSessionUseCase } from "@/infrastructure/container";
 import { SessionPresenter } from "@/interface/presenters/SessionPresenter";
 import { EntityNotFoundError, InvalidStateTransitionError } from "@/domain/errors/DomainError";
+import { broadcastSidebarChanged } from "@/lib/broadcast";
 
 /**
  * POST /api/sessions/:id/suspend - Suspend a session (detach tmux)
@@ -13,6 +14,7 @@ export const POST = withAuth(async (_request, { userId, params }) => {
       sessionId: params!.id,
       userId,
     });
+    broadcastSidebarChanged();
     return NextResponse.json(SessionPresenter.toResponse(session));
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

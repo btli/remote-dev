@@ -8,6 +8,7 @@ import * as TrashService from "@/services/trash-service";
 import * as ScheduleService from "@/services/schedule-service";
 import { notifySessionJobsRemoved } from "@/lib/scheduler-client";
 import { getFolderPreferences } from "@/services/preferences-service";
+import { broadcastSidebarChanged } from "@/lib/broadcast";
 import type { UpdateSessionInput, SessionStatus } from "@/types/session";
 import { createLogger } from "@/lib/logger";
 
@@ -69,6 +70,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
       userId,
       updates
     );
+    broadcastSidebarChanged();
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof SessionService.SessionServiceError) {
@@ -131,6 +133,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
         "worktree",
         id
       );
+      broadcastSidebarChanged();
       return NextResponse.json({ success: true, trashItemId: trashItem.id });
     }
 
@@ -179,6 +182,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
       // but the session record remains — acceptable since a stale session
       // can be manually closed later.
       await SessionService.closeSession(id, userId);
+      broadcastSidebarChanged();
       return NextResponse.json({ success: true, cleanup: cleanupResult });
     }
 
@@ -223,6 +227,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
     }
 
     await SessionService.closeSession(id, userId);
+    broadcastSidebarChanged();
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof SessionService.SessionServiceError) {

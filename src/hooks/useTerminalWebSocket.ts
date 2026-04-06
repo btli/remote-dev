@@ -322,6 +322,12 @@ export function useTerminalWebSocket({
               onSessionProgressRef.current?.(msg.sessionId, null);
               break;
 
+            case "sidebar_changed":
+              // Dispatch a global DOM event so SessionManager can debounce-refresh
+              // without threading a callback through the entire component tree.
+              document.dispatchEvent(new CustomEvent("rdv:sidebar-changed"));
+              break;
+
             case "voice_ready":
               break;
 

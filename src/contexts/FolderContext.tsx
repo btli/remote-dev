@@ -10,6 +10,8 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { checkAuthResponse } from "@/lib/api-client";
+import { useDebouncedRefresh } from "@/hooks/useDebouncedRefresh";
 
 export interface SessionFolder {
   id: string;
@@ -31,6 +33,8 @@ interface FolderContextValue {
   moveFolderToParent: (folderId: string, parentId: string | null) => Promise<void>;
   reorderFolders: (folderIds: string[]) => Promise<void>;
   refreshFolders: () => Promise<void>;
+  /** Debounced refresh for event-driven updates (WebSocket broadcasts). */
+  debouncedRefreshFolders: () => void;
   /** Update local sessionFolders state without API call - used for newly created sessions */
   registerSessionFolder: (sessionId: string, folderId: string | null) => void;
 }
@@ -59,6 +63,7 @@ export function FolderProvider({
   const refreshFolders = useCallback(async () => {
     try {
       const response = await fetch("/api/folders");
+      if (checkAuthResponse(response)) return;
       if (!response.ok) throw new Error("Failed to fetch folders");
       const data = await response.json();
 
@@ -78,6 +83,10 @@ export function FolderProvider({
       setLoading(false);
     }
   }, []);
+
+  // Debounced refresh — coalesces rapid WebSocket events and auto-refreshes
+  // on page visibility change (tab switch, wake from sleep).
+  const debouncedRefreshFolders = useDebouncedRefresh(refreshFolders);
 
   // Fetch folders on mount if none provided (once on mount)
   useEffect(() => {
@@ -288,6 +297,7 @@ export function FolderProvider({
       moveFolderToParent,
       reorderFolders,
       refreshFolders,
+      debouncedRefreshFolders,
       registerSessionFolder,
     }),
     [
@@ -302,6 +312,7 @@ export function FolderProvider({
       moveFolderToParent,
       reorderFolders,
       refreshFolders,
+      debouncedRefreshFolders,
       registerSessionFolder,
     ]
   );

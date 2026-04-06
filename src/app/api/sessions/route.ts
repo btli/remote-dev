@@ -4,6 +4,7 @@ import { validateProjectPath } from "@/lib/api-validation";
 import * as SessionService from "@/services/session-service";
 import type { CreateSessionInput, SessionStatus } from "@/types/session";
 import { WORKTREE_TYPES } from "@/types/session";
+import { broadcastSidebarChanged } from "@/lib/broadcast";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/sessions");
@@ -118,6 +119,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
     };
 
     const newSession = await SessionService.createSession(userId, input);
+
+    broadcastSidebarChanged();
 
     return NextResponse.json(newSession, { status: 201 });
   } catch (error) {

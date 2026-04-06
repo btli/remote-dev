@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import { moveSessionToFolderUseCase } from "@/infrastructure/container";
 import { EntityNotFoundError } from "@/domain/errors/DomainError";
+import { broadcastSidebarChanged } from "@/lib/broadcast";
 
 /**
  * PUT /api/sessions/:id/folder - Move a session to a folder (or remove from folder)
@@ -21,6 +22,7 @@ export const PUT = withAuth(async (request, { userId, params }) => {
       userId,
       folderId,
     });
+    broadcastSidebarChanged();
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

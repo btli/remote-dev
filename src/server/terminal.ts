@@ -706,6 +706,14 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
+  // Sidebar data changed — broadcast to all UI clients so they refetch sessions/folders
+  // Called by Next.js API routes after session/folder mutations
+  if (req.method === "POST" && pathname === "/internal/sidebar-changed") {
+    broadcastToClients({ type: "sidebar_changed" });
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
   // Handle beads issue updates — broadcast to UI clients
   // Called by hooks: POST /internal/beads-updated
   if (req.method === "POST" && pathname === "/internal/beads-updated") {
