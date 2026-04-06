@@ -64,13 +64,19 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
     updates.projectPath = validatedPath;
   }
 
+  // Only broadcast for structurally visible changes (name, status, projectPath);
+  // pinned and tabOrder are local UI state already handled by optimistic updates.
+  const hasStructuralChange = body.name !== undefined || body.status !== undefined || body.projectPath !== undefined;
+
   try {
     const updated = await SessionService.updateSession(
       params!.id,
       userId,
       updates
     );
-    broadcastSidebarChanged();
+    if (hasStructuralChange) {
+      broadcastSidebarChanged(userId);
+    }
     return NextResponse.json(updated);
   } catch (error) {
     if (error instanceof SessionService.SessionServiceError) {
@@ -133,7 +139,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
         "worktree",
         id
       );
-      broadcastSidebarChanged();
+      broadcastSidebarChanged(userId);
       return NextResponse.json({ success: true, trashItemId: trashItem.id });
     }
 
@@ -182,7 +188,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
       // but the session record remains — acceptable since a stale session
       // can be manually closed later.
       await SessionService.closeSession(id, userId);
-      broadcastSidebarChanged();
+      broadcastSidebarChanged(userId);
       return NextResponse.json({ success: true, cleanup: cleanupResult });
     }
 
@@ -227,7 +233,7 @@ export const DELETE = withAuth(async (request, { userId, params }) => {
     }
 
     await SessionService.closeSession(id, userId);
-    broadcastSidebarChanged();
+    broadcastSidebarChanged(userId);
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof SessionService.SessionServiceError) {

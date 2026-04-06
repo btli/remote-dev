@@ -46,7 +46,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
         });
       }
 
-      broadcastSidebarChanged();
+      broadcastSidebarChanged(userId);
       return NextResponse.json(FolderPresenter.toResponse(folder));
     }
 
@@ -70,7 +70,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
     // Only broadcast for structurally visible changes (name, sortOrder);
     // collapsed is local UI state already handled by optimistic updates.
     if (hasName || hasSortOrder) {
-      broadcastSidebarChanged();
+      broadcastSidebarChanged(userId);
     }
     return NextResponse.json(FolderPresenter.toResponse(folder));
   } catch (error) {
@@ -93,7 +93,7 @@ export const DELETE = withApiAuth(async (_request, { userId, params }) => {
       folderId: params!.id,
       userId,
     });
-    broadcastSidebarChanged();
+    broadcastSidebarChanged(userId);
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

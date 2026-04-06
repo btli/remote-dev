@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
 import * as SessionService from "@/services/session-service";
-import { broadcastSidebarChanged } from "@/lib/broadcast";
 
 /**
  * POST /api/sessions/reorder - Reorder sessions (update tab order)
@@ -15,6 +14,6 @@ export const POST = withAuth(async (request, { userId }) => {
   }
 
   await SessionService.reorderSessions(userId, sessionIds);
-  broadcastSidebarChanged();
+  // Tab ordering is local UI state — no cross-client broadcast needed.
   return NextResponse.json({ success: true });
 });

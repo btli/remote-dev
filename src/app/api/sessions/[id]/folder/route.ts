@@ -22,7 +22,7 @@ export const PUT = withAuth(async (request, { userId, params }) => {
       userId,
       folderId,
     });
-    broadcastSidebarChanged();
+    broadcastSidebarChanged(userId);
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

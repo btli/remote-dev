@@ -15,7 +15,7 @@ export const POST = withAuth(async (_request, { userId, params }) => {
       sessionId: params!.id,
       userId,
     });
-    broadcastSidebarChanged();
+    broadcastSidebarChanged(userId);
     return NextResponse.json(SessionPresenter.toResponse(session));
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

@@ -706,10 +706,20 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     return true;
   }
 
-  // Sidebar data changed — broadcast to all UI clients so they refetch sessions/folders
+  // Sidebar data changed — broadcast to the user's UI clients so they refetch sessions/folders
   // Called by Next.js API routes after session/folder mutations
   if (req.method === "POST" && pathname === "/internal/sidebar-changed") {
-    broadcastToClients({ type: "sidebar_changed" });
+    try {
+      const body = await readRequestBody(req);
+      const { userId } = JSON.parse(body);
+      if (userId) {
+        broadcastToUser(userId as string, { type: "sidebar_changed" });
+      } else {
+        broadcastToClients({ type: "sidebar_changed" });
+      }
+    } catch {
+      broadcastToClients({ type: "sidebar_changed" });
+    }
     sendJson(res, 200, { ok: true });
     return true;
   }

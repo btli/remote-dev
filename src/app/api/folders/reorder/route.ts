@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { reorderFoldersUseCase } from "@/infrastructure/container";
 import { BusinessRuleViolationError } from "@/domain/errors/DomainError";
-import { broadcastSidebarChanged } from "@/lib/broadcast";
 
 /**
  * POST /api/folders/reorder - Reorder folders (update sort order)
@@ -17,7 +16,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
   try {
     await reorderFoldersUseCase.execute({ userId, folderIds });
-    broadcastSidebarChanged();
+    // Sort ordering is local UI state — no cross-client broadcast needed.
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof BusinessRuleViolationError) {

@@ -43,7 +43,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       name,
       parentId,
     });
-    broadcastSidebarChanged();
+    broadcastSidebarChanged(userId);
     return NextResponse.json(FolderPresenter.toResponse(folder), { status: 201 });
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

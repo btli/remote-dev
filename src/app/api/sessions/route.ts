@@ -120,7 +120,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
     const newSession = await SessionService.createSession(userId, input);
 
-    broadcastSidebarChanged();
+    broadcastSidebarChanged(userId);
 
     return NextResponse.json(newSession, { status: 201 });
   } catch (error) {
