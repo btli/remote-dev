@@ -1860,9 +1860,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         )}
       </div>
 
-      {/* Right sidebar — Channel list (chat) or Task tracker (terminal), hidden in settings */}
+      {/* Right sidebar — Channel list (chat) or Beads+Schedules (terminal), hidden in settings */}
       <div className={cn((activeView === "chat" || activeView === "settings") && "hidden")}>
-        <BeadsSidebar />
+        <BeadsSidebar
+          scheduleTargetSessionId={scheduleTargetSessionId}
+          onScheduleTargetConsumed={() => setScheduleTargetSessionId(null)}
+        />
       </div>
       {activeView === "chat" && activeProject.folderId && (
         <ChannelSidebar onCreateChannel={() => setIsCreateChannelOpen(true)} />

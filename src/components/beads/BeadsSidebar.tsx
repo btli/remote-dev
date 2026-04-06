@@ -1,11 +1,10 @@
 "use client";
 
 /**
- * BeadsSidebar - Right sidebar for project-scoped beads issue tracking.
+ * BeadsSidebar - Right sidebar with tabbed Beads issue tracking and Schedules.
  *
- * Displays issues grouped by status (Ready, In Progress, Open, Closed)
- * with a resizable, collapsible panel. Issues are read-only in the UI;
- * mutations happen through the `bd` CLI or beads-mcp server.
+ * Two tabs: "Beads" shows issues grouped by status, "Schedules" shows
+ * session-scoped schedule management. Resizable, collapsible panel.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -22,6 +21,7 @@ import {
   Loader2,
   AlertTriangle,
   ArrowLeft,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -43,6 +43,8 @@ import {
   shortenId,
 } from "./beads-constants";
 import { CheckSquare } from "lucide-react";
+import { useScheduleContext } from "@/contexts/ScheduleContext";
+import { SchedulesPanel } from "@/components/schedule/SchedulesPanel";
 
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 500;
@@ -69,6 +71,18 @@ function setStoredCollapsed(val: boolean) {
 function setStoredWidth(val: number) {
   localStorage.setItem("beads-sidebar-width", String(val));
   window.dispatchEvent(new CustomEvent("beads-sidebar-width-change"));
+}
+
+type SidebarTab = "beads" | "schedules";
+
+function getStoredTab(): SidebarTab {
+  if (typeof window === "undefined") return "beads";
+  const stored = localStorage.getItem("beads-sidebar-tab");
+  return stored === "schedules" ? "schedules" : "beads";
+}
+
+function setStoredTab(val: SidebarTab) {
+  localStorage.setItem("beads-sidebar-tab", val);
 }
 
 interface SectionHeaderProps {
@@ -207,7 +221,17 @@ function BeadsIssueRow({ issue, onSelect }: BeadsIssueRowProps) {
   );
 }
 
-export function BeadsSidebar() {
+interface BeadsSidebarProps {
+  /** Session ID to pre-select in CreateScheduleModal (from context menu trigger) */
+  scheduleTargetSessionId?: string | null;
+  /** Called after CreateScheduleModal opens to reset the trigger */
+  onScheduleTargetConsumed?: () => void;
+}
+
+export function BeadsSidebar({
+  scheduleTargetSessionId,
+  onScheduleTargetConsumed,
+}: BeadsSidebarProps) {
   const {
     issues, stats, loading, error, projectPath, refreshIssues,
     beadsSidebarCollapsed: dbCollapsed,
@@ -215,6 +239,7 @@ export function BeadsSidebar() {
     beadsSectionExpanded: dbSectionExpanded,
   } = useBeadsContext();
   const { updateUserSettings } = usePreferencesContext();
+  const { schedules } = useScheduleContext();
 
   // Sidebar state — localStorage for instant rendering, DB defaults for first use
   const [collapsed, setCollapsed] = useState(() => {
@@ -240,6 +265,26 @@ export function BeadsSidebar() {
     setWidth(dbWidth);
     setStoredWidth(dbWidth);
   }, [dbWidth]);
+
+  // Selected issue for detail view (declared early so switchTab can reference it)
+  const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null);
+
+  // Active tab state — persisted to localStorage
+  const [activeTab, setActiveTab] = useState<SidebarTab>(getStoredTab);
+
+  const switchTab = useCallback((tab: SidebarTab) => {
+    setActiveTab(tab);
+    setStoredTab(tab);
+    // Clear issue detail when switching away from beads
+    if (tab !== "beads") setSelectedIssue(null);
+  }, []);
+
+  // Auto-switch to schedules tab when a schedule target arrives
+  useEffect(() => {
+    if (scheduleTargetSessionId) {
+      switchTab("schedules");
+    }
+  }, [scheduleTargetSessionId, switchTab]);
 
   // Section expand state — seed from DB settings
   const [readyExpanded, setReadyExpanded] = useState(dbSectionExpanded.ready);
@@ -275,9 +320,6 @@ export function BeadsSidebar() {
     },
     [updateUserSettings]
   );
-
-  // Selected issue for detail view
-  const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null);
 
   // Categorize issues
   const { readyIssues, inProgressIssues, openIssues, closedIssues } =
@@ -395,6 +437,12 @@ export function BeadsSidebar() {
 
   // Collapsed state - icon strip
   if (collapsed) {
+    const CollapsedIcon = activeTab === "schedules" ? Clock : Circle;
+    const collapsedBadge = activeTab === "schedules" ? schedules.length : openCount;
+    const collapsedLabel = activeTab === "schedules"
+      ? `Schedules (${schedules.length})`
+      : `Beads (${openCount} open)`;
+
     return (
       <div className="w-12 shrink-0 h-full flex flex-col items-center py-2 border-l border-border bg-card/30">
         <Tooltip>
@@ -406,17 +454,15 @@ export function BeadsSidebar() {
                 "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}
             >
-              <Circle className="w-4 h-4" />
-              {openCount > 0 && (
+              <CollapsedIcon className="w-4 h-4" />
+              {collapsedBadge > 0 && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] bg-primary text-primary-foreground rounded-full flex items-center justify-center">
-                  {openCount > 9 ? "9+" : openCount}
+                  {collapsedBadge > 9 ? "9+" : collapsedBadge}
                 </span>
               )}
             </button>
           </TooltipTrigger>
-          <TooltipContent side="left">
-            Beads ({openCount} open)
-          </TooltipContent>
+          <TooltipContent side="left">{collapsedLabel}</TooltipContent>
         </Tooltip>
       </div>
     );
@@ -435,7 +481,7 @@ export function BeadsSidebar() {
 
       {/* Header */}
       <div className="flex items-center gap-2 px-3 h-10 shrink-0 border-b border-border">
-        {selectedIssue ? (
+        {selectedIssue && activeTab === "beads" ? (
           <button
             onClick={() => setSelectedIssue(null)}
             className="text-muted-foreground hover:text-foreground transition-colors"
@@ -443,17 +489,41 @@ export function BeadsSidebar() {
             <ArrowLeft className="w-4 h-4" />
           </button>
         ) : (
-          <Circle className="w-4 h-4 text-primary shrink-0" />
+          /* Tab toggle */
+          <div className="flex items-center gap-0.5 bg-muted/50 rounded-md p-0.5">
+            <button
+              onClick={() => switchTab("beads")}
+              className={cn(
+                "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
+                activeTab === "beads"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Beads
+            </button>
+            <button
+              onClick={() => switchTab("schedules")}
+              className={cn(
+                "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
+                activeTab === "schedules"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Schedules
+            </button>
+          </div>
         )}
-        <span className="text-xs font-semibold text-foreground flex-1">
-          {selectedIssue ? "Issue Detail" : "Beads"}
-        </span>
-        {!selectedIssue && openCount > 0 && (
+
+        <span className="flex-1" />
+
+        {activeTab === "beads" && !selectedIssue && openCount > 0 && (
           <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
             {openCount}
           </span>
         )}
-        {!selectedIssue && (
+        {activeTab === "beads" && !selectedIssue && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -477,8 +547,13 @@ export function BeadsSidebar() {
         </button>
       </div>
 
-      {/* Content */}
-      {selectedIssue ? (
+      {/* Content — Beads or Schedules */}
+      {activeTab === "schedules" ? (
+        <SchedulesPanel
+          scheduleTargetSessionId={scheduleTargetSessionId}
+          onScheduleTargetConsumed={onScheduleTargetConsumed}
+        />
+      ) : selectedIssue ? (
         <BeadsIssueDetail
           issue={selectedIssue}
           allIssues={issues}
