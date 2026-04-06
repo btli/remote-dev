@@ -16,6 +16,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
 
   try {
     await reorderFoldersUseCase.execute({ userId, folderIds });
+    // Sort ordering is local UI state — no cross-client broadcast needed.
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof BusinessRuleViolationError) {

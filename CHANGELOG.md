@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Real-time sidebar sync**: Session and folder lists now update automatically across tabs and systems without page refresh — visibility-based refresh on tab focus + WebSocket broadcast on mutations
 - "Open Folder" context menu: right-click a folder to open its working directory in the OS file manager
 - Chat channels and groups: Slack/Discord-style channel organization for peer chat
 - Channel groups: "Channels" (default) and "Direct Messages" organizational containers

@@ -174,6 +174,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setActiveSession,
     reorderSessions,
     refreshSessions,
+    debouncedRefreshSessions,
     setAgentActivityStatus,
     agentActivityStatuses,
     setSessionStatusIndicator,
@@ -280,6 +281,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     moveFolderToParent,
     reorderFolders,
     registerSessionFolder,
+    debouncedRefreshFolders,
   } = useFolderContext();
 
   // Trash state from context
@@ -392,6 +394,20 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     },
     [setAgentActivityStatus]
   );
+
+  // Listen for sidebar_changed WebSocket broadcasts (dispatched as CustomEvent
+  // from useTerminalWebSocket) and debounce-refresh both sessions and folders.
+  useEffect(() => {
+    function handleSidebarChanged() {
+      debouncedRefreshSessions();
+      debouncedRefreshFolders();
+    }
+
+    document.addEventListener("rdv:sidebar-changed", handleSidebarChanged);
+    return () => {
+      document.removeEventListener("rdv:sidebar-changed", handleSidebarChanged);
+    };
+  }, [debouncedRefreshSessions, debouncedRefreshFolders]);
 
   const handlePeerMessageCreated = useCallback(
     (folderId: string, message: PeerChatMessage) => {

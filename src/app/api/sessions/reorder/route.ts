@@ -14,5 +14,6 @@ export const POST = withAuth(async (request, { userId }) => {
   }
 
   await SessionService.reorderSessions(userId, sessionIds);
+  // Tab ordering is local UI state — no cross-client broadcast needed.
   return NextResponse.json({ success: true });
 });

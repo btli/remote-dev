@@ -7,6 +7,7 @@ import {
 } from "@/infrastructure/container";
 import { FolderPresenter } from "@/interface/presenters/FolderPresenter";
 import { EntityNotFoundError, BusinessRuleViolationError } from "@/domain/errors/DomainError";
+import { broadcastSidebarChanged } from "@/lib/broadcast";
 
 /**
  * PATCH /api/folders/:id - Update a folder (or move to new parent)
@@ -45,6 +46,7 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
         });
       }
 
+      broadcastSidebarChanged(userId);
       return NextResponse.json(FolderPresenter.toResponse(folder));
     }
 
@@ -65,6 +67,11 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       sortOrder: hasSortOrder ? sortOrder : undefined,
     });
 
+    // Only broadcast for structurally visible changes (name, sortOrder);
+    // collapsed is local UI state already handled by optimistic updates.
+    if (hasName || hasSortOrder) {
+      broadcastSidebarChanged(userId);
+    }
     return NextResponse.json(FolderPresenter.toResponse(folder));
   } catch (error) {
     if (error instanceof EntityNotFoundError) {
@@ -86,6 +93,7 @@ export const DELETE = withApiAuth(async (_request, { userId, params }) => {
       folderId: params!.id,
       userId,
     });
+    broadcastSidebarChanged(userId);
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof EntityNotFoundError) {

@@ -19,6 +19,7 @@ import type {
   SessionStatus,
 } from "@/types/session";
 import { checkAuthResponse } from "@/lib/api-client";
+import { useDebouncedRefresh } from "@/hooks/useDebouncedRefresh";
 import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
@@ -66,6 +67,8 @@ interface SessionContextValue extends SessionState {
   setActiveSession: (sessionId: string | null) => void;
   reorderSessions: (sessionIds: string[]) => Promise<void>;
   refreshSessions: () => Promise<void>;
+  /** Debounced refresh for event-driven updates (WebSocket broadcasts). */
+  debouncedRefreshSessions: () => void;
   /** Local-only UI update — no API call. Use when the server already persisted the change. */
   patchSessionLocal: (sessionId: string, updates: Partial<TerminalSession>) => void;
   /** Agent activity statuses for real-time sidebar indicators */
@@ -302,6 +305,10 @@ export function SessionProvider({
     }
   }, []);
 
+  // Debounced refresh — coalesces rapid WebSocket events and auto-refreshes
+  // on page visibility change (tab switch, wake from sleep).
+  const debouncedRefreshSessions = useDebouncedRefresh(refreshSessions);
+
   // Fetch sessions on mount if none provided (once on mount)
   useEffect(() => {
     if (hasFetchedSessionsRef.current) return;
@@ -505,6 +512,7 @@ export function SessionProvider({
       setActiveSession,
       reorderSessions,
       refreshSessions,
+      debouncedRefreshSessions,
       patchSessionLocal,
       agentActivityStatuses,
       setAgentActivityStatus,
@@ -524,6 +532,7 @@ export function SessionProvider({
       setActiveSession,
       reorderSessions,
       refreshSessions,
+      debouncedRefreshSessions,
       patchSessionLocal,
       agentActivityStatuses,
       setAgentActivityStatus,
