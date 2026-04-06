@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- "Open Folder" context menu: right-click a folder to open its working directory in the OS file manager
 - Chat channels and groups: Slack/Discord-style channel organization for peer chat
 - Channel groups: "Channels" (default) and "Direct Messages" organizational containers
 - Default `#general` channel auto-created per project folder

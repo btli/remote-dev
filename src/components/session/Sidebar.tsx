@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   X, Plus, Terminal, Settings,
   Folder, FolderOpen, Pencil, Trash2, Sparkles, GitBranch, MessageCircle,
-  PanelLeftClose, PanelLeft,
+  PanelLeftClose, PanelLeft, ExternalLink,
   GitPullRequest, CircleDot, Clock, KeyRound, Fingerprint, Network,
   Pin, PinOff, History,
 } from "lucide-react";
@@ -39,6 +39,7 @@ import {
 import { useScheduleContext } from "@/contexts/ScheduleContext";
 import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
@@ -237,6 +238,7 @@ export function Sidebar({
   const [secretsModalOpen, setSecretsModalOpen] = useState(false);
   const [secretsModalFolderId, setSecretsModalFolderId] = useState<string | null>(null);
   const { folderConfigs } = useSecretsContext();
+  const { getFolderPreferences } = usePreferencesContext();
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
   const { getAgentActivityStatus } = useSessionContext();
@@ -527,6 +529,18 @@ export function Sidebar({
       setCreatingSubfolderId(null);
     }
   };
+
+  const handleOpenFolder = useCallback(async (folderId: string) => {
+    try {
+      const res = await fetch(`/api/folders/${folderId}/open`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        console.error("Failed to open folder:", data?.error || res.statusText);
+      }
+    } catch (err) {
+      console.error("Failed to open folder:", err);
+    }
+  }, []);
 
   const handleStartSubfolderCreate = (parentId: string) => {
     setCreatingSubfolderId(parentId);
@@ -2044,6 +2058,12 @@ export function Sidebar({
                                   <span className="ml-auto text-[10px] text-primary">Linked</span>
                                 )}
                               </ContextMenuItem>
+                              {getFolderPreferences(node.id)?.defaultWorkingDirectory && (
+                                <ContextMenuItem onClick={() => handleOpenFolder(node.id)}>
+                                  <ExternalLink className="w-3.5 h-3.5 mr-2" />
+                                  Open Folder
+                                </ContextMenuItem>
+                              )}
                               {onViewIssues && hasRepo && (
                                 <ContextMenuItem
                                   onClick={() => onViewIssues(node.id)}
