@@ -125,11 +125,9 @@ export function ProxyEndpointIndicator() {
 
   const effectiveBaseUrl = isAnthropic ? ANTHROPIC_DEFAULT_BASE_URL : baseUrl;
   const fullApiKey = proxyState?.apiKey || null;
-  const keyDisplay = fullApiKey || (keyPrefix ? `${keyPrefix}...` : null);
-  const tooltipText = [
-    `ANTHROPIC_BASE_URL: ${hasAlias ? (matchedKey.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL) : effectiveBaseUrl}`,
-    keyDisplay ? `ANTHROPIC_API_KEY: ${keyDisplay}` : null,
-  ].filter(Boolean).join("\n");
+  const truncatedKey = fullApiKey
+    ? `${fullApiKey.slice(0, 12)}...${fullApiKey.slice(-4)}`
+    : keyPrefix ? `${keyPrefix}...` : null;
 
   const handleAdd = () => {
     window.dispatchEvent(
@@ -159,7 +157,10 @@ export function ProxyEndpointIndicator() {
             <span className="truncate max-w-[180px]">{displayLabel}</span>
           </div>
         </TooltipTrigger>
-        <TooltipContent>{tooltipText}</TooltipContent>
+        <TooltipContent className="text-xs">
+          <div>ANTHROPIC_BASE_URL: {hasAlias ? (matchedKey.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL) : effectiveBaseUrl}</div>
+          {truncatedKey && <div>ANTHROPIC_API_KEY: {truncatedKey}</div>}
+        </TooltipContent>
       </Tooltip>
 
       {!hasAlias && (
