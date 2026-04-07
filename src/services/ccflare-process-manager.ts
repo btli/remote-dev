@@ -44,19 +44,21 @@ class CcflareProcessManager {
   private resolveBinaryPath(): string | null {
     if (this.cachedBinaryPath !== undefined) return this.cachedBinaryPath;
 
-    // Try local node_modules first
-    const localPath = join(
-      process.cwd(),
-      "node_modules",
-      ".bin",
-      "better-ccflare"
-    );
-    try {
-      accessSync(localPath, constants.X_OK);
-      this.cachedBinaryPath = localPath;
-      return localPath;
-    } catch {
-      // Not found or not executable locally
+    // Try multiple locations — standalone mode changes cwd to .next/standalone/
+    const candidates = [
+      join(process.cwd(), "node_modules", ".bin", "better-ccflare"),
+      // Project root (for standalone mode where cwd differs)
+      join(__dirname, "..", "..", "node_modules", ".bin", "better-ccflare"),
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        accessSync(candidate, constants.X_OK);
+        this.cachedBinaryPath = candidate;
+        return candidate;
+      } catch {
+        // Not found or not executable
+      }
     }
 
     // Don't cache negative result — binary may be installed later
