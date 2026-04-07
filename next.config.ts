@@ -22,7 +22,7 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return [
-      // Proxy ccflare dashboard through Next.js (auth enforced by middleware)
+      // Proxy ccflare dashboard through Next.js (auth enforced by proxy.ts)
       {
         source: "/ccflare/:path*",
         destination: `http://127.0.0.1:${ccflarePort}/:path*`,
