@@ -641,6 +641,7 @@ pub async fn run(
             match event.as_str() {
                 "session-start" | "active" | "prompt-submit" => {
                     report_status(client, "running").await;
+                    report_proxy_state(client).await;
                     // Peer digest is handled by PreToolUse (Bash matcher) to avoid
                     // duplicate output — the "" matcher fires on ALL tools including Bash.
                     broadcast_session_start(client).await;
