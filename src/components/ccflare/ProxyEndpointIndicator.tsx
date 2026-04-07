@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { useCcflareContext } from "@/contexts/CcflareContext";
+import { useSessionContext } from "@/contexts/SessionContext";
 import { ANTHROPIC_DEFAULT_BASE_URL } from "@/types/ccflare";
 import type { CcflareApiKey } from "@/types/ccflare";
 import { cn } from "@/lib/utils";
@@ -79,25 +80,30 @@ function findMatchingKey(
 }
 
 export function ProxyEndpointIndicator() {
-  const { activeProxyState, isRunning, proxyUrl, keys, loading } = useCcflareContext();
-  const [fullApiKey, setFullApiKey] = useState<string | null>(null);
+  const { isRunning, proxyUrl, keys, loading } = useCcflareContext();
+  const { activeSessionId } = useSessionContext();
+  const [proxyState, setProxyState] = useState<{ baseUrl: string; keyPrefix: string; apiKey: string } | null>(null);
 
-  // Fetch the full API key from the terminal server when proxy state is available
+  // Fetch proxy state from terminal server using the active session ID
   useEffect(() => {
-    if (!activeProxyState?.sessionId) return;
-    fetch(`/api/ccflare/keys/active?sessionId=${encodeURIComponent(activeProxyState.sessionId)}`)
+    if (!activeSessionId) return;
+    fetch(`/api/ccflare/keys/active?sessionId=${encodeURIComponent(activeSessionId)}`)
       .then((r) => r.ok ? r.json() : null)
-      .then((data) => { if (data?.apiKey) setFullApiKey(data.apiKey); })
+      .then((data) => {
+        if (data?.baseUrl || data?.apiKey) {
+          setProxyState({ baseUrl: data.baseUrl ?? "", keyPrefix: data.keyPrefix ?? "", apiKey: data.apiKey ?? "" });
+        }
+      })
       .catch(() => {});
-  }, [activeProxyState?.sessionId]);
+  }, [activeSessionId]);
 
-  // Derive display values from live proxy state or ccflare config fallback
+  // Derive display values from fetched proxy state or ccflare config fallback
   let baseUrl: string | null = null;
   let keyPrefix: string | null = null;
 
-  if (activeProxyState?.baseUrl) {
-    baseUrl = activeProxyState.baseUrl;
-    keyPrefix = activeProxyState.keyPrefix;
+  if (proxyState?.baseUrl) {
+    baseUrl = proxyState.baseUrl;
+    keyPrefix = proxyState.keyPrefix || null;
   } else if (isRunning && proxyUrl) {
     baseUrl = proxyUrl;
   }
@@ -118,6 +124,7 @@ export function ProxyEndpointIndicator() {
     : resolvedHostname;
 
   const effectiveBaseUrl = isAnthropic ? ANTHROPIC_DEFAULT_BASE_URL : baseUrl;
+  const fullApiKey = proxyState?.apiKey || null;
   const keyDisplay = fullApiKey || (keyPrefix ? `${keyPrefix}...` : null);
   const tooltipText = [
     `ANTHROPIC_BASE_URL: ${hasAlias ? (matchedKey.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL) : effectiveBaseUrl}`,

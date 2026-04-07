@@ -17,8 +17,8 @@ const log = createLogger("Terminal");
 const agentLog = createLogger("AgentExit");
 const agentStatusLog = createLogger("AgentStatus");
 
-/** In-memory store for API keys reported by agent sessions (for prefill only, never broadcast). */
-const proxyStateKeys = new Map<string, string>();
+/** In-memory store for proxy state reported by agent sessions (apiKey never broadcast to WS). */
+const proxyStateStore = new Map<string, { baseUrl: string; keyPrefix: string; apiKey: string }>();
 const notifyLog = createLogger("Notify");
 const voiceLog = createLogger("Voice");
 const internalLog = createLogger("InternalAPI");
@@ -662,10 +662,12 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       return true;
     }
 
-    // Store apiKey in memory for prefill (never broadcast to WS clients)
-    if (apiKey) {
-      proxyStateKeys.set(sessionId as string, apiKey as string);
-    }
+    // Store full state in memory for prefill (apiKey never broadcast to WS clients)
+    proxyStateStore.set(sessionId as string, {
+      baseUrl: (baseUrl as string) || "",
+      keyPrefix: (keyPrefix as string) || "",
+      apiKey: (apiKey as string) || "",
+    });
 
     // Broadcast to UI clients for real-time endpoint display (no apiKey!)
     broadcastToClients({
@@ -686,8 +688,12 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       sendJson(res, 400, { error: "Missing sessionId" });
       return true;
     }
-    const key = proxyStateKeys.get(sessionId);
-    sendJson(res, 200, { apiKey: key || null });
+    const state = proxyStateStore.get(sessionId);
+    sendJson(res, 200, {
+      apiKey: state?.apiKey || null,
+      baseUrl: state?.baseUrl || null,
+      keyPrefix: state?.keyPrefix || null,
+    });
     return true;
   }
 

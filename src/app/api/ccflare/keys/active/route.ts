@@ -31,7 +31,11 @@ export const GET = withAuth(async (request) => {
     }
 
     const data = await resp.json();
-    return NextResponse.json({ apiKey: data.apiKey ?? null });
+    return NextResponse.json({
+      apiKey: data.apiKey ?? null,
+      baseUrl: data.baseUrl ?? null,
+      keyPrefix: data.keyPrefix ?? null,
+    });
   } catch (error) {
     log.error("Failed to fetch active proxy key", { error: String(error) });
     return errorResponse("Failed to fetch active key", 500);
