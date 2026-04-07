@@ -7,21 +7,26 @@
  * Provides status control, configuration, API key management, and analytics.
  */
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Network,
   Play,
   Square,
   RotateCw,
   ExternalLink,
-  BarChart3,
   Loader2,
+  Pause,
+  CirclePlay,
+  Trash2,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { useCcflareContext } from "@/contexts/CcflareContext";
+import type { CcflareAccount } from "@/types/ccflare";
 import { cn } from "@/lib/utils";
 
 function formatUptime(seconds: number): string {
@@ -285,21 +290,109 @@ export function CcflareSettingsPanel() {
         )}
       </div>
 
-      {/* Section 3: ccflare Dashboard (auth-protected via middleware) */}
-      {isRunning && (
+      {/* Section 3: Accounts from ccflare */}
+      {isRunning && <CcflareAccountsList />}
+    </div>
+  );
+}
+
+function tokenStatusColor(status: string): string {
+  switch (status) {
+    case "valid": return "text-green-400";
+    case "expired": return "text-red-400";
+    case "refreshing": return "text-amber-400";
+    default: return "text-muted-foreground";
+  }
+}
+
+function CcflareAccountsList() {
+  const [accounts, setAccounts] = useState<CcflareAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const resp = await fetch("/api/ccflare/accounts");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      setAccounts(data.accounts ?? []);
+    } catch { /* silently handle */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+  useEffect(() => {
+    const id = setInterval(fetchAccounts, 15_000);
+    return () => clearInterval(id);
+  }, [fetchAccounts]);
+
+  const togglePause = async (id: string) => {
+    await fetch(`/api/ccflare/accounts?id=${id}`, { method: "PATCH" });
+    fetchAccounts();
+  };
+  const remove = async (id: string) => {
+    await fetch(`/api/ccflare/accounts?id=${id}`, { method: "DELETE" });
+    fetchAccounts();
+  };
+
+  if (loading) {
+    return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <Label className="text-foreground text-sm font-medium flex items-center gap-2">
+          <Network className="w-4 h-4" />
+          Accounts
+          {accounts.length > 0 && (
+            <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-primary/20 text-primary/80">{accounts.length}</span>
+          )}
+        </Label>
+        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={fetchAccounts}>
+          <RefreshCw className="w-3.5 h-3.5" />
+        </Button>
+      </div>
+
+      {accounts.length === 0 ? (
+        <div className="p-4 rounded-lg border border-dashed border-border text-center">
+          <Network className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
+          <p className="text-sm text-muted-foreground">No accounts registered.</p>
+          <code className="text-xs text-muted-foreground mt-1 block">
+            better-ccflare --add-account &quot;Name&quot; --mode claude-oauth
+          </code>
+        </div>
+      ) : (
         <div className="space-y-2">
-          <Label className="text-foreground text-sm font-medium flex items-center gap-2">
-            <BarChart3 className="w-4 h-4" />
-            Dashboard
-          </Label>
-          <div className="rounded-lg border border-border overflow-hidden">
-            <iframe
-              src="/ccflare/dashboard"
-              className="w-full border-0"
-              style={{ height: "600px" }}
-              title="ccflare Dashboard"
-            />
-          </div>
+          {accounts.map((acct) => (
+            <div key={acct.id} className={cn("p-3 rounded-lg border", acct.paused ? "border-border/50 bg-card/20 opacity-60" : "border-border bg-card/30")}>
+              <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-foreground truncate">{acct.name}</p>
+                    <Badge variant="secondary" className={cn("text-[10px] px-1.5 py-0", tokenStatusColor(acct.tokenStatus))}>{acct.tokenStatus}</Badge>
+                    {acct.paused && <span className="text-[10px] text-amber-400">Paused</span>}
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                    <span>{acct.provider}</span>
+                    {acct.customEndpoint && <span className="truncate max-w-[150px]">{acct.customEndpoint}</span>}
+                    <span>{acct.totalRequests} reqs</span>
+                    {acct.usageUtilization != null && (
+                      <span className={acct.usageUtilization > 80 ? "text-amber-400" : ""}>{acct.usageUtilization}% usage</span>
+                    )}
+                    {acct.rateLimitStatus && <span>{acct.rateLimitStatus}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => togglePause(acct.id)} title={acct.paused ? "Resume" : "Pause"}>
+                    {acct.paused ? <CirclePlay className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-400" onClick={() => remove(acct.id)} title="Remove">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
