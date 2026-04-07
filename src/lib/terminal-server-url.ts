@@ -5,7 +5,8 @@
  * Used by API routes and services that need to call the terminal server.
  */
 export function resolveTerminalServerUrl(): string {
-  const socketPath = process.env.RDV_TERMINAL_SOCKET;
+  // Check all known env var names for the terminal server socket
+  const socketPath = process.env.RDV_TERMINAL_SOCKET ?? process.env.TERMINAL_SOCKET;
   if (socketPath) {
     return `http://unix:${socketPath}:`;
   }
