@@ -65,4 +65,5 @@ export interface BeadsStats {
   closed: number;
   blocked: number;
   ready: number;
+  deferred: number;
 }

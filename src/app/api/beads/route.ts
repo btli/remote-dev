@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { getIssues } from "@/services/beads-service";
 import { validateProjectPath } from "@/lib/beads-auth";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
+import type { BeadsStatus, BeadsIssueType } from "@/types/beads";
 
 const log = createLogger("api/beads");
 
@@ -22,6 +25,14 @@ export const GET = withApiAuth(async (request, { userId }) => {
     return errorResponse("Invalid or unauthorized project path", 403);
   }
 
+  // Check if beads is initialized in this project
+  const beadsDir = join(resolved, ".beads");
+  const initialized = existsSync(beadsDir);
+
+  if (!initialized) {
+    return NextResponse.json({ initialized: false, issues: [] });
+  }
+
   const statusParam = url.searchParams.get("status");
   const status = statusParam && VALID_STATUSES.has(statusParam) ? statusParam : undefined;
   const issueTypeParam = url.searchParams.get("issueType");
@@ -33,18 +44,18 @@ export const GET = withApiAuth(async (request, { userId }) => {
 
   try {
     const issues = await getIssues(resolved, {
-      status: status as "open" | "in_progress" | "closed" | "deferred" | undefined,
-      issueType: issueType as "task" | "bug" | "feature" | "epic" | "chore" | "message" | undefined,
+      status: status as BeadsStatus | undefined,
+      issueType: issueType as BeadsIssueType | undefined,
       closedRetentionDays,
     });
 
-    return NextResponse.json(issues);
+    return NextResponse.json({ initialized: true, issues });
   } catch (err) {
     const msg = String(err);
     // Dolt server not running is expected — return empty rather than 500
     if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) {
       log.debug("Dolt server not reachable, returning empty issues", { error: msg });
-      return NextResponse.json([]);
+      return NextResponse.json({ initialized: true, issues: [] });
     }
     log.error("getIssues failed", { error: msg });
     return errorResponse(err instanceof Error ? err.message : "Unknown error", 500);

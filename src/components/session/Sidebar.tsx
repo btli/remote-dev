@@ -1066,8 +1066,11 @@ export function Sidebar({
     const showDropBefore = isDropTarget && dropPosition === "before";
     const showDropAfter = isDropTarget && dropPosition === "after";
 
-    // Collapsed view - show only status indicator with tooltip
+    // Collapsed view — session icon with tooltip for name
     if (collapsed) {
+      const iconColor = getSessionIconColor(session, isActive, getAgentActivityStatus);
+      const statusText = hasAgentBehavior(session) ? getAgentActivityStatus(session.id) : null;
+      const showStatus = statusText && statusText !== "idle";
       return (
         <Tooltip key={session.id}>
           <TooltipTrigger asChild>
@@ -1075,12 +1078,6 @@ export function Sidebar({
               role="button"
               tabIndex={0}
               aria-label={session.name}
-              draggable
-              onDragStart={(e) => handleDragStart(e, session.id)}
-              onDragEnd={handleDragEnd}
-              onDragOver={(e) => handleSessionDragOver(e, session.id, parentFolderId)}
-              onDragLeave={handleDragLeave}
-              onDrop={(e) => handleSessionDrop(e, session.id, parentFolderId)}
               onClick={() => onSessionClick(session.id)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -1089,56 +1086,51 @@ export function Sidebar({
                 }
               }}
               className={cn(
-                "relative flex items-center justify-center p-2 rounded-md cursor-pointer",
-                "transition-all duration-200",
-                inFolder && "ml-2",
+                "relative flex items-center justify-center rounded-md cursor-pointer",
+                "transition-all duration-150",
+                inFolder ? "p-1.5 mx-0.5" : "p-2",
                 isActive
-                  ? "bg-primary/20 border border-border"
-                  : "hover:bg-accent/50 border border-transparent",
-                isDragOverSession && "bg-primary/20 border-primary/30",
+                  ? "bg-primary/20"
+                  : "hover:bg-accent/50",
                 !isActive && hasAgentBehavior(session) &&
-                  ["waiting", "error"].includes(getAgentActivityStatus(session.id) ?? "") && "ring-2 ring-yellow-400/70 animate-pulse"
+                  ["waiting", "error"].includes(statusText ?? "") && "ring-1 ring-yellow-400/60"
               )}
             >
-              {/* Drop indicator - before */}
-              {showDropBefore && (
-                <div className="absolute -top-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
+              {session.worktreeBranch ? (
+                <GitBranch className={cn("w-4 h-4", iconColor)} />
+              ) : session.terminalType === "agent" ? (
+                <Sparkles className={cn("w-4 h-4", iconColor)} />
+              ) : session.terminalType === "loop" ? (
+                <MessageCircle className={cn("w-4 h-4", iconColor)} />
+              ) : (
+                <Terminal className={cn("w-4 h-4", iconColor)} />
               )}
-              {/* Status indicator - icon colored by agent activity status */}
-              {(() => {
-                const iconColor = getSessionIconColor(session, isActive, getAgentActivityStatus);
-                if (session.worktreeBranch) {
-                  return <GitBranch className={cn("w-3.5 h-3.5", iconColor)} />;
-                }
-                if (session.terminalType === "agent") {
-                  return <Sparkles className={cn("w-3.5 h-3.5", iconColor)} />;
-                }
-                if (session.terminalType === "loop") {
-                  return <MessageCircle className={cn("w-3.5 h-3.5", iconColor)} />;
-                }
-                return (
-                  <span className={cn(
-                    "w-2 h-2 rounded-full",
-                    isActive ? "bg-primary animate-pulse" : "bg-muted-foreground"
-                  )} />
-                );
-              })()}
-              {/* Drop indicator - after */}
-              {showDropAfter && (
-                <div className="absolute -bottom-0.5 left-1 right-1 h-0.5 bg-primary rounded-full" />
+              {/* Status dot overlay for agent sessions */}
+              {showStatus && (
+                <span className={cn(
+                  "absolute bottom-0.5 right-0.5 w-1.5 h-1.5 rounded-full",
+                  statusText === "running" && "bg-green-400",
+                  statusText === "waiting" && "bg-yellow-400",
+                  statusText === "error" && "bg-red-400",
+                  statusText === "compacting" && "bg-blue-400",
+                )} />
               )}
             </div>
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">
             <div className="flex items-center gap-1.5">
-              {session.worktreeBranch ? (
-                <GitBranch className="w-3 h-3" />
-              ) : session.terminalType === "agent" ? (
-                <Sparkles className="w-3 h-3" />
-              ) : session.terminalType === "loop" ? (
-                <MessageCircle className="w-3 h-3" />
-              ) : null}
               <span>{session.name}</span>
+              {showStatus && (
+                <span className={cn(
+                  "text-[10px]",
+                  statusText === "running" && "text-green-400",
+                  statusText === "waiting" && "text-yellow-400",
+                  statusText === "error" && "text-red-400",
+                  statusText === "compacting" && "text-blue-400",
+                )}>
+                  {statusText}
+                </span>
+              )}
             </div>
           </TooltipContent>
         </Tooltip>
@@ -1757,7 +1749,7 @@ export function Sidebar({
                   // Check if this is a .trash folder
                   const isTrashFolder = node.name === ".trash";
 
-                  // Collapsed sidebar view - show folder icon only
+                  // Collapsed sidebar view — folder header + sessions directly visible
                   if (collapsed) {
                     return (
                       <div key={node.id} className="space-y-0.5">
@@ -1769,44 +1761,28 @@ export function Sidebar({
                               onDragOver={(e) => handleDragOver(e, node.id)}
                               onDragLeave={handleDragLeave}
                               onDrop={(e) => handleDrop(e, node.id)}
-                              onTouchStart={isMobile ? undefined : (e) => handleFolderTouchStart(e, node.id)}
-                              onTouchMove={isMobile ? undefined : handleFolderTouchMove}
-                              onTouchEnd={isMobile ? undefined : handleFolderTouchEnd}
                               onClick={() => {
                                 onFolderClick(node.id);
                                 onFolderToggle(node.id);
                               }}
-                              style={{ marginLeft: node.depth > 0 ? `${node.depth * 8}px` : undefined }}
+                              style={{ marginLeft: node.depth > 0 ? `${node.depth * 6}px` : undefined }}
                               className={cn(
-                                "flex items-center justify-center p-2 rounded-md cursor-pointer",
+                                "flex items-center justify-center p-1.5 rounded-md cursor-pointer",
                                 "hover:bg-accent/50 transition-all duration-150",
                                 isDragOver && canDropHere && "bg-primary/20 border border-primary/30",
                                 isActive && "bg-primary/10",
                                 isBeingDragged && "opacity-50"
                               )}
                             >
-                              {node.collapsed && !isActive ? (
-                                <Folder
-                                  className={cn(
-                                    "w-4 h-4",
-                                    isTrashFolder
-                                      ? "text-destructive/70"
-                                      : isActive
-                                        ? "text-primary fill-primary"
-                                        : "text-primary"
-                                  )}
-                                />
+                              {isTrashFolder ? (
+                                <Trash2 className="w-4 h-4 text-destructive/70" />
+                              ) : node.collapsed && !isActive ? (
+                                <Folder className="w-4 h-4 text-primary" />
                               ) : (
-                                <FolderOpen
-                                  className={cn(
-                                    "w-4 h-4",
-                                    isTrashFolder
-                                      ? "text-destructive/70"
-                                      : isActive
-                                        ? "text-primary fill-primary"
-                                        : "text-primary"
-                                  )}
-                                />
+                                <FolderOpen className={cn(
+                                  "w-4 h-4",
+                                  isActive ? "text-primary fill-primary" : "text-primary"
+                                )} />
                               )}
                             </div>
                           </TooltipTrigger>
@@ -1814,7 +1790,7 @@ export function Sidebar({
                             {node.name}{totalSessions > 0 ? ` (${totalSessions})` : ""}
                           </TooltipContent>
                         </Tooltip>
-                        {/* Child folders and sessions in collapsed sidebar view */}
+                        {/* Sessions directly visible under folder */}
                         {!node.collapsed && (
                           <>
                             {pinnedFolderSessions.map((session) => renderSession(session, node.depth + 1, node.id))}

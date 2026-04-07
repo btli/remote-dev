@@ -79,8 +79,9 @@ function getServerEnv(extra: Record<string, string> = {}): Record<string, string
   const defaultPath = "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin";
   const homeBun = join(homedir(), ".bun", "bin");
   const homeLocal = join(homedir(), ".local", "bin");
+  const homeCargo = join(homedir(), ".cargo", "bin");
   const pathParts = (env.PATH || defaultPath).split(":");
-  for (const p of [homeBun, homeLocal, "/opt/homebrew/bin", "/usr/local/bin"]) {
+  for (const p of [homeBun, homeLocal, homeCargo, "/opt/homebrew/bin", "/usr/local/bin"]) {
     if (!pathParts.includes(p)) pathParts.unshift(p);
   }
   env.PATH = pathParts.join(":");
@@ -446,24 +447,6 @@ async function startServers(slot: Slot): Promise<boolean> {
   return true;
 }
 
-/**
- * Restart servers using rdv.ts, which is the known working startup path.
- * rdv.ts inherits the user's full shell environment (locale, PATH, etc.)
- * needed for correct PTY/UTF-8 encoding in node-pty.
- */
-function restartViaRdv(): void {
-  logDeploy("Restarting via rdv.ts...");
-  const result = spawnSync(["bun", "run", "scripts/rdv.ts", "start", "prod"], {
-    cwd: PROJECT_ROOT,
-    env: getServerEnv(),
-    stdout: "inherit",
-    stderr: "inherit",
-    // rdv.ts start blocks (waitForExit), so we need to spawn it detached
-  });
-  // rdv.ts start blocks forever, so we can't use spawnSync.
-  // Use Bun.spawn instead with detach.
-}
-
 function restartViaRdvAsync(): void {
   logDeploy("Starting servers via login shell...");
   // Use a login shell to get the user's full environment (locale, PATH,
@@ -563,12 +546,25 @@ function buildSlot(slot: Slot): boolean {
     return false;
   }
 
-  // Step 3: Build Next.js
+  // Step 3: Build rdv CLI (soft requirement — warn and continue if cargo is unavailable)
+  const cargoPath = join(homedir(), ".cargo", "bin", "cargo");
+  const cargoBin = existsSync(cargoPath) ? cargoPath : "cargo";
+  if (
+    !runCommand(
+      [cargoBin, "install", "--path", join(PROJECT_ROOT, "crates", "rdv")],
+      PROJECT_ROOT,
+      "cargo install rdv CLI"
+    )
+  ) {
+    logDeploy("WARNING: rdv CLI build failed (cargo not available?), continuing without it");
+  }
+
+  // Step 4: Build Next.js
   if (!runCommand(["bun", "run", "build"], PROJECT_ROOT, "bun run build")) {
     return false;
   }
 
-  // Step 4: Copy build output to slot directory
+  // Step 5: Copy build output to slot directory
   logDeploy(`Copying build to ${slot} slot...`);
 
   // Clean previous build in this slot
@@ -915,17 +911,11 @@ async function deploy(): Promise<void> {
   }
 }
 
-async function rollbackTo(_slot: Slot): Promise<void> {
+async function rollbackTo(slot: Slot): Promise<void> {
   logDeploy(`Rolling back, restarting via rdv.ts...`);
 
   restartViaRdvAsync();
   await Bun.sleep(5000);
-
-  const started = true; // rdv.ts handles its own startup
-  if (!started) {
-    logError(`CRITICAL: Rollback failed! Manual intervention needed.`);
-    return;
-  }
 
   const localHealthy = await healthCheckLocal();
   if (localHealthy) {

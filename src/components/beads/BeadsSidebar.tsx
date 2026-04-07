@@ -18,10 +18,11 @@ import {
   Circle,
   GitBranch,
   PanelRightClose,
+  PanelRightOpen,
   Loader2,
-  AlertTriangle,
   ArrowLeft,
   Clock,
+  CircleOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -233,7 +234,7 @@ export function BeadsSidebar({
   onScheduleTargetConsumed,
 }: BeadsSidebarProps) {
   const {
-    issues, stats, loading, error, projectPath, refreshIssues,
+    issues, stats, loading, error, initialized, projectPath, refreshIssues,
     beadsSidebarCollapsed: dbCollapsed,
     beadsSidebarWidth: dbWidth,
     beadsSectionExpanded: dbSectionExpanded,
@@ -255,13 +256,19 @@ export function BeadsSidebar({
     return dbWidth;
   });
 
-  // Sync DB settings → local state when changed via Settings page
+  // Sync DB settings → local state when changed via Settings page.
+  // Skip the initial mount to avoid overwriting localStorage values that the
+  // initializer already applied (the user may have toggled before prefs loaded).
+  const collapsedSyncMounted = useRef(false);
   useEffect(() => {
+    if (!collapsedSyncMounted.current) { collapsedSyncMounted.current = true; return; }
     setCollapsed(dbCollapsed);
     setStoredCollapsed(dbCollapsed);
   }, [dbCollapsed]);
 
+  const widthSyncMounted = useRef(false);
   useEffect(() => {
+    if (!widthSyncMounted.current) { widthSyncMounted.current = true; return; }
     setWidth(dbWidth);
     setStoredWidth(dbWidth);
   }, [dbWidth]);
@@ -354,7 +361,9 @@ export function BeadsSidebar({
       };
     }, [issues]);
 
-  const openCount = stats?.open ?? readyIssues.length + openIssues.length;
+  const openCount = stats
+    ? (stats.open + stats.inProgress + stats.deferred)
+    : (readyIssues.length + openIssues.length + inProgressIssues.length);
 
   // O(1) lookup map for navigating to issues by ID
   const issueMap = useMemo(() => new Map(issues.map(i => [i.id, i])), [issues]);
@@ -435,34 +444,102 @@ export function BeadsSidebar({
     [issueMap]
   );
 
-  // Collapsed state - icon strip
-  if (collapsed) {
-    const CollapsedIcon = activeTab === "schedules" ? Clock : Circle;
-    const collapsedBadge = activeTab === "schedules" ? schedules.length : openCount;
-    const collapsedLabel = activeTab === "schedules"
-      ? `Schedules (${schedules.length})`
-      : `Beads (${openCount} open)`;
+  // Build tooltip content for beads icon hover
+  const beadsTooltipContent = useMemo(() => {
+    if (!projectPath) return "No project selected";
+    if (!initialized) return "Beads not set up";
+    if (issues.length === 0) return "No issues";
+    const parts: string[] = [];
+    if (inProgressIssues.length > 0) parts.push(`${inProgressIssues.length} in progress`);
+    if (readyIssues.length > 0) parts.push(`${readyIssues.length} ready`);
+    if (openIssues.length > 0) parts.push(`${openIssues.length} open`);
+    if (closedIssues.length > 0) parts.push(`${closedIssues.length} closed`);
+    return parts.length > 0 ? parts.join(", ") : "No issues";
+  }, [projectPath, initialized, issues.length, inProgressIssues.length, readyIssues.length, openIssues.length, closedIssues.length]);
 
+  // Build tooltip content for schedules icon hover
+  const schedulesTooltipContent = useMemo(() => {
+    if (schedules.length === 0) return "No schedules";
+    const enabled = schedules.filter(s => s.enabled).length;
+    const disabled = schedules.length - enabled;
+    const parts: string[] = [`${enabled} active`];
+    if (disabled > 0) parts.push(`${disabled} paused`);
+    return parts.join(", ");
+  }, [schedules]);
+
+  // Collapsed state - vertical icon strip with both icons and expand button
+  if (collapsed) {
     return (
-      <div className="w-12 shrink-0 h-full flex flex-col items-center py-2 border-l border-border bg-card/30">
+      <div className="w-12 shrink-0 h-full flex flex-col items-center py-2 gap-1 border-l border-border bg-card/30">
+        {/* Expand button */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               onClick={toggleCollapsed}
+              className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+            >
+              <PanelRightOpen className="w-4 h-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left">Expand sidebar</TooltipContent>
+        </Tooltip>
+
+        <Separator className="w-6" />
+
+        {/* Beads icon — toggle tab only, don't expand */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => switchTab("beads")}
               className={cn(
                 "relative p-2 rounded-md transition-colors",
-                "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                activeTab === "beads"
+                  ? "text-foreground bg-accent/50"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               )}
             >
-              <CollapsedIcon className="w-4 h-4" />
-              {collapsedBadge > 0 && (
+              {initialized ? (
+                <Circle className="w-4 h-4" />
+              ) : (
+                <CircleOff className="w-4 h-4" />
+              )}
+              {initialized && openCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] bg-primary text-primary-foreground rounded-full flex items-center justify-center">
-                  {collapsedBadge > 9 ? "9+" : collapsedBadge}
+                  {openCount > 9 ? "9+" : openCount}
                 </span>
               )}
             </button>
           </TooltipTrigger>
-          <TooltipContent side="left">{collapsedLabel}</TooltipContent>
+          <TooltipContent side="left" className="text-xs">
+            <div className="font-medium">Beads</div>
+            <div className="text-muted-foreground">{beadsTooltipContent}</div>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Schedules icon — toggle tab only, don't expand */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => switchTab("schedules")}
+              className={cn(
+                "relative p-2 rounded-md transition-colors",
+                activeTab === "schedules"
+                  ? "text-foreground bg-accent/50"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+              )}
+            >
+              <Clock className="w-4 h-4" />
+              {schedules.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 text-[10px] bg-primary text-primary-foreground rounded-full flex items-center justify-center">
+                  {schedules.length > 9 ? "9+" : schedules.length}
+                </span>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="left" className="text-xs">
+            <div className="font-medium">Schedules</div>
+            <div className="text-muted-foreground">{schedulesTooltipContent}</div>
+          </TooltipContent>
         </Tooltip>
       </div>
     );
@@ -570,23 +647,29 @@ export function BeadsSidebar({
                   Select a project folder to view issues
                 </p>
               </div>
+            ) : !initialized && !loading ? (
+              /* Beads not set up */
+              <div className="flex flex-col items-center justify-center px-4 py-8 gap-2">
+                <CircleOff className="w-5 h-5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground text-center">
+                  Beads is not set up for this project
+                </p>
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Run{" "}
+                  <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono text-[10px]">
+                    bd init
+                  </code>{" "}
+                  to get started
+                </p>
+              </div>
             ) : error ? (
               /* Error state */
               <div className="px-4 py-6 space-y-2">
-                <div className="flex items-center gap-2 text-destructive">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span className="text-xs font-medium">
-                    Failed to load issues
-                  </span>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  {error}
+                <p className="text-xs font-medium text-destructive">
+                  Failed to load issues
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  Dolt server may not be running. Start with{" "}
-                  <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono text-[10px]">
-                    bd daemon start
-                  </code>
+                  {error}
                 </p>
                 <Button
                   variant="outline"
