@@ -20,6 +20,10 @@ const eslintConfig = defineConfig([
     "scripts/**",
     // Mobile app (separate React Native project)
     "packages/**",
+    // Git worktrees (separate checkouts with their own lint)
+    ".worktrees/**",
+    // Claude Code plugin skills (external JS scripts)
+    ".claude/skills/**",
   ]),
 ]);
 

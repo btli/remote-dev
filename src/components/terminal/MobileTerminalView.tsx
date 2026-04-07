@@ -332,7 +332,7 @@ export const MobileTerminalView = forwardRef<MobileTerminalViewRef, MobileTermin
       async (file: File) => {
         await sendImageToTerminal(file, wsRef.current);
       },
-      []
+      [wsRef]
     );
 
     // ── Agent restart / close ────────────────────────────────────────────────

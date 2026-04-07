@@ -13,7 +13,7 @@ import {
   agentPeerMessages,
   sessionFolders,
 } from "@/db/schema";
-import { eq, and, sql, gt, isNull, inArray } from "drizzle-orm";
+import { eq, and, sql, isNull, inArray } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import type { ChannelType } from "@/types/channels";
 

@@ -39,6 +39,9 @@ yarn-error.log*
 *.db
 *.db-journal
 
+# bun config (may contain private registry)
+bunfig.toml
+
 # vercel
 .vercel
 
