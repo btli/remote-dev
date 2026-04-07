@@ -30,10 +30,11 @@ ARCH=$(uname -m)
 case "${OS}" in
   Linux)
     case "${ARCH}" in
-      x86_64)  ASSET_NAME="" ;;  # npm ships this natively
+      x86_64)  ASSET_NAME="better-ccflare-linux-amd64" ;;
       aarch64) ASSET_NAME="better-ccflare-linux-arm64" ;;
       *)       ASSET_NAME="" ;;
     esac
+    EXPECTED_FILE_TYPE="ELF"
     ;;
   Darwin)
     case "${ARCH}" in
@@ -41,19 +42,20 @@ case "${OS}" in
       x86_64)  ASSET_NAME="better-ccflare-macos-x86_64" ;;
       *)       ASSET_NAME="" ;;
     esac
+    EXPECTED_FILE_TYPE="Mach-O"
     ;;
   *)
     ASSET_NAME=""
     ;;
 esac
 
-# If no replacement needed (Linux x86_64 or unsupported), skip
+# Unsupported platform
 if [[ -z "$ASSET_NAME" ]]; then
   exit 0
 fi
 
-# Check if the current binary already works
-if [[ -x "$BINARY_PATH" ]] && file "$BINARY_PATH" 2>/dev/null | grep -q "Mach-O.*arm64"; then
+# Check if the current binary already matches this platform
+if [[ -x "$BINARY_PATH" ]] && file "$BINARY_PATH" 2>/dev/null | grep -q "${EXPECTED_FILE_TYPE}"; then
   exit 0
 fi
 
