@@ -9,13 +9,15 @@
  * Hidden on mobile via `hidden md:flex`.
  */
 
-import { Network, Plus } from "lucide-react";
+import { useState } from "react";
+import { Network, Plus, Check, X, Loader2 } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useCcflareContext } from "@/contexts/CcflareContext";
 import { ANTHROPIC_DEFAULT_BASE_URL } from "@/types/ccflare";
 import type { CcflareApiKey } from "@/types/ccflare";
@@ -78,7 +80,10 @@ function findMatchingKey(
 }
 
 export function ProxyEndpointIndicator() {
-  const { activeProxyState, isRunning, proxyUrl, keys, loading } = useCcflareContext();
+  const { activeProxyState, isRunning, proxyUrl, keys, loading, createAlias } = useCcflareContext();
+  const [naming, setNaming] = useState(false);
+  const [aliasName, setAliasName] = useState("");
+  const [saving, setSaving] = useState(false);
 
   // Derive display values from live proxy state or ccflare config fallback
   let baseUrl: string | null = null;
@@ -110,15 +115,22 @@ export function ProxyEndpointIndicator() {
     ? `ANTHROPIC_BASE_URL: ${matchedKey.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL}`
     : `ANTHROPIC_BASE_URL: ${isAnthropic ? ANTHROPIC_DEFAULT_BASE_URL : baseUrl}${keyPrefix ? ` \u2022 ${keyPrefix}...` : ""}`;
 
-  const handleAdd = () => {
-    // Pre-fill the add-key form with the detected endpoint
-    const prefillUrl = isAnthropic ? "" : (baseUrl ?? "");
-    window.dispatchEvent(
-      new CustomEvent("rdv:prefill-proxy-key", { detail: { baseUrl: prefillUrl } })
-    );
-    window.dispatchEvent(
-      new CustomEvent("open-settings", { detail: { section: "proxy" } })
-    );
+  const handleSaveAlias = async () => {
+    const name = aliasName.trim() || resolvedHostname;
+    setSaving(true);
+    try {
+      await createAlias({
+        name,
+        baseUrl: isAnthropic ? undefined : (baseUrl ?? undefined),
+        keyPrefix: keyPrefix ?? undefined,
+      });
+      setNaming(false);
+      setAliasName("");
+    } catch {
+      // Error handled by context
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -138,20 +150,39 @@ export function ProxyEndpointIndicator() {
         <TooltipContent>{tooltipText}</TooltipContent>
       </Tooltip>
 
-      {!hasAlias && (
+      {!hasAlias && !naming && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
               className="h-6 w-6 text-muted-foreground hover:text-foreground"
-              onClick={handleAdd}
+              onClick={() => { setAliasName(resolvedHostname); setNaming(true); }}
             >
               <Plus className="w-3.5 h-3.5" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Save endpoint to proxy config</TooltipContent>
+          <TooltipContent>Name this endpoint</TooltipContent>
         </Tooltip>
+      )}
+
+      {naming && (
+        <div className="flex items-center gap-1">
+          <Input
+            value={aliasName}
+            onChange={(e) => setAliasName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSaveAlias(); if (e.key === "Escape") setNaming(false); }}
+            placeholder="Alias name"
+            className="h-6 w-28 text-xs bg-input border-border px-1.5"
+            autoFocus
+          />
+          <Button variant="ghost" size="icon" className="h-5 w-5 text-green-400" onClick={handleSaveAlias} disabled={saving}>
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+          </Button>
+          <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground" onClick={() => setNaming(false)}>
+            <X className="w-3 h-3" />
+          </Button>
+        </div>
       )}
     </div>
   );

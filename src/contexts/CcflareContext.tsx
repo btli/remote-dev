@@ -49,6 +49,7 @@ interface CcflareContextValue {
   stop: () => Promise<void>;
   restart: () => Promise<void>;
   addKey: (input: AddCcflareKeyInput) => Promise<void>;
+  createAlias: (input: { name: string; baseUrl?: string; keyPrefix?: string }) => Promise<CcflareApiKey>;
   removeKey: (keyId: string) => Promise<void>;
   toggleKeyPause: (keyId: string) => Promise<void>;
   refreshStatus: () => Promise<void>;
@@ -316,6 +317,23 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
     }
   }, []);
 
+  const createAlias = useCallback(async (input: { name: string; baseUrl?: string; keyPrefix?: string }): Promise<CcflareApiKey> => {
+    const response = await fetch("/api/ccflare/keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...input, aliasOnly: true }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || "Failed to create alias");
+    }
+
+    const newKey: CcflareApiKey = await response.json();
+    setKeys((prev) => [...prev, newKey]);
+    return newKey;
+  }, []);
+
   const removeKey = useCallback(async (keyId: string) => {
     try {
       const response = await fetch(`/api/ccflare/keys/${keyId}`, {
@@ -376,6 +394,7 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
       stop,
       restart,
       addKey,
+      createAlias,
       removeKey,
       toggleKeyPause,
       refreshStatus,
@@ -395,6 +414,7 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
       stop,
       restart,
       addKey,
+      createAlias,
       removeKey,
       toggleKeyPause,
       refreshStatus,

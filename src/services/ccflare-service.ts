@@ -230,6 +230,41 @@ export async function addApiKey(
 }
 
 /**
+ * Create an alias-only entry for display matching.
+ * Does not store a real API key or register with the ccflare binary.
+ */
+export async function createAlias(
+  userId: string,
+  input: { name: string; baseUrl?: string; keyPrefix?: string }
+): Promise<CcflareApiKey> {
+  const now = new Date();
+  const id = crypto.randomUUID();
+  const baseUrl = input.baseUrl?.trim() || null;
+  const keyPrefix = input.keyPrefix?.trim() || null;
+
+  await db.insert(ccflareApiKeys).values({
+    id,
+    userId,
+    name: input.name,
+    encryptedKey: "", // no real key for alias entries
+    keyPrefix,
+    baseUrl,
+    aliasOnly: true,
+    priority: 0,
+    paused: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  log.info("Created ccflare alias", { userId, name: input.name, baseUrl, keyPrefix });
+
+  const row = await db.query.ccflareApiKeys.findFirst({
+    where: eq(ccflareApiKeys.id, id),
+  });
+  return mapApiKeyRow(row!);
+}
+
+/**
  * Check if a key's baseUrl makes it eligible for the ccflare proxy.
  * Keys with null baseUrl or the default Anthropic URL go through the proxy.
  */
@@ -509,6 +544,7 @@ function mapApiKeyRow(row: {
   encryptedKey: string;
   keyPrefix: string | null;
   baseUrl: string | null;
+  aliasOnly: boolean;
   priority: number;
   paused: boolean;
   createdAt: Date;
@@ -520,6 +556,7 @@ function mapApiKeyRow(row: {
     name: row.name,
     keyPrefix: row.keyPrefix ?? null,
     baseUrl: row.baseUrl ?? null,
+    aliasOnly: row.aliasOnly,
     priority: row.priority,
     paused: row.paused,
     createdAt: row.createdAt,
@@ -542,7 +579,7 @@ export async function getActiveDirectKey(
   });
 
   const directKey = rows.find(
-    (r) => !r.paused && r.baseUrl && r.baseUrl !== ANTHROPIC_DEFAULT_BASE_URL
+    (r) => !r.paused && !r.aliasOnly && r.baseUrl && r.baseUrl !== ANTHROPIC_DEFAULT_BASE_URL
   );
 
   if (!directKey || !directKey.baseUrl) return null;

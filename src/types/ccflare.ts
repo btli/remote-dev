@@ -29,6 +29,7 @@ export interface CcflareApiKey {
   name: string;
   keyPrefix: string | null;
   baseUrl: string | null;
+  aliasOnly: boolean;
   priority: number;
   paused: boolean;
   createdAt: Date;
