@@ -103,8 +103,10 @@ function prepareStandalone(): void {
   const publicSrc = join(PROJECT_ROOT, "public");
   const publicDest = join(STANDALONE_DIR, "public");
 
-  // Create symlink for .next/static
+  // Create symlink for .next/static (ensure parent dir exists)
   if (existsSync(staticSrc) && !existsSync(staticDest)) {
+    const staticParent = join(STANDALONE_DIR, ".next");
+    if (!existsSync(staticParent)) mkdirSync(staticParent, { recursive: true });
     console.log("Linking static files for standalone mode...");
     symlinkSync(staticSrc, staticDest);
   }
@@ -115,12 +117,21 @@ function prepareStandalone(): void {
     symlinkSync(publicSrc, publicDest);
   }
 
-  // Symlink node_modules into standalone so spawned binaries (better-ccflare) are accessible
-  const nmSrc = join(PROJECT_ROOT, "node_modules");
-  const nmDest = join(STANDALONE_DIR, "node_modules");
-  if (existsSync(nmSrc) && !existsSync(nmDest)) {
-    console.log("Linking node_modules for standalone mode...");
-    symlinkSync(nmSrc, nmDest);
+  // Symlink node_modules into standalone so spawned binaries (better-ccflare) are accessible.
+  // Standalone already has a node_modules with traced deps — symlink the .bin directory only.
+  const binSrc = join(PROJECT_ROOT, "node_modules", ".bin");
+  const standalonNm = join(STANDALONE_DIR, "node_modules");
+  const binDest = join(standalonNm, ".bin");
+  if (existsSync(binSrc) && existsSync(standalonNm) && !existsSync(binDest)) {
+    console.log("Linking node_modules/.bin for standalone mode...");
+    symlinkSync(binSrc, binDest);
+  }
+  // Also symlink better-ccflare package itself (for dist/better-ccflare binary)
+  const ccflareSrc = join(PROJECT_ROOT, "node_modules", "better-ccflare");
+  const ccflareDest = join(standalonNm, "better-ccflare");
+  if (existsSync(ccflareSrc) && existsSync(standalonNm) && !existsSync(ccflareDest)) {
+    console.log("Linking better-ccflare for standalone mode...");
+    symlinkSync(ccflareSrc, ccflareDest);
   }
 }
 
