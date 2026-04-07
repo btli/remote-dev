@@ -127,12 +127,15 @@ export function ProxyEndpointIndicator() {
       }
     }
 
-    window.dispatchEvent(
-      new CustomEvent("rdv:prefill-proxy-key", { detail: { baseUrl: prefillUrl, apiKey: prefillKey } })
-    );
+    // Open settings first so CcflareSettingsPanel mounts, then prefill after it renders
     window.dispatchEvent(
       new CustomEvent("open-settings", { detail: { section: "proxy" } })
     );
+    setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("rdv:prefill-proxy-key", { detail: { baseUrl: prefillUrl, apiKey: prefillKey } })
+      );
+    }, 200);
   };
 
   return (
