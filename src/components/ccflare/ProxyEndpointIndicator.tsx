@@ -22,7 +22,9 @@ export function ProxyEndpointIndicator() {
   if (!isRunning || loading) return null;
 
   const handleClick = () => {
-    window.open("/ccflare/dashboard", "_blank");
+    window.dispatchEvent(
+      new CustomEvent("open-settings", { detail: { section: "proxy" } })
+    );
   };
 
   return (
