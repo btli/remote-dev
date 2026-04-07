@@ -63,18 +63,26 @@ async function resolveCcflareEnv(agentProvider: string, userId: string): Promise
   if (agentProvider !== "claude") return {};
   try {
     const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
+    const CcflareService = await import("@/services/ccflare-service");
+    const { decrypt } = await import("@/lib/encryption");
+
     if (ccflareProcessManager.isRunning()) {
       const port = ccflareProcessManager.getPort();
       if (port) {
-        return { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
+        const env: Record<string, string> = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
+        // Inject a proxy-eligible key so Claude Code has a key for the x-api-key header
+        // (the proxy rotates it server-side, but Claude Code needs one to send requests)
+        const proxyKey = await CcflareService.getActiveProxyKey(userId);
+        if (proxyKey?.encryptedKey) {
+          env.ANTHROPIC_API_KEY = decrypt(proxyKey.encryptedKey);
+        }
+        return env;
       }
     }
 
     // Proxy not running — check for a direct-endpoint key to auto-inject
-    const { getActiveDirectKey } = await import("@/services/ccflare-service");
-    const directKey = await getActiveDirectKey(userId);
+    const directKey = await CcflareService.getActiveDirectKey(userId);
     if (directKey) {
-      const { decrypt } = await import("@/lib/encryption");
       return {
         ANTHROPIC_BASE_URL: directKey.baseUrl,
         ANTHROPIC_API_KEY: decrypt(directKey.encryptedKey),

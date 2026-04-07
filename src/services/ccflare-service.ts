@@ -542,6 +542,27 @@ function mapApiKeyRow(row: {
 }
 
 /**
+ * Get the top-priority active proxy-eligible key for a user.
+ * These are Anthropic keys (null baseUrl) that go through the ccflare proxy.
+ * Used to inject ANTHROPIC_API_KEY alongside ANTHROPIC_BASE_URL so Claude Code
+ * has a key to send in requests (the proxy rotates it server-side).
+ */
+export async function getActiveProxyKey(
+  userId: string
+): Promise<{ encryptedKey: string } | null> {
+  const rows = await db.query.ccflareApiKeys.findMany({
+    where: eq(ccflareApiKeys.userId, userId),
+    orderBy: (t, { asc }) => [asc(t.priority)],
+  });
+
+  const proxyKey = rows.find(
+    (r) => !r.paused && isProxyEligible(r.baseUrl) && r.encryptedKey
+  );
+
+  return proxyKey ? { encryptedKey: proxyKey.encryptedKey } : null;
+}
+
+/**
  * Get the top-priority active direct-endpoint key for a user.
  * Lower priority number = higher precedence (0 is used first).
  * Returns null if no non-proxy keys are configured.
