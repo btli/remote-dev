@@ -67,7 +67,13 @@ async function resolveCcflareEnv(agentProvider: string, userId: string): Promise
     const { decrypt } = await import("@/lib/encryption");
 
     if (ccflareProcessManager.isRunning()) {
-      const port = ccflareProcessManager.getPort();
+      // getPort() returns null when the process was started by another server (e.g., terminal server).
+      // Fall back to the user's configured port from the DB.
+      let port = ccflareProcessManager.getPort();
+      if (!port) {
+        const config = await CcflareService.getConfig(userId);
+        port = config?.port ?? null;
+      }
       if (port) {
         const env: Record<string, string> = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
         // Inject a proxy-eligible key so Claude Code has a key for the x-api-key header
