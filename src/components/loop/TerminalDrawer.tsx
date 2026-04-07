@@ -37,25 +37,8 @@ export function TerminalDrawer({
   const startY = useRef(0);
   const startHeight = useRef(DEFAULT_HEIGHT);
 
-  const handleDragMove = useCallback(
-    (e: PointerEvent) => {
-      if (!dragging.current) return;
-      const delta = startY.current - e.clientY;
-      const maxHeight = window.innerHeight * MAX_HEIGHT_RATIO;
-      const newHeight = Math.max(
-        MIN_HEIGHT,
-        Math.min(maxHeight, startHeight.current + delta)
-      );
-      setHeight(newHeight);
-    },
-    []
-  );
-
-  const handleDragEnd = useCallback(() => {
-    dragging.current = false;
-    document.removeEventListener("pointermove", handleDragMove);
-    document.removeEventListener("pointerup", handleDragEnd);
-  }, [handleDragMove]);
+  // Stable refs for drag handlers — avoids self-reference issues with useCallback
+  const handlersRef = useRef({ move: null as ((e: PointerEvent) => void) | null, end: null as (() => void) | null });
 
   const handleDragStart = useCallback(
     (e: React.PointerEvent) => {
@@ -63,19 +46,34 @@ export function TerminalDrawer({
       dragging.current = true;
       startY.current = e.clientY;
       startHeight.current = height;
-      document.addEventListener("pointermove", handleDragMove);
-      document.addEventListener("pointerup", handleDragEnd);
+
+      const onMove = (ev: PointerEvent) => {
+        if (!dragging.current) return;
+        const delta = startY.current - ev.clientY;
+        const maxHeight = window.innerHeight * MAX_HEIGHT_RATIO;
+        setHeight(Math.max(MIN_HEIGHT, Math.min(maxHeight, startHeight.current + delta)));
+      };
+      const onEnd = () => {
+        dragging.current = false;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onEnd);
+        handlersRef.current = { move: null, end: null };
+      };
+
+      handlersRef.current = { move: onMove, end: onEnd };
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onEnd);
     },
-    [height, isMobile, handleDragMove, handleDragEnd]
+    [height, isMobile]
   );
 
   // Clean up listeners on unmount
   useEffect(() => {
     return () => {
-      document.removeEventListener("pointermove", handleDragMove);
-      document.removeEventListener("pointerup", handleDragEnd);
+      if (handlersRef.current.move) document.removeEventListener("pointermove", handlersRef.current.move);
+      if (handlersRef.current.end) document.removeEventListener("pointerup", handlersRef.current.end);
     };
-  }, [handleDragMove, handleDragEnd]);
+  }, []);
 
   if (!visible) {
     // Keep children mounted but hidden to maintain WebSocket connection

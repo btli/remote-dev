@@ -83,6 +83,7 @@ export function CcflareSettingsPanel() {
   // Add key form state
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyValue, setNewKeyValue] = useState("");
+  const [newKeyBaseUrl, setNewKeyBaseUrl] = useState("");
   const [newKeyPriority, setNewKeyPriority] = useState("2");
   const [addingKey, setAddingKey] = useState(false);
 
@@ -127,10 +128,12 @@ export function CcflareSettingsPanel() {
       await addKey({
         name: newKeyName.trim(),
         key: newKeyValue.trim(),
+        baseUrl: newKeyBaseUrl.trim() || undefined,
         priority: parseInt(newKeyPriority, 10),
       });
       setNewKeyName("");
       setNewKeyValue("");
+      setNewKeyBaseUrl("");
       setNewKeyPriority("2");
     } catch {
       // Error already toasted by context
@@ -381,6 +384,17 @@ export function CcflareSettingsPanel() {
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <Badge
                         variant="secondary"
+                        className={cn(
+                          "text-[10px] px-1.5 py-0",
+                          apiKey.baseUrl ? "bg-blue-500/20 text-blue-400" : "bg-primary/20 text-primary/80"
+                        )}
+                      >
+                        {apiKey.baseUrl
+                          ? (() => { try { return new URL(apiKey.baseUrl).hostname; } catch { return apiKey.baseUrl; } })()
+                          : "api.anthropic.com"}
+                      </Badge>
+                      <Badge
+                        variant="secondary"
                         className="text-[10px] px-1.5 py-0"
                       >
                         P{apiKey.priority}
@@ -448,6 +462,12 @@ export function CcflareSettingsPanel() {
               onChange={(e) => setNewKeyValue(e.target.value)}
               placeholder="sk-ant-..."
               className="bg-input border-border text-foreground placeholder:text-muted-foreground font-mono text-sm"
+            />
+            <Input
+              value={newKeyBaseUrl}
+              onChange={(e) => setNewKeyBaseUrl(e.target.value)}
+              placeholder="ANTHROPIC_BASE_URL (leave empty for api.anthropic.com)"
+              className="bg-input border-border text-foreground placeholder:text-muted-foreground font-mono text-xs"
             />
             <div className="flex items-center gap-2">
               <Select value={newKeyPriority} onValueChange={setNewKeyPriority}>

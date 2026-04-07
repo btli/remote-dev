@@ -28,6 +28,7 @@ function createEncryptedAdapter(): Adapter {
     accountsTable: accounts,
     sessionsTable: sessions,
     verificationTokensTable: verificationTokens,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- DrizzleAdapter types don't match our encrypted schema
   } as any);
 
   return {

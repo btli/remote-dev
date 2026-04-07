@@ -64,7 +64,6 @@ import { useNotificationContext, hydrateNotification } from "@/contexts/Notifica
 import { dismissToastsForSession } from "@/lib/notification-toast";
 import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { FolderTabBar } from "@/components/peers/FolderTabBar";
-import { PeerChatRoom } from "@/components/peers/PeerChatRoom";
 import type { ActiveView, PeerChatMessage } from "@/types/peer-chat";
 import { ChannelSidebar } from "@/components/channels/ChannelSidebar";
 import { ChannelView } from "@/components/channels/ChannelView";
@@ -249,7 +248,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const terminalRefsMap = useRef<Map<string, TerminalWithKeyboardRef>>(new Map());
   // Stable ref for sessions list — used in callbacks to avoid dep churn
   const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
+  useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
 
   // Compute WebSocket URL based on current location (supports cloudflared tunnels)
   const wsUrl = useMemo(() => {
@@ -416,7 +415,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         peerChat.addMessage(message);
       }
     },
-    [peerChat.addMessage, activeProject.folderId]
+    [peerChat, activeProject.folderId]
   );
 
   /** Convert a PeerChatMessage to a ChannelMessage, filling in channelId. */
@@ -442,7 +441,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         channelCtx.addMessage(toChannelMessage(message, channelId));
       }
     },
-    [activeProject.folderId, channelCtx.addMessage, toChannelMessage]
+    [activeProject.folderId, channelCtx, toChannelMessage]
   );
 
   const handleThreadReplyCreated = useCallback(
@@ -451,7 +450,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         channelCtx.addThreadReply(parentMessageId, toChannelMessage(message, ""));
       }
     },
-    [activeProject.folderId, channelCtx.addThreadReply, toChannelMessage]
+    [activeProject.folderId, channelCtx, toChannelMessage]
   );
 
   const handleChannelCreated = useCallback(
@@ -460,7 +459,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         channelCtx.addChannel(channel);
       }
     },
-    [activeProject.folderId, channelCtx.addChannel]
+    [activeProject.folderId, channelCtx]
   );
 
   // Handle server-pushed session rename (from `rdv session title`)
@@ -920,18 +919,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [getRepoInfoForFolder]
   );
 
-  // Handle viewing a specific issue from the right sidebar
-  const handleViewIssueByNumber = useCallback(
-    (issueNumber: number) => {
-      if (!activeProject.folderId) return;
-      const info = getRepoInfoForFolder(activeProject.folderId);
-      if (!info) return;
-
-      setIssuesModal({ open: true, ...info, initialIssueNumber: issueNumber });
-    },
-    [activeProject.folderId, getRepoInfoForFolder]
-  );
-
   // Handle viewing PRs for a folder's linked repository
   const handleViewPRs = useCallback(
     (folderId: string) => {
@@ -941,18 +928,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setPrsModal({ open: true, ...info });
     },
     [getRepoInfoForFolder]
-  );
-
-  // Handle viewing a specific PR from the right sidebar
-  const handleViewPRByNumber = useCallback(
-    (prNumber: number) => {
-      if (!activeProject.folderId) return;
-      const info = getRepoInfoForFolder(activeProject.folderId);
-      if (!info) return;
-
-      setPrsModal({ open: true, ...info, initialPRNumber: prNumber });
-    },
-    [activeProject.folderId, getRepoInfoForFolder]
   );
 
   // Get pinned files for a folder
@@ -1491,7 +1466,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         peerChat.markChatInactive();
       }
     },
-    [peerChat.markAllRead, peerChat.markChatInactive]
+    [peerChat]
   );
 
   // Handle agent tab click from FolderTabBar
@@ -1513,19 +1488,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     );
   }, [activeSessions, activeProject.folderId]);
 
-  // Reset to terminal view when all agent sessions close (tab bar disappears)
-  // Only reset from "chat" — don't interrupt "settings" view
-  useEffect(() => {
-    if (folderAgentSessions.length === 0 && activeView === "chat") {
-      setActiveView("terminal");
-    }
-  }, [folderAgentSessions.length, activeView]);
-
-  /** Resolve GitHub repo ID for the task sidebar */
-  const taskSidebarRepoId = useMemo(() => {
-    if (!activeProject.folderId) return null;
-    return resolvePreferencesForFolder(activeProject.folderId)?.githubRepoId ?? null;
-  }, [activeProject.folderId, resolvePreferencesForFolder]);
+  // When all agent sessions close, force back to terminal from chat view
+  // (tab bar disappears so chat is unreachable). Computed, not effect-based.
+  const effectiveActiveView: ActiveView =
+    folderAgentSessions.length === 0 && activeView === "chat"
+      ? "terminal"
+      : activeView;
 
   // On mobile, sidebar is collapsed when drawer is not open
   const effectiveCollapsed = isMobile ? !isMobileSidebarOpen : sidebarCollapsed;
@@ -1536,7 +1504,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <div
         className={cn(
           isPWA && isMobile ? "pt-safe-top" : undefined,
-          activeView === "settings" && "hidden"
+          effectiveActiveView === "settings" && "hidden"
         )}
         onClick={() => {
           // On mobile, clicking the collapsed sidebar expands it
@@ -1611,7 +1579,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isPWA && isMobile && "pt-safe-top"
       )}>
         {/* Mobile header bar */}
-        {isMobile && activeSessions.length > 0 && activeView !== "settings" && (
+        {isMobile && activeSessions.length > 0 && effectiveActiveView !== "settings" && (
           <div className="flex items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
             {mobileEditingName !== null ? (
               <input
@@ -1657,7 +1625,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         )}
 
         {/* Folder tab bar — Terminal / Chat Room / Agent tabs (hidden in settings) */}
-        {activeSessions.length > 0 && folderAgentSessions.length > 0 && activeView !== "settings" && (
+        {activeSessions.length > 0 && folderAgentSessions.length > 0 && effectiveActiveView !== "settings" && (
           <FolderTabBar
             activeView={activeView}
             onViewChange={handleViewChange}
@@ -1669,7 +1637,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         )}
 
         {/* Empty state when no sessions (unless settings view is active) */}
-        {!loading && activeSessions.length === 0 && activeView !== "settings" ? (
+        {!loading && activeSessions.length === 0 && effectiveActiveView !== "settings" ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md mx-auto px-4">
               <div className="relative p-8 rounded-2xl bg-card/50 backdrop-blur-xl border border-border shadow-2xl">
@@ -1706,7 +1674,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         ) : (
           <>
           {/* Terminal Container — hidden when chat view is active */}
-          <div className={cn("flex-1 p-3 overflow-hidden", isMobile && "pb-safe-bottom", activeView !== "terminal" && "hidden")}>
+          <div className={cn("flex-1 p-3 overflow-hidden", isMobile && "pb-safe-bottom", effectiveActiveView !== "terminal" && "hidden")}>
             <div className="h-full relative rounded-xl overflow-hidden">
               {/* Gradient border effect */}
               <div className="absolute inset-0 rounded-xl p-[1px] bg-gradient-to-br from-primary/30 via-transparent to-accent/30">
@@ -1855,7 +1823,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
 
           {/* Channel View — visible when chat view is active */}
-          <div className={cn("flex-1 overflow-hidden", activeView !== "chat" && "hidden")}>
+          <div className={cn("flex-1 overflow-hidden", effectiveActiveView !== "chat" && "hidden")}>
             <ChannelView
               folderId={activeProject.folderId}
               folderName={getFolderName(activeProject.folderId)}
@@ -1863,7 +1831,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
 
           {/* Settings View — conditionally rendered (no state to preserve, key handles remount) */}
-          {activeView === "settings" && (
+          {effectiveActiveView === "settings" && (
             <div className="flex-1 overflow-hidden">
               <SettingsView
                 key={`settings-${settingsOpenCount}`}
@@ -1877,13 +1845,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       </div>
 
       {/* Right sidebar — Channel list (chat) or Beads+Schedules (terminal), hidden in settings */}
-      <div className={cn((activeView === "chat" || activeView === "settings") && "hidden")}>
+      <div className={cn((effectiveActiveView === "chat" || effectiveActiveView === "settings") && "hidden")}>
         <BeadsSidebar
           scheduleTargetSessionId={scheduleTargetSessionId}
           onScheduleTargetConsumed={() => setScheduleTargetSessionId(null)}
         />
       </div>
-      {activeView === "chat" && activeProject.folderId && (
+      {effectiveActiveView === "chat" && activeProject.folderId && (
         <ChannelSidebar onCreateChannel={() => setIsCreateChannelOpen(true)} />
       )}
 

@@ -22,6 +22,7 @@ import {
 import { LogOut } from "lucide-react";
 import Image from "next/image";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { ProxyEndpointIndicator } from "@/components/ccflare/ProxyEndpointIndicator";
 
 interface HeaderProps {
   isGitHubConnected: boolean;
@@ -101,6 +102,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
 
         {/* User info and actions */}
         <div className="flex items-center gap-1">
+          <ProxyEndpointIndicator />
           <GitHubStatusIcon
             isConnected={isGitHubConnected}
             onClick={openModal}

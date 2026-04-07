@@ -1,10 +1,6 @@
 import { createConnection, type Connection, type RowDataPacket } from "mysql2/promise";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("BeadsDB");
-
 const QUERY_TIMEOUT_MS = 8000;
 
 /** Read the Dolt server port for a project from its .beads/dolt-server.port file. */
@@ -82,11 +78,6 @@ export async function beadsQuery<T extends RowDataPacket>(
       setTimeout(() => reject(new QueryTimeoutError()), QUERY_TIMEOUT_MS)
     ),
   ]);
-}
-
-// Legacy export — kept for backward compatibility but no longer pool-backed
-export function getBeadsPool(_projectPath: string): never {
-  throw new Error("getBeadsPool is removed — use beadsQuery directly");
 }
 
 export async function isBeadsAvailable(projectPath: string): Promise<boolean> {

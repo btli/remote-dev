@@ -56,9 +56,10 @@ async function resolveGitCredentialEnv(
 
 /**
  * Resolve ccflare proxy env for Claude agent sessions.
- * Returns ANTHROPIC_BASE_URL pointing at the local proxy when running.
+ * When the proxy is running, returns ANTHROPIC_BASE_URL pointing at the local proxy.
+ * When the proxy is not running, checks for a direct-endpoint key and injects its URL + decrypted key.
  */
-async function resolveCcflareEnv(agentProvider: string): Promise<Record<string, string>> {
+async function resolveCcflareEnv(agentProvider: string, userId: string): Promise<Record<string, string>> {
   if (agentProvider !== "claude") return {};
   try {
     const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
@@ -67,6 +68,17 @@ async function resolveCcflareEnv(agentProvider: string): Promise<Record<string, 
       if (port) {
         return { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
       }
+    }
+
+    // Proxy not running — check for a direct-endpoint key to auto-inject
+    const { getActiveDirectKey } = await import("@/services/ccflare-service");
+    const directKey = await getActiveDirectKey(userId);
+    if (directKey) {
+      const { decrypt } = await import("@/lib/encryption");
+      return {
+        ANTHROPIC_BASE_URL: directKey.baseUrl,
+        ANTHROPIC_API_KEY: decrypt(directKey.encryptedKey),
+      };
     }
   } catch {
     // ccflare not available
@@ -370,7 +382,7 @@ export async function createSession(
   }
 
   const ccflareEnv = isAgentSession
-    ? await resolveCcflareEnv(effectiveAgentProvider)
+    ? await resolveCcflareEnv(effectiveAgentProvider, userId)
     : {};
 
   // File and browser sessions don't need tmux — they're pure UI
@@ -965,7 +977,7 @@ export async function resumeSession(
       const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!session.profileId);
       const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.folderId);
 
-      const ccflareEnv = await resolveCcflareEnv(agentProvider);
+      const ccflareEnv = await resolveCcflareEnv(agentProvider, userId);
 
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
         ...ccflareEnv,

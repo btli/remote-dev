@@ -32,7 +32,7 @@ export const POST = withAuth(async (request, { userId }) => {
   try {
     const result = await parseJsonBody<AddCcflareKeyInput>(request);
     if ("error" in result) return result.error;
-    const { name, key, priority } = result.data;
+    const { name, key, baseUrl, priority } = result.data;
 
     if (!name || typeof name !== "string") {
       return errorResponse("Key name is required", 400, "NAME_REQUIRED");
@@ -42,11 +42,19 @@ export const POST = withAuth(async (request, { userId }) => {
       return errorResponse("API key value is required", 400, "KEY_REQUIRED");
     }
 
+    if (baseUrl !== undefined && baseUrl !== null && typeof baseUrl === "string" && baseUrl.trim()) {
+      try {
+        new URL(baseUrl);
+      } catch {
+        return errorResponse("Invalid base URL", 400, "INVALID_BASE_URL");
+      }
+    }
+
     if (priority !== undefined && (typeof priority !== "number" || priority < 0)) {
       return errorResponse("Priority must be a non-negative number", 400, "INVALID_PRIORITY");
     }
 
-    const created = await CcflareService.addApiKey(userId, { name, key, priority });
+    const created = await CcflareService.addApiKey(userId, { name, key, baseUrl, priority });
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
     log.error("Failed to add ccflare key", { error: String(error) });

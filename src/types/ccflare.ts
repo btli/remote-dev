@@ -2,6 +2,9 @@
  * Type definitions for the ccflare (better-ccflare) Anthropic API proxy integration.
  */
 
+/** Default Anthropic API base URL. Keys with null or this value are proxy-eligible. */
+export const ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com";
+
 /**
  * ccflare proxy configuration stored in the database.
  */
@@ -16,12 +19,16 @@ export interface CcflareConfig {
 }
 
 /**
- * Anthropic API key stored in the database for ccflare load balancing.
+ * API key stored in the database for ccflare load balancing.
+ * Keys with a null/undefined baseUrl are Anthropic keys routed through the proxy.
+ * Keys with a custom baseUrl are direct-endpoint keys (OpenRouter, Databricks, etc.).
  */
 export interface CcflareApiKey {
   id: string;
   userId: string;
   name: string;
+  keyPrefix: string | null;
+  baseUrl: string | null;
   priority: number;
   paused: boolean;
   createdAt: Date;
@@ -57,11 +64,12 @@ export interface UpdateCcflareConfigInput {
 }
 
 /**
- * Input for adding an Anthropic API key to ccflare.
+ * Input for adding an API key to ccflare.
  */
 export interface AddCcflareKeyInput {
   name: string;
   key: string;
+  baseUrl?: string;
   priority?: number;
 }
 

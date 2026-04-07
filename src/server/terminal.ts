@@ -323,9 +323,9 @@ function cleanupConnection(connectionId: string): void {
     }
     // Clean up MCP socket cache entry if the MCP server has exited.
     // Don't destroy live sockets — the MCP server outlives browser connections.
-    getMcpPush().then(({ closeMcpSocket, getMcpSocketPath }) => {
-      const fs = require("node:fs");
-      try { fs.accessSync(getMcpSocketPath(conn.sessionId)); } catch {
+    getMcpPush().then(async ({ closeMcpSocket, getMcpSocketPath }) => {
+      const { accessSync } = await import("node:fs");
+      try { accessSync(getMcpSocketPath(conn.sessionId)); } catch {
         closeMcpSocket(conn.sessionId);
       }
     }).catch(() => {});
@@ -642,6 +642,30 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
         })
         .catch((err) => agentStatusLog.error("Failed to create notification", { error: String(err) }));
     }
+
+    sendJson(res, 200, { success: true });
+    return true;
+  }
+
+  // POST /internal/proxy-state — report active API endpoint from agent session
+  // Called by PreToolUse hook: { sessionId, baseUrl, keyPrefix }
+  if (pathname === "/internal/proxy-state" && req.method === "POST") {
+    const payload = await parseRequestJson(req, res);
+    if (!payload) return true;
+    const { sessionId, baseUrl, keyPrefix } = payload;
+
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+
+    // Broadcast to UI clients for real-time endpoint display
+    broadcastToClients({
+      type: "proxy_state",
+      sessionId,
+      baseUrl: baseUrl || null,
+      keyPrefix: keyPrefix || null,
+    });
 
     sendJson(res, 200, { success: true });
     return true;
