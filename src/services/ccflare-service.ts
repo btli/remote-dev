@@ -24,6 +24,7 @@ import type {
   UpdateCcflareConfigInput,
   AddCcflareKeyInput,
 } from "@/types/ccflare";
+import { ANTHROPIC_DEFAULT_BASE_URL } from "@/types/ccflare";
 
 const log = createLogger("CcflareService");
 const execFileAsync = promisify(execFile);
@@ -193,6 +194,8 @@ export async function addApiKey(
   input: AddCcflareKeyInput
 ): Promise<CcflareApiKey> {
   const priority = input.priority ?? 0;
+  const baseUrl = input.baseUrl?.trim() || null;
+  const keyPrefix = input.key.slice(0, 12);
   const encryptedKey = encrypt(input.key);
   const now = new Date();
   const id = crypto.randomUUID();
@@ -202,22 +205,36 @@ export async function addApiKey(
     userId,
     name: input.name,
     encryptedKey,
+    keyPrefix,
+    baseUrl,
     priority,
     paused: false,
     createdAt: now,
     updatedAt: now,
   });
 
-  log.info("Added ccflare API key", { userId, name: input.name, priority });
+  log.info("Added ccflare API key", { userId, name: input.name, priority, baseUrl });
 
-  // Register the key with the ccflare binary database
-  await registerKeyWithCcflare(input.name, input.key, priority);
+  // Only register Anthropic keys with the ccflare binary (proxy-eligible)
+  if (isProxyEligible(baseUrl)) {
+    await registerKeyWithCcflare(input.name, input.key, priority);
+  } else {
+    log.info("Skipping ccflare binary registration for direct-endpoint key", { name: input.name, baseUrl });
+  }
 
   const row = await db.query.ccflareApiKeys.findFirst({
     where: eq(ccflareApiKeys.id, id),
   });
 
   return mapApiKeyRow(row!);
+}
+
+/**
+ * Check if a key's baseUrl makes it eligible for the ccflare proxy.
+ * Keys with null baseUrl or the default Anthropic URL go through the proxy.
+ */
+function isProxyEligible(baseUrl: string | null): boolean {
+  return !baseUrl || baseUrl === ANTHROPIC_DEFAULT_BASE_URL;
 }
 
 /**
@@ -490,6 +507,8 @@ function mapApiKeyRow(row: {
   userId: string;
   name: string;
   encryptedKey: string;
+  keyPrefix: string | null;
+  baseUrl: string | null;
   priority: number;
   paused: boolean;
   createdAt: Date;
@@ -499,9 +518,34 @@ function mapApiKeyRow(row: {
     id: row.id,
     userId: row.userId,
     name: row.name,
+    keyPrefix: row.keyPrefix ?? null,
+    baseUrl: row.baseUrl ?? null,
     priority: row.priority,
     paused: row.paused,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * Get the top-priority active direct-endpoint key for a user.
+ * Lower priority number = higher precedence (0 is used first).
+ * Returns null if no non-proxy keys are configured.
+ * Used by session env resolution to auto-inject a direct endpoint when the proxy is not running.
+ */
+export async function getActiveDirectKey(
+  userId: string
+): Promise<{ baseUrl: string; encryptedKey: string } | null> {
+  const rows = await db.query.ccflareApiKeys.findMany({
+    where: eq(ccflareApiKeys.userId, userId),
+    orderBy: (t, { asc }) => [asc(t.priority)],
+  });
+
+  const directKey = rows.find(
+    (r) => !r.paused && r.baseUrl && r.baseUrl !== ANTHROPIC_DEFAULT_BASE_URL
+  );
+
+  if (!directKey || !directKey.baseUrl) return null;
+
+  return { baseUrl: directKey.baseUrl, encryptedKey: directKey.encryptedKey };
 }

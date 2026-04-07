@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 import type { CIStatusState, PRState } from "@/types/github-stats";
@@ -1790,6 +1790,8 @@ export const ccflareApiKeys = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     encryptedKey: text("encrypted_key").notNull(),
+    keyPrefix: text("key_prefix"), // first 12 chars for client-side matching
+    baseUrl: text("base_url"), // null = Anthropic default (proxy-eligible)
     priority: integer("priority").notNull().default(0),
     paused: integer("paused", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

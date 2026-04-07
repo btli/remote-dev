@@ -255,6 +255,49 @@ async fn broadcast_session_start(client: &Client) {
     let _ = client.post_json("/internal/peers/messages/send", &payload).await;
 }
 
+// ── Proxy state reporting ───────────────────────────────────────────
+
+/// Report the active ANTHROPIC_BASE_URL and API key prefix to the server.
+/// When ANTHROPIC_BASE_URL is unset, reports the default (https://api.anthropic.com)
+/// since that is the actual endpoint Claude Code will use.
+/// Uses a sentinel file to only report when state changes.
+async fn report_proxy_state(client: &Client) {
+    let Some(sid) = client.session_id() else {
+        return;
+    };
+
+    const DEFAULT_ANTHROPIC_URL: &str = "https://api.anthropic.com";
+
+    let has_key = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    // Skip entirely if no API key is set (agent won't be calling any API)
+    if !has_key {
+        return;
+    }
+
+    let base_url = std::env::var("ANTHROPIC_BASE_URL")
+        .unwrap_or_else(|_| DEFAULT_ANTHROPIC_URL.to_string());
+    let key_prefix = std::env::var("ANTHROPIC_API_KEY")
+        .map(|k| k.chars().take(12).collect::<String>())
+        .unwrap_or_default();
+
+    // Sentinel: only report on change
+    let sentinel = format!("/tmp/rdv-proxy-state-{sid}");
+    let current = format!("{base_url}|{key_prefix}");
+    if std::fs::read_to_string(&sentinel).unwrap_or_default() == current {
+        return;
+    }
+
+    let payload = json!({
+        "sessionId": sid,
+        "baseUrl": base_url,
+        "keyPrefix": key_prefix,
+    });
+
+    if client.post_json("/internal/proxy-state", &payload).await.is_ok() {
+        let _ = std::fs::write(&sentinel, &current);
+    }
+}
+
 // ── Git identity guard ──────────────────────────────────────────────
 
 /// Check if a git command in a sensitive folder would leak identity.
@@ -484,6 +527,7 @@ pub async fn run(
             report_status(client, "running").await;
             print_peer_digest(client).await;
             broadcast_session_start(client).await;
+            report_proxy_state(client).await;
 
             // Read stdin once into a buffer, parse as JSON
             let mut buf = Vec::new();
