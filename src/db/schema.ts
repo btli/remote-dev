@@ -1792,7 +1792,6 @@ export const ccflareApiKeys = sqliteTable(
     encryptedKey: text("encrypted_key").notNull(),
     keyPrefix: text("key_prefix"), // first 12 chars for client-side matching
     baseUrl: text("base_url"), // null = Anthropic default (proxy-eligible)
-    aliasOnly: integer("alias_only", { mode: "boolean" }).notNull().default(false), // display-only entry, not for key injection
     priority: integer("priority").notNull().default(0),
     paused: integer("paused", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

@@ -30,18 +30,12 @@ export const GET = withAuth(async (_request, { userId }) => {
  */
 export const POST = withAuth(async (request, { userId }) => {
   try {
-    const result = await parseJsonBody<AddCcflareKeyInput & { aliasOnly?: boolean; keyPrefix?: string }>(request);
+    const result = await parseJsonBody<AddCcflareKeyInput>(request);
     if ("error" in result) return result.error;
-    const { name, key, baseUrl, priority, aliasOnly, keyPrefix } = result.data;
+    const { name, key, baseUrl, priority } = result.data;
 
     if (!name || typeof name !== "string") {
       return errorResponse("Key name is required", 400, "NAME_REQUIRED");
-    }
-
-    // Alias-only entries: just name + baseUrl + keyPrefix for display matching
-    if (aliasOnly) {
-      const created = await CcflareService.createAlias(userId, { name, baseUrl, keyPrefix });
-      return NextResponse.json(created, { status: 201 });
     }
 
     if (!key || typeof key !== "string") {
