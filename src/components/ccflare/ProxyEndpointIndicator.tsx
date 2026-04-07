@@ -127,15 +127,12 @@ export function ProxyEndpointIndicator() {
       }
     }
 
-    // Open settings first so CcflareSettingsPanel mounts, then prefill after it renders
+    // Pass prefill data through the open-settings event so it flows as props
     window.dispatchEvent(
-      new CustomEvent("open-settings", { detail: { section: "proxy" } })
+      new CustomEvent("open-settings", {
+        detail: { section: "proxy", proxyPrefill: { baseUrl: prefillUrl, apiKey: prefillKey } },
+      })
     );
-    setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent("rdv:prefill-proxy-key", { detail: { baseUrl: prefillUrl, apiKey: prefillKey } })
-      );
-    }, 200);
   };
 
   return (

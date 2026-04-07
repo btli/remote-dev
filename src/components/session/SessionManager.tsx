@@ -298,6 +298,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Settings view state
   const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
+  const [settingsProxyPrefill, setSettingsProxyPrefill] = useState<{ baseUrl?: string; apiKey?: string } | undefined>(undefined);
   const [settingsOpenCount, setSettingsOpenCount] = useState(0);
 
   // Port manager modal state
@@ -1395,8 +1396,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Listen for open-settings event from Header gear button and Sidebar
   useEffect(() => {
     const handleOpenSettings = (e: Event) => {
-      const detail = (e as CustomEvent<{ section?: string }>).detail;
+      const detail = (e as CustomEvent<{ section?: string; proxyPrefill?: { baseUrl?: string; apiKey?: string } }>).detail;
       setSettingsInitialSection(detail?.section);
+      setSettingsProxyPrefill(detail?.proxyPrefill);
       setSettingsOpenCount((c) => c + 1);
       setActiveView("settings");
     };
@@ -1837,6 +1839,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                 key={`settings-${settingsOpenCount}`}
                 onClose={() => setActiveView("terminal")}
                 initialSection={settingsInitialSection as SettingsSection | undefined}
+                proxyPrefill={settingsProxyPrefill}
               />
             </div>
           )}

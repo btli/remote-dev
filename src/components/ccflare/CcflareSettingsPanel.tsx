@@ -7,7 +7,7 @@
  * Provides status control, configuration, API key management, and analytics.
  */
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Network,
   Play,
@@ -62,7 +62,11 @@ function formatNumber(num: number): string {
   return num.toLocaleString();
 }
 
-export function CcflareSettingsPanel() {
+interface CcflareSettingsPanelProps {
+  prefill?: { baseUrl?: string; apiKey?: string };
+}
+
+export function CcflareSettingsPanel({ prefill }: CcflareSettingsPanelProps) {
   const {
     config,
     status,
@@ -80,23 +84,12 @@ export function CcflareSettingsPanel() {
     proxyUrl,
   } = useCcflareContext();
 
-  // Add key form state
+  // Add key form state — initialize from prefill prop if provided
   const [newKeyName, setNewKeyName] = useState("");
-  const [newKeyValue, setNewKeyValue] = useState("");
-  const [newKeyBaseUrl, setNewKeyBaseUrl] = useState("");
+  const [newKeyValue, setNewKeyValue] = useState(prefill?.apiKey ?? "");
+  const [newKeyBaseUrl, setNewKeyBaseUrl] = useState(prefill?.baseUrl ?? "");
   const [newKeyPriority, setNewKeyPriority] = useState("2");
   const [addingKey, setAddingKey] = useState(false);
-
-  // Listen for prefill event from ProxyEndpointIndicator "+" button
-  useEffect(() => {
-    function handlePrefill(e: Event) {
-      const { baseUrl, apiKey } = (e as CustomEvent).detail ?? {};
-      if (baseUrl) setNewKeyBaseUrl(baseUrl);
-      if (apiKey) setNewKeyValue(apiKey);
-    }
-    window.addEventListener("rdv:prefill-proxy-key", handlePrefill);
-    return () => window.removeEventListener("rdv:prefill-proxy-key", handlePrefill);
-  }, []);
 
   // Config form state
   const [portValue, setPortValue] = useState("");
