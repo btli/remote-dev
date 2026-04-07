@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const ccflarePort = process.env.CCFLARE_PORT || "8787";
+
 const nextConfig: NextConfig = {
   output: "standalone",
   serverExternalPackages: ["@libsql/client", "mysql2"],
@@ -17,6 +19,15 @@ const nextConfig: NextConfig = {
         pathname: "/u/**",
       },
     ],
+  },
+  async rewrites() {
+    return [
+      // Proxy ccflare dashboard and API through Next.js for remote access
+      {
+        source: "/ccflare/:path*",
+        destination: `http://127.0.0.1:${ccflarePort}/:path*`,
+      },
+    ];
   },
 };
 

@@ -74,6 +74,34 @@ export interface AddCcflareKeyInput {
 }
 
 /**
+ * Native ccflare account from the proxy's /api/accounts endpoint.
+ * This is the source of truth for registered accounts and their status.
+ */
+export interface CcflareAccount {
+  id: string;
+  name: string;
+  provider: string;
+  requestCount: number;
+  totalRequests: number;
+  lastUsed: string | null;
+  created: string;
+  paused: boolean;
+  priority: number;
+  tokenStatus: "valid" | "expired" | "refreshing" | "error";
+  tokenExpiresAt: string | null;
+  rateLimitStatus: string | null;
+  rateLimitReset: string | null;
+  rateLimitRemaining: number | null;
+  rateLimitedUntil: string | null;
+  sessionInfo: string | null;
+  customEndpoint: string | null;
+  usageUtilization: number | null;
+  usageWindow: string | null;
+  usageData: Record<string, unknown> | null;
+  hasRefreshToken: boolean;
+}
+
+/**
  * Analytics stats from ccflare's HTTP API.
  */
 export interface CcflareStats {
