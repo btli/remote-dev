@@ -45,6 +45,8 @@ interface BeadsContextValue {
   stats: BeadsStats | null;
   loading: boolean;
   error: string | null;
+  /** Whether beads is initialized in the current project (.beads dir exists) */
+  initialized: boolean;
   /** The resolved project path used for queries */
   projectPath: string | null;
   /** Refresh issues from the API */
@@ -83,6 +85,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
   const [issues, setIssues] = useState<BeadsIssue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
 
   const { currentPreferences, userSettings } = usePreferencesContext();
   const projectPath = currentPreferences.defaultWorkingDirectory || null;
@@ -98,10 +101,11 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
   // Compute stats client-side from issues array
   const computedStats = useMemo(() => {
     if (issues.length === 0) return null;
-    const stats = { total: issues.length, open: 0, inProgress: 0, closed: 0, blocked: 0, ready: 0 };
+    const stats = { total: issues.length, open: 0, inProgress: 0, closed: 0, blocked: 0, ready: 0, deferred: 0 };
     for (const issue of issues) {
       if (issue.status === "closed") stats.closed++;
       else if (issue.status === "in_progress") stats.inProgress++;
+      else if (issue.status === "deferred") stats.deferred++;
       else if (issue.status === "open" && issue.dependencies.length === 0) { stats.open++; stats.ready++; }
       else stats.open++;
       if (issue.dependencies.length > 0 && issue.status !== "closed") stats.blocked++;
@@ -114,6 +118,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
 
     if (!projectPath) {
       setIssues([]);
+      setInitialized(false);
       return;
     }
 
@@ -134,10 +139,21 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
         throw new Error("Failed to fetch beads issues");
       }
 
-      const issuesData = await issuesRes.json();
-      setIssues(
-        Array.isArray(issuesData) ? issuesData.map(hydrateIssue) : []
-      );
+      const data = await issuesRes.json();
+
+      // New response format: { initialized, issues }
+      if (data && typeof data === "object" && "initialized" in data) {
+        setInitialized(data.initialized);
+        setIssues(
+          Array.isArray(data.issues) ? data.issues.map(hydrateIssue) : []
+        );
+      } else {
+        // Legacy fallback: plain array response
+        setInitialized(true);
+        setIssues(
+          Array.isArray(data) ? data.map(hydrateIssue) : []
+        );
+      }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -194,6 +210,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
       stats: computedStats,
       loading,
       error,
+      initialized,
       projectPath,
       refreshIssues,
       debouncedRefresh,
@@ -202,7 +219,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
       beadsClosedRetentionDays,
       beadsSectionExpanded,
     }),
-    [issues, computedStats, loading, error, projectPath, refreshIssues, debouncedRefresh,
+    [issues, computedStats, loading, error, initialized, projectPath, refreshIssues, debouncedRefresh,
      beadsSidebarCollapsed, beadsSidebarWidth, beadsClosedRetentionDays, beadsSectionExpanded]
   );
 

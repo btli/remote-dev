@@ -396,5 +396,6 @@ export async function getStats(projectPath: string): Promise<BeadsStats> {
     closed: counts["closed"] ?? 0,
     blocked,
     ready,
+    deferred: counts["deferred"] ?? 0,
   };
 }
