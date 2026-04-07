@@ -447,24 +447,6 @@ async function startServers(slot: Slot): Promise<boolean> {
   return true;
 }
 
-/**
- * Restart servers using rdv.ts, which is the known working startup path.
- * rdv.ts inherits the user's full shell environment (locale, PATH, etc.)
- * needed for correct PTY/UTF-8 encoding in node-pty.
- */
-function restartViaRdv(): void {
-  logDeploy("Restarting via rdv.ts...");
-  const result = spawnSync(["bun", "run", "scripts/rdv.ts", "start", "prod"], {
-    cwd: PROJECT_ROOT,
-    env: getServerEnv(),
-    stdout: "inherit",
-    stderr: "inherit",
-    // rdv.ts start blocks (waitForExit), so we need to spawn it detached
-  });
-  // rdv.ts start blocks forever, so we can't use spawnSync.
-  // Use Bun.spawn instead with detach.
-}
-
 function restartViaRdvAsync(): void {
   logDeploy("Starting servers via login shell...");
   // Use a login shell to get the user's full environment (locale, PATH,
@@ -934,12 +916,6 @@ async function rollbackTo(slot: Slot): Promise<void> {
 
   restartViaRdvAsync();
   await Bun.sleep(5000);
-
-  const started = true; // rdv.ts handles its own startup
-  if (!started) {
-    logError(`CRITICAL: Rollback failed! Manual intervention needed.`);
-    return;
-  }
 
   const localHealthy = await healthCheckLocal();
   if (localHealthy) {

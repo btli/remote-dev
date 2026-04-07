@@ -5,6 +5,7 @@ import { validateProjectPath } from "@/lib/beads-auth";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
+import type { BeadsStatus, BeadsIssueType } from "@/types/beads";
 
 const log = createLogger("api/beads");
 
@@ -43,8 +44,8 @@ export const GET = withApiAuth(async (request, { userId }) => {
 
   try {
     const issues = await getIssues(resolved, {
-      status: status as "open" | "in_progress" | "closed" | "deferred" | undefined,
-      issueType: issueType as "task" | "bug" | "feature" | "epic" | "chore" | "message" | undefined,
+      status: status as BeadsStatus | undefined,
+      issueType: issueType as BeadsIssueType | undefined,
       closedRetentionDays,
     });
 
