@@ -7,7 +7,7 @@
  * Provides status control, configuration, API key management, and analytics.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Network,
   Play,
@@ -86,6 +86,16 @@ export function CcflareSettingsPanel() {
   const [newKeyBaseUrl, setNewKeyBaseUrl] = useState("");
   const [newKeyPriority, setNewKeyPriority] = useState("2");
   const [addingKey, setAddingKey] = useState(false);
+
+  // Listen for prefill event from ProxyEndpointIndicator "+" button
+  useEffect(() => {
+    function handlePrefill(e: Event) {
+      const { baseUrl } = (e as CustomEvent).detail ?? {};
+      if (baseUrl) setNewKeyBaseUrl(baseUrl);
+    }
+    window.addEventListener("rdv:prefill-proxy-key", handlePrefill);
+    return () => window.removeEventListener("rdv:prefill-proxy-key", handlePrefill);
+  }, []);
 
   // Config form state
   const [portValue, setPortValue] = useState("");

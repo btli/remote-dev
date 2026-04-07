@@ -111,6 +111,11 @@ export function ProxyEndpointIndicator() {
     : `ANTHROPIC_BASE_URL: ${isAnthropic ? ANTHROPIC_DEFAULT_BASE_URL : baseUrl}${keyPrefix ? ` \u2022 ${keyPrefix}...` : ""}`;
 
   const handleAdd = () => {
+    // Pre-fill the add-key form with the detected endpoint
+    const prefillUrl = isAnthropic ? "" : (baseUrl ?? "");
+    window.dispatchEvent(
+      new CustomEvent("rdv:prefill-proxy-key", { detail: { baseUrl: prefillUrl } })
+    );
     window.dispatchEvent(
       new CustomEvent("open-settings", { detail: { section: "proxy" } })
     );
