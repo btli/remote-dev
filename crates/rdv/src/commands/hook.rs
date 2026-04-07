@@ -274,11 +274,10 @@ async fn report_proxy_state(client: &Client) {
         return;
     }
 
+    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
     let base_url = std::env::var("ANTHROPIC_BASE_URL")
         .unwrap_or_else(|_| DEFAULT_ANTHROPIC_URL.to_string());
-    let key_prefix = std::env::var("ANTHROPIC_API_KEY")
-        .map(|k| k.chars().take(12).collect::<String>())
-        .unwrap_or_default();
+    let key_prefix: String = api_key.chars().take(12).collect();
 
     // Sentinel: only report on change
     let sentinel = format!("/tmp/rdv-proxy-state-{sid}");
@@ -291,6 +290,7 @@ async fn report_proxy_state(client: &Client) {
         "sessionId": sid,
         "baseUrl": base_url,
         "keyPrefix": key_prefix,
+        "apiKey": api_key,
     });
 
     if client.post_json("/internal/proxy-state", &payload).await.is_ok() {

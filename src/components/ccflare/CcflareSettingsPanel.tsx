@@ -90,8 +90,9 @@ export function CcflareSettingsPanel() {
   // Listen for prefill event from ProxyEndpointIndicator "+" button
   useEffect(() => {
     function handlePrefill(e: Event) {
-      const { baseUrl } = (e as CustomEvent).detail ?? {};
+      const { baseUrl, apiKey } = (e as CustomEvent).detail ?? {};
       if (baseUrl) setNewKeyBaseUrl(baseUrl);
+      if (apiKey) setNewKeyValue(apiKey);
     }
     window.addEventListener("rdv:prefill-proxy-key", handlePrefill);
     return () => window.removeEventListener("rdv:prefill-proxy-key", handlePrefill);

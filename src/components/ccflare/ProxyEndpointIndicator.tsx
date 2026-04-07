@@ -110,11 +110,25 @@ export function ProxyEndpointIndicator() {
     ? `ANTHROPIC_BASE_URL: ${matchedKey.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL}`
     : `ANTHROPIC_BASE_URL: ${isAnthropic ? ANTHROPIC_DEFAULT_BASE_URL : baseUrl}${keyPrefix ? ` \u2022 ${keyPrefix}...` : ""}`;
 
-  const handleAdd = () => {
-    // Pre-fill the add-key form with the detected endpoint
+  const handleAdd = async () => {
     const prefillUrl = isAnthropic ? "" : (baseUrl ?? "");
+    let prefillKey = "";
+
+    // Fetch the full API key from the terminal server's in-memory store
+    if (activeProxyState?.sessionId) {
+      try {
+        const resp = await fetch(`/api/ccflare/keys/active?sessionId=${encodeURIComponent(activeProxyState.sessionId)}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.apiKey) prefillKey = data.apiKey;
+        }
+      } catch {
+        // Best effort — form still opens without key prefilled
+      }
+    }
+
     window.dispatchEvent(
-      new CustomEvent("rdv:prefill-proxy-key", { detail: { baseUrl: prefillUrl } })
+      new CustomEvent("rdv:prefill-proxy-key", { detail: { baseUrl: prefillUrl, apiKey: prefillKey } })
     );
     window.dispatchEvent(
       new CustomEvent("open-settings", { detail: { section: "proxy" } })

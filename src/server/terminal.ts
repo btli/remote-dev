@@ -16,6 +16,9 @@ import { createLogger } from "../lib/logger.js";
 const log = createLogger("Terminal");
 const agentLog = createLogger("AgentExit");
 const agentStatusLog = createLogger("AgentStatus");
+
+/** In-memory store for API keys reported by agent sessions (for prefill only, never broadcast). */
+const proxyStateKeys = new Map<string, string>();
 const notifyLog = createLogger("Notify");
 const voiceLog = createLogger("Voice");
 const internalLog = createLogger("InternalAPI");
@@ -648,18 +651,23 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
   }
 
   // POST /internal/proxy-state — report active API endpoint from agent session
-  // Called by PreToolUse hook: { sessionId, baseUrl, keyPrefix }
+  // Called by PreToolUse hook: { sessionId, baseUrl, keyPrefix, apiKey }
   if (pathname === "/internal/proxy-state" && req.method === "POST") {
     const payload = await parseRequestJson(req, res);
     if (!payload) return true;
-    const { sessionId, baseUrl, keyPrefix } = payload;
+    const { sessionId, baseUrl, keyPrefix, apiKey } = payload;
 
     if (!sessionId) {
       sendJson(res, 400, { error: "Missing sessionId" });
       return true;
     }
 
-    // Broadcast to UI clients for real-time endpoint display
+    // Store apiKey in memory for prefill (never broadcast to WS clients)
+    if (apiKey) {
+      proxyStateKeys.set(sessionId as string, apiKey as string);
+    }
+
+    // Broadcast to UI clients for real-time endpoint display (no apiKey!)
     broadcastToClients({
       type: "proxy_state",
       sessionId,
@@ -668,6 +676,18 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
     });
 
     sendJson(res, 200, { success: true });
+    return true;
+  }
+
+  // GET /internal/proxy-state/key?sessionId=xxx — retrieve stored API key for prefill
+  if (pathname === "/internal/proxy-state/key" && req.method === "GET") {
+    const sessionId = query.sessionId as string;
+    if (!sessionId) {
+      sendJson(res, 400, { error: "Missing sessionId" });
+      return true;
+    }
+    const key = proxyStateKeys.get(sessionId);
+    sendJson(res, 200, { apiKey: key || null });
     return true;
   }
 
