@@ -426,52 +426,66 @@ export async function getStats(): Promise<CcflareStats | null> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Register an API key with the ccflare binary's internal database.
- * This calls the CLI to persist the key so ccflare can use it on next start.
+ * Register an API key with the running ccflare server via its REST API.
+ * Falls back to CLI registration if the server is not running.
  */
 async function registerKeyWithCcflare(
   name: string,
   apiKey: string,
   priority: number
 ): Promise<void> {
+  const port = ccflareProcessManager.getPort();
+
+  // Prefer REST API when server is running (CLI prompts are interactive)
+  if (port && ccflareProcessManager.isRunning()) {
+    try {
+      const resp = await fetch(`http://127.0.0.1:${port}/api/accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          mode: "anthropic-compatible",
+          accessToken: apiKey,
+          refreshToken: "none",
+          endpointUrl: "https://api.anthropic.com",
+          priority,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error((err as Record<string, string>).error || `HTTP ${resp.status}`);
+      }
+
+      log.info("Registered API key with ccflare via REST API", { name, priority });
+      return;
+    } catch (err) {
+      log.warn("REST API registration failed, trying CLI fallback", { error: String(err) });
+    }
+  }
+
+  // CLI fallback (for when server is not running)
   const binaryPath = ccflareProcessManager.getBinaryPath();
   if (!binaryPath) {
-    log.warn(
-      "Cannot register key with ccflare — binary not found"
-    );
+    log.warn("Cannot register key with ccflare — binary not found");
     return;
   }
 
   const dbPath = ccflareProcessManager.getDatabasePath();
 
   try {
-    // Pass API key via env to avoid exposure in process listing
     await execFileAsync(
       binaryPath,
-      [
-        "--add-account",
-        name,
-        "--mode",
-        "claude-api",
-        "--priority",
-        String(priority),
-      ],
+      ["--add-account", name, "--mode", "anthropic-compatible", "--priority", String(priority)],
       {
-        env: {
-          ...process.env,
-          BETTER_CCFLARE_DB_PATH: dbPath,
-          ANTHROPIC_API_KEY: apiKey,
-        } as NodeJS.ProcessEnv,
+        env: { ...process.env, BETTER_CCFLARE_DB_PATH: dbPath, ANTHROPIC_API_KEY: apiKey } as NodeJS.ProcessEnv,
         timeout: 10000,
       }
     );
-
-    log.info("Registered API key with ccflare", { name, priority });
+    log.info("Registered API key with ccflare via CLI", { name, priority });
   } catch (err) {
-    log.error("Failed to register API key with ccflare", {
-      error: String(err),
-      name,
-    });
+    log.error("Failed to register API key with ccflare", { error: String(err), name });
   }
 }
 
