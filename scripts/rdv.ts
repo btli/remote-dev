@@ -53,6 +53,20 @@ const CONFIG = {
 type Mode = keyof typeof CONFIG;
 type SpawnedProcess = ReturnType<typeof spawn>;
 
+function ensureCcflare(): void {
+  const binaryPath = join(PROJECT_ROOT, "node_modules", "better-ccflare", "dist", "better-ccflare");
+  if (!existsSync(binaryPath)) {
+    console.log("better-ccflare binary not found, running postinstall...");
+    const result = spawnSync(["bash", join(PROJECT_ROOT, "scripts", "postinstall-ccflare.sh")], {
+      cwd: PROJECT_ROOT,
+      stdio: "inherit",
+    });
+    if (result.exitCode !== 0) {
+      console.warn("Warning: failed to install better-ccflare binary (proxy will be unavailable)");
+    }
+  }
+}
+
 function ensurePidDir(): void {
   if (!existsSync(PID_DIR)) {
     mkdirSync(PID_DIR, { recursive: true });
@@ -99,6 +113,14 @@ function prepareStandalone(): void {
   if (existsSync(publicSrc) && !existsSync(publicDest)) {
     console.log("Linking public files for standalone mode...");
     symlinkSync(publicSrc, publicDest);
+  }
+
+  // Symlink node_modules into standalone so spawned binaries (better-ccflare) are accessible
+  const nmSrc = join(PROJECT_ROOT, "node_modules");
+  const nmDest = join(STANDALONE_DIR, "node_modules");
+  if (existsSync(nmSrc) && !existsSync(nmDest)) {
+    console.log("Linking node_modules for standalone mode...");
+    symlinkSync(nmSrc, nmDest);
   }
 }
 
@@ -275,6 +297,7 @@ async function startServer(
 
 async function start(mode: Mode): Promise<void> {
   ensurePidDir();
+  ensureCcflare();
 
   const config = CONFIG[mode];
 
