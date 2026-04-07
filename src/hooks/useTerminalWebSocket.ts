@@ -322,13 +322,6 @@ export function useTerminalWebSocket({
               onSessionProgressRef.current?.(msg.sessionId, null);
               break;
 
-            case "proxy_state":
-              // Dispatch global event so CcflareContext can update the active endpoint indicator
-              document.dispatchEvent(new CustomEvent("rdv:proxy-state", {
-                detail: { sessionId: msg.sessionId, baseUrl: msg.baseUrl, keyPrefix: msg.keyPrefix },
-              }));
-              break;
-
             case "sidebar_changed":
               // Dispatch a global DOM event so SessionManager can debounce-refresh
               // without threading a callback through the entire component tree.

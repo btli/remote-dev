@@ -28,21 +28,12 @@ import type {
   AddCcflareKeyInput,
 } from "@/types/ccflare";
 
-/** Active proxy state reported by agent sessions via PreToolUse hook. */
-export interface ProxyState {
-  sessionId: string;
-  baseUrl: string | null;
-  keyPrefix: string | null;
-}
-
 interface CcflareContextValue {
   config: CcflareConfig | null;
   status: CcflareStatus;
   keys: CcflareApiKey[];
   stats: CcflareStats | null;
   loading: boolean;
-  /** Latest proxy state reported by an agent session. */
-  activeProxyState: ProxyState | null;
 
   updateConfig: (input: UpdateCcflareConfigInput) => Promise<void>;
   start: () => Promise<void>;
@@ -79,7 +70,6 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
   const [keys, setKeys] = useState<CcflareApiKey[]>([]);
   const [stats, setStats] = useState<CcflareStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeProxyState, setActiveProxyState] = useState<ProxyState | null>(null);
 
   const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -191,16 +181,6 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
       }
     };
   }, [status.running, refreshStats]);
-
-  // Listen for proxy state events from agent sessions (dispatched via WebSocket → CustomEvent)
-  useEffect(() => {
-    function handleProxyState(e: Event) {
-      const { sessionId, baseUrl, keyPrefix } = (e as CustomEvent).detail;
-      setActiveProxyState({ sessionId, baseUrl: baseUrl || null, keyPrefix: keyPrefix || null });
-    }
-    document.addEventListener("rdv:proxy-state", handleProxyState);
-    return () => document.removeEventListener("rdv:proxy-state", handleProxyState);
-  }, []);
 
   // Update config
   const updateConfig = useCallback(async (input: UpdateCcflareConfigInput) => {
@@ -370,7 +350,7 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
       keys,
       stats,
       loading,
-      activeProxyState,
+
       updateConfig,
       start,
       stop,
@@ -389,7 +369,7 @@ export function CcflareProvider({ children }: CcflareProviderProps) {
       keys,
       stats,
       loading,
-      activeProxyState,
+
       updateConfig,
       start,
       stop,

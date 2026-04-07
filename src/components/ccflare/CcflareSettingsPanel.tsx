@@ -38,12 +38,7 @@ function formatUptime(seconds: number): string {
   return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-interface CcflareSettingsPanelProps {
-  prefill?: { baseUrl?: string; apiKey?: string };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- prefill kept for future use by endpoint indicator
-export function CcflareSettingsPanel({ prefill }: CcflareSettingsPanelProps) {
+export function CcflareSettingsPanel() {
   const {
     config,
     status,

@@ -2,14 +2,10 @@
 
 import { CcflareSettingsPanel } from "@/components/ccflare/CcflareSettingsPanel";
 
-interface ProxySectionProps {
-  prefill?: { baseUrl?: string; apiKey?: string };
-}
-
-export function ProxySection({ prefill }: ProxySectionProps) {
+export function ProxySection() {
   return (
     <div className="space-y-4">
-      <CcflareSettingsPanel prefill={prefill} />
+      <CcflareSettingsPanel />
     </div>
   );
 }

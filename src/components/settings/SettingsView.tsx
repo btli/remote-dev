@@ -93,7 +93,6 @@ const NAV_ITEMS: (NavItem | "divider")[] = [
 interface SettingsViewProps {
   onClose: () => void;
   initialSection?: SettingsSection;
-  proxyPrefill?: { baseUrl?: string; apiKey?: string };
 }
 
 function SectionLoader() {
@@ -104,7 +103,7 @@ function SectionLoader() {
   );
 }
 
-export function SettingsView({ onClose, initialSection, proxyPrefill }: SettingsViewProps) {
+export function SettingsView({ onClose, initialSection }: SettingsViewProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>(
     initialSection ?? "terminal"
   );
@@ -131,7 +130,7 @@ export function SettingsView({ onClose, initialSection, proxyPrefill }: Settings
       case "agents":
         return <AgentsSection />;
       case "proxy":
-        return <ProxySection prefill={proxyPrefill} />;
+        return <ProxySection />;
       case "profiles":
         return <ProfilesSection />;
       case "secrets":
