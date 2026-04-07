@@ -9,6 +9,7 @@
  * Hidden on mobile via `hidden md:flex`.
  */
 
+import { useState, useEffect } from "react";
 import { Network, Plus } from "lucide-react";
 import {
   Tooltip,
@@ -79,6 +80,16 @@ function findMatchingKey(
 
 export function ProxyEndpointIndicator() {
   const { activeProxyState, isRunning, proxyUrl, keys, loading } = useCcflareContext();
+  const [fullApiKey, setFullApiKey] = useState<string | null>(null);
+
+  // Fetch the full API key from the terminal server when proxy state is available
+  useEffect(() => {
+    if (!activeProxyState?.sessionId) return;
+    fetch(`/api/ccflare/keys/active?sessionId=${encodeURIComponent(activeProxyState.sessionId)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data?.apiKey) setFullApiKey(data.apiKey); })
+      .catch(() => {});
+  }, [activeProxyState?.sessionId]);
 
   // Derive display values from live proxy state or ccflare config fallback
   let baseUrl: string | null = null;
@@ -106,31 +117,23 @@ export function ProxyEndpointIndicator() {
     ? matchedKey.name
     : resolvedHostname;
 
-  const tooltipText = hasAlias
-    ? `ANTHROPIC_BASE_URL: ${matchedKey.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL}`
-    : `ANTHROPIC_BASE_URL: ${isAnthropic ? ANTHROPIC_DEFAULT_BASE_URL : baseUrl}${keyPrefix ? ` \u2022 ${keyPrefix}...` : ""}`;
+  const effectiveBaseUrl = isAnthropic ? ANTHROPIC_DEFAULT_BASE_URL : baseUrl;
+  const keyDisplay = fullApiKey || (keyPrefix ? `${keyPrefix}...` : null);
+  const tooltipText = [
+    `ANTHROPIC_BASE_URL: ${hasAlias ? (matchedKey.baseUrl ?? ANTHROPIC_DEFAULT_BASE_URL) : effectiveBaseUrl}`,
+    keyDisplay ? `ANTHROPIC_API_KEY: ${keyDisplay}` : null,
+  ].filter(Boolean).join("\n");
 
-  const handleAdd = async () => {
-    const prefillUrl = isAnthropic ? "" : (baseUrl ?? "");
-    let prefillKey = "";
-
-    // Fetch the full API key from the terminal server's in-memory store
-    if (activeProxyState?.sessionId) {
-      try {
-        const resp = await fetch(`/api/ccflare/keys/active?sessionId=${encodeURIComponent(activeProxyState.sessionId)}`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.apiKey) prefillKey = data.apiKey;
-        }
-      } catch {
-        // Best effort — form still opens without key prefilled
-      }
-    }
-
-    // Pass prefill data through the open-settings event so it flows as props
+  const handleAdd = () => {
     window.dispatchEvent(
       new CustomEvent("open-settings", {
-        detail: { section: "proxy", proxyPrefill: { baseUrl: prefillUrl, apiKey: prefillKey } },
+        detail: {
+          section: "proxy",
+          proxyPrefill: {
+            baseUrl: isAnthropic ? "" : (baseUrl ?? ""),
+            apiKey: fullApiKey ?? "",
+          },
+        },
       })
     );
   };
