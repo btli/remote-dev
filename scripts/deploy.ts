@@ -929,7 +929,7 @@ async function deploy(): Promise<void> {
   }
 }
 
-async function rollbackTo(_slot: Slot): Promise<void> {
+async function rollbackTo(slot: Slot): Promise<void> {
   logDeploy(`Rolling back, restarting via rdv.ts...`);
 
   restartViaRdvAsync();

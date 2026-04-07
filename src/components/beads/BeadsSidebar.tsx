@@ -259,15 +259,16 @@ export function BeadsSidebar({
   // Sync DB settings → local state when changed via Settings page.
   // Skip the initial mount to avoid overwriting localStorage values that the
   // initializer already applied (the user may have toggled before prefs loaded).
-  const dbSyncMountedRef = useRef(false);
+  const collapsedSyncMounted = useRef(false);
   useEffect(() => {
-    if (!dbSyncMountedRef.current) { dbSyncMountedRef.current = true; return; }
+    if (!collapsedSyncMounted.current) { collapsedSyncMounted.current = true; return; }
     setCollapsed(dbCollapsed);
     setStoredCollapsed(dbCollapsed);
   }, [dbCollapsed]);
 
+  const widthSyncMounted = useRef(false);
   useEffect(() => {
-    if (!dbSyncMountedRef.current) return;
+    if (!widthSyncMounted.current) { widthSyncMounted.current = true; return; }
     setWidth(dbWidth);
     setStoredWidth(dbWidth);
   }, [dbWidth]);
