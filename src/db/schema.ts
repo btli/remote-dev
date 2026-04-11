@@ -1749,14 +1749,15 @@ export const systemUpdateCache = sqliteTable("system_update_cache", {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ccflare Proxy Configuration
+// LiteLLM Proxy Configuration
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * User-scoped ccflare proxy configuration (one row per user).
- * Controls whether the proxy is enabled, auto-starts, and which port to use.
+ * User-scoped LiteLLM proxy configuration (one row per user).
+ * Controls whether the proxy is enabled, auto-starts, which port to use,
+ * and stores the encrypted master key for LiteLLM API auth.
  */
-export const ccflareConfig = sqliteTable("ccflare_config", {
+export const litellmConfig = sqliteTable("litellm_config", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
@@ -1766,7 +1767,8 @@ export const ccflareConfig = sqliteTable("ccflare_config", {
     .references(() => users.id, { onDelete: "cascade" }),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
   autoStart: integer("auto_start", { mode: "boolean" }).notNull().default(true),
-  port: integer("port").notNull().default(8787),
+  port: integer("port").notNull().default(4000),
+  masterKey: text("master_key"), // AES-256-GCM encrypted, generated on first run
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -1776,11 +1778,12 @@ export const ccflareConfig = sqliteTable("ccflare_config", {
 });
 
 /**
- * Anthropic API keys for ccflare load balancing.
- * Keys are stored encrypted and synced to ccflare on startup.
+ * LiteLLM model configurations.
+ * Each row maps to a model_list entry in the generated LiteLLM config.yaml.
+ * API keys are stored encrypted; direct endpoint URLs support Databricks FMAPI, etc.
  */
-export const ccflareApiKeys = sqliteTable(
-  "ccflare_api_key",
+export const litellmModels = sqliteTable(
+  "litellm_model",
   {
     id: text("id")
       .primaryKey()
@@ -1788,12 +1791,16 @@ export const ccflareApiKeys = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    encryptedKey: text("encrypted_key").notNull(),
-    keyPrefix: text("key_prefix"), // first 12 chars for client-side matching
-    baseUrl: text("base_url"), // null = Anthropic default (proxy-eligible)
+    modelName: text("model_name").notNull(), // display name, e.g. "claude-opus"
+    provider: text("provider").notNull(), // "anthropic"|"databricks"|"openai"|"openrouter"|"custom"
+    litellmModel: text("litellm_model").notNull(), // e.g. "anthropic/claude-opus-4-6"
+    apiBase: text("api_base"), // custom base URL (Databricks FMAPI, etc.)
+    encryptedApiKey: text("encrypted_api_key"), // AES-256-GCM encrypted
+    keyPrefix: text("key_prefix"), // first 12 chars for display
+    extraHeaders: text("extra_headers"), // JSON blob, e.g. {"x-databricks-use-coding-agent-mode":"true"}
     priority: integer("priority").notNull().default(0),
     paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -1802,6 +1809,6 @@ export const ccflareApiKeys = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    index("ccflare_api_key_user_idx").on(table.userId),
+    index("litellm_model_user_idx").on(table.userId),
   ]
 );

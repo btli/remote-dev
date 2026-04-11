@@ -1,24 +1,23 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { resolveTerminalServerUrl } from "@/lib/terminal-server-url";
-import * as CcflareService from "@/services/ccflare-service";
 import { createLogger } from "@/lib/logger";
 
-import type { CcflareControlAction } from "@/types/ccflare";
+import type { LiteLLMControlAction } from "@/types/litellm";
 
-const log = createLogger("api/ccflare/control");
+const log = createLogger("api/litellm/control");
 
-const VALID_ACTIONS: CcflareControlAction[] = ["start", "stop", "restart"];
+const VALID_ACTIONS: LiteLLMControlAction[] = ["start", "stop", "restart"];
 
 /**
- * POST /api/ccflare/control - Start, stop, or restart ccflare proxy
+ * POST /api/litellm/control - Start, stop, or restart LiteLLM proxy
  *
  * Proxies the control action to the terminal server where the process manager lives.
  * Body: { action: "start" | "stop" | "restart" }
  */
 export const POST = withAuth(async (request, { userId }) => {
   try {
-    const result = await parseJsonBody<{ action: CcflareControlAction }>(
+    const result = await parseJsonBody<{ action: LiteLLMControlAction }>(
       request
     );
     if ("error" in result) return result.error;
@@ -32,34 +31,27 @@ export const POST = withAuth(async (request, { userId }) => {
       );
     }
 
-    // For start/restart, get the user's configured port
-    let port: number | undefined;
-    if (action === "start" || action === "restart") {
-      const config = await CcflareService.getConfig(userId);
-      port = config?.port ?? 8787;
-    }
-
     const baseUrl = resolveTerminalServerUrl();
 
     if (action === "start") {
-      const resp = await fetch(`${baseUrl}/internal/ccflare/start`, {
+      const resp = await fetch(`${baseUrl}/internal/litellm/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ port }),
+        body: JSON.stringify({ userId }),
       });
       const data = await resp.json();
       if (!resp.ok) {
         return errorResponse(
-          data.error ?? "Failed to start ccflare",
+          data.error ?? "Failed to start LiteLLM",
           resp.status
         );
       }
-      log.info("ccflare started", { userId, port });
+      log.info("LiteLLM started", { userId });
       return NextResponse.json(data);
     }
 
     if (action === "stop") {
-      const resp = await fetch(`${baseUrl}/internal/ccflare/stop`, {
+      const resp = await fetch(`${baseUrl}/internal/litellm/stop`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -67,31 +59,31 @@ export const POST = withAuth(async (request, { userId }) => {
       const data = await resp.json();
       if (!resp.ok) {
         return errorResponse(
-          data.error ?? "Failed to stop ccflare",
+          data.error ?? "Failed to stop LiteLLM",
           resp.status
         );
       }
-      log.info("ccflare stopped", { userId });
+      log.info("LiteLLM stopped", { userId });
       return NextResponse.json(data);
     }
 
     // restart
-    const resp = await fetch(`${baseUrl}/internal/ccflare/restart`, {
+    const resp = await fetch(`${baseUrl}/internal/litellm/restart`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ port }),
+      body: JSON.stringify({ userId }),
     });
     const data = await resp.json();
     if (!resp.ok) {
       return errorResponse(
-        data.error ?? "Failed to restart ccflare",
+        data.error ?? "Failed to restart LiteLLM",
         resp.status
       );
     }
-    log.info("ccflare restarted", { userId, port });
+    log.info("LiteLLM restarted", { userId });
     return NextResponse.json(data);
   } catch (error) {
-    log.error("Failed to control ccflare", { error: String(error) });
-    return errorResponse("Failed to control ccflare proxy", 500);
+    log.error("Failed to control LiteLLM", { error: String(error) });
+    return errorResponse("Failed to control LiteLLM proxy", 500);
   }
 });

@@ -1,45 +1,45 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
-import * as CcflareService from "@/services/ccflare-service";
+import * as LiteLLMService from "@/services/litellm-service";
 import { createLogger } from "@/lib/logger";
 
-import type { UpdateCcflareConfigInput } from "@/types/ccflare";
+import type { UpdateLiteLLMConfigInput } from "@/types/litellm";
 
-const log = createLogger("api/ccflare");
+const log = createLogger("api/litellm");
 
 /**
- * GET /api/ccflare - Get user's ccflare config
+ * GET /api/litellm - Get user's LiteLLM config
  *
- * Returns the user's ccflare proxy configuration, or defaults if none exists.
+ * Returns the user's LiteLLM proxy configuration, or defaults if none exists.
  */
 export const GET = withAuth(async (_request, { userId }) => {
   try {
-    const config = await CcflareService.getConfig(userId);
+    const config = await LiteLLMService.getConfig(userId);
     return NextResponse.json({
       config: config ?? {
         id: null,
         userId,
         enabled: false,
         autoStart: false,
-        port: 8787,
+        port: 4000,
         createdAt: null,
         updatedAt: null,
       },
     });
   } catch (error) {
-    log.error("Failed to get ccflare config", { error: String(error) });
-    return errorResponse("Failed to get ccflare config", 500);
+    log.error("Failed to get LiteLLM config", { error: String(error) });
+    return errorResponse("Failed to get LiteLLM config", 500);
   }
 });
 
 /**
- * PATCH /api/ccflare - Update ccflare config
+ * PATCH /api/litellm - Update LiteLLM config
  *
- * Creates or updates the user's ccflare proxy configuration.
+ * Creates or updates the user's LiteLLM proxy configuration.
  */
 export const PATCH = withAuth(async (request, { userId }) => {
   try {
-    const result = await parseJsonBody<UpdateCcflareConfigInput>(request);
+    const result = await parseJsonBody<UpdateLiteLLMConfigInput>(request);
     if ("error" in result) return result.error;
     const { enabled, autoStart, port } = result.data;
 
@@ -54,14 +54,14 @@ export const PATCH = withAuth(async (request, { userId }) => {
       }
     }
 
-    const config = await CcflareService.upsertConfig(userId, {
+    const config = await LiteLLMService.upsertConfig(userId, {
       enabled,
       autoStart,
       port,
     });
     return NextResponse.json({ config });
   } catch (error) {
-    log.error("Failed to update ccflare config", { error: String(error) });
-    return errorResponse("Failed to update ccflare config", 500);
+    log.error("Failed to update LiteLLM config", { error: String(error) });
+    return errorResponse("Failed to update LiteLLM config", 500);
   }
 });

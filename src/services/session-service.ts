@@ -55,47 +55,48 @@ async function resolveGitCredentialEnv(
 }
 
 /**
- * Resolve ccflare proxy env for Claude agent sessions.
- * When the proxy is running, returns ANTHROPIC_BASE_URL pointing at the local proxy.
- * When the proxy is not running, checks for a direct-endpoint key and injects its URL + decrypted key.
+ * Resolve LiteLLM proxy env for Claude agent sessions.
+ * When the proxy is running, returns ANTHROPIC_BASE_URL pointing at the local proxy
+ * and ANTHROPIC_API_KEY set to the LiteLLM master key for authentication.
+ * When the proxy is not running, checks for a direct-endpoint model and injects its URL + decrypted key.
  */
-async function resolveCcflareEnv(agentProvider: string, userId: string): Promise<Record<string, string>> {
+async function resolveProxyEnv(agentProvider: string, userId: string): Promise<Record<string, string>> {
   if (agentProvider !== "claude") return {};
   try {
-    const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
-    const CcflareService = await import("@/services/ccflare-service");
+    const { litellmProcessManager } = await import("@/services/litellm-process-manager");
+    const LiteLLMService = await import("@/services/litellm-service");
     const { decrypt } = await import("@/lib/encryption");
 
-    if (ccflareProcessManager.isRunning()) {
-      // getPort() returns null when the process was started by another server (e.g., terminal server).
+    if (litellmProcessManager.isRunning()) {
+      // getPort() returns null when the process was started by another server instance.
       // Fall back to the user's configured port from the DB.
-      let port = ccflareProcessManager.getPort();
+      let port = litellmProcessManager.getPort();
       if (!port) {
-        const config = await CcflareService.getConfig(userId);
+        const config = await LiteLLMService.getConfig(userId);
         port = config?.port ?? null;
       }
       if (port) {
         const env: Record<string, string> = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${port}` };
-        // Inject a proxy-eligible key so Claude Code has a key for the x-api-key header
-        // (the proxy rotates it server-side, but Claude Code needs one to send requests)
-        const proxyKey = await CcflareService.getActiveProxyKey(userId);
-        if (proxyKey?.encryptedKey) {
-          env.ANTHROPIC_API_KEY = decrypt(proxyKey.encryptedKey);
+        // Inject the LiteLLM master key as ANTHROPIC_API_KEY
+        // (LiteLLM validates incoming requests against this key)
+        const proxyModel = await LiteLLMService.getActiveDefaultModel(userId);
+        if (proxyModel?.masterKey) {
+          env.ANTHROPIC_API_KEY = proxyModel.masterKey;
         }
         return env;
       }
     }
 
-    // Proxy not running — check for a direct-endpoint key to auto-inject
-    const directKey = await CcflareService.getActiveDirectKey(userId);
-    if (directKey) {
+    // Proxy not running — check for a direct-endpoint model to auto-inject
+    const directModel = await LiteLLMService.getActiveDirectModel(userId);
+    if (directModel) {
       return {
-        ANTHROPIC_BASE_URL: directKey.baseUrl,
-        ANTHROPIC_API_KEY: decrypt(directKey.encryptedKey),
+        ANTHROPIC_BASE_URL: directModel.apiBase,
+        ANTHROPIC_API_KEY: decrypt(directModel.encryptedKey),
       };
     }
-  } catch {
-    // ccflare not available
+  } catch (error) {
+    log.warn("Failed to resolve proxy env", { error: String(error) });
   }
   return {};
 }
@@ -395,8 +396,8 @@ export async function createSession(
     log.error("Failed to resolve GitHub account env", { sessionId, error: String(error) });
   }
 
-  const ccflareEnv = isAgentSession
-    ? await resolveCcflareEnv(effectiveAgentProvider, userId)
+  const proxyEnv = isAgentSession
+    ? await resolveProxyEnv(effectiveAgentProvider, userId)
     : {};
 
   // File and browser sessions don't need tmux — they're pure UI
@@ -410,11 +411,11 @@ export async function createSession(
       : {};
 
     // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately
-    // Precedence: claudeAgentDefaults < profileEnv < ccflareEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
+    // Precedence: claudeAgentDefaults < profileEnv < proxyEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
     const initialEnv: Record<string, string> = {
       ...claudeAgentDefaults,
       ...(profileEnv ?? {}),
-      ...ccflareEnv,
+      ...proxyEnv,
       ...(folderEnv ?? {}),
       ...folderGitIdentityEnv,
       ...gitCredentialEnv,
@@ -991,10 +992,10 @@ export async function resumeSession(
       const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!session.profileId);
       const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.folderId);
 
-      const ccflareEnv = await resolveCcflareEnv(agentProvider, userId);
+      const proxyEnv = await resolveProxyEnv(agentProvider, userId);
 
       await TmuxService.setSessionEnvironment(session.tmuxSessionName, {
-        ...ccflareEnv,
+        ...proxyEnv,
         ...folderGitIdentityEnv,
         ...gitCredentialEnv,
         ...ghAccountEnv,

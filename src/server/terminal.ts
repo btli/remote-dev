@@ -1618,66 +1618,68 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // --- end cmux parity endpoints ---
 
-  // --- ccflare process manager endpoints ---
+  // --- LiteLLM proxy endpoints ---
 
-  // POST /internal/ccflare/start — start the ccflare proxy process
-  if (pathname === "/internal/ccflare/start" && req.method === "POST") {
+  // POST /internal/litellm/start — start the LiteLLM proxy process
+  if (pathname === "/internal/litellm/start" && req.method === "POST") {
     try {
       const payload = await parseRequestJson(req, res);
       if (!payload) return true;
-      const port = typeof payload.port === "number" ? payload.port : 8787;
-      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
-      await ccflareProcessManager.start({ port });
-      sendJson(res, 200, ccflareProcessManager.getStatus());
+      const userId = payload.userId as string;
+      const LiteLLMService = await import("@/services/litellm-service");
+      await LiteLLMService.start(userId);
+      const { litellmProcessManager } = await import("@/services/litellm-process-manager");
+      sendJson(res, 200, litellmProcessManager.getStatus());
     } catch (err) {
-      internalLog.error("Failed to start ccflare", { error: String(err) });
-      sendJson(res, 500, { error: "Failed to start ccflare" });
+      internalLog.error("Failed to start LiteLLM", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to start LiteLLM" });
     }
     return true;
   }
 
-  // POST /internal/ccflare/stop — stop the ccflare proxy process
-  if (pathname === "/internal/ccflare/stop" && req.method === "POST") {
+  // POST /internal/litellm/stop — stop the LiteLLM proxy process
+  if (pathname === "/internal/litellm/stop" && req.method === "POST") {
     try {
-      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
-      await ccflareProcessManager.stop();
+      const { litellmProcessManager } = await import("@/services/litellm-process-manager");
+      await litellmProcessManager.stop();
       sendJson(res, 200, { success: true });
     } catch (err) {
-      internalLog.error("Failed to stop ccflare", { error: String(err) });
-      sendJson(res, 500, { error: "Failed to stop ccflare" });
+      internalLog.error("Failed to stop LiteLLM", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to stop LiteLLM" });
     }
     return true;
   }
 
-  // POST /internal/ccflare/restart — restart the ccflare proxy process
-  if (pathname === "/internal/ccflare/restart" && req.method === "POST") {
+  // POST /internal/litellm/restart — restart the LiteLLM proxy process
+  if (pathname === "/internal/litellm/restart" && req.method === "POST") {
     try {
       const payload = await parseRequestJson(req, res);
       if (!payload) return true;
-      const port = typeof payload.port === "number" ? payload.port : 8787;
-      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
-      await ccflareProcessManager.restart({ port });
-      sendJson(res, 200, ccflareProcessManager.getStatus());
+      const userId = payload.userId as string;
+      const LiteLLMService = await import("@/services/litellm-service");
+      await LiteLLMService.restart(userId);
+      const { litellmProcessManager } = await import("@/services/litellm-process-manager");
+      sendJson(res, 200, litellmProcessManager.getStatus());
     } catch (err) {
-      internalLog.error("Failed to restart ccflare", { error: String(err) });
-      sendJson(res, 500, { error: "Failed to restart ccflare" });
+      internalLog.error("Failed to restart LiteLLM", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to restart LiteLLM" });
     }
     return true;
   }
 
-  // GET /internal/ccflare/status — get the ccflare proxy status
-  if (pathname === "/internal/ccflare/status" && req.method === "GET") {
+  // GET /internal/litellm/status — get the LiteLLM proxy status
+  if (pathname === "/internal/litellm/status" && req.method === "GET") {
     try {
-      const { ccflareProcessManager } = await import("@/services/ccflare-process-manager");
-      sendJson(res, 200, ccflareProcessManager.getStatus());
+      const { litellmProcessManager } = await import("@/services/litellm-process-manager");
+      sendJson(res, 200, litellmProcessManager.getStatus());
     } catch (err) {
-      internalLog.error("Failed to get ccflare status", { error: String(err) });
-      sendJson(res, 500, { error: "Failed to get ccflare status" });
+      internalLog.error("Failed to get LiteLLM status", { error: String(err) });
+      sendJson(res, 500, { error: "Failed to get LiteLLM status" });
     }
     return true;
   }
 
-  // --- end ccflare endpoints ---
+  // --- end LiteLLM endpoints ---
 
   if (!pathname?.startsWith("/internal/scheduler/")) {
     return false;

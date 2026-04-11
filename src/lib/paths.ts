@@ -14,7 +14,9 @@
  * ├── session-gitconfigs/ # Session-scoped gitconfigs for non-profile sessions
  * ├── recordings/        # Session recordings
  * ├── server/            # Server runtime files
- * └── rdv/               # rdv CLI runtime files (.local-key)
+ * ├── rdv/               # rdv CLI runtime files (.local-key)
+ * ├── litellm/           # LiteLLM proxy config and runtime
+ * └── analytics/         # Analytics SQLite database
  */
 
 import { homedir } from "node:os";
@@ -202,11 +204,27 @@ export function getUpdateDownloadDir(): string {
 }
 
 /**
- * Get the ccflare proxy data directory path.
- * Stores ccflare's SQLite database and runtime files.
+ * Get the LiteLLM proxy data directory path.
+ * Stores generated config.yaml and runtime files.
  */
-export function getCcflareDir(): string {
-  return join(getDataDir(), "ccflare");
+export function getLiteLLMDir(): string {
+  return join(getDataDir(), "litellm");
+}
+
+/**
+ * Get the analytics data directory path.
+ * Stores the separate analytics SQLite database.
+ */
+export function getAnalyticsDir(): string {
+  return join(getDataDir(), "analytics");
+}
+
+/**
+ * Get the analytics database file path.
+ * Stored separately from the main application database (high-volume writes).
+ */
+export function getAnalyticsDatabasePath(): string {
+  return join(getAnalyticsDir(), "analytics.db");
 }
 
 /**
@@ -229,7 +247,8 @@ export function ensureDataDirectories(): void {
     getReleasesDir(),
     getDeployDir(),
     getBuildsDir(),
-    getCcflareDir(),
+    getLiteLLMDir(),
+    getAnalyticsDir(),
   ];
 
   for (const dir of dirs) {
@@ -301,8 +320,14 @@ export const AppPaths = {
   get updateDownloadDir() {
     return getUpdateDownloadDir();
   },
-  get ccflareDir() {
-    return getCcflareDir();
+  get litellmDir() {
+    return getLiteLLMDir();
+  },
+  get analyticsDir() {
+    return getAnalyticsDir();
+  },
+  get analyticsDatabasePath() {
+    return getAnalyticsDatabasePath();
   },
   ensureDirectories: ensureDataDirectories,
 } as const;
