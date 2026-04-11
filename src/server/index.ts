@@ -84,17 +84,16 @@ async function startServer(): Promise<void> {
     log.error("Failed to start auto-update orchestrator", { error: String(error) });
   }
 
-  // Auto-start ccflare proxy if configured (non-blocking — readiness not needed until first session)
-  import("../services/ccflare-service.js")
-    .then(async (CcflareService) => {
-      const ccflareAutoConfig = await CcflareService.getAutoStartConfig();
-      if (ccflareAutoConfig) {
-        const { ccflareProcessManager } = await import("../services/ccflare-process-manager.js");
-        await ccflareProcessManager.start({ port: ccflareAutoConfig.port });
-        log.info("ccflare proxy started", { port: ccflareAutoConfig.port });
+  // Auto-start LiteLLM proxy if configured (non-blocking)
+  import("../services/litellm-service.js")
+    .then(async (LiteLLMService) => {
+      const autoConfig = await LiteLLMService.getAutoStartConfig();
+      if (autoConfig) {
+        await LiteLLMService.start(autoConfig.userId);
+        log.info("LiteLLM proxy auto-started", { port: autoConfig.port });
       }
     })
-    .catch((error) => log.error("Failed to auto-start ccflare", { error: String(error) }));
+    .catch((error) => log.error("Failed to auto-start LiteLLM", { error: String(error) }));
 
   async function shutdown(signal: string): Promise<void> {
     log.info("Shutdown signal received", { signal });
@@ -110,11 +109,16 @@ async function startServer(): Promise<void> {
     }
 
     try {
-      const { ccflareProcessManager } = await import("../services/ccflare-process-manager.js");
-      await ccflareProcessManager.stop();
+      const { litellmProcessManager } = await import("../services/litellm-process-manager.js");
+      await litellmProcessManager.stop();
     } catch (error) {
-      log.error("Error stopping ccflare", { error: String(error) });
+      log.error("Error stopping LiteLLM", { error: String(error) });
     }
+
+    try {
+      const { closeAnalyticsDatabase } = await import("../infrastructure/analytics/AnalyticsDatabase.js");
+      closeAnalyticsDatabase();
+    } catch { /* ignore */ }
 
     closeLogDatabase();
     process.exit(0);

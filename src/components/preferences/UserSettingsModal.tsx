@@ -29,7 +29,7 @@ import { useFolderContext } from "@/contexts/FolderContext";
 import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appearance";
 import { TmuxSessionManager } from "@/components/tmux";
 import { AgentCLIStatusPanel } from "@/components/agents";
-import { CcflareSettingsPanel } from "@/components/ccflare/CcflareSettingsPanel";
+import { LiteLLMSettingsPanel } from "@/components/litellm/LiteLLMSettingsPanel";
 import { UpdateManager, LogViewer, MobileSetupPanel } from "@/components/system";
 import type { UpdateUserSettingsInput } from "@/types/preferences";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
@@ -380,7 +380,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
           </TabsContent>
 
           <TabsContent value="proxy" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">
-            <CcflareSettingsPanel />
+            <LiteLLMSettingsPanel />
           </TabsContent>
 
           <TabsContent value="project" className="space-y-4 mt-4 flex-1 overflow-y-auto overflow-x-hidden pr-2 isolate">

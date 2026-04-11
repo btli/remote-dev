@@ -53,20 +53,6 @@ const CONFIG = {
 type Mode = keyof typeof CONFIG;
 type SpawnedProcess = ReturnType<typeof spawn>;
 
-function ensureCcflare(): void {
-  const binaryPath = join(PROJECT_ROOT, "node_modules", "better-ccflare", "dist", "better-ccflare");
-  if (!existsSync(binaryPath)) {
-    console.log("better-ccflare binary not found, running postinstall...");
-    const result = spawnSync(["bash", join(PROJECT_ROOT, "scripts", "postinstall-ccflare.sh")], {
-      cwd: PROJECT_ROOT,
-      stdio: "inherit",
-    });
-    if (result.exitCode !== 0) {
-      console.warn("Warning: failed to install better-ccflare binary (proxy will be unavailable)");
-    }
-  }
-}
-
 function ensurePidDir(): void {
   if (!existsSync(PID_DIR)) {
     mkdirSync(PID_DIR, { recursive: true });
@@ -117,7 +103,7 @@ function prepareStandalone(): void {
     symlinkSync(publicSrc, publicDest);
   }
 
-  // Symlink node_modules into standalone so spawned binaries (better-ccflare) are accessible.
+  // Symlink node_modules/.bin into standalone so spawned binaries are accessible.
   // Standalone already has a node_modules with traced deps — symlink the .bin directory only.
   const binSrc = join(PROJECT_ROOT, "node_modules", ".bin");
   const standalonNm = join(STANDALONE_DIR, "node_modules");
@@ -125,13 +111,6 @@ function prepareStandalone(): void {
   if (existsSync(binSrc) && existsSync(standalonNm) && !existsSync(binDest)) {
     console.log("Linking node_modules/.bin for standalone mode...");
     symlinkSync(binSrc, binDest);
-  }
-  // Also symlink better-ccflare package itself (for dist/better-ccflare binary)
-  const ccflareSrc = join(PROJECT_ROOT, "node_modules", "better-ccflare");
-  const ccflareDest = join(standalonNm, "better-ccflare");
-  if (existsSync(ccflareSrc) && existsSync(standalonNm) && !existsSync(ccflareDest)) {
-    console.log("Linking better-ccflare for standalone mode...");
-    symlinkSync(ccflareSrc, ccflareDest);
   }
 }
 
@@ -308,8 +287,6 @@ async function startServer(
 
 async function start(mode: Mode): Promise<void> {
   ensurePidDir();
-  ensureCcflare();
-
   const config = CONFIG[mode];
 
   if (config.type === "port") {

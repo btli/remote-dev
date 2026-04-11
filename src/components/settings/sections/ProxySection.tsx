@@ -1,11 +1,11 @@
 "use client";
 
-import { CcflareSettingsPanel } from "@/components/ccflare/CcflareSettingsPanel";
+import { LiteLLMSettingsPanel } from "@/components/litellm/LiteLLMSettingsPanel";
 
 export function ProxySection() {
   return (
     <div className="space-y-4">
-      <CcflareSettingsPanel />
+      <LiteLLMSettingsPanel />
     </div>
   );
 }

@@ -1,0 +1,74 @@
+import { NextResponse } from "next/server";
+import * as LiteLLMAnalyticsService from "@/services/litellm-analytics-service";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api/cron");
+
+/**
+ * POST /api/cron/litellm-cleanup - Scheduled cleanup of old LiteLLM request logs
+ *
+ * This endpoint can be called by an external cron job (e.g., Vercel Cron, GitHub Actions).
+ * Supports two authentication methods:
+ * 1. Authorization header: `Bearer <CRON_SECRET>`
+ * 2. Query param: `?secret=<CRON_SECRET>`
+ *
+ * Set CRON_SECRET in your environment variables.
+ * If CRON_SECRET is not set, the endpoint is disabled for security.
+ */
+export async function POST(request: Request) {
+  try {
+    // Verify cron secret
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (!cronSecret) {
+      log.warn("CRON_SECRET not configured - cron endpoint disabled");
+      return NextResponse.json(
+        { error: "Cron endpoint not configured" },
+        { status: 503 }
+      );
+    }
+
+    // Check Authorization header
+    const authHeader = request.headers.get("authorization");
+    const bearerToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : null;
+
+    // Check query param fallback
+    const { searchParams } = new URL(request.url);
+    const querySecret = searchParams.get("secret");
+
+    const providedSecret = bearerToken || querySecret;
+
+    if (providedSecret !== cronSecret) {
+      log.warn("Invalid or missing cron secret");
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    // Run cleanup (90-day retention for request logs)
+    log.info("Running scheduled LiteLLM log cleanup...");
+    const result = LiteLLMAnalyticsService.pruneOldLogs(90);
+
+    log.info("LiteLLM cleanup complete", { deletedCount: result.deletedCount });
+
+    return NextResponse.json({
+      success: true,
+      deletedCount: result.deletedCount,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    log.error("LiteLLM log cleanup failed", { error: String(error) });
+    return NextResponse.json(
+      { error: "Cleanup failed" },
+      { status: 500 }
+    );
+  }
+}
+
+// Also support GET for simpler cron integrations (e.g., Vercel Cron)
+export async function GET(request: Request) {
+  return POST(request);
+}

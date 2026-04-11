@@ -22,7 +22,7 @@ import {
 import { LogOut } from "lucide-react";
 import Image from "next/image";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
-import { ProxyEndpointIndicator } from "@/components/ccflare/ProxyEndpointIndicator";
+import { ProxyEndpointIndicator } from "@/components/litellm/ProxyEndpointIndicator";
 
 interface HeaderProps {
   isGitHubConnected: boolean;

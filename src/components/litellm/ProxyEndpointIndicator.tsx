@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * ProxyEndpointIndicator - Header indicator showing ccflare proxy status.
+ * ProxyEndpointIndicator - Header indicator showing LiteLLM proxy status.
  *
  * Shows a compact badge when the proxy is running. Click opens Settings → Proxy.
  * Hidden on mobile via `hidden md:flex`.
@@ -13,11 +13,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useCcflareContext } from "@/contexts/CcflareContext";
+import { useLiteLLMContext } from "@/contexts/LiteLLMContext";
 import { cn } from "@/lib/utils";
 
 export function ProxyEndpointIndicator() {
-  const { isRunning, status, loading } = useCcflareContext();
+  const { isRunning, status, loading } = useLiteLLMContext();
 
   if (!isRunning || loading) return null;
 
@@ -44,7 +44,7 @@ export function ProxyEndpointIndicator() {
         </button>
       </TooltipTrigger>
       <TooltipContent>
-        <div>ccflare proxy active</div>
+        <div>LiteLLM proxy active</div>
         {status.port && <div className="text-muted-foreground">Port {status.port}</div>}
       </TooltipContent>
     </Tooltip>

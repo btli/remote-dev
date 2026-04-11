@@ -1,27 +1,25 @@
 /**
- * Ccflare Process Manager
+ * LiteLLM Process Manager
  *
- * Singleton class managing the better-ccflare child process lifecycle.
- * Handles spawning, monitoring, health checks, and graceful shutdown
- * of the Anthropic API proxy server.
+ * Singleton class managing the LiteLLM child process lifecycle.
+ * Handles spawning, monitoring, health checks, config YAML generation,
+ * and graceful shutdown of the LiteLLM AI API proxy server.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
   unlinkSync,
-  accessSync,
-  constants,
 } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@/lib/logger";
-import { getServerDir, getCcflareDir } from "@/lib/paths";
-import type { CcflareStatus } from "@/types/ccflare";
+import { getServerDir, getLiteLLMDir } from "@/lib/paths";
+import type { LiteLLMStatus } from "@/types/litellm";
 
-const log = createLogger("CcflareProcess");
+const log = createLogger("LiteLLMProcess");
 
 const GRACEFUL_SHUTDOWN_MS = 5000;
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
@@ -29,7 +27,23 @@ const READY_POLL_INTERVAL_MS = 200;
 const READY_TIMEOUT_MS = 10000;
 const DEFAULT_HOST = "127.0.0.1";
 
-class CcflareProcessManager {
+interface YamlModelEntry {
+  modelName: string;
+  litellmModel: string;
+  apiKey?: string;
+  apiBase?: string;
+  extraHeaders?: Record<string, string>;
+}
+
+interface StartConfig {
+  port: number;
+  models: YamlModelEntry[];
+  masterKey: string;
+  webhookSecret?: string;
+  nextPort: number;
+}
+
+class LiteLLMProcessManager {
   private process: ChildProcess | null = null;
   private port: number | null = null;
   private startTime: number | null = null;
@@ -38,39 +52,43 @@ class CcflareProcessManager {
   private cachedBinaryPath: string | null | undefined = undefined;
 
   /**
-   * Resolve the path to the better-ccflare binary.
-   * Prefers the local node_modules/.bin version, falls back to PATH.
+   * Resolve the path to the litellm binary via `which`.
+   * Caches the result on success; returns null (uncached) on failure
+   * so subsequent calls retry resolution.
    */
   private resolveBinaryPath(): string | null {
     if (this.cachedBinaryPath !== undefined) return this.cachedBinaryPath;
 
-    // Try multiple locations — standalone mode changes cwd to .next/standalone/
-    const candidates = [
-      join(process.cwd(), "node_modules", ".bin", "better-ccflare"),
-      // Project root (for standalone mode where cwd differs)
-      join(__dirname, "..", "..", "node_modules", ".bin", "better-ccflare"),
-    ];
-
-    for (const candidate of candidates) {
-      try {
-        accessSync(candidate, constants.X_OK);
-        this.cachedBinaryPath = candidate;
-        return candidate;
-      } catch {
-        // Not found or not executable
+    try {
+      const result = execFileSync("which", ["litellm"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      }).trim();
+      if (result) {
+        this.cachedBinaryPath = result;
+        return result;
       }
+    } catch {
+      // Not found on PATH
     }
 
-    // Don't cache negative result — binary may be installed later
+    // Don't cache negative result -- binary may be installed later
     return null;
   }
 
   private getPidFilePath(): string {
-    return join(getServerDir(), "ccflare.pid");
+    return join(getServerDir(), "litellm.pid");
   }
 
-  private getDbPath(): string {
-    return join(getCcflareDir(), "better-ccflare.db");
+  private getConfigDir(): string {
+    return getLiteLLMDir();
+  }
+
+  /**
+   * Get the path to the generated config.yaml file.
+   */
+  getConfigYamlPath(): string {
+    return join(this.getConfigDir(), "config.yaml");
   }
 
   private ensureDirectories(): void {
@@ -78,9 +96,9 @@ class CcflareProcessManager {
     if (!existsSync(serverDir)) {
       mkdirSync(serverDir, { recursive: true });
     }
-    const ccflareDir = getCcflareDir();
-    if (!existsSync(ccflareDir)) {
-      mkdirSync(ccflareDir, { recursive: true });
+    const litellmDir = this.getConfigDir();
+    if (!existsSync(litellmDir)) {
+      mkdirSync(litellmDir, { recursive: true });
     }
   }
 
@@ -138,7 +156,7 @@ class CcflareProcessManager {
     }
 
     // Kill orphaned process and wait for it to release the port
-    log.warn("Killing orphaned ccflare process from previous session", { pid });
+    log.warn("Killing orphaned litellm process from previous session", { pid });
     try {
       process.kill(pid, "SIGTERM");
     } catch {
@@ -151,22 +169,74 @@ class CcflareProcessManager {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     if (this.isProcessAlive(pid)) {
-      log.warn("Force killing orphaned ccflare process", { pid });
+      log.warn("Force killing orphaned litellm process", { pid });
       try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
     }
     this.removePid();
   }
 
   /**
-   * Start the ccflare proxy server.
+   * Generate the LiteLLM config.yaml from the given model entries and settings.
+   * Writes to `getLiteLLMDir()/config.yaml`.
    */
-  async start(config: { port: number }): Promise<void> {
+  private generateConfigYaml(config: StartConfig): string {
+    const lines: string[] = [];
+
+    // model_list
+    lines.push("model_list:");
+    for (const model of config.models) {
+      lines.push(`  - model_name: ${yamlQuote(model.modelName)}`);
+      lines.push("    litellm_params:");
+      lines.push(`      model: ${yamlQuote(model.litellmModel)}`);
+      if (model.apiKey) {
+        lines.push(`      api_key: ${yamlQuote(model.apiKey)}`);
+      }
+      if (model.apiBase) {
+        lines.push(`      api_base: ${yamlQuote(model.apiBase)}`);
+      }
+      if (model.extraHeaders && Object.keys(model.extraHeaders).length > 0) {
+        lines.push("      extra_headers:");
+        for (const [key, value] of Object.entries(model.extraHeaders)) {
+          lines.push(`        ${yamlQuote(key)}: ${yamlQuote(value)}`);
+        }
+      }
+    }
+
+    // litellm_settings
+    lines.push("");
+    lines.push("litellm_settings:");
+    lines.push("  forward_client_headers_to_llm_api: true");
+    lines.push('  success_callback: ["generic"]');
+    lines.push('  failure_callback: ["generic"]');
+
+    // general_settings
+    lines.push("");
+    lines.push("general_settings:");
+    lines.push(`  master_key: ${yamlQuote(config.masterKey)}`);
+    lines.push("  alerting_args:");
+    lines.push(`    webhook_url: ${yamlQuote(`http://127.0.0.1:${config.nextPort}/api/litellm/webhook`)}`);
+    if (config.webhookSecret) {
+      lines.push("    webhook_headers:");
+      lines.push(`      x-webhook-secret: ${yamlQuote(config.webhookSecret)}`);
+    }
+
+    const yaml = lines.join("\n") + "\n";
+    const configPath = this.getConfigYamlPath();
+    writeFileSync(configPath, yaml, { encoding: "utf-8", mode: 0o600 });
+    log.info("Generated LiteLLM config.yaml", { path: configPath, modelCount: config.models.length });
+    return configPath;
+  }
+
+  /**
+   * Start the LiteLLM proxy server.
+   */
+  async start(config: StartConfig): Promise<void> {
     if (this.starting) {
       log.warn("Start already in progress, ignoring duplicate call");
       return;
     }
     if (this.process !== null) {
-      log.warn("Ccflare is already running", {
+      log.warn("LiteLLM is already running", {
         pid: this.process.pid,
         port: this.port,
       });
@@ -181,37 +251,33 @@ class CcflareProcessManager {
 
       const binaryPath = this.resolveBinaryPath();
       if (!binaryPath) {
-        throw new Error("better-ccflare binary not found");
+        throw new Error("litellm binary not found — is it installed? (pip install litellm)");
       }
 
-      const dbPath = this.getDbPath();
+      const configYamlPath = this.generateConfigYaml(config);
       const port = config.port;
 
-      log.info("Starting ccflare proxy", {
+      log.info("Starting LiteLLM proxy", {
         binaryPath,
         port,
         host: DEFAULT_HOST,
-        dbPath,
+        configPath: configYamlPath,
       });
 
-      const spawnEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        PORT: String(port),
-        BETTER_CCFLARE_HOST: DEFAULT_HOST,
-        BETTER_CCFLARE_DB_PATH: dbPath,
-      };
-
-      const child: ChildProcess = spawn(binaryPath, ["--serve"], {
-        env: spawnEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
-      } as import("node:child_process").SpawnOptions);
+      const child: ChildProcess = spawn(
+        binaryPath,
+        ["--config", configYamlPath, "--port", String(port), "--host", DEFAULT_HOST],
+        {
+          env: { ...process.env },
+          stdio: ["ignore", "pipe", "pipe"],
+          detached: false,
+        } as import("node:child_process").SpawnOptions,
+      );
 
       // Attach error/exit listeners immediately to prevent unhandled ENOENT
       child.on("error", (err: Error) => {
-        log.error("Ccflare process error", { error: String(err) });
+        log.error("LiteLLM process error", { error: String(err) });
         // Clear cached binary path on exec errors so it re-resolves
-        // (e.g., after postinstall replaces the binary for the current platform)
         if ((err as NodeJS.ErrnoException).code === "ENOEXEC" || (err as NodeJS.ErrnoException).code === "ENOENT") {
           this.cachedBinaryPath = undefined;
         }
@@ -220,7 +286,7 @@ class CcflareProcessManager {
 
       // Handle process exit
       child.on("exit", (code: number | null, signal: string | null) => {
-        log.info("Ccflare process exited", {
+        log.info("LiteLLM process exited", {
           code,
           signal,
           pid: child.pid,
@@ -229,7 +295,7 @@ class CcflareProcessManager {
       });
 
       if (!child.pid) {
-        throw new Error("Failed to spawn ccflare process — no PID assigned");
+        throw new Error("Failed to spawn litellm process — no PID assigned");
       }
 
       this.process = child;
@@ -237,7 +303,7 @@ class CcflareProcessManager {
       this.startTime = Date.now();
       this.writePid(child.pid);
 
-      log.info("Ccflare process spawned", { pid: child.pid, port });
+      log.info("LiteLLM process spawned", { pid: child.pid, port });
 
       // Pipe stdout/stderr to structured logger
       child.stdout?.on("data", (data: Buffer) => {
@@ -268,7 +334,7 @@ class CcflareProcessManager {
     const deadline = Date.now() + READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (this.process === null) {
-        log.warn("Ccflare process exited before becoming ready");
+        log.warn("LiteLLM process exited before becoming ready");
         return;
       }
       try {
@@ -279,7 +345,7 @@ class CcflareProcessManager {
         });
         clearTimeout(timeout);
         if (response.ok) {
-          log.debug("Ccflare proxy ready");
+          log.debug("LiteLLM proxy ready");
           return;
         }
       } catch {
@@ -287,13 +353,13 @@ class CcflareProcessManager {
       }
       await new Promise((resolve) => setTimeout(resolve, READY_POLL_INTERVAL_MS));
     }
-    log.warn("Ccflare proxy did not become ready within timeout", {
+    log.warn("LiteLLM proxy did not become ready within timeout", {
       timeoutMs: READY_TIMEOUT_MS,
     });
   }
 
   /**
-   * Stop the ccflare proxy server.
+   * Stop the LiteLLM proxy server.
    * Sends SIGTERM and waits up to 5 seconds before SIGKILL.
    */
   async stop(): Promise<void> {
@@ -307,18 +373,18 @@ class CcflareProcessManager {
     try {
       const pid = this.process?.pid ?? this.readPid();
       if (pid === null || pid === undefined) {
-        log.debug("No ccflare process to stop");
+        log.debug("No litellm process to stop");
         this.resetState();
         return;
       }
 
       if (!this.isProcessAlive(pid)) {
-        log.debug("Ccflare process already exited", { pid });
+        log.debug("LiteLLM process already exited", { pid });
         this.resetState();
         return;
       }
 
-      log.info("Stopping ccflare process", { pid });
+      log.info("Stopping LiteLLM process", { pid });
 
       // Send SIGTERM for graceful shutdown
       try {
@@ -337,7 +403,7 @@ class CcflareProcessManager {
 
       // Force kill if still alive
       if (this.isProcessAlive(pid)) {
-        log.warn("Force killing ccflare process", { pid });
+        log.warn("Force killing LiteLLM process", { pid });
         try {
           process.kill(pid, "SIGKILL");
         } catch {
@@ -350,22 +416,22 @@ class CcflareProcessManager {
       this.startTime = null;
       this.removePid();
 
-      log.info("Ccflare process stopped", { pid });
+      log.info("LiteLLM process stopped", { pid });
     } finally {
       this.stopping = false;
     }
   }
 
   /**
-   * Restart the ccflare proxy server.
+   * Restart the LiteLLM proxy server.
    */
-  async restart(config: { port: number }): Promise<void> {
+  async restart(config: StartConfig): Promise<void> {
     await this.stop();
     await this.start(config);
   }
 
   /**
-   * Check if the ccflare process is currently running.
+   * Check if the LiteLLM process is currently running.
    */
   isRunning(): boolean {
     if (this.process !== null && this.process.pid !== undefined) {
@@ -382,16 +448,16 @@ class CcflareProcessManager {
   }
 
   /**
-   * Get the current port ccflare is listening on.
+   * Get the current port LiteLLM is listening on.
    */
   getPort(): number | null {
     return this.port;
   }
 
   /**
-   * Get the full status of the ccflare process.
+   * Get the full status of the LiteLLM process.
    */
-  getStatus(): CcflareStatus {
+  getStatus(): LiteLLMStatus {
     const running = this.isRunning();
     const pid = this.process?.pid ?? this.readPid();
 
@@ -400,7 +466,7 @@ class CcflareProcessManager {
       running,
       port: running ? this.port : null,
       pid: running && pid ? pid : null,
-      version: null, // Populated by ccflare-service via checkInstallation
+      version: null, // Populated by litellm-service via checkInstallation
       uptime:
         running && this.startTime !== null
           ? Math.floor((Date.now() - this.startTime) / 1000)
@@ -421,14 +487,14 @@ class CcflareProcessManager {
       const controller = new AbortController();
       const timeout = setTimeout(
         () => controller.abort(),
-        HEALTH_CHECK_TIMEOUT_MS
+        HEALTH_CHECK_TIMEOUT_MS,
       );
 
       const response = await fetch(
         `http://${DEFAULT_HOST}:${this.port}/health`,
         {
           signal: controller.signal,
-        }
+        },
       );
 
       clearTimeout(timeout);
@@ -439,18 +505,63 @@ class CcflareProcessManager {
   }
 
   /**
-   * Get the binary path for use by other services (e.g., key registration).
+   * Get the binary path for use by other services.
    */
   getBinaryPath(): string | null {
     return this.resolveBinaryPath();
   }
-
-  /**
-   * Get the database path for use by other services.
-   */
-  getDatabasePath(): string {
-    return this.getDbPath();
-  }
 }
 
-export const ccflareProcessManager = new CcflareProcessManager();
+/**
+ * Quote a YAML value if it contains special characters, or return as-is for simple values.
+ */
+function yamlQuote(value: string): string {
+  // Quote if the value contains characters that could be problematic in YAML
+  if (
+    value === "" ||
+    value.includes(":") ||
+    value.includes("#") ||
+    value.includes("'") ||
+    value.includes('"') ||
+    value.includes("{") ||
+    value.includes("}") ||
+    value.includes("[") ||
+    value.includes("]") ||
+    value.includes(",") ||
+    value.includes("&") ||
+    value.includes("*") ||
+    value.includes("!") ||
+    value.includes("|") ||
+    value.includes(">") ||
+    value.includes("%") ||
+    value.includes("@") ||
+    value.includes("`") ||
+    value.startsWith(" ") ||
+    value.endsWith(" ") ||
+    value === "true" ||
+    value === "false" ||
+    value === "null" ||
+    value === "yes" ||
+    value === "no"
+  ) {
+    // Use double quotes and escape internal double quotes, backslashes, and newlines
+    const escaped = value
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r");
+    return `"${escaped}"`;
+  }
+  // Also quote values containing newlines even if no other special chars
+  if (value.includes("\n") || value.includes("\r")) {
+    const escaped = value
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r");
+    return `"${escaped}"`;
+  }
+  return value;
+}
+
+export const litellmProcessManager = new LiteLLMProcessManager();

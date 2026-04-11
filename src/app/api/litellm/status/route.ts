@@ -3,10 +3,10 @@ import { withAuth, errorResponse } from "@/lib/api";
 import { resolveTerminalServerUrl } from "@/lib/terminal-server-url";
 import { createLogger } from "@/lib/logger";
 
-const log = createLogger("api/ccflare/status");
+const log = createLogger("api/litellm/status");
 
 /**
- * GET /api/ccflare/status - Get ccflare proxy status
+ * GET /api/litellm/status - Get LiteLLM proxy status
  *
  * Proxies to the terminal server where the process manager tracks the running state.
  */
@@ -14,7 +14,7 @@ const log = createLogger("api/ccflare/status");
 export const GET = withAuth(async (_request, { userId: _userId }) => {
   try {
     const baseUrl = resolveTerminalServerUrl();
-    const resp = await fetch(`${baseUrl}/internal/ccflare/status`, {
+    const resp = await fetch(`${baseUrl}/internal/litellm/status`, {
       method: "GET",
     });
 
@@ -37,14 +37,14 @@ export const GET = withAuth(async (_request, { userId: _userId }) => {
 
     if (!resp.ok) {
       return errorResponse(
-        (data.error as string) ?? "Failed to get ccflare status",
+        (data.error as string) ?? "Failed to get LiteLLM status",
         resp.status
       );
     }
 
     return NextResponse.json(data);
   } catch (error) {
-    log.error("Failed to get ccflare status", { error: String(error) });
+    log.error("Failed to get LiteLLM status", { error: String(error) });
     // If the terminal server is unreachable, return a safe default
     return NextResponse.json({
       installed: false,
