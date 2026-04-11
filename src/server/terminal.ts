@@ -463,6 +463,10 @@ function createTmuxSession(
   // Prevent tmux from resizing window to smallest attached client
   // This fixes the issue where switching tabs causes resize
   execFileSync("tmux", ["set-option", "-t", sessionName, "aggressive-resize", "off"], { stdio: "pipe" });
+
+  // Disable tmux status bar — it consumes 1 row and causes the bottom line
+  // of terminal content to be clipped. Session info is already shown in the app UI.
+  execFileSync("tmux", ["set-option", "-t", sessionName, "status", "off"], { stdio: "pipe" });
 }
 
 /**
