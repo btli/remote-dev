@@ -18,10 +18,14 @@ describe("Android release signing", () => {
 
   it("supports env vars, falls back to key.properties, and fails clearly for misconfigured release builds", () => {
     const buildGradle = readFileSync(buildGradlePath, "utf-8");
+    const compactBuildGradle = buildGradle.replace(/\s+/g, " ");
 
     expect(buildGradle).toContain('rootProject.file("key.properties")');
-    expect(buildGradle).toMatch(
-      /providers\.environmentVariable\(envVar\).*releaseSigningProperties\.getProperty\(key\)/s
+    expect(compactBuildGradle).toContain(
+      "providers.environmentVariable(envVar).orNull?.trim()"
+    );
+    expect(compactBuildGradle).toContain(
+      "releaseSigningProperties.getProperty(key)?.trim()?.takeIf"
     );
     expect(buildGradle).toContain('it.contains("Release", ignoreCase = true)');
     expect(buildGradle).toContain("throw GradleException(");
