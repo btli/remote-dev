@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { SetupConfiguration } from "../../src/components/setup/types";
+import type { SetupConfiguration } from "./preload";
 
 const SETUP_CONFIG_FILE = "setup-config.json";
 

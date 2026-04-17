@@ -16,7 +16,7 @@ import { createTray, destroyTray, showMainWindow, getMainWindow } from "./tray";
 import AutoUpdater from "./auto-updater";
 import { CloudflaredService, CloudflaredInfo, TunnelInfo } from "./cloudflared";
 import { loadSetupConfig, saveSetupConfig } from "./setup-config-store";
-import type { SetupConfiguration } from "../../src/components/setup/types";
+import type { SetupConfiguration } from "./preload";
 
 const execFileAsync = promisify(execFile);
 
