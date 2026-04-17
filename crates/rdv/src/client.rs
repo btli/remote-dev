@@ -64,17 +64,28 @@ impl Client {
 
     // ── generic verbs ────────────────────────────────────────────────
 
-    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, Box<dyn std::error::Error>> {
+    pub async fn get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T, Box<dyn std::error::Error>> {
         let resp = self.request(reqwest::Method::GET, path).send().await?;
         handle_response(resp).await
     }
 
-    pub async fn get_with_query<T, Q>(&self, path: &str, query: &Q) -> Result<T, Box<dyn std::error::Error>>
+    pub async fn get_with_query<T, Q>(
+        &self,
+        path: &str,
+        query: &Q,
+    ) -> Result<T, Box<dyn std::error::Error>>
     where
         T: DeserializeOwned,
         Q: Serialize + ?Sized,
     {
-        let resp = self.request(reqwest::Method::GET, path).query(query).send().await?;
+        let resp = self
+            .request(reqwest::Method::GET, path)
+            .query(query)
+            .send()
+            .await?;
         handle_response(resp).await
     }
 
@@ -87,16 +98,36 @@ impl Client {
         }
     }
 
-    pub async fn post_empty(&self, path: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    pub async fn get_text(&self, path: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let resp = self.request(reqwest::Method::GET, path).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.text().await?)
+        } else {
+            Err(format_http_error(resp).await.into())
+        }
+    }
+
+    pub async fn post_empty(
+        &self,
+        path: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let resp = self.request(reqwest::Method::POST, path).send().await?;
         handle_response(resp).await
     }
 
-    pub async fn post_empty_with_query<Q>(&self, path: &str, query: &Q) -> Result<serde_json::Value, Box<dyn std::error::Error>>
+    pub async fn post_empty_with_query<Q>(
+        &self,
+        path: &str,
+        query: &Q,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>>
     where
         Q: Serialize + ?Sized,
     {
-        let resp = self.request(reqwest::Method::POST, path).query(query).send().await?;
+        let resp = self
+            .request(reqwest::Method::POST, path)
+            .query(query)
+            .send()
+            .await?;
         handle_response(resp).await
     }
 
@@ -105,11 +136,18 @@ impl Client {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
-        let resp = self.request(reqwest::Method::PATCH, path).json(body).send().await?;
+        let resp = self
+            .request(reqwest::Method::PATCH, path)
+            .json(body)
+            .send()
+            .await?;
         handle_response(resp).await
     }
 
-    pub async fn delete(&self, path: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    pub async fn delete(
+        &self,
+        path: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let resp = self.request(reqwest::Method::DELETE, path).send().await?;
         handle_response(resp).await
     }
@@ -119,7 +157,11 @@ impl Client {
         path: &str,
         body: &B,
     ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        let resp = self.request(reqwest::Method::DELETE, path).json(body).send().await?;
+        let resp = self
+            .request(reqwest::Method::DELETE, path)
+            .json(body)
+            .send()
+            .await?;
         handle_response(resp).await
     }
 
@@ -129,7 +171,11 @@ impl Client {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        let resp = self.request(reqwest::Method::POST, path).json(body).send().await?;
+        let resp = self
+            .request(reqwest::Method::POST, path)
+            .json(body)
+            .send()
+            .await?;
         handle_response(resp).await
     }
 
@@ -163,7 +209,9 @@ async fn format_http_error(resp: reqwest::Response) -> String {
 }
 
 /// Turn an HTTP response into a deserialized value or a descriptive error.
-async fn handle_response<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, Box<dyn std::error::Error>> {
+async fn handle_response<T: DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T, Box<dyn std::error::Error>> {
     let status = resp.status();
     if status.is_success() {
         let body = resp.text().await?;
