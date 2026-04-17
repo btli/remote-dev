@@ -27,10 +27,8 @@ import { DependencyStatus } from "./types";
 
 function DependencyCard({
   dependency,
-  onInstall,
 }: {
   dependency: DependencyStatus;
-  onInstall: () => void;
 }) {
   const copyCommand = async (command: string) => {
     await navigator.clipboard.writeText(command);
@@ -86,6 +84,9 @@ function DependencyCard({
 
           {!dependency.installed && dependency.status !== "installing" && (
             <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                Install this dependency manually, then re-check.
+              </p>
               {dependency.installCommand && (
                 <div className="flex items-center gap-2 p-2 bg-black/20 rounded">
                   <code className="flex-1 text-xs font-mono overflow-x-auto">
@@ -101,23 +102,18 @@ function DependencyCard({
                   </Button>
                 </div>
               )}
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={onInstall}>
-                  Auto Install
+              {dependency.downloadUrl && (
+                <Button size="sm" variant="ghost" asChild>
+                  <a
+                    href={dependency.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-1" />
+                    Manual Install
+                  </a>
                 </Button>
-                {dependency.downloadUrl && (
-                  <Button size="sm" variant="ghost" asChild>
-                    <a
-                      href={dependency.downloadUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <ExternalLink className="h-4 w-4 mr-1" />
-                      Manual Install
-                    </a>
-                  </Button>
-                )}
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -147,7 +143,6 @@ export function DependenciesStep() {
     isLoading,
     error,
     checkDependencies,
-    installDependency,
     nextStep,
     prevStep,
     canProceed,
@@ -239,11 +234,7 @@ export function DependenciesStep() {
           {/* Dependency cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
             {dependencies.map((dep) => (
-              <DependencyCard
-                key={dep.name}
-                dependency={dep}
-                onInstall={() => installDependency(dep.name)}
-              />
+              <DependencyCard key={dep.name} dependency={dep} />
             ))}
           </div>
 

@@ -15,6 +15,7 @@ import React, {
   useContext,
   useReducer,
   useCallback,
+  useEffect,
   ReactNode,
 } from "react";
 import {
@@ -35,6 +36,10 @@ interface ElectronSetupAPI {
   installDependency: (name: string) => Promise<{ success: boolean; error?: string }>;
   selectDirectory: () => Promise<string | null>;
   saveSetupConfig: (config: SetupConfiguration) => Promise<void>;
+  getSetupConfig: () => Promise<{
+    isComplete: boolean;
+    config?: SetupConfiguration;
+  }>;
 }
 
 // Helper to get electron API if available
@@ -120,6 +125,56 @@ const SetupWizardContext = createContext<SetupContextValue | null>(null);
 // Provider component
 export function SetupWizardProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(setupReducer, initialState);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function hydrateSetupState() {
+      dispatch({ type: "SET_LOADING", isLoading: true });
+
+      try {
+        const electron = getElectronAPI();
+        const setupState = electron
+          ? await electron.getSetupConfig()
+          : await fetch("/api/setup/complete").then(async (response) => {
+              if (!response.ok) {
+                throw new Error("Failed to load setup configuration");
+              }
+
+              return (await response.json()) as {
+                isComplete: boolean;
+                config?: SetupConfiguration;
+              };
+            });
+
+        if (
+          isCancelled ||
+          !setupState.isComplete ||
+          !setupState.config
+        ) {
+          return;
+        }
+
+        dispatch({
+          type: "UPDATE_CONFIGURATION",
+          config: setupState.config,
+        });
+        dispatch({ type: "SET_COMPLETE" });
+      } catch {
+        // Ignore hydration failures and continue with default setup flow.
+      } finally {
+        if (!isCancelled) {
+          dispatch({ type: "SET_LOADING", isLoading: false });
+        }
+      }
+    }
+
+    void hydrateSetupState();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   // Navigation
   const goToStep = useCallback((step: SetupStep) => {

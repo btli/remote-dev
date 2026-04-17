@@ -15,6 +15,8 @@ import ProcessManager, { ServerStatus } from "./process-manager";
 import { createTray, destroyTray, showMainWindow, getMainWindow } from "./tray";
 import AutoUpdater from "./auto-updater";
 import { CloudflaredService, CloudflaredInfo, TunnelInfo } from "./cloudflared";
+import { loadSetupConfig, saveSetupConfig } from "./setup-config-store";
+import type { SetupConfiguration } from "../../src/components/setup/types";
 
 const execFileAsync = promisify(execFile);
 
@@ -345,15 +347,12 @@ function setupIpcHandlers(): void {
     return result.filePaths[0];
   });
 
-  ipcMain.handle("save-setup-config", async (_event, config) => {
-    // In a real implementation, this would save to a config file or database
-    console.log("[Main] Saving setup config:", config);
-    // For now, just log it - the web app handles actual persistence
+  ipcMain.handle("save-setup-config", async (_event, config: SetupConfiguration) => {
+    await saveSetupConfig(config, Config.userDataPath);
   });
 
   ipcMain.handle("get-setup-config", async () => {
-    // Check if setup is complete
-    return { isComplete: false };
+    return loadSetupConfig(Config.userDataPath);
   });
 
   // Cloudflared handlers
