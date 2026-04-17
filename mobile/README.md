@@ -1,17 +1,49 @@
-# remote_dev
+# Remote Dev Mobile
 
-A new Flutter project.
+Flutter client for connecting to Remote Dev servers from Android and iOS.
 
-## Getting Started
+## Local development
 
-This project is a starting point for a Flutter application.
+```bash
+cd mobile
+flutter pub get
+flutter run
+```
 
-A few resources to get you started if this is your first Flutter project:
+## Android release signing
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Release builds require a dedicated keystore. The app no longer falls back to the
+debug keystore for `release`.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Provide signing secrets in one of these ways:
+
+1. Environment variables
+
+```bash
+export RDV_ANDROID_KEYSTORE_PATH=/absolute/path/to/remote-dev-release.jks
+export RDV_ANDROID_KEYSTORE_PASSWORD=...
+export RDV_ANDROID_KEY_ALIAS=remote-dev
+export RDV_ANDROID_KEY_PASSWORD=...
+```
+
+2. A local `mobile/android/key.properties` file
+
+```properties
+storeFile=/absolute/path/to/remote-dev-release.jks
+storePassword=...
+keyAlias=remote-dev
+keyPassword=...
+```
+
+If both are present, the environment variables win.
+
+Do not commit `mobile/android/key.properties` or the keystore itself. In CI,
+write the keystore to a temporary path from secret storage, then export the
+same `RDV_ANDROID_*` variables before running the release build.
+
+With signing configured, build the Android release artifact with:
+
+```bash
+cd mobile
+flutter build appbundle --release
+```
