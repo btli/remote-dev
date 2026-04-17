@@ -24,17 +24,17 @@ import {
 } from "lucide-react";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import type { ProfileSecretsProviderType, ProfileSecretsConfig } from "@/types/agent";
+import { SUPPORTED_SECRETS_PROVIDERS } from "@/types/secrets";
 
 interface ProfileSecretsTabProps {
   profileId: string;
 }
 
-const PROVIDER_OPTIONS: { value: ProfileSecretsProviderType; label: string; available: boolean }[] = [
-  { value: "phase", label: "Phase", available: true },
-  { value: "vault", label: "HashiCorp Vault", available: false },
-  { value: "aws-secrets-manager", label: "AWS Secrets Manager", available: false },
-  { value: "1password", label: "1Password", available: false },
-];
+const PROVIDER_OPTIONS: { value: ProfileSecretsProviderType; label: string }[] =
+  SUPPORTED_SECRETS_PROVIDERS.map((provider) => ({
+    value: provider.type as ProfileSecretsProviderType,
+    label: provider.name,
+  }));
 
 export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
   const { getSecretsConfig, setSecretsConfig, deleteSecretsConfig, toggleSecretsEnabled } =
@@ -239,15 +239,9 @@ export function ProfileSecretsTab({ profileId }: ProfileSecretsTabProps) {
               <SelectItem
                 key={option.value}
                 value={option.value}
-                disabled={!option.available}
                 className="text-foreground focus:bg-primary/20"
               >
-                <span className="flex items-center gap-2">
-                  {option.label}
-                  {!option.available && (
-                    <span className="text-xs text-muted-foreground/70">(Coming soon)</span>
-                  )}
-                </span>
+                <span className="flex items-center gap-2">{option.label}</span>
               </SelectItem>
             ))}
           </SelectContent>

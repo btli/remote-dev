@@ -35,7 +35,7 @@ import { useSecretsContext } from "@/contexts/SecretsContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useFolderContext } from "@/contexts/FolderContext";
 import {
-  SECRETS_PROVIDERS,
+  SUPPORTED_SECRETS_PROVIDERS,
   getProviderInfo,
   type SecretsProviderType,
   type SecretsValidationResult,
@@ -348,23 +348,17 @@ export function SecretsSection() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-card border-border">
-                      {SECRETS_PROVIDERS.map((p) => (
+                      {SUPPORTED_SECRETS_PROVIDERS.map((p) => (
                         <SelectItem
                           key={p.type}
                           value={p.type}
                           className="text-foreground focus:bg-primary/20"
-                          disabled={p.type !== "phase"}
                         >
                           <div className="flex flex-col">
                             <span>{p.name}</span>
                             <span className="text-xs text-muted-foreground">
                               {p.description}
                             </span>
-                            {p.type !== "phase" && (
-                              <span className="text-xs text-amber-400">
-                                Coming soon
-                              </span>
-                            )}
                           </div>
                         </SelectItem>
                       ))}

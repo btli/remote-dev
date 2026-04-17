@@ -114,6 +114,7 @@ export interface SecretsProviderInfo {
   name: string;
   description: string;
   icon: string;
+  supported: boolean;
   configFields: SecretsConfigField[];
 }
 
@@ -139,6 +140,7 @@ export const SECRETS_PROVIDERS: SecretsProviderInfo[] = [
     name: "Phase",
     description: "End-to-end encrypted secrets management",
     icon: "shield",
+    supported: true,
     configFields: [
       {
         key: "serviceToken",
@@ -182,6 +184,7 @@ export const SECRETS_PROVIDERS: SecretsProviderInfo[] = [
     name: "HashiCorp Vault",
     description: "Manage secrets and protect sensitive data",
     icon: "lock",
+    supported: false,
     configFields: [
       {
         key: "url",
@@ -211,6 +214,7 @@ export const SECRETS_PROVIDERS: SecretsProviderInfo[] = [
     name: "AWS Secrets Manager",
     description: "Rotate, manage, and retrieve database credentials and secrets",
     icon: "cloud",
+    supported: false,
     configFields: [
       {
         key: "region",
@@ -247,6 +251,7 @@ export const SECRETS_PROVIDERS: SecretsProviderInfo[] = [
     name: "1Password",
     description: "Enterprise password management",
     icon: "key",
+    supported: false,
     configFields: [
       {
         key: "serviceAccountToken",
@@ -272,6 +277,10 @@ export const SECRETS_PROVIDERS: SecretsProviderInfo[] = [
     ],
   },
 ];
+
+export const SUPPORTED_SECRETS_PROVIDERS = SECRETS_PROVIDERS.filter(
+  (provider) => provider.supported
+);
 
 /**
  * Get provider info by type
