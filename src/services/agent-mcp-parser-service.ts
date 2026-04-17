@@ -282,6 +282,41 @@ function parseTomlInlineTable(
   return result;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function updateCodexServerEnabledState(
+  content: string,
+  serverName: string,
+  enabled: boolean
+): string {
+  const sectionRegex = new RegExp(
+    `(\\[mcp_servers\\.${escapeRegExp(serverName)}\\]\\s*\\n)([\\s\\S]*?)(?=\\n\\[|$)`
+  );
+  const match = sectionRegex.exec(content);
+
+  if (!match) {
+    throw new Error(`Server ${serverName} not found in config`);
+  }
+
+  const [fullMatch, sectionHeader, sectionBody] = match;
+  const disabledLine = `disabled = ${enabled ? "false" : "true"}`;
+  const disabledRegex = /^disabled\s*=\s*(true|false)\s*$/m;
+
+  let updatedBody: string;
+  if (disabledRegex.test(sectionBody)) {
+    updatedBody = sectionBody.replace(disabledRegex, disabledLine);
+  } else {
+    const trimmedBody = sectionBody.replace(/\s*$/, "");
+    updatedBody = trimmedBody
+      ? `${trimmedBody}\n${disabledLine}\n`
+      : `${disabledLine}\n`;
+  }
+
+  return content.replace(fullMatch, `${sectionHeader}${updatedBody}`);
+}
+
 /**
  * Parse MCP servers for a session.
  */
@@ -408,9 +443,25 @@ export async function updateMCPServerConfig(
 
     await writeFile(sourceFile, JSON.stringify(config, null, 2), "utf-8");
   } else if (agentProvider === "codex") {
-    // TOML format - for now, only support simple updates
-    // Full TOML editing would require a proper parser
-    throw new Error("TOML config editing not yet implemented");
+    if (
+      updates.command !== undefined ||
+      updates.args !== undefined ||
+      updates.env !== undefined
+    ) {
+      throw new Error("Codex MCP config updates currently support enabled only");
+    }
+
+    if (updates.enabled === undefined) {
+      return;
+    }
+
+    const updatedContent = updateCodexServerEnabledState(
+      content,
+      serverName,
+      updates.enabled
+    );
+
+    await writeFile(sourceFile, updatedContent, "utf-8");
   }
 }
 
