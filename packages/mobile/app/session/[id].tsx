@@ -14,9 +14,10 @@ import { TerminalView } from "@/presentation/components/TerminalView";
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { getSession, updateSession } = useSessionStore();
+  const { getSession, restartAgent } = useSessionStore();
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [ctrlActive, setCtrlActive] = useState(false);
+  const [restartingAgent, setRestartingAgent] = useState(false);
   const wsManagerRef = useRef(getWebSocketManager());
   const isMountedRef = useRef(true);
 
@@ -79,6 +80,25 @@ export default function SessionScreen() {
     setCtrlActive((prev) => !prev);
   }, []);
 
+  const handleRestartAgent = useCallback(async () => {
+    setRestartingAgent(true);
+    setConnectionError(null);
+
+    try {
+      await restartAgent(id);
+
+      const apiClient = getApiClient();
+      const token = await apiClient.getSessionToken(id);
+      await wsManagerRef.current.connect(id, token);
+    } catch (error) {
+      setConnectionError(
+        error instanceof Error ? error.message : "Failed to restart agent"
+      );
+    } finally {
+      setRestartingAgent(false);
+    }
+  }, [id, restartAgent]);
+
   if (!session) {
     return (
       <View style={styles.centered}>
@@ -131,13 +151,17 @@ export default function SessionScreen() {
             <View style={styles.exitActions}>
               <TouchableOpacity
                 style={styles.restartButton}
-                onPress={() => {
-                  // TODO: Restart agent
-                  updateSession(id, { agentExitState: "running" });
-                }}
+                onPress={handleRestartAgent}
+                disabled={restartingAgent}
               >
-                <Ionicons name="refresh" size={20} color="#1a1b26" />
-                <Text style={styles.restartText}>Restart</Text>
+                {restartingAgent ? (
+                  <ActivityIndicator size="small" color="#1a1b26" />
+                ) : (
+                  <Ionicons name="refresh" size={20} color="#1a1b26" />
+                )}
+                <Text style={styles.restartText}>
+                  {restartingAgent ? "Restarting..." : "Restart"}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
                 <Ionicons name="close" size={20} color="#f7768e" />

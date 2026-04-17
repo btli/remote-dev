@@ -86,6 +86,10 @@ export class RemoteDevApiClient {
     return this.post<TerminalSessionDTO>(`/api/sessions/${id}/resume`, {});
   }
 
+  async restartAgentSession(id: string): Promise<TerminalSessionDTO> {
+    return this.post<TerminalSessionDTO>(`/api/sessions/${id}/restart`, {});
+  }
+
   async getSessionToken(id: string): Promise<string> {
     const response = await this.get<{ token: string }>(`/api/sessions/${id}/token`);
     return response.token;

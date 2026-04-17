@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { TerminalSessionDTO } from "@remote-dev/domain";
+import type { CreateSessionInput, TerminalSessionDTO } from "@remote-dev/domain";
 import { getApiClient } from "@/infrastructure/api/RemoteDevApiClient";
 
 interface SessionState {
@@ -27,10 +27,11 @@ interface SessionActions {
 
   // Async actions (will be implemented with API client)
   fetchSessions: () => Promise<void>;
-  createSession: (input: { name: string; terminalType?: string }) => Promise<TerminalSessionDTO>;
+  createSession: (input: { name: string; terminalType?: CreateSessionInput["terminalType"] }) => Promise<TerminalSessionDTO>;
   closeSession: (id: string) => Promise<void>;
   suspendSession: (id: string) => Promise<void>;
   resumeSession: (id: string) => Promise<void>;
+  restartAgent: (id: string) => Promise<TerminalSessionDTO>;
 }
 
 type SessionStore = SessionState & SessionActions;
@@ -93,7 +94,7 @@ export const useSessionStore = create<SessionStore>()(
           const apiClient = getApiClient();
           const session = await apiClient.createSession({
             name: input.name,
-            terminalType: input.terminalType as any,
+            terminalType: input.terminalType,
           });
           get().addSession(session);
           set({ loading: false });
@@ -141,6 +142,20 @@ export const useSessionStore = create<SessionStore>()(
         } catch (error) {
           set({
             error: error instanceof Error ? error : new Error("Failed to resume session"),
+          });
+          throw error;
+        }
+      },
+
+      restartAgent: async (id) => {
+        try {
+          const apiClient = getApiClient();
+          const updated = await apiClient.restartAgentSession(id);
+          get().updateSession(id, updated);
+          return updated;
+        } catch (error) {
+          set({
+            error: error instanceof Error ? error : new Error("Failed to restart agent"),
           });
           throw error;
         }
