@@ -34,8 +34,10 @@ class AddServerScreen extends ConsumerStatefulWidget {
   ConsumerState<AddServerScreen> createState() => _AddServerScreenState();
 }
 
+const bool _qrOnboardingEnabled = false;
+
 class _AddServerScreenState extends ConsumerState<AddServerScreen> {
-  bool _showManualForm = false;
+  bool _showManualForm = !_qrOnboardingEnabled;
 
   // Manual form state
   String _protocol = 'https://';
@@ -191,7 +193,7 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // QR Scan Hero
-              if (!_showManualForm) ...[
+              if (_qrOnboardingEnabled && !_showManualForm) ...[
                 const SizedBox(height: 32),
                 Icon(
                   Icons.qr_code_scanner_rounded,
