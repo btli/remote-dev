@@ -2,12 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:remote_dev/presentation/providers/providers.dart';
-
-const _availableFonts = [
-  'JetBrainsMono Nerd Font',
-  'FiraCode Nerd Font',
-  'MesloLGS Nerd Font',
-];
+import 'package:remote_dev/presentation/theme/app_theme.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -138,7 +133,7 @@ class SettingsScreen extends ConsumerWidget {
                                   value;
                             }
                           },
-                          dropdownMenuEntries: _availableFonts
+                          dropdownMenuEntries: NerdFonts.bundledFonts
                               .map(
                                 (font) => DropdownMenuEntry(
                                   value: font,
