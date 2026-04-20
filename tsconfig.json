@@ -40,6 +40,8 @@
     "node_modules",
     ".trash",
     "packages",
-    "scripts"
+    "scripts",
+    "tests/migrations/folders-preflight.test.ts",
+    "tests/migrations/folders-to-projects.test.ts"
   ]
 }

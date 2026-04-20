@@ -48,7 +48,9 @@ export class SessionBuilder {
   }
 
   withFolderId(folderId: string | null): SessionBuilder {
-    this.props.folderId = folderId;
+    // Phase 6: folderId consolidated into projectId; keep builder name for
+    // test back-compat but write through to projectId.
+    this.props.projectId = folderId;
     return this;
   }
 
