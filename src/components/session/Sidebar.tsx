@@ -45,6 +45,7 @@ import { usePortContext } from "@/contexts/PortContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
+import { ProjectTreeSidebar } from "./ProjectTreeSidebar";
 import { SessionMetadataBar } from "./SessionMetadataBar";
 import { SessionStatusBadge } from "./SessionStatusBadge";
 import { SessionProgressBar } from "./SessionProgressBar";
@@ -126,6 +127,16 @@ interface SidebarProps {
   onViewPRs?: (folderId: string) => void;
   getFolderPinnedFiles?: (folderId: string) => PinnedFile[];
   onOpenPinnedFile?: (folderId: string, file: PinnedFile) => void;
+  /**
+   * Phase 4: invoked when the user clicks the settings gear on a ProjectTree
+   * row (group or project). Opens the corresponding
+   * Group/ProjectPreferencesModal. When omitted, gear icons are hidden.
+   */
+  onOpenNodePreferences?: (node: {
+    id: string;
+    type: "group" | "project";
+    name: string;
+  }) => void;
 }
 
 /**
@@ -213,6 +224,7 @@ export function Sidebar({
   onViewPRs,
   getFolderPinnedFiles,
   onOpenPinnedFile,
+  onOpenNodePreferences,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingType, setEditingType] = useState<"session" | "folder" | null>(null);
@@ -1711,6 +1723,18 @@ export function Sidebar({
                 folderId: null,
                 depth: 0,
               })}
+
+              {/* Phase 4: Project tree (groups + projects). Rendered above the
+                  legacy folder tree during the transition. Phase 6 will drop
+                  the folder tree. */}
+              {!collapsed && (
+                <div className="mt-1 mb-2">
+                  <div className="px-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                    Projects
+                  </div>
+                  <ProjectTreeSidebar onOpenPreferences={onOpenNodePreferences} />
+                </div>
+              )}
 
               {/* Recursive folder rendering */}
               {folderTree.map((folderNode) => {

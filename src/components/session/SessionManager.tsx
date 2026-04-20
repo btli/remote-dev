@@ -5,6 +5,8 @@ import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
 import { FolderPreferencesModal } from "@/components/preferences/FolderPreferencesModal";
+import { GroupPreferencesModal } from "@/components/preferences/GroupPreferencesModal";
+import { ProjectPreferencesModal } from "@/components/preferences/ProjectPreferencesModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { RecordingsModal } from "@/components/session/RecordingsModal";
@@ -221,6 +223,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     folderId: string;
     folderName: string;
     initialTab?: "general" | "appearance" | "repository" | "environment";
+  } | null>(null);
+  // Phase 4: Group/Project preferences modal triggered from ProjectTreeSidebar gear.
+  const [nodeSettingsModal, setNodeSettingsModal] = useState<{
+    id: string;
+    type: "group" | "project";
+    name: string;
   } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
@@ -854,6 +862,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleFolderSettings = useCallback(
     (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => {
       setFolderSettingsModal({ folderId, folderName, initialTab });
+    },
+    []
+  );
+
+  const handleNodeSettings = useCallback(
+    (node: { id: string; type: "group" | "project"; name: string }) => {
+      setNodeSettingsModal(node);
     },
     []
   );
@@ -1571,6 +1586,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onViewPRs={handleViewPRs}
             getFolderPinnedFiles={handleGetFolderPinnedFiles}
             onOpenPinnedFile={handleOpenPinnedFile}
+            onOpenNodePreferences={handleNodeSettings}
           />
       </div>
 
@@ -1882,6 +1898,24 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           initialTab={folderSettingsModal?.initialTab}
         />
       </Activity>
+
+      {/* Phase 4: Group/Project preferences modal (triggered from ProjectTree gear). */}
+      {nodeSettingsModal?.type === "group" && (
+        <GroupPreferencesModal
+          open
+          onClose={() => setNodeSettingsModal(null)}
+          groupId={nodeSettingsModal.id}
+          groupName={nodeSettingsModal.name}
+        />
+      )}
+      {nodeSettingsModal?.type === "project" && (
+        <ProjectPreferencesModal
+          open
+          onClose={() => setNodeSettingsModal(null)}
+          projectId={nodeSettingsModal.id}
+          projectName={nodeSettingsModal.name}
+        />
+      )}
 
       {/* Command Palette */}
       <CommandPalette
