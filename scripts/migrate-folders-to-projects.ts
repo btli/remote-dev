@@ -6,10 +6,17 @@ import { db } from "@/db";
 import {
   sessionFolders,
   terminalSessions,
+  sessionTemplates,
   projectTasks,
   channelGroups,
   channels,
   agentPeerMessages,
+  agentConfigs,
+  mcpServers,
+  sessionMemory,
+  githubStatsPreferences,
+  portRegistry,
+  worktreeTrashMetadata,
   projectGroups,
   projects,
 } from "@/db/schema";
@@ -377,6 +384,238 @@ async function main() {
     log.info("Inserted Default projects", { count: defaultProjectIdsByGroup.size });
 
     await setMigrationState(k("tree-inserted"), "done");
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Task 10: Backfill project_id columns on dependent tables
+  // ───────────────────────────────────────────────────────────────────────
+  function resolveProjectId(
+    legacyFolderId: string | null | undefined
+  ): string | null {
+    if (!legacyFolderId) return null;
+    // Direct project match?
+    const direct = projectIdMap.get(legacyFolderId);
+    if (direct) return direct;
+    // Group with Default project?
+    const dflt = defaultProjectIdsByGroup.get(legacyFolderId);
+    if (dflt) return dflt;
+    return null;
+  }
+
+  const backfilledMarker = await getMigrationState(k("backfilled-fks"));
+  if (backfilledMarker === "done") {
+    log.info("Bridge columns already backfilled; skipping Task 10.");
+  } else {
+    async function backfillProjectId(
+      tableName: string,
+      updater: (legacyId: string, projectId: string | null) => Promise<void>,
+      loader: () => Promise<Array<{ id: string; folderId: string | null }>>
+    ) {
+      const rows = await loader();
+      let updated = 0;
+      for (const row of rows) {
+        const pid = resolveProjectId(row.folderId);
+        if (!pid) continue;
+        await updater(row.id, pid);
+        updated++;
+      }
+      log.info(`Backfilled ${tableName}`, { rows: rows.length, updated });
+    }
+
+    await backfillProjectId(
+      "terminal_session",
+      async (id, pid) => {
+        await db
+          .update(terminalSessions)
+          .set({ projectId: pid })
+          .where(eq(terminalSessions.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: terminalSessions.id, folderId: terminalSessions.folderId })
+          .from(terminalSessions);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "project_task",
+      async (id, pid) => {
+        await db
+          .update(projectTasks)
+          .set({ projectId: pid })
+          .where(eq(projectTasks.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: projectTasks.id, folderId: projectTasks.folderId })
+          .from(projectTasks);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "channel_groups",
+      async (id, pid) => {
+        await db
+          .update(channelGroups)
+          .set({ projectId: pid })
+          .where(eq(channelGroups.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: channelGroups.id, folderId: channelGroups.folderId })
+          .from(channelGroups);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "channels",
+      async (id, pid) => {
+        await db.update(channels).set({ projectId: pid }).where(eq(channels.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: channels.id, folderId: channels.folderId })
+          .from(channels);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "agent_peer_message",
+      async (id, pid) => {
+        await db
+          .update(agentPeerMessages)
+          .set({ projectId: pid })
+          .where(eq(agentPeerMessages.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: agentPeerMessages.id, folderId: agentPeerMessages.folderId })
+          .from(agentPeerMessages);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "agent_config",
+      async (id, pid) => {
+        await db
+          .update(agentConfigs)
+          .set({ projectId: pid })
+          .where(eq(agentConfigs.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: agentConfigs.id, folderId: agentConfigs.folderId })
+          .from(agentConfigs);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "mcp_server",
+      async (id, pid) => {
+        await db
+          .update(mcpServers)
+          .set({ projectId: pid })
+          .where(eq(mcpServers.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: mcpServers.id, folderId: mcpServers.folderId })
+          .from(mcpServers);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "session_memory",
+      async (id, pid) => {
+        await db
+          .update(sessionMemory)
+          .set({ projectId: pid })
+          .where(eq(sessionMemory.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: sessionMemory.id, folderId: sessionMemory.folderId })
+          .from(sessionMemory);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "github_stats_preference",
+      async (id, pid) => {
+        await db
+          .update(githubStatsPreferences)
+          .set({ projectId: pid })
+          .where(eq(githubStatsPreferences.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: githubStatsPreferences.id, folderId: githubStatsPreferences.folderId })
+          .from(githubStatsPreferences);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "port_registry",
+      async (id, pid) => {
+        await db
+          .update(portRegistry)
+          .set({ projectId: pid })
+          .where(eq(portRegistry.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: portRegistry.id, folderId: portRegistry.folderId })
+          .from(portRegistry);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    await backfillProjectId(
+      "session_template",
+      async (id, pid) => {
+        await db
+          .update(sessionTemplates)
+          .set({ projectId: pid })
+          .where(eq(sessionTemplates.id, id));
+      },
+      async () => {
+        const rows = await db
+          .select({ id: sessionTemplates.id, folderId: sessionTemplates.folderId })
+          .from(sessionTemplates);
+        return rows as Array<{ id: string; folderId: string | null }>;
+      }
+    );
+
+    // worktree_trash_metadata uses originalFolderId/name (plain text)
+    const trashRows = await db
+      .select({
+        id: worktreeTrashMetadata.id,
+        originalFolderId: worktreeTrashMetadata.originalFolderId,
+      })
+      .from(worktreeTrashMetadata);
+    for (const row of trashRows) {
+      const pid = resolveProjectId(row.originalFolderId);
+      if (!pid) continue;
+      const folderName = row.originalFolderId
+        ? foldersById.get(row.originalFolderId)?.name ?? null
+        : null;
+      await db
+        .update(worktreeTrashMetadata)
+        .set({ originalProjectId: pid, originalProjectName: folderName })
+        .where(eq(worktreeTrashMetadata.id, row.id));
+    }
+    log.info("Backfilled worktree_trash_metadata", { rows: trashRows.length });
+
+    await setMigrationState(k("backfilled-fks"), "done");
   }
 }
 
