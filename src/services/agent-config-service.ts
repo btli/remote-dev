@@ -14,6 +14,7 @@ import type {
   AgentConfigType,
   UpsertAgentConfigInput,
 } from "@/types/agent";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 /**
  * Get all configs for a user (global and folder-specific)
@@ -170,12 +171,17 @@ export async function upsertConfig(
     return mapDbToConfig(updated);
   }
 
-  // Create new
+  // Create new — dual-write Phase 3: populate projectId alongside folderId.
+  const resolvedProjectId = input.folderId
+    ? await translateFolderIdToProjectId(input.folderId, userId)
+    : null;
+
   const [created] = await db
     .insert(agentConfigs)
     .values({
       userId,
       folderId: input.folderId ?? null,
+      projectId: resolvedProjectId,
       provider: input.provider,
       configType: input.configType,
       content: input.content,
@@ -228,6 +234,12 @@ export async function copyFolderConfigs(
   const sourceConfigs = await getFolderConfigs(sourceFolderId, userId);
   const now = new Date();
 
+  // Dual-write Phase 3: translate the target folderId once.
+  const resolvedTargetProjectId = await translateFolderIdToProjectId(
+    targetFolderId,
+    userId
+  );
+
   const created: AgentConfig[] = [];
   for (const config of sourceConfigs) {
     const [newConfig] = await db
@@ -235,6 +247,7 @@ export async function copyFolderConfigs(
       .values({
         userId,
         folderId: targetFolderId,
+        projectId: resolvedTargetProjectId,
         provider: config.provider,
         configType: config.configType,
         content: config.content,
