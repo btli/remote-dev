@@ -38,7 +38,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
 
   // Update using upsert (which handles the update)
   const updated = await AgentConfigService.upsertConfig(userId, {
-    folderId: existingConfig.folderId,
+    projectId: existingConfig.projectId,
     provider: existingConfig.provider,
     configType: existingConfig.configType,
     content,

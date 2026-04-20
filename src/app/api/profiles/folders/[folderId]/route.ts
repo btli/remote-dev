@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { db } from "@/db";
-import { sessionFolders } from "@/db/schema";
+import { projects } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import * as AgentProfileService from "@/services/agent-profile-service";
 
 /**
- * Helper to verify folder ownership
+ * Helper to verify project (legacy folder) ownership
  */
 async function verifyFolderOwnership(
   folderId: string,
   userId: string
 ): Promise<boolean> {
-  const folder = await db.query.sessionFolders.findFirst({
-    where: and(eq(sessionFolders.id, folderId), eq(sessionFolders.userId, userId)),
+  const project = await db.query.projects.findFirst({
+    where: and(eq(projects.id, folderId), eq(projects.userId, userId)),
   });
-  return !!folder;
+  return !!project;
 }
 
 /**

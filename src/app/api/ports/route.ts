@@ -1,22 +1,22 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api";
 import { getPortsForUser } from "@/services/port-registry-service";
-import { getFolders } from "@/services/folder-service";
+import { ProjectService } from "@/services/project-service";
 
 /**
  * GET /api/ports
- * Returns all port allocations for the current user with folder names
+ * Returns all port allocations for the current user with project (folder) names
  */
 export const GET = withAuth(async (_request, { userId }) => {
-  const [ports, folders] = await Promise.all([
+  const [ports, projects] = await Promise.all([
     getPortsForUser(userId),
-    getFolders(userId),
+    ProjectService.listByUser(userId),
   ]);
 
-  // Build folder name lookup
+  // Build project (folder) name lookup
   const folderNames = new Map<string, string>();
-  for (const folder of folders) {
-    folderNames.set(folder.id, folder.name);
+  for (const project of projects) {
+    folderNames.set(project.id, project.name);
   }
 
   // Transform ports to include folder names and active status
@@ -24,8 +24,10 @@ export const GET = withAuth(async (_request, { userId }) => {
     id: port.id,
     port: port.port,
     variableName: port.variableName,
-    folderId: port.folderId,
-    folderName: folderNames.get(port.folderId) || "Unknown",
+    folderId: port.projectId,
+    folderName: port.projectId
+      ? folderNames.get(port.projectId) || "Unknown"
+      : "Unknown",
     isActive: false, // Will be updated by status check
     createdAt: port.createdAt,
   }));

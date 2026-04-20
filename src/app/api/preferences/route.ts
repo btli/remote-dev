@@ -4,9 +4,9 @@ import {
   getUserSettings,
   updateUserSettings,
   getAllFolderPreferences,
+  getAllFolders,
   PreferencesServiceError,
 } from "@/services/preferences-service";
-import { getFolders } from "@/services/folder-service";
 
 /**
  * GET /api/preferences
@@ -17,14 +17,14 @@ export const GET = withAuth(async (_request, { userId }) => {
     const [userSettingsData, folderPreferencesData, folders] = await Promise.all([
       getUserSettings(userId),
       getAllFolderPreferences(userId),
-      getFolders(userId),
+      getAllFolders(userId),
     ]);
 
-    // Find active folder details if set
-    const activeFolderId =
-      userSettingsData.pinnedFolderId || userSettingsData.activeFolderId;
-    const activeFolder = activeFolderId
-      ? folders.find((f) => f.id === activeFolderId) || null
+    // Find active node details if set
+    const activeNodeId =
+      userSettingsData.pinnedNodeId || userSettingsData.activeNodeId;
+    const activeFolder = activeNodeId
+      ? folders.find((f) => f.id === activeNodeId) || null
       : null;
 
     return NextResponse.json({
@@ -68,8 +68,10 @@ export const PATCH = withAuth(async (request, { userId }) => {
     "fontFamily",
     "xtermScrollback",
     "tmuxHistoryLimit",
-    "activeFolderId",
-    "pinnedFolderId",
+    "activeNodeId",
+    "activeNodeType",
+    "pinnedNodeId",
+    "pinnedNodeType",
     "autoFollowActiveSession",
     "notificationsEnabled",
     "beadsSidebarCollapsed",

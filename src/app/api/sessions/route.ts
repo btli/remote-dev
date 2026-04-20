@@ -99,8 +99,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       projectPath: validatedPath,
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
-      folderId: body.folderId,
-      projectId: body.projectId,
+      projectId: body.projectId ?? body.folderId,
       // Terminal type (shell, agent, file, browser, loop)
       terminalType: body.terminalType,
       filePath: validatedFilePath,
