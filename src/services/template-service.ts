@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { sessionTemplates } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 // Re-export types and utilities from shared module for backwards compatibility
 export type {
@@ -52,6 +53,12 @@ export async function createTemplate(
   userId: string,
   input: CreateTemplateInput
 ): Promise<SessionTemplate> {
+  // Dual-write Phase 3: populate projectId alongside folderId.
+  const resolvedProjectId =
+    input.projectId ??
+    (input.folderId
+      ? await translateFolderIdToProjectId(input.folderId, userId)
+      : null);
   const [template] = await db
     .insert(sessionTemplates)
     .values({
@@ -62,6 +69,7 @@ export async function createTemplate(
       projectPath: input.projectPath ?? null,
       startupCommand: input.startupCommand ?? null,
       folderId: input.folderId ?? null,
+      projectId: resolvedProjectId,
       icon: input.icon ?? null,
       theme: input.theme ?? null,
       fontSize: input.fontSize ?? null,
