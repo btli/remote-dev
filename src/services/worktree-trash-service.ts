@@ -13,6 +13,7 @@ import {
   githubRepositories,
   sessionFolders,
   folderPreferences,
+  projects,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
@@ -23,6 +24,7 @@ import { sanitizeBranchName, getRepoRoot } from "./worktree-service";
 import { execFileNoThrow } from "@/lib/exec";
 import { WorktreeTrashServiceError } from "@/lib/errors";
 import { createLogger } from "@/lib/logger";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 const log = createLogger("WorktreeTrash");
 
@@ -172,6 +174,26 @@ export async function trashWorktreeSession(
     }
   }
 
+  // Dual-write Phase 3: snapshot the project id + name for the worktree's
+  // originating folder so restore can re-link to the project node in Phase 4+.
+  let originalProjectId: string | null = null;
+  let originalProjectName: string | null = null;
+  if (session.folderId) {
+    originalProjectId = await translateFolderIdToProjectId(
+      session.folderId,
+      userId
+    );
+    if (originalProjectId) {
+      const project = await db.query.projects.findFirst({
+        where: eq(projects.id, originalProjectId),
+        columns: { name: true },
+      });
+      if (project) {
+        originalProjectName = project.name;
+      }
+    }
+  }
+
   const trashedAt = new Date();
   const expiresAt = new Date(trashedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
   const trashPath = generateTrashPath(repoLocalPath, session.worktreeBranch, trashedAt);
@@ -226,6 +248,8 @@ export async function trashWorktreeSession(
     worktreeTrashPath: trashPath,
     originalFolderId: session.folderId,
     originalFolderName: folderName,
+    originalProjectId,
+    originalProjectName,
   });
 
   // Update session status to trashed
