@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -11,8 +11,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2 } from "lucide-react";
+import { Briefcase, Loader2 } from "lucide-react";
 import { useTemplateContext } from "@/contexts/TemplateContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
+import { ProjectPickerCombobox } from "./ProjectPickerCombobox";
 import type { TerminalSession } from "@/types/session";
 
 interface SaveTemplateModalProps {
@@ -27,13 +29,38 @@ export function SaveTemplateModal({
   session,
 }: SaveTemplateModalProps) {
   const { createTemplate } = useTemplateContext();
+  const { projects, activeNode } = useProjectTree();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sessionNamePattern, setSessionNamePattern] = useState("");
   const [startupCommand, setStartupCommand] = useState("");
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Pre-select project from: the session's projectId, else from the session's
+  // legacy folderId (mapped via ProjectTreeContext), else the active project
+  // node (if any).
+  useEffect(() => {
+    if (!open) return;
+    if (session?.projectId) {
+      setProjectId(session.projectId);
+      return;
+    }
+    if (session?.folderId) {
+      const mapped = projects.find(
+        (p) => p.legacyFolderId === session.folderId
+      );
+      if (mapped) {
+        setProjectId(mapped.id);
+        return;
+      }
+    }
+    if (activeNode?.type === "project") {
+      setProjectId(activeNode.id);
+    }
+  }, [open, session?.projectId, session?.folderId, projects, activeNode]);
 
   // Reset form when session changes
   const handleOpen = (isOpen: boolean) => {
@@ -64,6 +91,8 @@ export function SaveTemplateModal({
         sessionNamePattern: sessionNamePattern.trim() || undefined,
         projectPath: session?.projectPath || undefined,
         startupCommand: startupCommand.trim() || undefined,
+        // Phase 4: prefer projectId; keep folderId for legacy consumers.
+        projectId: projectId ?? undefined,
         folderId: session?.folderId || undefined,
       });
 
@@ -129,6 +158,23 @@ export function SaveTemplateModal({
               Use {"${n}"} for counter, {"${date}"} for date, {"${time}"} for time
             </p>
           </div>
+
+          {projects.length > 0 && (
+            <div className="space-y-2">
+              <Label className="text-sm text-muted-foreground flex items-center gap-2">
+                <Briefcase className="w-4 h-4 text-primary" />
+                Project
+              </Label>
+              <ProjectPickerCombobox
+                value={projectId}
+                onChange={(id) => setProjectId(id)}
+                placeholder="Select a project (optional)"
+              />
+              <p className="text-xs text-muted-foreground/70">
+                Templates created in a project inherit its preferences.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="startup-command" className="text-sm text-muted-foreground">

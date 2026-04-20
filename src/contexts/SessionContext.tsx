@@ -21,6 +21,7 @@ import type {
 import { checkAuthResponse } from "@/lib/api-client";
 import { useDebouncedRefresh } from "@/hooks/useDebouncedRefresh";
 import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
+import { useProjectTree } from "./ProjectTreeContext";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
 const VALID_ACTIVITY_STATUSES = new Set<AgentActivityStatus>(["running", "waiting", "idle", "error", "compacting", "ended"]);
@@ -197,6 +198,10 @@ export function SessionProvider({
     error: null,
   });
 
+  // Active project tree node is used to auto-scope new sessions when the
+  // caller didn't pass an explicit projectId/folderId.
+  const { activeNode, getProject } = useProjectTree();
+
   // Agent activity statuses (client-side only, not persisted)
   const [agentActivityStatuses, setAgentActivityStatuses] = useState<Record<string, AgentActivityStatus>>({});
 
@@ -320,10 +325,38 @@ export function SessionProvider({
 
   const createSession = useCallback(
     async (input: CreateSessionInput): Promise<TerminalSession> => {
+      // Phase 4: derive projectId from the active node when the caller didn't
+      // pass one. Group nodes can't own sessions directly, so we only fill in
+      // for project nodes.
+      let derivedProjectId: string | null | undefined = input.projectId;
+      if (derivedProjectId == null && activeNode?.type === "project") {
+        derivedProjectId = activeNode.id;
+      }
+      // If we have a project but no folderId, backfill folderId from the
+      // project's legacyFolderId so downstream server-side mapping stays
+      // consistent while the two columns are dual-written.
+      let derivedFolderId: string | null | undefined = input.folderId;
+      if (!derivedFolderId && derivedProjectId) {
+        const project = getProject(derivedProjectId);
+        if (project?.legacyFolderId) {
+          derivedFolderId = project.legacyFolderId;
+        }
+      }
+
+      const payload: CreateSessionInput = {
+        ...input,
+        ...(derivedProjectId !== undefined
+          ? { projectId: derivedProjectId }
+          : {}),
+        ...(derivedFolderId !== undefined
+          ? { folderId: derivedFolderId }
+          : {}),
+      };
+
       const response = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify(payload),
       });
 
       if (checkAuthResponse(response)) return undefined as unknown as TerminalSession;
@@ -337,7 +370,7 @@ export function SessionProvider({
       dispatch({ type: "CREATE", session });
       return session;
     },
-    []
+    [activeNode, getProject]
   );
 
   const updateSession = useCallback(
