@@ -93,6 +93,20 @@ export function classifyFolders(folders: FolderRow[]): {
   return { groupIds, projectIds };
 }
 
+export function planDefaultProjects(
+  groupIds: Set<string>,
+  directCounts: Map<string, number>
+): Map<string, { defaultProjectId: string }> {
+  const plan = new Map<string, { defaultProjectId: string }>();
+  for (const gid of groupIds) {
+    const count = directCounts.get(gid) ?? 0;
+    if (count > 0) {
+      plan.set(gid, { defaultProjectId: randomUUID() });
+    }
+  }
+  return plan;
+}
+
 export function validateFolderGraph(folders: FolderRow[]): void {
   const byId = new Map<string, FolderRow>();
   for (const f of folders) byId.set(f.id, f);

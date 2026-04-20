@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { classifyFolders } from "../../scripts/migrate-folders-to-projects";
+import {
+  classifyFolders,
+  planDefaultProjects,
+} from "../../scripts/migrate-folders-to-projects";
 
 interface Folder {
   id: string;
@@ -37,5 +40,21 @@ describe("classifyFolders", () => {
     const { groupIds, projectIds } = classifyFolders(folders);
     expect(groupIds).toEqual(expect.arrayContaining(["g1", "g2"]));
     expect(projectIds).toEqual(["p1"]);
+  });
+});
+
+describe("planDefaultProjects", () => {
+  it("plans Default project when group has direct sessions", () => {
+    const groupIds = new Set(["g1"]);
+    const directCounts = new Map([["g1", 3]]);
+    const plan = planDefaultProjects(groupIds, directCounts);
+    expect(plan.has("g1")).toBe(true);
+  });
+
+  it("skips groups with no direct contents", () => {
+    const groupIds = new Set(["g1"]);
+    const directCounts = new Map<string, number>();
+    const plan = planDefaultProjects(groupIds, directCounts);
+    expect(plan.size).toBe(0);
   });
 });
