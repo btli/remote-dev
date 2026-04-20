@@ -6,7 +6,11 @@
  */
 
 import { db } from "@/db";
-import { folderSecretsConfig, sessionFolders } from "@/db/schema";
+import {
+  folderSecretsConfig,
+  projectSecretsConfig,
+  sessionFolders,
+} from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { SecretsServiceError } from "@/lib/errors";
@@ -40,6 +44,66 @@ export async function getFolderSecretsConfig(
   });
 
   return config ? mapDbSecretsConfig(config) : null;
+}
+
+/**
+ * Phase 3 project-first lookup: check project_secrets_config for the given
+ * projectId; if none, fall back to folder_secrets_config for the legacy
+ * folderId. Used by readers that already know the node's projectId.
+ *
+ * Returns a FolderSecretsConfig-shaped value so consumers remain compatible
+ * during the transition (Phase 4 will introduce a dedicated project type).
+ */
+export async function getConfigByProjectOrFolder(
+  projectId: string | null,
+  folderId: string | null,
+  userId: string
+): Promise<FolderSecretsConfig | null> {
+  if (projectId) {
+    const row = await db.query.projectSecretsConfig.findFirst({
+      where: and(
+        eq(projectSecretsConfig.projectId, projectId),
+        eq(projectSecretsConfig.userId, userId)
+      ),
+    });
+    if (row) {
+      // Shape the project row into the folder-secrets contract. Provider config
+      // is stored as JSON (not encrypted) on project_secrets_config today; keep
+      // behavior forward-compatible without introducing a second mapper.
+      const providerConfig =
+        typeof row.providerConfig === "string"
+          ? safeJsonParseObject(row.providerConfig)
+          : (row.providerConfig as Record<string, string>) ?? {};
+      return {
+        id: row.id,
+        // During transition, surface the legacy folderId for downstream code
+        // that still keys on it. Phase 4 will switch the type to a node ref.
+        folderId: folderId ?? "",
+        userId: row.userId,
+        provider: row.provider as SecretsProviderType,
+        providerConfig,
+        enabled: row.enabled ?? true,
+        lastFetchedAt: row.lastFetchedAt ? new Date(row.lastFetchedAt) : null,
+        createdAt: new Date(row.createdAt),
+        updatedAt: new Date(row.updatedAt),
+      };
+    }
+  }
+  if (folderId) {
+    return getFolderSecretsConfig(folderId, userId);
+  }
+  return null;
+}
+
+function safeJsonParseObject(raw: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, string>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
