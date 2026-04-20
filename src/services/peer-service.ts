@@ -1,49 +1,29 @@
 /**
- * PeerService - Folder-scoped inter-agent communication
+ * PeerService - Project-scoped inter-agent communication
  */
 
 import { db } from "@/db";
-import { agentPeerMessages, sessionFolders, terminalSessions } from "@/db/schema";
+import { agentPeerMessages, terminalSessions } from "@/db/schema";
 import { eq, and, or, isNull, gt, inArray, sql, desc } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import { safeJsonParse } from "@/lib/utils";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 const log = createLogger("PeerService");
-
-/**
- * Resolve the projectId for a folder for dual-write.
- * Looks up the folder owner first, then translates via projects.legacyFolderId.
- */
-async function resolveProjectIdForFolder(folderId: string): Promise<string> {
-  const row = await db.query.sessionFolders.findFirst({
-    where: eq(sessionFolders.id, folderId),
-    columns: { userId: true },
-  });
-  if (!row?.userId) {
-    throw new Error(`Folder ${folderId} has no owner; cannot resolve projectId`);
-  }
-  const projectId = await translateFolderIdToProjectId(folderId, row.userId);
-  if (!projectId) {
-    throw new Error(`Folder ${folderId} has no corresponding project`);
-  }
-  return projectId;
-}
 
 const MAX_MESSAGE_LENGTH = 8192;
 
 /**
  * Resolve @name mentions in message body to @<sid:UUID> tokens.
- * Looks up peer names in the given folder (case-insensitive, longest match first).
+ * Looks up peer names in the given project (case-insensitive, longest match first).
  * Already-tokenized mentions (@<sid:UUID>) are left untouched.
  */
-async function resolveMentionsInBody(body: string, folderId: string): Promise<string> {
+async function resolveMentionsInBody(body: string, projectId: string): Promise<string> {
   if (!body.includes("@")) return body;
 
-  // Get all agent/loop sessions in the folder
+  // Get all agent/loop sessions in the project
   const peers = await db.query.terminalSessions.findMany({
     where: and(
-      eq(terminalSessions.folderId, folderId),
+      eq(terminalSessions.projectId, projectId),
       inArray(terminalSessions.terminalType, ["agent", "loop"]),
       inArray(terminalSessions.status, ["active", "suspended"]),
     ),
@@ -87,7 +67,7 @@ export interface PeerMessage {
 }
 
 /**
- * List active agent peers in the same folder as the given session.
+ * List active agent peers in the same project as the given session.
  * The requesting session is excluded from results.
  */
 export async function getPeers(
@@ -96,14 +76,14 @@ export async function getPeers(
 ): Promise<PeerInfo[]> {
   const session = await db.query.terminalSessions.findFirst({
     where: eq(terminalSessions.id, sessionId),
-    columns: { folderId: true },
+    columns: { projectId: true },
   });
 
-  if (!session?.folderId) {
+  if (!session?.projectId) {
     return [];
   }
 
-  const allPeers = await getFolderPeers(session.folderId, isConnectedFn);
+  const allPeers = await getProjectPeers(session.projectId, isConnectedFn);
   return allPeers.filter((p) => p.sessionId !== sessionId);
 }
 
@@ -150,14 +130,14 @@ export interface SendMessageResult {
   messageId: string;
   resolvedBody: string;
   senderName: string;
-  folderId: string;
+  projectId: string;
   userId: string;
   createdAt: string;
   channelId: string | null;
 }
 
 /**
- * Send a message to a specific peer or broadcast to all peers in the folder.
+ * Send a message to a specific peer or broadcast to all peers in the project.
  */
 export async function sendMessage(params: {
   fromSessionId: string;
@@ -174,38 +154,35 @@ export async function sendMessage(params: {
 
   const sender = await db.query.terminalSessions.findFirst({
     where: eq(terminalSessions.id, fromSessionId),
-    columns: { folderId: true, name: true, userId: true },
+    columns: { projectId: true, name: true, userId: true },
   });
 
-  if (!sender?.folderId || !sender.userId) {
-    throw new Error("Sender session not found or has no folder");
+  if (!sender?.projectId || !sender.userId) {
+    throw new Error("Sender session not found or has no project");
   }
 
   // Resolve channel — default to #general if not specified
   const ChannelService = await import("@/services/channel-service");
-  const resolvedChannelId = channelId ?? await ChannelService.getGeneralChannelId(sender.folderId);
+  const resolvedChannelId = channelId ?? await ChannelService.getGeneralChannelId(sender.projectId);
 
   if (toSessionId) {
     const recipient = await db.query.terminalSessions.findFirst({
       where: eq(terminalSessions.id, toSessionId),
-      columns: { folderId: true },
+      columns: { projectId: true },
     });
 
-    if (!recipient || recipient.folderId !== sender.folderId) {
-      throw new Error("Recipient session not found or not in the same folder");
+    if (!recipient || recipient.projectId !== sender.projectId) {
+      throw new Error("Recipient session not found or not in the same project");
     }
   }
 
   const messageId = crypto.randomUUID();
   const now = new Date();
-  const resolvedBody = await resolveMentionsInBody(body, sender.folderId);
-  // Dual-write Phase 3: translate folderId → projectId once.
-  const resolvedProjectId = await resolveProjectIdForFolder(sender.folderId);
+  const resolvedBody = await resolveMentionsInBody(body, sender.projectId);
 
   await db.insert(agentPeerMessages).values({
     id: messageId,
-    folderId: sender.folderId,
-    projectId: resolvedProjectId,
+    projectId: sender.projectId,
     fromSessionId,
     fromSessionName: sender.name,
     toSessionId: toSessionId ?? null,
@@ -232,14 +209,14 @@ export async function sendMessage(params: {
     messageId,
     fromSessionId,
     toSessionId: toSessionId ?? "broadcast",
-    folderId: sender.folderId,
+    projectId: sender.projectId,
   });
 
   return {
     messageId,
     resolvedBody,
     senderName: sender.name,
-    folderId: sender.folderId,
+    projectId: sender.projectId,
     userId: sender.userId,
     createdAt: now.toISOString(),
     channelId: resolvedChannelId,
@@ -255,10 +232,10 @@ export async function pollMessages(
 ): Promise<PeerMessage[]> {
   const session = await db.query.terminalSessions.findFirst({
     where: eq(terminalSessions.id, sessionId),
-    columns: { folderId: true },
+    columns: { projectId: true },
   });
 
-  if (!session?.folderId) {
+  if (!session?.projectId) {
     return [];
   }
 
@@ -275,7 +252,7 @@ export async function pollMessages(
     .from(agentPeerMessages)
     .where(
       and(
-        eq(agentPeerMessages.folderId, session.folderId),
+        eq(agentPeerMessages.projectId, session.projectId),
         gt(agentPeerMessages.createdAt, since),
         // Direct messages to this session OR broadcasts (toSessionId IS NULL)
         or(
@@ -330,31 +307,28 @@ export async function cleanupOldMessages(): Promise<void> {
  * Inserts directly with fromSessionId=null and isUserMessage=true.
  */
 export async function sendUserMessage(params: {
-  folderId: string;
+  projectId: string;
   fromName: string;
   body: string;
   channelId?: string;
   parentMessageId?: string;
 }): Promise<{ messageId: string; message: PeerMessage }> {
-  const { folderId, fromName, body, channelId, parentMessageId } = params;
+  const { projectId, fromName, body, channelId, parentMessageId } = params;
 
   if (body.length > MAX_MESSAGE_LENGTH) {
     throw new Error(`Message exceeds maximum length of ${MAX_MESSAGE_LENGTH} characters`);
   }
 
   const ChannelService = await import("@/services/channel-service");
-  const resolvedChannelId = channelId ?? await ChannelService.getGeneralChannelId(folderId);
+  const resolvedChannelId = channelId ?? await ChannelService.getGeneralChannelId(projectId);
 
   const messageId = crypto.randomUUID();
   const now = new Date();
-  const resolvedBody = await resolveMentionsInBody(body, folderId);
-  // Dual-write Phase 3: translate folderId → projectId once.
-  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
+  const resolvedBody = await resolveMentionsInBody(body, projectId);
 
   const row = {
     id: messageId,
-    folderId,
-    projectId: resolvedProjectId,
+    projectId,
     fromSessionId: null,
     fromSessionName: fromName,
     toSessionId: null,
@@ -378,17 +352,17 @@ export async function sendUserMessage(params: {
       .where(eq(agentPeerMessages.id, parentMessageId));
   }
 
-  log.debug("User message sent", { messageId, folderId, fromName });
+  log.debug("User message sent", { messageId, projectId, fromName });
 
   return { messageId, message: toMessageRow(row) };
 }
 
 /**
- * List all messages in a folder (for the chat room UI).
+ * List all messages in a project (for the chat room UI).
  * Unlike pollMessages, this is not session-scoped — it returns the full conversation.
  */
-export async function listFolderMessages(
-  folderId: string,
+export async function listProjectMessages(
+  projectId: string,
   limit: number = 200
 ): Promise<PeerMessage[]> {
   const rows = await db
@@ -402,7 +376,7 @@ export async function listFolderMessages(
       createdAt: agentPeerMessages.createdAt,
     })
     .from(agentPeerMessages)
-    .where(eq(agentPeerMessages.folderId, folderId))
+    .where(eq(agentPeerMessages.projectId, projectId))
     .orderBy(desc(agentPeerMessages.createdAt))
     .limit(limit);
 
@@ -480,16 +454,16 @@ export async function listThreadReplies(
 }
 
 /**
- * List active agent peers in a folder (without requiring a calling session ID).
+ * List active agent peers in a project (without requiring a calling session ID).
  * Used by the chat room UI's tab bar to show agent activity dots.
  */
-export async function getFolderPeers(
-  folderId: string,
+export async function getProjectPeers(
+  projectId: string,
   isConnectedFn?: (id: string) => boolean
 ): Promise<PeerInfo[]> {
   const peers = await db.query.terminalSessions.findMany({
     where: and(
-      eq(terminalSessions.folderId, folderId),
+      eq(terminalSessions.projectId, projectId),
       inArray(terminalSessions.terminalType, ["agent", "loop"]),
       inArray(terminalSessions.status, ["active", "suspended"]),
     ),

@@ -9,12 +9,6 @@ export {
 } from "./SessionMapper";
 
 export {
-  FolderMapper,
-  type FolderDbRecord,
-  type FolderDbInsert,
-} from "./FolderMapper";
-
-export {
   GitHubIssueMapper,
   type GitHubIssueDbRecord,
   type GitHubIssueDbInsert,

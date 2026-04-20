@@ -5,5 +5,4 @@
  */
 
 export { DrizzleSessionRepository } from "./DrizzleSessionRepository";
-export { DrizzleFolderRepository } from "./DrizzleFolderRepository";
 export { DrizzleGitHubIssueRepository } from "./DrizzleGitHubIssueRepository";

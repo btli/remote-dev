@@ -34,12 +34,6 @@ export interface TerminalSession {
   githubRepoId: string | null;
   worktreeBranch: string | null;
   worktreeType: WorktreeType | null;
-  folderId: string | null;
-  /**
-   * Project identifier bridging to the post-migration Project entity. Populated
-   * alongside `folderId` during the Phase 3 transition window; callers should
-   * prefer `projectId` when present.
-   */
   projectId: string | null;
   // Agent profile for environment isolation
   profileId: string | null;
@@ -71,11 +65,6 @@ export interface CreateSessionInput {
   projectPath?: string;
   githubRepoId?: string;
   worktreeBranch?: string;
-  folderId?: string | null;
-  /**
-   * Project identifier. When provided alongside `folderId`, `projectId` wins.
-   * If absent, services translate `folderId` via `projects.legacyFolderId`.
-   */
   projectId?: string | null;
   // Agent profile for environment isolation
   profileId?: string;

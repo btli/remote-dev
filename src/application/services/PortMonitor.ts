@@ -22,7 +22,7 @@ export interface ActivePort {
   sessionName: string;
   port: number;
   variableName: string;
-  folderId: string | null;
+  projectId: string | null;
 }
 
 /**
@@ -43,8 +43,8 @@ export interface PortValidationWithRuntimeResult {
 export interface PortDatabaseConflict {
   port: number;
   variableName: string;
-  conflictingFolderId: string;
-  conflictingFolderName: string;
+  conflictingProjectId: string;
+  conflictingProjectName: string;
   conflictingVariableName: string;
   suggestedPort: number | null;
 }
@@ -66,20 +66,20 @@ export interface PortRuntimeConflict {
  */
 export interface PortRegistryAdapter {
   getPortsForUser(userId: string): Promise<Array<{
-    folderId: string;
+    projectId: string;
     port: number;
     variableName: string;
   }>>;
 
   validatePorts(
-    folderId: string,
+    projectId: string,
     userId: string,
     envVars: Record<string, string> | null
   ): Promise<{
     conflicts: Array<{
       port: number;
       variableName: string;
-      conflictingFolder: { id: string; name: string };
+      conflictingProject: { id: string; name: string };
       conflictingVariableName: string;
       suggestedPort: number | null;
     }>;
@@ -101,7 +101,7 @@ export interface SessionAdapter {
   ): Promise<Array<{
     id: string;
     name: string;
-    folderId: string | null;
+    projectId: string | null;
     tmuxSessionName: string;
     isActive: boolean;
   }>>;
@@ -166,7 +166,7 @@ export class PortMonitor {
                 sessionName: session.name,
                 port,
                 variableName: key,
-                folderId: session.folderId,
+                projectId: session.projectId,
               });
             }
           }
@@ -187,7 +187,7 @@ export class PortMonitor {
    * multiple folders) and runtime detection (port actually in use on system).
    */
   async validateWithRuntimeCheck(
-    folderId: string,
+    projectId: string,
     userId: string,
     envVars: Record<string, string> | null
   ): Promise<PortValidationWithRuntimeResult> {
@@ -200,12 +200,12 @@ export class PortMonitor {
     }
 
     // Get database conflicts
-    const dbResult = await this.portRegistry.validatePorts(folderId, userId, envVars);
+    const dbResult = await this.portRegistry.validatePorts(projectId, userId, envVars);
     const databaseConflicts: PortDatabaseConflict[] = dbResult.conflicts.map((c) => ({
       port: c.port,
       variableName: c.variableName,
-      conflictingFolderId: c.conflictingFolder.id,
-      conflictingFolderName: c.conflictingFolder.name,
+      conflictingProjectId: c.conflictingProject.id,
+      conflictingProjectName: c.conflictingProject.name,
       conflictingVariableName: c.conflictingVariableName,
       suggestedPort: c.suggestedPort,
     }));

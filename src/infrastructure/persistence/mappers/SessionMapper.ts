@@ -26,7 +26,7 @@ export interface SessionDbRecord {
   githubRepoId: string | null;
   worktreeBranch: string | null;
   worktreeType: string | null;
-  folderId: string | null;
+  projectId: string | null;
   profileId: string | null;
   terminalType: string | null;
   agentProvider: string | null;
@@ -59,7 +59,7 @@ export interface SessionDbInsert {
   githubRepoId: string | null;
   worktreeBranch: string | null;
   worktreeType: WorktreeType | null;
-  folderId: string | null;
+  projectId: string | null;
   profileId: string | null;
   terminalType: TerminalType;
   agentProvider: AgentProviderType | null;
@@ -93,7 +93,7 @@ export class SessionMapper {
       githubRepoId: record.githubRepoId,
       worktreeBranch: record.worktreeBranch,
       worktreeType: record.worktreeType ?? null,
-      folderId: record.folderId,
+      projectId: record.projectId,
       profileId: record.profileId,
       terminalType: (record.terminalType as TerminalType) ?? "shell",
       agentProvider: (record.agentProvider as AgentProviderType) ?? null,
@@ -135,7 +135,7 @@ export class SessionMapper {
       worktreeBranch: session.worktreeBranch,
       // Cast is safe because Session.worktreeType only holds values set via WorktreeType-typed inputs
       worktreeType: (session.worktreeType as WorktreeType) ?? null,
-      folderId: session.folderId,
+      projectId: session.projectId,
       profileId: session.profileId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,
@@ -169,7 +169,7 @@ export class SessionMapper {
     githubRepoId: string | null;
     worktreeBranch: string | null;
     worktreeType: string | null;
-    folderId: string | null;
+    projectId: string | null;
     profileId: string | null;
     terminalType: TerminalType;
     agentProvider: AgentProviderType | null;
@@ -196,7 +196,7 @@ export class SessionMapper {
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
       worktreeType: session.worktreeType ?? null,
-      folderId: session.folderId,
+      projectId: session.projectId,
       profileId: session.profileId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,

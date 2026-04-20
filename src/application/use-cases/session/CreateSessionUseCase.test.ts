@@ -119,12 +119,12 @@ describe("CreateSessionUseCase", () => {
       const input: CreateSessionInput = {
         userId: "user-123",
         name: "Session in Folder",
-        folderId: "folder-456",
+        projectId: "folder-456",
       };
 
       const result = await useCase.execute(input);
 
-      expect(result.session.folderId).toBe("folder-456");
+      expect(result.session.projectId).toBe("folder-456");
     });
 
     it("creates tmux session with correct parameters", async () => {

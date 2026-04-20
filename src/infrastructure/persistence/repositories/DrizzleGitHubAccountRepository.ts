@@ -8,11 +8,9 @@
 import { db } from "@/db";
 import {
   githubAccountMetadata,
-  folderGitHubAccountLinks,
   accounts,
-  sessionFolders,
 } from "@/db/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { decryptSafe } from "@/lib/encryption";
 import type { GitHubAccount } from "@/domain/entities/GitHubAccount";
 import type { GitHubAccountRepository } from "@/application/ports/GitHubAccountRepository";
@@ -57,19 +55,6 @@ export class DrizzleGitHubAccountRepository implements GitHubAccountRepository {
       where: eq(githubAccountMetadata.userId, userId),
     });
     return fallback ? GitHubAccountMapper.toDomain(fallback) : null;
-  }
-
-  async findByFolder(
-    folderId: string,
-    userId: string
-  ): Promise<GitHubAccount | null> {
-    const link = await db.query.folderGitHubAccountLinks.findFirst({
-      where: eq(folderGitHubAccountLinks.folderId, folderId),
-    });
-
-    if (!link) return null;
-
-    return this.findByProviderAccountId(link.providerAccountId, userId);
   }
 
   async getAccessToken(
@@ -152,54 +137,6 @@ export class DrizzleGitHubAccountRepository implements GitHubAccountRepository {
           )
         );
     });
-  }
-
-  async bindFolder(
-    folderId: string,
-    providerAccountId: string
-  ): Promise<void> {
-    await db
-      .insert(folderGitHubAccountLinks)
-      .values({
-        folderId,
-        providerAccountId,
-      })
-      .onConflictDoUpdate({
-        target: folderGitHubAccountLinks.folderId,
-        set: {
-          providerAccountId,
-          createdAt: new Date(),
-        },
-      });
-  }
-
-  async unbindFolder(folderId: string): Promise<void> {
-    await db
-      .delete(folderGitHubAccountLinks)
-      .where(eq(folderGitHubAccountLinks.folderId, folderId));
-  }
-
-  async unbindFoldersByAccount(providerAccountId: string): Promise<void> {
-    await db
-      .delete(folderGitHubAccountLinks)
-      .where(eq(folderGitHubAccountLinks.providerAccountId, providerAccountId));
-  }
-
-  async findFolderBindings(userId: string): Promise<Map<string, string>> {
-    const folders = await db.query.sessionFolders.findMany({
-      where: eq(sessionFolders.userId, userId),
-      columns: { id: true },
-    });
-
-    const folderIds = folders.map((f) => f.id);
-    if (folderIds.length === 0) return new Map();
-
-    const links = await db
-      .select()
-      .from(folderGitHubAccountLinks)
-      .where(inArray(folderGitHubAccountLinks.folderId, folderIds));
-
-    return new Map(links.map((link) => [link.folderId, link.providerAccountId]));
   }
 
   async findOwner(providerAccountId: string): Promise<string | null> {
