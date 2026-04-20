@@ -6,7 +6,7 @@
  * More specific (child) folders override less specific (parent) folders.
  */
 import { db } from "@/db";
-import { users, userSettings, folderPreferences, sessionFolders } from "@/db/schema";
+import { users, userSettings, nodePreferences, projects, projectGroups } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import type {
   UserSettings,
@@ -135,9 +135,13 @@ export async function setActiveFolder(
   folderId: string | null,
   pinned: boolean = false
 ): Promise<UserSettings> {
+  // Translate legacy "folderId" to the new node-based representation.
+  // With the project refactor, this is expected to be a project id.
   return updateUserSettings(userId, {
-    activeFolderId: pinned ? null : folderId,
-    pinnedFolderId: pinned ? folderId : null,
+    activeNodeId: pinned ? null : folderId,
+    activeNodeType: pinned ? null : folderId ? "project" : null,
+    pinnedNodeId: pinned ? folderId : null,
+    pinnedNodeType: pinned && folderId ? "project" : null,
   });
 }
 
@@ -152,10 +156,12 @@ export async function getFolderPreferences(
   folderId: string,
   userId: string
 ): Promise<FolderPreferences | null> {
-  const prefs = await db.query.folderPreferences.findFirst({
+  // After the project refactor, folderId is treated as a project id.
+  const prefs = await db.query.nodePreferences.findFirst({
     where: and(
-      eq(folderPreferences.folderId, folderId),
-      eq(folderPreferences.userId, userId)
+      eq(nodePreferences.ownerId, folderId),
+      eq(nodePreferences.ownerType, "project"),
+      eq(nodePreferences.userId, userId)
     ),
   });
 
@@ -168,8 +174,8 @@ export async function getFolderPreferences(
 export async function getAllFolderPreferences(
   userId: string
 ): Promise<FolderPreferences[]> {
-  const prefs = await db.query.folderPreferences.findMany({
-    where: eq(folderPreferences.userId, userId),
+  const prefs = await db.query.nodePreferences.findMany({
+    where: eq(nodePreferences.userId, userId),
   });
 
   return prefs.map(mapDbFolderPreferences);
@@ -177,19 +183,26 @@ export async function getAllFolderPreferences(
 
 /**
  * Get all folders for a user (for building hierarchy)
+ *
+ * After the project refactor, this returns project nodes with their
+ * parent project group as the "parent" of the ancestry chain.
  */
 export async function getAllFolders(
   userId: string
 ): Promise<FolderWithAncestry[]> {
-  const folders = await db.query.sessionFolders.findMany({
-    where: eq(sessionFolders.userId, userId),
-  });
+  const [allProjects, allGroups] = await Promise.all([
+    db.query.projects.findMany({ where: eq(projects.userId, userId) }),
+    db.query.projectGroups.findMany({ where: eq(projectGroups.userId, userId) }),
+  ]);
 
-  return folders.map((f) => ({
-    id: f.id,
-    parentId: f.parentId ?? null,
-    name: f.name,
-  }));
+  const result: FolderWithAncestry[] = [];
+  for (const g of allGroups) {
+    result.push({ id: g.id, parentId: g.parentGroupId ?? null, name: g.name });
+  }
+  for (const p of allProjects) {
+    result.push({ id: p.id, parentId: p.groupId, name: p.name });
+  }
+  return result;
 }
 
 /**
@@ -233,17 +246,22 @@ export async function updateFolderPreferences(
   userId: string,
   updates: UpdateFolderPreferencesInput
 ): Promise<UpdateFolderPreferencesResult> {
-  // Check if folder exists and belongs to user
-  const folder = await db.query.sessionFolders.findFirst({
-    where: and(
-      eq(sessionFolders.id, folderId),
-      eq(sessionFolders.userId, userId)
-    ),
-  });
+  // After the project refactor, folderId must correspond to a project
+  // or group node. We check both.
+  const [project, group] = await Promise.all([
+    db.query.projects.findFirst({
+      where: and(eq(projects.id, folderId), eq(projects.userId, userId)),
+    }),
+    db.query.projectGroups.findFirst({
+      where: and(eq(projectGroups.id, folderId), eq(projectGroups.userId, userId)),
+    }),
+  ]);
 
-  if (!folder) {
+  if (!project && !group) {
     throw new PreferencesServiceError("Folder not found", "FOLDER_NOT_FOUND");
   }
+
+  const ownerType: "group" | "project" = project ? "project" : "group";
 
   // Prepare database values - serialize JSON fields
   const dbUpdates: Record<string, unknown> = { ...updates };
@@ -259,15 +277,16 @@ export async function updateFolderPreferences(
 
   if (existing) {
     const [updated] = await db
-      .update(folderPreferences)
+      .update(nodePreferences)
       .set({
         ...dbUpdates,
         updatedAt: new Date(),
       })
       .where(
         and(
-          eq(folderPreferences.folderId, folderId),
-          eq(folderPreferences.userId, userId)
+          eq(nodePreferences.ownerId, folderId),
+          eq(nodePreferences.ownerType, ownerType),
+          eq(nodePreferences.userId, userId)
         )
       )
       .returning();
@@ -275,9 +294,11 @@ export async function updateFolderPreferences(
     result = mapDbFolderPreferences(updated);
   } else {
     const [created] = await db
-      .insert(folderPreferences)
+      .insert(nodePreferences)
       .values({
-        folderId,
+        id: crypto.randomUUID(),
+        ownerId: folderId,
+        ownerType,
         userId,
         ...dbUpdates,
         createdAt: new Date(),
@@ -320,11 +341,11 @@ export async function deleteFolderPreferences(
   await deletePortsForFolder(folderId, userId);
 
   const result = await db
-    .delete(folderPreferences)
+    .delete(nodePreferences)
     .where(
       and(
-        eq(folderPreferences.folderId, folderId),
-        eq(folderPreferences.userId, userId)
+        eq(nodePreferences.ownerId, folderId),
+        eq(nodePreferences.userId, userId)
       )
     );
 
@@ -361,8 +382,8 @@ export async function getEffectiveActiveFolderId(
   const settings = await getUserSettings(userId);
 
   // If pinned, always use pinned folder
-  if (settings.pinnedFolderId) {
-    return settings.pinnedFolderId;
+  if (settings.pinnedNodeId) {
+    return settings.pinnedNodeId;
   }
 
   // If auto-follow is enabled and we have a current session folder, use it
@@ -371,7 +392,7 @@ export async function getEffectiveActiveFolderId(
   }
 
   // Otherwise use the stored active folder
-  return settings.activeFolderId;
+  return settings.activeNodeId;
 }
 
 /**
@@ -494,8 +515,10 @@ function mapDbUserSettings(
     theme: db.theme,
     fontSize: db.fontSize,
     fontFamily: db.fontFamily,
-    activeFolderId: db.activeFolderId,
-    pinnedFolderId: db.pinnedFolderId,
+    activeNodeId: db.activeNodeId,
+    activeNodeType: (db.activeNodeType as "group" | "project" | null) ?? null,
+    pinnedNodeId: db.pinnedNodeId,
+    pinnedNodeType: (db.pinnedNodeType as "group" | "project" | null) ?? null,
     autoFollowActiveSession: db.autoFollowActiveSession ?? true,
     notificationsEnabled: db.notificationsEnabled ?? true,
     beadsSidebarCollapsed: db.beadsSidebarCollapsed ?? true,
@@ -511,11 +534,11 @@ function mapDbUserSettings(
 }
 
 function mapDbFolderPreferences(
-  dbRow: typeof folderPreferences.$inferSelect
+  dbRow: typeof nodePreferences.$inferSelect
 ): FolderPreferences {
   return {
     id: dbRow.id,
-    folderId: dbRow.folderId,
+    folderId: dbRow.ownerId,
     userId: dbRow.userId,
     defaultWorkingDirectory: dbRow.defaultWorkingDirectory,
     defaultShell: dbRow.defaultShell,
@@ -525,9 +548,9 @@ function mapDbFolderPreferences(
     fontFamily: dbRow.fontFamily,
     githubRepoId: dbRow.githubRepoId,
     localRepoPath: dbRow.localRepoPath,
-    defaultAgentProvider: dbRow.defaultAgentProvider ?? null,
-    environmentVars: parseEnvironmentVars(dbRow.environmentVars),
-    pinnedFiles: parsePinnedFiles(dbRow.pinnedFiles),
+    defaultAgentProvider: (dbRow.defaultAgentProvider as import("@/types/session").AgentProviderType | null) ?? null,
+    environmentVars: parseEnvironmentVars(typeof dbRow.environmentVars === "string" ? dbRow.environmentVars : dbRow.environmentVars == null ? null : JSON.stringify(dbRow.environmentVars)),
+    pinnedFiles: parsePinnedFiles(typeof dbRow.pinnedFiles === "string" ? dbRow.pinnedFiles : dbRow.pinnedFiles == null ? null : JSON.stringify(dbRow.pinnedFiles)),
     gitIdentityName: dbRow.gitIdentityName ?? null,
     gitIdentityEmail: dbRow.gitIdentityEmail ?? null,
     isSensitive: dbRow.isSensitive ?? false,

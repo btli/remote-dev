@@ -63,8 +63,10 @@ export interface UserSettings {
   // Scrollback buffer settings (for performance tuning)
   xtermScrollback: number | null;
   tmuxHistoryLimit: number | null;
-  activeFolderId: string | null;
-  pinnedFolderId: string | null;
+  activeNodeId: string | null;
+  activeNodeType: "group" | "project" | null;
+  pinnedNodeId: string | null;
+  pinnedNodeType: "group" | "project" | null;
   autoFollowActiveSession: boolean;
   notificationsEnabled: boolean;
   // Beads issue tracker sidebar settings
@@ -176,8 +178,10 @@ export interface UpdateUserSettingsInput {
   // Scrollback buffer settings (for performance tuning)
   xtermScrollback?: number | null;
   tmuxHistoryLimit?: number | null;
-  activeFolderId?: string | null;
-  pinnedFolderId?: string | null;
+  activeNodeId?: string | null;
+  activeNodeType?: "group" | "project" | null;
+  pinnedNodeId?: string | null;
+  pinnedNodeType?: "group" | "project" | null;
   autoFollowActiveSession?: boolean;
   notificationsEnabled?: boolean;
   // Beads issue tracker sidebar settings
