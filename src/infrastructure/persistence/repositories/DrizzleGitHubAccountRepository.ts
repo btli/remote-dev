@@ -9,6 +9,8 @@ import { db } from "@/db";
 import {
   githubAccountMetadata,
   accounts,
+  projectGitHubAccountLinks,
+  projects,
 } from "@/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 import { decryptSafe } from "@/lib/encryption";
@@ -147,6 +149,71 @@ export class DrizzleGitHubAccountRepository implements GitHubAccountRepository {
       ),
     });
     return record?.userId ?? null;
+  }
+
+  async findProjectBindings(userId: string): Promise<Map<string, string>> {
+    const rows = await db
+      .select({
+        projectId: projectGitHubAccountLinks.projectId,
+        providerAccountId: projectGitHubAccountLinks.providerAccountId,
+      })
+      .from(projectGitHubAccountLinks)
+      .innerJoin(projects, eq(projects.id, projectGitHubAccountLinks.projectId))
+      .where(eq(projects.userId, userId));
+
+    return new Map(rows.map((r) => [r.projectId, r.providerAccountId]));
+  }
+
+  async bindProject(
+    projectId: string,
+    providerAccountId: string,
+    userId: string
+  ): Promise<void> {
+    // Ensure the project belongs to the user before writing.
+    const owned = await db.query.projects.findFirst({
+      where: and(eq(projects.id, projectId), eq(projects.userId, userId)),
+      columns: { id: true },
+    });
+    if (!owned) return;
+
+    await db
+      .insert(projectGitHubAccountLinks)
+      .values({ projectId, providerAccountId })
+      .onConflictDoUpdate({
+        target: projectGitHubAccountLinks.projectId,
+        set: { providerAccountId },
+      });
+  }
+
+  async unbindProject(projectId: string, userId: string): Promise<void> {
+    const owned = await db.query.projects.findFirst({
+      where: and(eq(projects.id, projectId), eq(projects.userId, userId)),
+      columns: { id: true },
+    });
+    if (!owned) return;
+
+    await db
+      .delete(projectGitHubAccountLinks)
+      .where(eq(projectGitHubAccountLinks.projectId, projectId));
+  }
+
+  async unbindProjectsByAccount(providerAccountId: string): Promise<void> {
+    await db
+      .delete(projectGitHubAccountLinks)
+      .where(eq(projectGitHubAccountLinks.providerAccountId, providerAccountId));
+  }
+
+  async findByProject(projectId: string): Promise<GitHubAccount | null> {
+    const link = await db.query.projectGitHubAccountLinks.findFirst({
+      where: eq(projectGitHubAccountLinks.projectId, projectId),
+      columns: { providerAccountId: true },
+    });
+    if (!link) return null;
+
+    const record = await db.query.githubAccountMetadata.findFirst({
+      where: eq(githubAccountMetadata.providerAccountId, link.providerAccountId),
+    });
+    return record ? GitHubAccountMapper.toDomain(record) : null;
   }
 
   async getAccountScopes(userId: string): Promise<Map<string, string | null>> {

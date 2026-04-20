@@ -25,4 +25,26 @@ export interface GitHubAccountRepository {
 
   /** Returns a map of providerAccountId -> scope string from the OAuth accounts table. */
   getAccountScopes(userId: string): Promise<Map<string, string | null>>;
+
+  /**
+   * Returns a map of projectId -> providerAccountId for per-project GitHub account bindings.
+   * Only projects owned by `userId` are considered.
+   */
+  findProjectBindings(userId: string): Promise<Map<string, string>>;
+
+  /** Bind a project to a GitHub account (upsert). */
+  bindProject(
+    projectId: string,
+    providerAccountId: string,
+    userId: string
+  ): Promise<void>;
+
+  /** Remove a project's GitHub account binding. */
+  unbindProject(projectId: string, userId: string): Promise<void>;
+
+  /** Remove all project bindings for a given provider account (called on unlink). */
+  unbindProjectsByAccount(providerAccountId: string): Promise<void>;
+
+  /** Find the bound providerAccountId for a given project, if any. */
+  findByProject(projectId: string): Promise<GitHubAccount | null>;
 }

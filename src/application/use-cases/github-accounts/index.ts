@@ -9,3 +9,9 @@ export type { SetDefaultGitHubAccountInput } from "./SetDefaultGitHubAccountUseC
 
 export { ListGitHubAccountsUseCase } from "./ListGitHubAccountsUseCase";
 export type { ListGitHubAccountsOutput } from "./ListGitHubAccountsUseCase";
+
+export { BindProjectToGitHubAccountUseCase } from "./BindProjectToGitHubAccountUseCase";
+export type { BindProjectToGitHubAccountInput } from "./BindProjectToGitHubAccountUseCase";
+
+export { UnbindProjectFromGitHubAccountUseCase } from "./UnbindProjectFromGitHubAccountUseCase";
+export type { UnbindProjectFromGitHubAccountInput } from "./UnbindProjectFromGitHubAccountUseCase";

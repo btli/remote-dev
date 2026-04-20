@@ -1,6 +1,6 @@
 /**
- * One-time migration: create default channels for existing folders with peer messages
- * and assign all existing messages to their folder's #general channel.
+ * One-time migration: create default channels for existing projects with peer
+ * messages and assign all existing messages to their project's #general channel.
  *
  * Safe to run multiple times (idempotent).
  *
@@ -15,24 +15,24 @@ import * as ChannelService from "@/services/channel-service";
 async function main() {
   console.log("Starting channel migration...");
 
-  // Find all distinct folder IDs with peer messages
-  const folders = await db
-    .selectDistinct({ folderId: agentPeerMessages.folderId })
+  // Find all distinct project IDs with peer messages
+  const projectsWithMessages = await db
+    .selectDistinct({ projectId: agentPeerMessages.projectId })
     .from(agentPeerMessages);
 
-  console.log(`Found ${folders.length} folder(s) with peer messages`);
+  console.log(`Found ${projectsWithMessages.length} project(s) with peer messages`);
 
   let migrated = 0;
-  for (const { folderId } of folders) {
+  for (const { projectId } of projectsWithMessages) {
     // Ensure default group + #general channel
-    const { generalChannelId } = await ChannelService.ensureFolderChannels(folderId);
+    const { generalChannelId } = await ChannelService.ensureProjectChannels(projectId);
 
     // Assign all unassigned messages to #general
     await db
       .update(agentPeerMessages)
       .set({ channelId: generalChannelId })
       .where(
-        sql`${agentPeerMessages.folderId} = ${folderId} AND ${agentPeerMessages.channelId} IS NULL`
+        sql`${agentPeerMessages.projectId} = ${projectId} AND ${agentPeerMessages.channelId} IS NULL`
       );
 
     // Update message count on the channel
@@ -61,11 +61,11 @@ async function main() {
         .where(eq(channels.id, generalChannelId));
     }
 
-    console.log(`  Folder ${folderId}: assigned messages to #general (${count} total)`);
+    console.log(`  Project ${projectId}: assigned messages to #general (${count} total)`);
     migrated++;
   }
 
-  console.log(`Migration complete. Processed ${migrated} folder(s).`);
+  console.log(`Migration complete. Processed ${migrated} project(s).`);
   process.exit(0);
 }
 

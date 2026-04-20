@@ -2,7 +2,7 @@
  * ChannelService - Channel and group lifecycle management
  *
  * Handles creation, listing, and management of chat channels and groups.
- * Channels are folder-scoped and organized into groups.
+ * Channels are project-scoped and organized into groups.
  */
 
 import { db, client } from "@/db";
@@ -11,35 +11,11 @@ import {
   channels,
   channelReadState,
   agentPeerMessages,
-  sessionFolders,
   projects,
 } from "@/db/schema";
 import { eq, and, sql, isNull, inArray } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import type { ChannelType } from "@/types/channels";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
-
-/** Look up the owner userId for a folder so we can translate folderId → projectId. */
-async function resolveFolderUserId(folderId: string): Promise<string | null> {
-  const row = await db.query.sessionFolders.findFirst({
-    where: eq(sessionFolders.id, folderId),
-    columns: { userId: true },
-  });
-  return row?.userId ?? null;
-}
-
-/** Resolve the projectId for a given folder. Throws if no bridge row exists. */
-async function resolveProjectIdForFolder(folderId: string): Promise<string> {
-  const userId = await resolveFolderUserId(folderId);
-  if (!userId) {
-    throw new Error(`Folder ${folderId} has no owner; cannot resolve projectId`);
-  }
-  const projectId = await translateFolderIdToProjectId(folderId, userId);
-  if (!projectId) {
-    throw new Error(`Folder ${folderId} has no corresponding project`);
-  }
-  return projectId;
-}
 
 const log = createLogger("ChannelService");
 
@@ -69,98 +45,94 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 // ─── Bootstrap ──────────────────────────────────────────────────────────────
 
 /**
- * Ensure a folder has the default "Channels" group and "#general" channel.
+ * Ensure a project has the default "Channels" group and "#general" channel.
  * Idempotent — safe to call multiple times and concurrently.
  */
-export async function ensureFolderChannels(
-  folderId: string
+export async function ensureProjectChannels(
+  projectId: string
 ): Promise<{ groupId: string; generalChannelId: string }> {
   // Check cache first
-  const cached = generalChannelCache.get(folderId);
+  const cached = generalChannelCache.get(projectId);
   if (cached && cached.expiresAt > Date.now()) {
     const ch = await db.query.channels.findFirst({
       where: eq(channels.id, cached.id),
       columns: { groupId: true },
     });
     if (ch) {
-      // Refresh cache expiry
       cached.expiresAt = Date.now() + CACHE_TTL_MS;
       return { groupId: ch.groupId, generalChannelId: cached.id };
     } else {
-      // Channel was deleted — evict stale cache
-      generalChannelCache.delete(folderId);
+      generalChannelCache.delete(projectId);
     }
   }
-
-  // Dual-write Phase 3: translate folderId → projectId once and reuse below.
-  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
 
   // Upsert the default group
   await db
     .insert(channelGroups)
-    .values({ folderId, projectId: resolvedProjectId, name: DEFAULT_GROUP_NAME, position: 0 })
-    .onConflictDoNothing({ target: [channelGroups.folderId, channelGroups.name] });
+    .values({ projectId, name: DEFAULT_GROUP_NAME, position: 0 })
+    .onConflictDoNothing({ target: [channelGroups.projectId, channelGroups.name] });
 
   const group = await db.query.channelGroups.findFirst({
     where: and(
-      eq(channelGroups.folderId, folderId),
+      eq(channelGroups.projectId, projectId),
       eq(channelGroups.name, DEFAULT_GROUP_NAME)
     ),
     columns: { id: true },
   });
 
   if (!group) {
-    throw new Error(`Failed to ensure default group for folder ${folderId}`);
+    throw new Error(`Failed to ensure default group for project ${projectId}`);
   }
 
   // Upsert the #general channel
   await db
     .insert(channels)
     .values({
-      folderId,
-      projectId: resolvedProjectId,
+      projectId,
       groupId: group.id,
       name: GENERAL_CHANNEL_NAME,
       displayName: "#general",
       type: "public",
       isDefault: true,
     })
-    .onConflictDoNothing({ target: [channels.folderId, channels.name] });
+    .onConflictDoNothing({ target: [channels.projectId, channels.name] });
 
   const general = await db.query.channels.findFirst({
     where: and(
-      eq(channels.folderId, folderId),
+      eq(channels.projectId, projectId),
       eq(channels.name, GENERAL_CHANNEL_NAME)
     ),
     columns: { id: true },
   });
 
   if (!general) {
-    throw new Error(`Failed to ensure #general channel for folder ${folderId}`);
+    throw new Error(`Failed to ensure #general channel for project ${projectId}`);
   }
 
-  // Update cache
-  generalChannelCache.set(folderId, {
+  generalChannelCache.set(projectId, {
     id: general.id,
     expiresAt: Date.now() + CACHE_TTL_MS,
   });
 
-  log.debug("Folder channels ensured", { folderId, generalChannelId: general.id });
+  log.debug("Project channels ensured", { projectId, generalChannelId: general.id });
   return { groupId: group.id, generalChannelId: general.id };
 }
 
+/** @deprecated Use {@link ensureProjectChannels}. */
+export const ensureFolderChannels = ensureProjectChannels;
+
 /**
- * Get the #general channel ID for a folder (cached).
+ * Get the #general channel ID for a project (cached).
  */
-export async function getGeneralChannelId(folderId: string): Promise<string> {
-  const { generalChannelId } = await ensureFolderChannels(folderId);
+export async function getGeneralChannelId(projectId: string): Promise<string> {
+  const { generalChannelId } = await ensureProjectChannels(projectId);
   return generalChannelId;
 }
 
 // ─── Channel CRUD ───────────────────────────────────────────────────────────
 
 export interface CreateChannelParams {
-  folderId: string;
+  projectId: string;
   groupId?: string;
   name: string;
   displayName?: string;
@@ -170,11 +142,11 @@ export interface CreateChannelParams {
 }
 
 /**
- * Create a new channel in a folder.
+ * Create a new channel in a project.
  * If no groupId is provided, uses the default "Channels" group.
  */
 export async function createChannel(params: CreateChannelParams) {
-  const { folderId, name, topic, type = "public", createdBySessionId } = params;
+  const { projectId, name, topic, type = "public", createdBySessionId } = params;
 
   if (!CHANNEL_NAME_RE.test(name)) {
     throw new ChannelValidationError(
@@ -185,20 +157,16 @@ export async function createChannel(params: CreateChannelParams) {
   // Ensure default group exists and use it if no groupId specified
   let groupId = params.groupId;
   if (!groupId) {
-    const { groupId: defaultGroupId } = await ensureFolderChannels(folderId);
+    const { groupId: defaultGroupId } = await ensureProjectChannels(projectId);
     groupId = defaultGroupId;
   }
 
   const displayName = params.displayName || `#${name}`;
 
-  // Dual-write Phase 3: populate projectId alongside folderId.
-  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
-
   const [channel] = await db
     .insert(channels)
     .values({
-      folderId,
-      projectId: resolvedProjectId,
+      projectId,
       groupId,
       name,
       displayName,
@@ -208,35 +176,33 @@ export async function createChannel(params: CreateChannelParams) {
     })
     .returning();
 
-  log.info("Channel created", { channelId: channel.id, name, folderId });
+  log.info("Channel created", { channelId: channel.id, name, projectId });
   return channel;
 }
 
 /**
- * List all channel groups with nested channels for a folder.
+ * List all channel groups with nested channels for a project.
  * Includes unread counts for the given user.
  */
 export async function listChannelGroups(
-  folderId: string,
+  projectId: string,
   userId: string
 ) {
-  // Ensure defaults exist
-  await ensureFolderChannels(folderId);
+  await ensureProjectChannels(projectId);
 
   const groups = await db.query.channelGroups.findMany({
-    where: eq(channelGroups.folderId, folderId),
+    where: eq(channelGroups.projectId, projectId),
     orderBy: channelGroups.position,
   });
 
   const allChannels = await db.query.channels.findMany({
     where: and(
-      eq(channels.folderId, folderId),
+      eq(channels.projectId, projectId),
       isNull(channels.archivedAt)
     ),
     orderBy: channels.createdAt,
   });
 
-  // Batch: get read states for all channels in one query
   const channelIds = allChannels.map((c) => c.id);
   const readStates =
     channelIds.length > 0
@@ -254,9 +220,12 @@ export async function listChannelGroups(
           )
       : [];
 
-  const readStateMap = new Map(readStates.map((rs) => [rs.channelId, rs.lastReadAt]));
+  const readStateMap = new Map(
+    readStates
+      .filter((rs) => rs.lastReadAt !== null)
+      .map((rs) => [rs.channelId, rs.lastReadAt as Date])
+  );
 
-  // Batch: count unread messages per channel since each channel's last-read timestamp
   const channelsWithReadState = allChannels
     .filter((c) => readStateMap.has(c.id))
     .map((c) => ({ id: c.id, lastReadAt: readStateMap.get(c.id)! }));
@@ -289,7 +258,6 @@ export async function listChannelGroups(
     }
   }
 
-  // For never-read channels, count only top-level messages (not thread replies)
   const neverReadIds = allChannels.filter((c) => !readStateMap.has(c.id)).map((c) => c.id);
   const neverReadCountMap = new Map<string, number>();
   if (neverReadIds.length > 0) {
@@ -313,14 +281,13 @@ export async function listChannelGroups(
 
   const channelsWithUnread = allChannels.map((ch) => {
     const lastReadAt = readStateMap.get(ch.id);
-    // Never read → count top-level messages only; otherwise use the batched count
     const unreadCount = lastReadAt
       ? (unreadCountMap.get(ch.id) ?? 0)
       : (neverReadCountMap.get(ch.id) ?? 0);
 
     return {
       id: ch.id,
-      folderId: ch.folderId,
+      projectId: ch.projectId,
       groupId: ch.groupId,
       name: ch.name,
       displayName: ch.displayName,
@@ -336,7 +303,7 @@ export async function listChannelGroups(
 
   return groups.map((g) => ({
     id: g.id,
-    folderId: g.folderId,
+    projectId: g.projectId,
     name: g.name,
     position: g.position,
     channels: channelsWithUnread.filter((c) => c.groupId === g.id),
@@ -344,26 +311,21 @@ export async function listChannelGroups(
 }
 
 /**
- * Resolve the list of legacy folder ids that correspond to a project/group
- * node. For a project node, this is the single mapped `legacyFolderId` (if
- * any). For a group node, it's the legacyFolderIds of every project in the
- * group's descendant subtree.
- *
- * Phase 4 helper: lets the channel layer (still folder-scoped in SQL) answer
- * node-scoped queries without rewriting the storage model.
+ * Resolve the list of project ids that correspond to a project/group node.
+ * For a project node, this is just `[id]`. For a group node, it is every
+ * descendant project id.
  */
-async function resolveFolderIdsForNode(node: {
+async function resolveProjectIdsForNode(node: {
   id: string;
   type: "group" | "project";
 }): Promise<string[]> {
   if (node.type === "project") {
     const row = await db.query.projects.findFirst({
       where: eq(projects.id, node.id),
-      columns: { legacyFolderId: true },
+      columns: { id: true },
     });
-    return row?.legacyFolderId ? [row.legacyFolderId] : [];
+    return row ? [row.id] : [];
   }
-  // Group rollup: recursive CTE over descendants, then pluck project legacy ids.
   const res = await client.execute({
     sql: `
       WITH RECURSIVE descendants(id, depth) AS (
@@ -373,45 +335,36 @@ async function resolveFolderIdsForNode(node: {
           JOIN descendants d ON pg.parent_group_id = d.id
           WHERE d.depth < 128
       )
-      SELECT p.legacy_folder_id AS folder_id
+      SELECT p.id AS project_id
       FROM project p
       WHERE p.group_id IN (SELECT id FROM descendants)
-        AND p.legacy_folder_id IS NOT NULL
     `,
     args: [node.id],
   });
   return res.rows
-    .map((r) => r.folder_id as string | null)
+    .map((r) => r.project_id as string | null)
     .filter((id): id is string => Boolean(id));
 }
 
 /**
  * List channel groups scoped to a project/group node. For group nodes, this
- * aggregates channels from every descendant project's mapped folder so the
- * UI can show a "rolled up" channel list when a group is active.
- *
- * Keeps the same shape as {@link listChannelGroups} so the UI can consume
- * both uniformly.
+ * aggregates channels from every descendant project.
  */
 export async function listChannelGroupsForNode(
   node: { id: string; type: "group" | "project" },
   userId: string
 ) {
-  const folderIds = await resolveFolderIdsForNode(node);
-  if (folderIds.length === 0) return [];
+  const projectIds = await resolveProjectIdsForNode(node);
+  if (projectIds.length === 0) return [];
 
-  // For a single folder just reuse the existing (ensureDefaults + unread-
-  // aware) path so behaviour is identical to folder-scoped listing.
-  if (folderIds.length === 1) {
-    return listChannelGroups(folderIds[0], userId);
+  if (projectIds.length === 1) {
+    return listChannelGroups(projectIds[0], userId);
   }
 
-  // Group rollup: concat per-folder listings. De-dup is unnecessary because
-  // every channel belongs to exactly one folder.
-  const perFolder = await Promise.all(
-    folderIds.map((fid) => listChannelGroups(fid, userId))
+  const perProject = await Promise.all(
+    projectIds.map((pid) => listChannelGroups(pid, userId))
   );
-  return perFolder.flat();
+  return perProject.flat();
 }
 
 /**
@@ -424,14 +377,14 @@ export async function getChannel(channelId: string) {
 }
 
 /**
- * Verify a channel belongs to a specific folder.
+ * Verify a channel belongs to a specific project.
  */
-export async function verifyChannelInFolder(
+export async function verifyChannelInProject(
   channelId: string,
-  folderId: string
+  projectId: string
 ): Promise<boolean> {
   const ch = await db.query.channels.findFirst({
-    where: and(eq(channels.id, channelId), eq(channels.folderId, folderId)),
+    where: and(eq(channels.id, channelId), eq(channels.projectId, projectId)),
     columns: { id: true },
   });
   return !!ch;
@@ -440,44 +393,44 @@ export async function verifyChannelInFolder(
 // ─── Access Checks (shared by API routes) ────────────────────────────────────
 
 /**
- * Verify the user owns the folder containing a channel.
- * Returns the folderId on success, or null if the channel doesn't exist
- * or the user doesn't own the folder.
+ * Verify the user owns the project containing a channel.
+ * Returns the projectId on success, or null if the channel doesn't exist
+ * or the user doesn't own the project.
  */
 export async function verifyChannelAccess(
   channelId: string,
   userId: string
-): Promise<{ folderId: string } | null> {
+): Promise<{ projectId: string } | null> {
   const channel = await getChannel(channelId);
   if (!channel) return null;
 
-  const folder = await db.query.sessionFolders.findFirst({
+  const project = await db.query.projects.findFirst({
     where: and(
-      eq(sessionFolders.id, channel.folderId),
-      eq(sessionFolders.userId, userId)
+      eq(projects.id, channel.projectId),
+      eq(projects.userId, userId)
     ),
     columns: { id: true },
   });
-  if (!folder) return null;
+  if (!project) return null;
 
-  return { folderId: channel.folderId };
+  return { projectId: channel.projectId };
 }
 
 /**
- * Verify the user owns the given folder.
+ * Verify the user owns the given project.
  */
-export async function verifyFolderOwnership(
-  folderId: string,
+export async function verifyProjectOwnership(
+  projectId: string,
   userId: string
 ): Promise<boolean> {
-  const folder = await db.query.sessionFolders.findFirst({
+  const project = await db.query.projects.findFirst({
     where: and(
-      eq(sessionFolders.id, folderId),
-      eq(sessionFolders.userId, userId)
+      eq(projects.id, projectId),
+      eq(projects.userId, userId)
     ),
     columns: { id: true },
   });
-  return !!folder;
+  return !!project;
 }
 
 /**
@@ -485,31 +438,26 @@ export async function verifyFolderOwnership(
  * DM channel names are deterministic: `dm-{minId8}-{maxId8}` for idempotency.
  */
 export async function findOrCreateDmChannel(
-  folderId: string,
+  projectId: string,
   sessionIdA: string,
   sessionIdB: string
 ) {
   const [minId, maxId] = [sessionIdA, sessionIdB].sort();
   const dmName = `dm-${minId.slice(0, 8)}-${maxId.slice(0, 8)}`;
 
-  // Check if already exists
   const existing = await db.query.channels.findFirst({
-    where: and(eq(channels.folderId, folderId), eq(channels.name, dmName)),
+    where: and(eq(channels.projectId, projectId), eq(channels.name, dmName)),
   });
   if (existing) return existing;
 
-  // Dual-write Phase 3: resolve projectId once for both group + channel inserts.
-  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
-
-  // Ensure DM group exists
   await db
     .insert(channelGroups)
-    .values({ folderId, projectId: resolvedProjectId, name: DM_GROUP_NAME, position: 100 })
-    .onConflictDoNothing({ target: [channelGroups.folderId, channelGroups.name] });
+    .values({ projectId, name: DM_GROUP_NAME, position: 100 })
+    .onConflictDoNothing({ target: [channelGroups.projectId, channelGroups.name] });
 
   const dmGroup = await db.query.channelGroups.findFirst({
     where: and(
-      eq(channelGroups.folderId, folderId),
+      eq(channelGroups.projectId, projectId),
       eq(channelGroups.name, DM_GROUP_NAME)
     ),
     columns: { id: true },
@@ -520,26 +468,24 @@ export async function findOrCreateDmChannel(
   const [channel] = await db
     .insert(channels)
     .values({
-      folderId,
-      projectId: resolvedProjectId,
+      projectId,
       groupId: dmGroup.id,
       name: dmName,
-      displayName: dmName, // Will be resolved to peer name at render time
+      displayName: dmName,
       type: "dm",
     })
-    .onConflictDoNothing({ target: [channels.folderId, channels.name] })
+    .onConflictDoNothing({ target: [channels.projectId, channels.name] })
     .returning();
 
-  // Handle race condition: if onConflictDoNothing fired, re-query
   if (!channel) {
     const raced = await db.query.channels.findFirst({
-      where: and(eq(channels.folderId, folderId), eq(channels.name, dmName)),
+      where: and(eq(channels.projectId, projectId), eq(channels.name, dmName)),
     });
     if (!raced) throw new Error("Failed to create DM channel");
     return raced;
   }
 
-  log.info("DM channel created", { channelId: channel.id, folderId });
+  log.info("DM channel created", { channelId: channel.id, projectId });
   return channel;
 }
 
@@ -547,14 +493,12 @@ export async function findOrCreateDmChannel(
 
 /**
  * Mark a channel as read for a user up to a specific message.
- * Uses the message's actual createdAt timestamp for consistency.
  */
 export async function markChannelRead(
   channelId: string,
   userId: string,
   messageId: string
 ) {
-  // Verify message belongs to this channel and get its timestamp
   const message = await db.query.agentPeerMessages.findFirst({
     where: and(
       eq(agentPeerMessages.id, messageId),
@@ -568,7 +512,6 @@ export async function markChannelRead(
 
   const lastReadAt = message.createdAt ?? new Date();
 
-  // Upsert read state
   await db
     .insert(channelReadState)
     .values({ channelId, userId, lastReadMessageId: messageId, lastReadAt })

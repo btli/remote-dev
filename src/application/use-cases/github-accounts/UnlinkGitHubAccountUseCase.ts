@@ -34,7 +34,7 @@ export class UnlinkGitHubAccountUseCase {
     }
 
     await this.ghCliConfig.removeConfig(account.configDir).catch(() => {});
-    await this.accountRepo.unbindFoldersByAccount(input.providerAccountId);
+    await this.accountRepo.unbindProjectsByAccount(input.providerAccountId);
     await this.accountRepo.delete(input.providerAccountId, input.userId);
 
     // Promote another account to default if needed

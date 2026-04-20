@@ -3,8 +3,8 @@ import { withAuth, errorResponse } from "@/lib/api";
 import {
   unlinkGitHubAccountUseCase,
   setDefaultGitHubAccountUseCase,
-  bindFolderToGitHubAccountUseCase,
-  unbindFolderFromGitHubAccountUseCase,
+  bindProjectToGitHubAccountUseCase,
+  unbindProjectFromGitHubAccountUseCase,
 } from "@/infrastructure/container";
 import { EntityNotFoundError } from "@/domain/errors/DomainError";
 import { createLogger } from "@/lib/logger";
@@ -13,9 +13,9 @@ const log = createLogger("api/github");
 
 /**
  * PATCH /api/github/accounts/:accountId
- * Update account properties (e.g., set as default, bind/unbind folder)
+ * Update account properties (e.g., set as default, bind/unbind project)
  *
- * Body: { action: "set-default" | "bind-folder" | "unbind-folder", folderId?: string }
+ * Body: { action: "set-default" | "bind-project" | "unbind-project", projectId?: string }
  */
 export const PATCH = withAuth(async (request, { userId, params }) => {
   const accountId = params?.accountId;
@@ -34,24 +34,24 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
       return NextResponse.json({ success: true });
     }
 
-    if (body.action === "bind-folder") {
-      if (!body.folderId) {
-        return errorResponse("folderId required", 400);
+    if (body.action === "bind-project") {
+      if (!body.projectId) {
+        return errorResponse("projectId required", 400);
       }
-      await bindFolderToGitHubAccountUseCase.execute({
+      await bindProjectToGitHubAccountUseCase.execute({
         userId,
-        folderId: body.folderId,
+        projectId: body.projectId,
         providerAccountId: accountId,
       });
       return NextResponse.json({ success: true });
     }
 
-    if (body.action === "unbind-folder") {
-      if (!body.folderId) {
-        return errorResponse("folderId required", 400);
+    if (body.action === "unbind-project") {
+      if (!body.projectId) {
+        return errorResponse("projectId required", 400);
       }
-      await unbindFolderFromGitHubAccountUseCase.execute({
-        folderId: body.folderId,
+      await unbindProjectFromGitHubAccountUseCase.execute({
+        projectId: body.projectId,
         userId,
       });
       return NextResponse.json({ success: true });

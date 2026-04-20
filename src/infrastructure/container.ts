@@ -76,6 +76,8 @@ import {
   UnlinkGitHubAccountUseCase,
   SetDefaultGitHubAccountUseCase,
   ListGitHubAccountsUseCase,
+  BindProjectToGitHubAccountUseCase,
+  UnbindProjectFromGitHubAccountUseCase,
 } from "@/application/use-cases/github-accounts";
 
 // Agent Use Cases
@@ -334,6 +336,12 @@ export const setDefaultGitHubAccountUseCase = new SetDefaultGitHubAccountUseCase
 export const listGitHubAccountsUseCase = new ListGitHubAccountsUseCase(
   githubAccountRepository
 );
+
+export const bindProjectToGitHubAccountUseCase =
+  new BindProjectToGitHubAccountUseCase(githubAccountRepository);
+
+export const unbindProjectFromGitHubAccountUseCase =
+  new UnbindProjectFromGitHubAccountUseCase(githubAccountRepository);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Log System
