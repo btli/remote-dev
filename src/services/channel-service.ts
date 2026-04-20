@@ -5,13 +5,14 @@
  * Channels are folder-scoped and organized into groups.
  */
 
-import { db } from "@/db";
+import { db, client } from "@/db";
 import {
   channelGroups,
   channels,
   channelReadState,
   agentPeerMessages,
   sessionFolders,
+  projects,
 } from "@/db/schema";
 import { eq, and, sql, isNull, inArray } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
@@ -334,6 +335,77 @@ export async function listChannelGroups(
     position: g.position,
     channels: channelsWithUnread.filter((c) => c.groupId === g.id),
   }));
+}
+
+/**
+ * Resolve the list of legacy folder ids that correspond to a project/group
+ * node. For a project node, this is the single mapped `legacyFolderId` (if
+ * any). For a group node, it's the legacyFolderIds of every project in the
+ * group's descendant subtree.
+ *
+ * Phase 4 helper: lets the channel layer (still folder-scoped in SQL) answer
+ * node-scoped queries without rewriting the storage model.
+ */
+async function resolveFolderIdsForNode(node: {
+  id: string;
+  type: "group" | "project";
+}): Promise<string[]> {
+  if (node.type === "project") {
+    const row = await db.query.projects.findFirst({
+      where: eq(projects.id, node.id),
+      columns: { legacyFolderId: true },
+    });
+    return row?.legacyFolderId ? [row.legacyFolderId] : [];
+  }
+  // Group rollup: recursive CTE over descendants, then pluck project legacy ids.
+  const res = await client.execute({
+    sql: `
+      WITH RECURSIVE descendants(id, depth) AS (
+        SELECT id, 0 FROM project_group WHERE id = ?
+        UNION
+        SELECT pg.id, d.depth + 1 FROM project_group pg
+          JOIN descendants d ON pg.parent_group_id = d.id
+          WHERE d.depth < 128
+      )
+      SELECT p.legacy_folder_id AS folder_id
+      FROM project p
+      WHERE p.group_id IN (SELECT id FROM descendants)
+        AND p.legacy_folder_id IS NOT NULL
+    `,
+    args: [node.id],
+  });
+  return res.rows
+    .map((r) => r.folder_id as string | null)
+    .filter((id): id is string => Boolean(id));
+}
+
+/**
+ * List channel groups scoped to a project/group node. For group nodes, this
+ * aggregates channels from every descendant project's mapped folder so the
+ * UI can show a "rolled up" channel list when a group is active.
+ *
+ * Keeps the same shape as {@link listChannelGroups} so the UI can consume
+ * both uniformly.
+ */
+export async function listChannelGroupsForNode(
+  node: { id: string; type: "group" | "project" },
+  userId: string
+) {
+  const folderIds = await resolveFolderIdsForNode(node);
+  if (folderIds.length === 0) return [];
+
+  // For a single folder just reuse the existing (ensureDefaults + unread-
+  // aware) path so behaviour is identical to folder-scoped listing.
+  if (folderIds.length === 1) {
+    return listChannelGroups(folderIds[0], userId);
+  }
+
+  // Group rollup: concat per-folder listings. De-dup is unnecessary because
+  // every channel belongs to exactly one folder.
+  const perFolder = await Promise.all(
+    folderIds.map((fid) => listChannelGroups(fid, userId))
+  );
+  return perFolder.flat();
 }
 
 /**

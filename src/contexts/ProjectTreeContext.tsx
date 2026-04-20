@@ -26,6 +26,12 @@ export interface ProjectNode {
   groupId: string;
   isAutoCreated: boolean;
   sortOrder: number;
+  /**
+   * Legacy folder id that this project was migrated from, if any. Present so
+   * client code can fall back to folder-scoped APIs during the Phase 4
+   * transition when a node-scoped endpoint isn't available yet.
+   */
+  legacyFolderId?: string | null;
 }
 
 export interface ActiveNode {

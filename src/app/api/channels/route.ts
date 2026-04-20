@@ -6,14 +6,26 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/channels");
 
-// GET /api/channels?folderId= — list channel groups with unread counts
+// GET /api/channels?folderId= — list channel groups with unread counts.
+// Phase 4: also accepts ?nodeId=&nodeType=(group|project) for node-scoped
+// listing (group nodes aggregate across all descendant projects).
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
     const { searchParams } = new URL(request.url);
     const folderId = searchParams.get("folderId");
+    const nodeId = searchParams.get("nodeId");
+    const nodeType = searchParams.get("nodeType");
+
+    if (nodeId && (nodeType === "group" || nodeType === "project")) {
+      const groups = await ChannelService.listChannelGroupsForNode(
+        { id: nodeId, type: nodeType },
+        userId
+      );
+      return NextResponse.json({ groups });
+    }
 
     if (!folderId) {
-      return errorResponse("folderId is required", 400);
+      return errorResponse("folderId or nodeId is required", 400);
     }
 
     if (!(await ChannelService.verifyFolderOwnership(folderId, userId))) {

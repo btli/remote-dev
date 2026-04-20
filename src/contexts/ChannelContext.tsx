@@ -24,6 +24,7 @@ import {
   type SetStateAction,
 } from "react";
 import { usePreferencesContext } from "./PreferencesContext";
+import { useProjectTree } from "./ProjectTreeContext";
 import type { ChannelGroup, Channel, ChannelMessage } from "@/types/channels";
 
 // ---------------------------------------------------------------------------
@@ -122,6 +123,7 @@ interface ChannelProviderProps {
 export function ChannelProvider({ children }: ChannelProviderProps) {
   const { activeProject } = usePreferencesContext();
   const folderId = activeProject.folderId;
+  const { activeNode } = useProjectTree();
 
   const [groups, setGroups] = useState<ChannelGroup[]>([]);
   const [activeChannelId, setActiveChannelIdState] = useState<string | null>(null);
@@ -141,14 +143,23 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
   // ---------------------------------------------------------------------------
 
   const fetchChannels = useCallback(async () => {
-    if (!folderId) {
+    // Phase 4: prefer node-scoped fetching so group nodes aggregate across
+    // descendant projects. Fall back to the legacy folder scope when no
+    // active node has been selected yet (first paint, pre-migration).
+    const query = activeNode
+      ? `nodeId=${encodeURIComponent(activeNode.id)}&nodeType=${activeNode.type}`
+      : folderId
+        ? `folderId=${encodeURIComponent(folderId)}`
+        : null;
+
+    if (!query) {
       setGroups([]);
       return;
     }
 
     setLoading(true);
     try {
-      const resp = await fetch(`/api/channels?folderId=${encodeURIComponent(folderId)}`);
+      const resp = await fetch(`/api/channels?${query}`);
       if (resp.ok) {
         const data = await resp.json();
         const fetchedGroups: ChannelGroup[] = data.groups ?? [];
@@ -180,9 +191,9 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     } finally {
       setLoading(false);
     }
-  }, [folderId]);
+  }, [folderId, activeNode]);
 
-  // Reset state on folder change
+  // Reset state on scope change (folder or active node)
   useEffect(() => {
     setGroups([]);
     setMessagesByChannel(new Map());
@@ -190,18 +201,18 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
     setOpenThreadId(null);
     setActiveChannelIdState(null);
     fetchChannels();
-  }, [folderId, fetchChannels]);
+  }, [folderId, activeNode, fetchChannels]);
 
   // Refetch on tab focus
   useEffect(() => {
     function handleVisibility(): void {
-      if (!document.hidden && folderId) {
+      if (!document.hidden && (folderId || activeNode)) {
         fetchChannels();
       }
     }
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [folderId, fetchChannels]);
+  }, [folderId, activeNode, fetchChannels]);
 
   const refreshChannels = fetchChannels;
 
