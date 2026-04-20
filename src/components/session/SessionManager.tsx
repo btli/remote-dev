@@ -618,6 +618,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       githubRepoId?: string;
       worktreeBranch?: string;
       folderId?: string;
+      projectId?: string;
       startupCommand?: string;
       featureDescription?: string;
       createWorktree?: boolean;

@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle, Briefcase } from "lucide-react";
 import { PathInput } from "@/components/common";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
+import { ProjectPickerCombobox } from "./ProjectPickerCombobox";
 import { useProfileContext } from "@/contexts/ProfileContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { useTemplateContext } from "@/contexts/TemplateContext";
 import { expandNamePattern, type SessionTemplate } from "@/types/template";
 import {
@@ -39,6 +41,7 @@ interface NewSessionWizardProps {
     githubRepoId?: string;
     worktreeBranch?: string;
     folderId?: string;
+    projectId?: string;
     startupCommand?: string;
     featureDescription?: string;
     createWorktree?: boolean;
@@ -97,6 +100,19 @@ export function NewSessionWizard({
   // Profile state
   const { profiles } = useProfileContext();
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+
+  // Project state (selects which project the new session is created under).
+  // Defaults to the active project from ProjectTreeContext when the wizard opens.
+  const projectTree = useProjectTree();
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    if (selectedProjectId) return;
+    const active = projectTree.activeNode;
+    if (active?.type === "project") {
+      setSelectedProjectId(active.id);
+    }
+  }, [open, projectTree.activeNode, selectedProjectId]);
 
   // Feature session state
   const [featureDescription, setFeatureDescription] = useState("");
@@ -177,6 +193,7 @@ export function NewSessionWizard({
     setNewBranchName(undefined);
     setCloningStatus(null);
     setSelectedProfileId(null);
+    setSelectedProjectId(null);
     // Feature session reset
     setFeatureDescription("");
     setGeneratedBranchName("");
@@ -234,6 +251,7 @@ export function NewSessionWizard({
         name,
         projectPath: template.projectPath || undefined,
         folderId: template.folderId || undefined,
+        projectId: template.projectId || undefined,
         startupCommand: template.startupCommand || undefined,
       });
 
@@ -271,6 +289,7 @@ export function NewSessionWizard({
         name: sessionName || "Terminal",
         projectPath: projectPath || undefined,
         profileId: selectedProfileId || undefined,
+        projectId: selectedProjectId || undefined,
       });
       handleClose();
     } catch (err) {
@@ -344,6 +363,7 @@ export function NewSessionWizard({
         // Use database ID returned from clone API (not GitHub's numeric ID)
         githubRepoId: cloneData.repositoryId,
         worktreeBranch: newBranchName || selectedBranch?.name,
+        projectId: selectedProjectId || undefined,
       });
 
       handleClose();
@@ -367,6 +387,7 @@ export function NewSessionWizard({
       await onCreate({
         name: sessionName || featureDescription || "Feature Session",
         projectPath: featureProjectPath || undefined,
+        projectId: selectedProjectId || undefined,
         featureDescription,
         createWorktree: featureCreateWorktree,
         baseBranch: featureBaseBranch,
@@ -537,6 +558,24 @@ export function NewSessionWizard({
                   className="bg-card/50 border-border focus:border-primary"
                 />
               </div>
+
+              {/* Project Selection */}
+              {projectTree.projects.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-foreground flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-primary" />
+                    Project
+                  </Label>
+                  <ProjectPickerCombobox
+                    value={selectedProjectId}
+                    onChange={setSelectedProjectId}
+                    placeholder="Select a project (optional)"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Organize this session under a project
+                  </p>
+                </div>
+              )}
 
               {/* Profile Selection */}
               {profiles.length > 0 && (
@@ -811,6 +850,21 @@ export function NewSessionWizard({
                 />
               </div>
 
+              {/* Project Selection */}
+              {projectTree.projects.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-foreground flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-primary" />
+                    Project
+                  </Label>
+                  <ProjectPickerCombobox
+                    value={selectedProjectId}
+                    onChange={setSelectedProjectId}
+                    placeholder="Select a project (optional)"
+                  />
+                </div>
+              )}
+
               {/* Profile Selection */}
               {profiles.length > 0 && (
                 <div className="space-y-2">
@@ -1015,6 +1069,21 @@ export function NewSessionWizard({
                 </div>
               </div>
 
+              {/* Project selector */}
+              {projectTree.projects.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-primary" />
+                    Project
+                  </Label>
+                  <ProjectPickerCombobox
+                    value={selectedProjectId}
+                    onChange={setSelectedProjectId}
+                    placeholder="Select a project (optional)"
+                  />
+                </div>
+              )}
+
               {/* Profile selector */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium flex items-center gap-2">
@@ -1048,6 +1117,7 @@ export function NewSessionWizard({
                         name: loopName.trim(),
                         projectPath: loopProjectPath || undefined,
                         profileId: selectedProfileId || undefined,
+                        projectId: selectedProjectId || undefined,
                         terminalType: "loop",
                         agentProvider: loopAgent,
                         autoLaunchAgent: true,
