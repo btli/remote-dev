@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { db } from "@/db";
 import {
   sessionFolders,
+  folderPreferences,
   terminalSessions,
   sessionTemplates,
   projectTasks,
@@ -19,6 +20,7 @@ import {
   worktreeTrashMetadata,
   projectGroups,
   projects,
+  nodePreferences,
 } from "@/db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
@@ -616,6 +618,89 @@ async function main() {
     log.info("Backfilled worktree_trash_metadata", { rows: trashRows.length });
 
     await setMigrationState(k("backfilled-fks"), "done");
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Task 11: Migrate folder_preferences → node_preferences
+  // ───────────────────────────────────────────────────────────────────────
+  // Inheritable fields (valid for both group and project owners).
+  // Project-only fields (githubRepoId, localRepoPath, pinnedFiles) must be
+  // nulled out on group-owned rows — Phase 2 NodePreferences.forGroup forbids
+  // them, and keeping real values here breaks the factory invariant.
+  const INHERITABLE_KEYS = [
+    "defaultWorkingDirectory",
+    "defaultShell",
+    "startupCommand",
+    "theme",
+    "fontSize",
+    "fontFamily",
+    "defaultAgentProvider",
+    "environmentVars",
+    "gitIdentityName",
+    "gitIdentityEmail",
+    "isSensitive",
+  ] as const;
+  const PROJECT_ONLY_KEYS = ["githubRepoId", "localRepoPath", "pinnedFiles"] as const;
+  void INHERITABLE_KEYS; // keeps the policy list traceable in source
+
+  const prefsMarker = await getMigrationState(k("prefs-migrated"));
+  if (prefsMarker === "done") {
+    log.info("Preferences already migrated; skipping Task 11.");
+  } else {
+    const allPrefs = await db.select().from(folderPreferences);
+    for (const pref of allPrefs) {
+      // Determine owner: group if folder is group; project (including Default) if folder is project-mapped
+      const groupTarget = groupIdMap.get(pref.folderId);
+      const projectTarget =
+        projectIdMap.get(pref.folderId) ??
+        defaultProjectIdsByGroup.get(pref.folderId) ??
+        null;
+      const ownerId = projectTarget ?? groupTarget;
+      if (!ownerId) {
+        log.warn("Orphan folder preferences row", { folderId: pref.folderId });
+        continue;
+      }
+      const ownerType: "group" | "project" = projectTarget ? "project" : "group";
+
+      // Warn when we'd drop project-only fields on a group (data loss that the
+      // operator should see during the run log).
+      if (ownerType === "group") {
+        for (const key of PROJECT_ONLY_KEYS) {
+          if (pref[key] != null) {
+            log.warn("Dropping project-only field on group owner", {
+              folderId: pref.folderId,
+              field: key,
+            });
+          }
+        }
+      }
+
+      await db.insert(nodePreferences).values({
+        id: randomUUID(),
+        ownerId,
+        ownerType,
+        userId: pref.userId,
+        defaultWorkingDirectory: pref.defaultWorkingDirectory,
+        defaultShell: pref.defaultShell,
+        startupCommand: pref.startupCommand,
+        theme: pref.theme,
+        fontSize: pref.fontSize,
+        fontFamily: pref.fontFamily,
+        // Project-only fields: null on group owners, real value on project owners.
+        githubRepoId: ownerType === "project" ? pref.githubRepoId : null,
+        localRepoPath: ownerType === "project" ? pref.localRepoPath : null,
+        pinnedFiles: ownerType === "project" ? pref.pinnedFiles : null,
+        defaultAgentProvider: pref.defaultAgentProvider,
+        environmentVars: pref.environmentVars,
+        gitIdentityName: pref.gitIdentityName,
+        gitIdentityEmail: pref.gitIdentityEmail,
+        isSensitive: pref.isSensitive ?? false,
+      });
+    }
+    log.info("Migrated folder preferences → node_preferences", {
+      rows: allPrefs.length,
+    });
+    await setMigrationState(k("prefs-migrated"), "done");
   }
 }
 
