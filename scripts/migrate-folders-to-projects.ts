@@ -419,7 +419,7 @@ async function main() {
   } else {
     async function backfillProjectId(
       tableName: string,
-      updater: (legacyId: string, projectId: string | null) => Promise<void>,
+      updater: (legacyId: string, projectId: string) => Promise<void>,
       loader: () => Promise<Array<{ id: string; folderId: string | null }>>
     ) {
       const rows = await loader();

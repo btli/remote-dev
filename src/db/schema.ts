@@ -1535,9 +1535,11 @@ export const projectTasks = sqliteTable(
     folderId: text("folder_id").references(() => sessionFolders.id, {
       onDelete: "cascade",
     }),
-    projectId: text("project_id").references(() => projects.id, {
-      onDelete: "cascade",
-    }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     sessionId: text("session_id").references(() => terminalSessions.id, {
       onDelete: "set null",
     }),
@@ -1661,7 +1663,7 @@ export const agentPeerMessages = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     folderId: text("folder_id").notNull(),
-    projectId: text("project_id"),
+    projectId: text("project_id").notNull(),
     fromSessionId: text("from_session_id").references(() => terminalSessions.id, {
       onDelete: "set null",
     }),
@@ -1702,9 +1704,11 @@ export const channelGroups = sqliteTable(
     folderId: text("folder_id")
       .notNull()
       .references(() => sessionFolders.id, { onDelete: "cascade" }),
-    projectId: text("project_id").references(() => projects.id, {
-      onDelete: "cascade",
-    }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     name: text("name").notNull(),
     position: integer("position").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -1731,9 +1735,11 @@ export const channels = sqliteTable(
     folderId: text("folder_id")
       .notNull()
       .references(() => sessionFolders.id, { onDelete: "cascade" }),
-    projectId: text("project_id").references(() => projects.id, {
-      onDelete: "cascade",
-    }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     groupId: text("group_id")
       .notNull()
       .references(() => channelGroups.id, { onDelete: "cascade" }),

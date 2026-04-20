@@ -15,13 +15,19 @@ const log = createLogger("PeerService");
  * Resolve the projectId for a folder for dual-write.
  * Looks up the folder owner first, then translates via projects.legacyFolderId.
  */
-async function resolveProjectIdForFolder(folderId: string): Promise<string | null> {
+async function resolveProjectIdForFolder(folderId: string): Promise<string> {
   const row = await db.query.sessionFolders.findFirst({
     where: eq(sessionFolders.id, folderId),
     columns: { userId: true },
   });
-  if (!row?.userId) return null;
-  return translateFolderIdToProjectId(folderId, row.userId);
+  if (!row?.userId) {
+    throw new Error(`Folder ${folderId} has no owner; cannot resolve projectId`);
+  }
+  const projectId = await translateFolderIdToProjectId(folderId, row.userId);
+  if (!projectId) {
+    throw new Error(`Folder ${folderId} has no corresponding project`);
+  }
+  return projectId;
 }
 
 const MAX_MESSAGE_LENGTH = 8192;

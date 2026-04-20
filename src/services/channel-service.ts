@@ -28,11 +28,17 @@ async function resolveFolderUserId(folderId: string): Promise<string | null> {
   return row?.userId ?? null;
 }
 
-/** Resolve the projectId for a given folder, or null if no bridge row exists. */
-async function resolveProjectIdForFolder(folderId: string): Promise<string | null> {
+/** Resolve the projectId for a given folder. Throws if no bridge row exists. */
+async function resolveProjectIdForFolder(folderId: string): Promise<string> {
   const userId = await resolveFolderUserId(folderId);
-  if (!userId) return null;
-  return translateFolderIdToProjectId(folderId, userId);
+  if (!userId) {
+    throw new Error(`Folder ${folderId} has no owner; cannot resolve projectId`);
+  }
+  const projectId = await translateFolderIdToProjectId(folderId, userId);
+  if (!projectId) {
+    throw new Error(`Folder ${folderId} has no corresponding project`);
+  }
+  return projectId;
 }
 
 const log = createLogger("ChannelService");

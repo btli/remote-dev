@@ -250,6 +250,9 @@ export async function createTask(
     (input.folderId
       ? await translateFolderIdToProjectId(input.folderId, userId)
       : null);
+  if (!resolvedProjectId) {
+    throw new Error("createTask: projectId is required (no folderId→projectId mapping found)");
+  }
   const [row] = await db
     .insert(projectTasks)
     .values({
