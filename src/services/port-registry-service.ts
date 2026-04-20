@@ -17,6 +17,7 @@ import type {
 import { extractPortVariables, RESERVED_PORTS } from "@/types/environment";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 const execFile = promisify(execFileCallback);
 
@@ -45,10 +46,15 @@ export async function syncPortRegistry(
   const ports = extractPortVariables(envVars);
   if (ports.length === 0) return;
 
+  // Dual-write Phase 3: translate the folderId once; all inserted rows
+  // belong to the same folder, so they share the same projectId.
+  const resolvedProjectId = await translateFolderIdToProjectId(folderId, userId);
+
   // Insert new port allocations
   await db.insert(portRegistry).values(
     ports.map(({ variableName, port }) => ({
       folderId,
+      projectId: resolvedProjectId,
       userId,
       port,
       variableName,
