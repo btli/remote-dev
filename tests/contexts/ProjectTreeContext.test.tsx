@@ -4,7 +4,7 @@ import { ProjectTreeProvider, useProjectTree } from "@/contexts/ProjectTreeConte
 
 describe("ProjectTreeContext", () => {
   beforeEach(() => {
-    global.fetch = vi.fn((url) => {
+    global.fetch = vi.fn((url: string | URL | Request) => {
       if (String(url).includes("/api/groups")) {
         return Promise.resolve({
           ok: true,
@@ -18,7 +18,7 @@ describe("ProjectTreeContext", () => {
         }) as any;
       }
       return Promise.resolve({ ok: false, status: 404 }) as any;
-    });
+    }) as unknown as typeof fetch;
   });
 
   it("loads groups and projects and exposes a unified tree", async () => {

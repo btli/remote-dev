@@ -8,6 +8,7 @@ import { terminalSessions, accounts, sessionFolders, githubAccountMetadata } fro
 import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { FolderProvider } from "@/contexts/FolderContext";
+import { ProjectTreeProvider } from "@/contexts/ProjectTreeContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { TemplateProvider } from "@/contexts/TemplateContext";
 import { RecordingProvider } from "@/contexts/RecordingContext";
@@ -117,6 +118,7 @@ export default async function Home() {
   return (
     <PreferencesProvider>
       <FolderProvider initialFolders={initialFolders} initialSessionFolders={sessionFoldersMap}>
+        <ProjectTreeProvider>
         <SecretsProvider>
           <LiteLLMProvider>
           <ProfileProvider>
@@ -164,6 +166,7 @@ export default async function Home() {
           </ProfileProvider>
           </LiteLLMProvider>
         </SecretsProvider>
+        </ProjectTreeProvider>
       </FolderProvider>
     </PreferencesProvider>
   );
