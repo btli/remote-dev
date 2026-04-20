@@ -5,7 +5,7 @@ export interface NodePreferencesFields {
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
-  githubRepoId?: number | null;
+  githubRepoId?: string | null;
   localRepoPath?: string | null;
   defaultAgentProvider?: string | null;
   environmentVars?: Record<string, string> | null;
