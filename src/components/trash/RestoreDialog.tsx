@@ -58,7 +58,7 @@ export function RestoreDialog({
   }
 
   const metadata = item.metadata;
-  const needsFolderSelection = !originalFolderId && metadata?.originalFolderId;
+  const needsFolderSelection = !originalFolderId && metadata?.originalProjectId;
 
   // Use override if set, otherwise use original
   const effectiveFolderId = folderOverride !== undefined ? folderOverride : originalFolderId;
@@ -145,16 +145,16 @@ export function RestoreDialog({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                The original folder &quot;{metadata?.originalFolderName}&quot; was deleted.
+                The original folder &quot;{metadata?.originalProjectName}&quot; was deleted.
                 Choose where to restore this session.
               </p>
             </div>
           )}
 
           {/* Original folder info */}
-          {originalFolderId && metadata?.originalFolderName && (
+          {originalFolderId && metadata?.originalProjectName && (
             <div className="text-xs text-muted-foreground">
-              Will restore to folder: {metadata.originalFolderName}
+              Will restore to folder: {metadata.originalProjectName}
             </div>
           )}
         </div>

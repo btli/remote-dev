@@ -386,9 +386,9 @@ export function Sidebar({
     onSessionClose(session.id);
   }, [onSessionClose]);
 
-  // Sessions not in any folder - use session.folderId directly for accurate rendering
+  // Sessions not in any folder - use session.projectId directly for accurate rendering
   const rootSessions = activeSessions.filter(
-    (s) => !s.folderId
+    (s) => !s.projectId
   );
   const pinnedRootSessions = rootSessions.filter((s) => s.pinned);
   const unpinnedRootSessions = rootSessions.filter((s) => !s.pinned);
@@ -948,9 +948,9 @@ export function Sidebar({
       return;
     }
 
-    // Check if in the same folder - use session.folderId directly
+    // Check if in the same folder - use session.projectId directly
     const draggedSession = activeSessions.find((s) => s.id === draggedId);
-    const draggedFolderId = draggedSession?.folderId || null;
+    const draggedFolderId = draggedSession?.projectId || null;
     if (draggedFolderId !== targetFolderId) {
       // Different folder - move to target folder
       onSessionMove(draggedId, targetFolderId);
@@ -958,7 +958,7 @@ export function Sidebar({
       // Same folder - reorder within same pin partition
       const draggedPinned = draggedSession?.pinned ?? false;
       const sessionsInFolder = activeSessions.filter(
-        (s) => (s.folderId || null) === targetFolderId && s.pinned === draggedPinned
+        (s) => (s.projectId || null) === targetFolderId && s.pinned === draggedPinned
       );
       const currentOrder = sessionsInFolder.map((s) => s.id);
 
@@ -978,7 +978,7 @@ export function Sidebar({
       // Add sessions from each folder
       // For the target folder, include reordered partition first, then the other partition
       const otherPartitionIds = activeSessions
-        .filter((s) => (s.folderId || null) === targetFolderId && s.pinned !== draggedPinned)
+        .filter((s) => (s.projectId || null) === targetFolderId && s.pinned !== draggedPinned)
         .map((s) => s.id);
       folders.forEach((folder) => {
         if (folder.id === targetFolderId) {
@@ -991,7 +991,7 @@ export function Sidebar({
         } else {
           // Keep existing order for other folders
           const otherFolderSessions = activeSessions
-            .filter((s) => s.folderId === folder.id)
+            .filter((s) => s.projectId === folder.id)
             .map((s) => s.id);
           fullOrder.push(...otherFolderSessions);
         }
@@ -1001,7 +1001,7 @@ export function Sidebar({
       if (targetFolderId === null) {
         // Reordering root sessions - include both partitions
         const otherRootPartitionIds = activeSessions
-          .filter((s) => !s.folderId && s.pinned !== draggedPinned)
+          .filter((s) => !s.projectId && s.pinned !== draggedPinned)
           .map((s) => s.id);
         if (draggedPinned) {
           fullOrder.push(...newOrder, ...otherRootPartitionIds);
@@ -1011,7 +1011,7 @@ export function Sidebar({
       } else {
         // Keep existing order for root sessions
         const rootSessionIds = activeSessions
-          .filter((s) => !s.folderId)
+          .filter((s) => !s.projectId)
           .map((s) => s.id);
         fullOrder.push(...rootSessionIds);
       }
@@ -1038,10 +1038,10 @@ export function Sidebar({
       return;
     }
 
-    // Check if dragged session is in the same folder - use session.folderId directly
+    // Check if dragged session is in the same folder - use session.projectId directly
     const draggedSession = draggedSessionId ? activeSessions.find((s) => s.id === draggedSessionId) : null;
     const targetSession = activeSessions.find((s) => s.id === targetSessionId);
-    const draggedFolderId = draggedSession?.folderId || null;
+    const draggedFolderId = draggedSession?.projectId || null;
     if (draggedFolderId !== targetFolderId) {
       // Different folder - treat as folder drop
       setDragOverFolderId(targetFolderId);
@@ -1072,7 +1072,7 @@ export function Sidebar({
     const isActive = session.id === activeSessionId;
     const isEditing = editingId === session.id;
     const inFolder = parentFolderId !== null;
-    const currentFolderId = session.folderId; // Used in context menu - use session.folderId directly
+    const currentFolderId = session.projectId; // Used in context menu - use session.projectId directly
     const isDragOverSession = parentFolderId !== null && dragOverFolderId === parentFolderId;
     const isDropTarget = dropTargetId === session.id;
     const showDropBefore = isDropTarget && dropPosition === "before";
@@ -1740,7 +1740,7 @@ export function Sidebar({
               {folderTree.map((folderNode) => {
                 // Helper to count sessions recursively in a folder and all descendants
                 const countSessionsRecursively = (node: FolderNode): number => {
-                  const directSessions = activeSessions.filter(s => s.folderId === node.id && s.terminalType !== "file").length;
+                  const directSessions = activeSessions.filter(s => s.projectId === node.id && s.terminalType !== "file").length;
                   const childSessions = node.children.reduce(
                     (sum, child) => sum + countSessionsRecursively(child),
                     0
@@ -1749,9 +1749,9 @@ export function Sidebar({
                 };
 
                 const renderFolderNode = (node: FolderNode): React.ReactNode => {
-                  // Use session.folderId directly for accurate folder membership
+                  // Use session.projectId directly for accurate folder membership
                   const folderSessions = activeSessions.filter(
-                    (s) => s.folderId === node.id && s.terminalType !== "file"
+                    (s) => s.projectId === node.id && s.terminalType !== "file"
                   );
                   const pinnedFolderSessions = folderSessions.filter((s) => s.pinned);
                   const unpinnedFolderSessions = folderSessions.filter((s) => !s.pinned);

@@ -250,7 +250,6 @@ export function NewSessionWizard({
       await onCreate({
         name,
         projectPath: template.projectPath || undefined,
-        folderId: template.folderId || undefined,
         projectId: template.projectId || undefined,
         startupCommand: template.startupCommand || undefined,
       });

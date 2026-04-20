@@ -48,19 +48,10 @@ export function SaveTemplateModal({
       setProjectId(session.projectId);
       return;
     }
-    if (session?.folderId) {
-      const mapped = projects.find(
-        (p) => p.legacyFolderId === session.folderId
-      );
-      if (mapped) {
-        setProjectId(mapped.id);
-        return;
-      }
-    }
     if (activeNode?.type === "project") {
       setProjectId(activeNode.id);
     }
-  }, [open, session?.projectId, session?.folderId, projects, activeNode]);
+  }, [open, session?.projectId, projects, activeNode]);
 
   // Reset form when session changes
   const handleOpen = (isOpen: boolean) => {
@@ -91,9 +82,7 @@ export function SaveTemplateModal({
         sessionNamePattern: sessionNamePattern.trim() || undefined,
         projectPath: session?.projectPath || undefined,
         startupCommand: startupCommand.trim() || undefined,
-        // Phase 4: prefer projectId; keep folderId for legacy consumers.
         projectId: projectId ?? undefined,
-        folderId: session?.folderId || undefined,
       });
 
       onClose();
