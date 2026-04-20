@@ -850,7 +850,11 @@ async function main() {
   log.info("Migration complete ✓");
 }
 
-main().catch((err) => {
-  log.error("Migration failed", { error: String(err) });
-  process.exit(1);
-});
+// Only run main() when invoked as a script (not when imported by tests).
+// `import.meta.main` is true when this file is the entry point under Bun/Node.
+if (import.meta.main) {
+  main().catch((err) => {
+    log.error("Migration failed", { error: String(err) });
+    process.exit(1);
+  });
+}
