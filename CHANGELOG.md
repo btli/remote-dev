@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rdv project` subcommand for managing projects (list/create/update/move/delete).
+- `rdv group` subcommand for managing project groups (list/create/update/move/delete).
 - Domain entities `ProjectGroup` and `Project` with hierarchy invariants (Phase 2 of project/folder refactor).
 - Value objects `NodeRef` and `NodePreferences` (polymorphic container for group/project settings).
 - Use cases for project/group CRUD + `ResolveProjectScope` (backs groups-can-be-active aggregation).
@@ -52,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rdv agent start` now accepts `--project-id`; the old `--folder-id` alias stays until Phase 6.
+- `rdv context` reports `projectId`/`projectName`/`groupId`/`groupName` alongside legacy `folderId`/`folderName` for the transition window.
+- `rdv` hook, peer, and channel commands now include `projectId` in payloads (read from `RDV_PROJECT_ID` env or the session's project) while continuing to send `folderId` for server-side compatibility.
 - **MCP server renamed from `rdv-peers` to `rdv` (v2.0.0)**: Slimmed tool set from 8 to 3 response-only tools (`send_message`, `send_to_channel`, `set_summary`). Read operations moved to rdv CLI. Stale `rdv-peers` entries auto-cleaned from settings.json and .mcp.json.
 - **Real-time MCP push notifications**: Agents receive peer messages, channel messages, and @mentions instantly via Unix socket push from the terminal server, relayed through `sendLoggingMessage()`. PreToolUse hook remains as reliable fallback with dedup via sentinel file.
 - Peer messages now scoped to channels (existing messages migrated to #general)
@@ -60,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-title stop-word stripping produces more meaningful titles (e.g., "fix-login-bug" instead of "fix-the-login")
 - PreToolUse hook now shows full peer status digest (agent names, activity status, work summaries) alongside new messages
 - Stop hook now clears peer summary and broadcasts "finished work" to peer chatroom
+
+### Deprecated
+
+- `rdv folder` prints a deprecation warning on every invocation. The alias will be removed in Phase 6 once all callers migrate to `rdv project` / `rdv group`.
 
 ### Fixed
 
