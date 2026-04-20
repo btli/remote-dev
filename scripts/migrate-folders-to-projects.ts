@@ -70,6 +70,29 @@ export interface FolderRow {
   name: string;
 }
 
+export function classifyFolders(folders: FolderRow[]): {
+  groupIds: string[];
+  projectIds: string[];
+} {
+  const childrenByParent = new Map<string, string[]>();
+  for (const f of folders) {
+    if (!f.parentId) continue;
+    const bucket = childrenByParent.get(f.parentId) ?? [];
+    bucket.push(f.id);
+    childrenByParent.set(f.parentId, bucket);
+  }
+  const groupIds: string[] = [];
+  const projectIds: string[] = [];
+  for (const f of folders) {
+    if ((childrenByParent.get(f.id) ?? []).length > 0) {
+      groupIds.push(f.id);
+    } else {
+      projectIds.push(f.id);
+    }
+  }
+  return { groupIds, projectIds };
+}
+
 export function validateFolderGraph(folders: FolderRow[]): void {
   const byId = new Map<string, FolderRow>();
   for (const f of folders) byId.set(f.id, f);
