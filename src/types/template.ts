@@ -11,8 +11,6 @@ export interface SessionTemplate {
   sessionNamePattern: string | null;
   projectPath: string | null;
   startupCommand: string | null;
-  folderId: string | null;
-  /** Phase 3 dual-write: project id bridge, populated alongside folderId. */
   projectId: string | null;
   icon: string | null;
   theme: string | null;
@@ -30,8 +28,6 @@ export interface CreateTemplateInput {
   sessionNamePattern?: string;
   projectPath?: string;
   startupCommand?: string;
-  folderId?: string;
-  /** Project id override; when provided, translation from folderId is skipped. */
   projectId?: string | null;
   icon?: string;
   theme?: string;
@@ -45,7 +41,6 @@ export interface UpdateTemplateInput {
   sessionNamePattern?: string | null;
   projectPath?: string | null;
   startupCommand?: string | null;
-  folderId?: string | null;
   projectId?: string | null;
   icon?: string | null;
   theme?: string | null;

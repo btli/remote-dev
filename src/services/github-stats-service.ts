@@ -9,12 +9,10 @@ import {
   githubRepositoryStats,
   githubPullRequests,
   githubBranchProtection,
-  folderRepositories,
   projectRepositories,
   githubChangeNotifications,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 import { safeJsonParse } from "@/lib/utils";
 import * as GitHubService from "./github-service";
 import * as GraphQLService from "./github-graphql-service";
@@ -423,52 +421,25 @@ export async function linkFolderToRepository(
   folderId: string,
   repositoryId: string
 ): Promise<void> {
-  // Check if already linked
-  const existing = await db.query.folderRepositories.findFirst({
+  // folderId is now treated as projectId (Phase 6)
+  const existingProjectLink = await db.query.projectRepositories.findFirst({
     where: and(
-      eq(folderRepositories.folderId, folderId),
-      eq(folderRepositories.userId, userId)
+      eq(projectRepositories.projectId, folderId),
+      eq(projectRepositories.userId, userId)
     ),
   });
-
-  if (existing) {
-    // Update existing link
+  if (existingProjectLink) {
     await db
-      .update(folderRepositories)
+      .update(projectRepositories)
       .set({ repositoryId })
-      .where(eq(folderRepositories.id, existing.id));
+      .where(eq(projectRepositories.id, existingProjectLink.id));
   } else {
-    // Create new link
-    await db.insert(folderRepositories).values({
-      folderId,
+    await db.insert(projectRepositories).values({
+      id: crypto.randomUUID(),
+      projectId: folderId,
       repositoryId,
       userId,
     });
-  }
-
-  // Dual-write Phase 3: mirror the link into project_repository when the
-  // folder has a corresponding project bridge row. This table is a separate
-  // row per the Phase 3 scope (distinct from a bridge column on the same row).
-  const resolvedProjectId = await translateFolderIdToProjectId(folderId, userId);
-  if (resolvedProjectId) {
-    const existingProjectLink = await db.query.projectRepositories.findFirst({
-      where: and(
-        eq(projectRepositories.projectId, resolvedProjectId),
-        eq(projectRepositories.userId, userId)
-      ),
-    });
-    if (existingProjectLink) {
-      await db
-        .update(projectRepositories)
-        .set({ repositoryId })
-        .where(eq(projectRepositories.id, existingProjectLink.id));
-    } else {
-      await db.insert(projectRepositories).values({
-        projectId: resolvedProjectId,
-        repositoryId,
-        userId,
-      });
-    }
   }
 }
 
@@ -479,27 +450,15 @@ export async function unlinkFolderFromRepository(
   userId: string,
   folderId: string
 ): Promise<void> {
+  // folderId is now treated as projectId (Phase 6)
   await db
-    .delete(folderRepositories)
+    .delete(projectRepositories)
     .where(
       and(
-        eq(folderRepositories.folderId, folderId),
-        eq(folderRepositories.userId, userId)
+        eq(projectRepositories.projectId, folderId),
+        eq(projectRepositories.userId, userId)
       )
     );
-
-  // Dual-write Phase 3: drop the mirrored project_repository link if any.
-  const resolvedProjectId = await translateFolderIdToProjectId(folderId, userId);
-  if (resolvedProjectId) {
-    await db
-      .delete(projectRepositories)
-      .where(
-        and(
-          eq(projectRepositories.projectId, resolvedProjectId),
-          eq(projectRepositories.userId, userId)
-        )
-      );
-  }
 }
 
 // =============================================================================

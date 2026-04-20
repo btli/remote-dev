@@ -116,8 +116,8 @@ export async function listTrashItemsWithMetadata(
           worktreeBranch: metadata.worktreeBranch,
           worktreeOriginalPath: metadata.worktreeOriginalPath,
           worktreeTrashPath: metadata.worktreeTrashPath,
-          originalFolderId: metadata.originalFolderId,
-          originalFolderName: metadata.originalFolderName,
+          originalProjectId: metadata.originalProjectId,
+          originalProjectName: metadata.originalProjectName,
           createdAt: metadata.createdAt,
         },
       };
@@ -174,8 +174,8 @@ export async function getTrashItem(
           worktreeBranch: metadata.worktreeBranch,
           worktreeOriginalPath: metadata.worktreeOriginalPath,
           worktreeTrashPath: metadata.worktreeTrashPath,
-          originalFolderId: metadata.originalFolderId,
-          originalFolderName: metadata.originalFolderName,
+          originalProjectId: metadata.originalProjectId,
+          originalProjectName: metadata.originalProjectName,
           createdAt: metadata.createdAt,
         },
       } as WorktreeTrashItem;

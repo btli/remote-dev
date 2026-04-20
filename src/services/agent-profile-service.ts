@@ -11,14 +11,12 @@
 import { db } from "@/db";
 import {
   agentProfiles,
-  folderProfileLinks,
   projectProfileLinks,
   profileGitIdentities,
   profileSecretsConfig,
   terminalSessions,
 } from "@/db/schema";
 import { eq, and, asc } from "drizzle-orm";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 import { mkdir, writeFile, readFile, access } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -194,24 +192,12 @@ export async function getFolderProfile(
   folderId: string,
   userId: string
 ): Promise<AgentProfile | null> {
-  // Project-first lookup: translate folder → project and check project_profile_link.
-  const resolvedProjectId = await translateFolderIdToProjectId(folderId, userId);
-  if (resolvedProjectId) {
-    const projectLink = await db.query.projectProfileLinks.findFirst({
-      where: eq(projectProfileLinks.projectId, resolvedProjectId),
-    });
-    if (projectLink) {
-      return getProfile(projectLink.profileId, userId);
-    }
-  }
-
-  const link = await db.query.folderProfileLinks.findFirst({
-    where: eq(folderProfileLinks.folderId, folderId),
+  // folderId is now treated as projectId (Phase 6)
+  const projectLink = await db.query.projectProfileLinks.findFirst({
+    where: eq(projectProfileLinks.projectId, folderId),
   });
-
-  if (!link) return null;
-
-  return getProfile(link.profileId, userId);
+  if (!projectLink) return null;
+  return getProfile(projectLink.profileId, userId);
 }
 
 /**
@@ -350,29 +336,16 @@ export async function deleteProfile(
 export async function linkFolderToProfile(
   folderId: string,
   profileId: string,
-  userId?: string
+  _userId?: string
 ): Promise<void> {
+  // folderId is now treated as projectId (Phase 6)
   await db
-    .insert(folderProfileLinks)
-    .values({ folderId, profileId })
+    .insert(projectProfileLinks)
+    .values({ projectId: folderId, profileId })
     .onConflictDoUpdate({
-      target: folderProfileLinks.folderId,
+      target: projectProfileLinks.projectId,
       set: { profileId, createdAt: new Date() },
     });
-
-  // Dual-write: when we know the user, also mirror into project_profile_link.
-  if (userId) {
-    const resolvedProjectId = await translateFolderIdToProjectId(folderId, userId);
-    if (resolvedProjectId) {
-      await db
-        .insert(projectProfileLinks)
-        .values({ projectId: resolvedProjectId, profileId })
-        .onConflictDoUpdate({
-          target: projectProfileLinks.projectId,
-          set: { profileId, createdAt: new Date() },
-        });
-    }
-  }
 }
 
 /**
@@ -382,20 +355,12 @@ export async function linkFolderToProfile(
  */
 export async function unlinkFolderFromProfile(
   folderId: string,
-  userId?: string
+  _userId?: string
 ): Promise<void> {
+  // folderId is now treated as projectId (Phase 6)
   await db
-    .delete(folderProfileLinks)
-    .where(eq(folderProfileLinks.folderId, folderId));
-
-  if (userId) {
-    const resolvedProjectId = await translateFolderIdToProjectId(folderId, userId);
-    if (resolvedProjectId) {
-      await db
-        .delete(projectProfileLinks)
-        .where(eq(projectProfileLinks.projectId, resolvedProjectId));
-    }
-  }
+    .delete(projectProfileLinks)
+    .where(eq(projectProfileLinks.projectId, folderId));
 }
 
 /**
@@ -411,13 +376,14 @@ export async function getFolderProfileLinks(
   });
   const profileIds = new Set(userProfiles.map((p) => p.id));
 
-  // Get all links
-  const links = await db.query.folderProfileLinks.findMany();
+  // Get all project-profile links
+  const links = await db.query.projectProfileLinks.findMany();
 
-  // Filter to only links for user's profiles and return as array
+  // Filter to only links for user's profiles and return as array.
+  // Surface projectId under the legacy folderId key for downstream compatibility.
   return links
     .filter((link) => profileIds.has(link.profileId))
-    .map((link) => ({ folderId: link.folderId, profileId: link.profileId }));
+    .map((link) => ({ folderId: link.projectId, profileId: link.profileId }));
 }
 
 /**

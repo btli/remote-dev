@@ -32,8 +32,8 @@ export interface WorktreeTrashMetadata {
   worktreeBranch: string;
   worktreeOriginalPath: string;
   worktreeTrashPath: string;
-  originalFolderId: string | null;
-  originalFolderName: string | null;
+  originalProjectId: string | null;
+  originalProjectName: string | null;
   createdAt: Date;
 }
 

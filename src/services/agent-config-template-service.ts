@@ -502,7 +502,7 @@ export async function applyTemplateToFolder(
   }
 
   await AgentConfigService.upsertConfig(userId, {
-    folderId,
+    projectId: folderId,
     provider: template.provider,
     configType: template.configType,
     content: template.content,
