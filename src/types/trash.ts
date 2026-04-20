@@ -73,7 +73,7 @@ export interface RestoreOptions {
 export interface RestoreResult {
   sessionId: string;
   worktreePath: string;
-  folderId: string | null;
+  projectId: string | null;
 }
 
 /**

@@ -171,7 +171,7 @@ export interface PortValidationWithRuntimeResult extends PortValidationResult {
  */
 export interface PortRegistryEntry {
   id: string;
-  folderId: string;
+  projectId: string | null;
   userId: string;
   port: number;
   variableName: string;

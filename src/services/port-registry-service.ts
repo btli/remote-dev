@@ -1,11 +1,15 @@
 /**
  * PortRegistryService - Manages port allocations and conflict detection
  *
- * Tracks which ports are claimed by which folders for a user, allowing
+ * Tracks which ports are claimed by which projects for a user, allowing
  * detection of conflicts when multiple projects try to use the same port.
+ *
+ * After the project refactor, the legacy `folderId` arguments are treated
+ * as project ids. Existing call sites keep their signatures for
+ * backward compatibility; internally the service uses `portRegistry.projectId`.
  */
 import { db } from "@/db";
-import { portRegistry, sessionFolders } from "@/db/schema";
+import { portRegistry, projects } from "@/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import type {
   EnvironmentVariables,
@@ -17,26 +21,25 @@ import type {
 import { extractPortVariables, RESERVED_PORTS } from "@/types/environment";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 const execFile = promisify(execFileCallback);
 
 /**
- * Sync port registry for a folder based on its environment variables.
+ * Sync port registry for a project based on its environment variables.
  *
- * This should be called whenever a folder's environment variables are updated.
- * It replaces all existing port entries for the folder with the current ports.
+ * This should be called whenever a project's environment variables are updated.
+ * It replaces all existing port entries for the project with the current ports.
  */
 export async function syncPortRegistry(
   folderId: string,
   userId: string,
   envVars: EnvironmentVariables | null
 ): Promise<void> {
-  // Delete existing ports for this folder
+  // Delete existing ports for this project
   await db
     .delete(portRegistry)
     .where(
-      and(eq(portRegistry.folderId, folderId), eq(portRegistry.userId, userId))
+      and(eq(portRegistry.projectId, folderId), eq(portRegistry.userId, userId))
     );
 
   // If no env vars, we're done
@@ -46,15 +49,10 @@ export async function syncPortRegistry(
   const ports = extractPortVariables(envVars);
   if (ports.length === 0) return;
 
-  // Dual-write Phase 3: translate the folderId once; all inserted rows
-  // belong to the same folder, so they share the same projectId.
-  const resolvedProjectId = await translateFolderIdToProjectId(folderId, userId);
-
   // Insert new port allocations
   await db.insert(portRegistry).values(
     ports.map(({ variableName, port }) => ({
-      folderId,
-      projectId: resolvedProjectId,
+      projectId: folderId,
       userId,
       port,
       variableName,
@@ -63,7 +61,7 @@ export async function syncPortRegistry(
 }
 
 /**
- * Validate ports and detect conflicts with other folders.
+ * Validate ports and detect conflicts with other projects.
  *
  * Returns information about any conflicts found, including suggestions
  * for alternative ports. Does not modify any data.
@@ -85,28 +83,28 @@ export async function validatePorts(
   const conflicts: PortConflict[] = [];
 
   for (const { variableName, port } of ports) {
-    // Find existing allocations for this port (excluding current folder)
+    // Find existing allocations for this port (excluding current project)
     const existing = await db.query.portRegistry.findFirst({
       where: and(
         eq(portRegistry.userId, userId),
         eq(portRegistry.port, port),
-        ne(portRegistry.folderId, folderId)
+        ne(portRegistry.projectId, folderId)
       ),
     });
 
-    if (existing) {
-      // Get folder name for display
-      const folder = await db.query.sessionFolders.findFirst({
-        where: eq(sessionFolders.id, existing.folderId),
+    if (existing && existing.projectId) {
+      // Get project name for display
+      const project = await db.query.projects.findFirst({
+        where: eq(projects.id, existing.projectId),
         columns: { id: true, name: true },
       });
 
-      if (folder) {
+      if (project) {
         const suggested = await suggestAlternativePort(userId, port);
         conflicts.push({
           port,
           variableName,
-          conflictingFolder: { id: folder.id, name: folder.name },
+          conflictingFolder: { id: project.id, name: project.name },
           conflictingVariableName: existing.variableName,
           suggestedPort: suggested,
         });
@@ -168,7 +166,7 @@ export async function getPortsForUser(
 }
 
 /**
- * Get port allocations for a specific folder.
+ * Get port allocations for a specific project.
  */
 export async function getPortsForFolder(
   folderId: string,
@@ -176,7 +174,7 @@ export async function getPortsForFolder(
 ): Promise<PortRegistryEntry[]> {
   const entries = await db.query.portRegistry.findMany({
     where: and(
-      eq(portRegistry.folderId, folderId),
+      eq(portRegistry.projectId, folderId),
       eq(portRegistry.userId, userId)
     ),
   });
@@ -185,9 +183,9 @@ export async function getPortsForFolder(
 }
 
 /**
- * Delete all port allocations for a folder.
+ * Delete all port allocations for a project.
  *
- * Called when a folder is deleted or its environment variables are cleared.
+ * Called when a project is deleted or its environment variables are cleared.
  */
 export async function deletePortsForFolder(
   folderId: string,
@@ -196,15 +194,15 @@ export async function deletePortsForFolder(
   await db
     .delete(portRegistry)
     .where(
-      and(eq(portRegistry.folderId, folderId), eq(portRegistry.userId, userId))
+      and(eq(portRegistry.projectId, folderId), eq(portRegistry.userId, userId))
     );
 }
 
 /**
- * Check if a specific port is available for a folder.
+ * Check if a specific port is available for a project.
  *
  * Returns true if the port is either unallocated or already allocated
- * to the same folder (not a conflict with self).
+ * to the same project (not a conflict with self).
  */
 export async function isPortAvailable(
   folderId: string,
@@ -215,7 +213,7 @@ export async function isPortAvailable(
     where: and(
       eq(portRegistry.userId, userId),
       eq(portRegistry.port, port),
-      ne(portRegistry.folderId, folderId)
+      ne(portRegistry.projectId, folderId)
     ),
   });
 
@@ -265,12 +263,7 @@ export async function checkPortsInUse(
  * Validate ports with both database and runtime checks.
  *
  * Performs database-level conflict detection (same port allocated to
- * multiple folders) and runtime detection (port actually in use on system).
- *
- * @param folderId - Folder to validate ports for
- * @param userId - User owning the folder
- * @param envVars - Environment variables to check for port definitions
- * @returns Validation result with database conflicts and runtime conflicts
+ * multiple projects) and runtime detection (port actually in use on system).
  */
 export async function validatePortsRuntime(
   folderId: string,
@@ -309,7 +302,7 @@ function mapDbPortRegistry(
 ): PortRegistryEntry {
   return {
     id: dbEntry.id,
-    folderId: dbEntry.folderId,
+    projectId: dbEntry.projectId ?? null,
     userId: dbEntry.userId,
     port: dbEntry.port,
     variableName: dbEntry.variableName,
