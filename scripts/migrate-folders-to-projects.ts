@@ -6,6 +6,10 @@ import { db } from "@/db";
 import {
   sessionFolders,
   folderPreferences,
+  folderSecretsConfig,
+  folderGitHubAccountLinks,
+  folderProfileLinks,
+  folderRepositories,
   terminalSessions,
   sessionTemplates,
   projectTasks,
@@ -21,6 +25,10 @@ import {
   projectGroups,
   projects,
   nodePreferences,
+  projectSecretsConfig,
+  projectGitHubAccountLinks,
+  projectProfileLinks,
+  projectRepositories,
 } from "@/db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
@@ -701,6 +709,83 @@ async function main() {
       rows: allPrefs.length,
     });
     await setMigrationState(k("prefs-migrated"), "done");
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Task 12: Migrate link tables (secrets, github, profile, repositories)
+  // ───────────────────────────────────────────────────────────────────────
+  const linksMarker = await getMigrationState(k("links-migrated"));
+  if (linksMarker === "done") {
+    log.info("Link tables already migrated; skipping Task 12.");
+  } else {
+    // folder_secrets_config -> project_secrets_config (only for project-mapped folders)
+    const secrets = await db.select().from(folderSecretsConfig);
+    for (const s of secrets) {
+      const pid = resolveProjectId(s.folderId);
+      if (!pid) {
+        log.warn("Dropping orphan secrets config", { folderId: s.folderId });
+        continue;
+      }
+      await db.insert(projectSecretsConfig).values({
+        id: s.id,
+        userId: s.userId,
+        projectId: pid,
+        provider: s.provider,
+        providerConfig: s.providerConfig,
+        enabled: s.enabled,
+        lastFetchedAt: s.lastFetchedAt,
+      });
+    }
+    log.info("Migrated secrets configs", { rows: secrets.length });
+
+    // folder_github_account_link has no userId column — it's only (folderId, providerAccountId).
+    const ghLinks = await db.select().from(folderGitHubAccountLinks);
+    for (const gh of ghLinks) {
+      const pid = resolveProjectId(gh.folderId);
+      if (!pid) continue;
+      await db.insert(projectGitHubAccountLinks).values({
+        projectId: pid,
+        providerAccountId: gh.providerAccountId,
+      });
+    }
+    log.info("Migrated github account links", { rows: ghLinks.length });
+
+    // folder_profile_link has no userId column — it's only (folderId, profileId).
+    const profileLinks = await db.select().from(folderProfileLinks);
+    for (const pl of profileLinks) {
+      const pid = resolveProjectId(pl.folderId);
+      if (!pid) continue;
+      await db.insert(projectProfileLinks).values({
+        projectId: pid,
+        profileId: pl.profileId,
+      });
+    }
+    log.info("Migrated profile links", { rows: profileLinks.length });
+
+    // folder_repository (many-to-many folder↔repo join) -> project_repository.
+    // Only migrate rows whose folder classified as a project; drop otherwise.
+    const folderRepos = await db.select().from(folderRepositories);
+    let droppedRepos = 0;
+    for (const fr of folderRepos) {
+      const pid = resolveProjectId(fr.folderId);
+      if (!pid) {
+        droppedRepos++;
+        continue;
+      }
+      await db.insert(projectRepositories).values({
+        id: fr.id,
+        projectId: pid,
+        repositoryId: fr.repositoryId,
+        userId: fr.userId,
+        createdAt: fr.createdAt,
+      });
+    }
+    log.info("Migrated folder repository links", {
+      rows: folderRepos.length,
+      dropped: droppedRepos,
+    });
+
+    await setMigrationState(k("links-migrated"), "done");
   }
 }
 
