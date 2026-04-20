@@ -48,6 +48,9 @@ impl From<&Folder> for FolderRow {
 }
 
 pub async fn run(args: FolderArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!(
+        "warning: `rdv folder` is deprecated; use `rdv project` or `rdv group` instead. This alias will be removed in a future release."
+    );
     match args.command {
         FolderCommand::List => {
             let folders: Vec<Folder> = client.get("/api/folders").await?;
