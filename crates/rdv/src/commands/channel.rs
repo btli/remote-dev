@@ -93,9 +93,15 @@ pub async fn run(
         .session_id()
         .ok_or("RDV_SESSION_ID not set — run inside an agent session")?;
 
+    // Optional project scope from env (server falls back to session's project).
+    let project_id = std::env::var("RDV_PROJECT_ID").ok();
+
     match args.command {
         ChannelCommand::List => {
-            let query = [("sessionId", sid)];
+            let mut query: Vec<(&str, &str)> = vec![("sessionId", sid)];
+            if let Some(pid) = project_id.as_deref() {
+                query.push(("projectId", pid));
+            }
             let resp: ChannelListResponse = client
                 .get_with_query("/internal/channels/list", &query)
                 .await?;
@@ -125,6 +131,7 @@ pub async fn run(
         ChannelCommand::Create { name, topic } => {
             let mut payload = json!({
                 "fromSessionId": sid,
+                "projectId": project_id,
                 "name": name,
             });
             if let Some(t) = &topic {
@@ -148,6 +155,7 @@ pub async fn run(
         } => {
             let mut payload = json!({
                 "fromSessionId": sid,
+                "projectId": project_id,
                 "channelName": channel,
                 "body": body,
             });
@@ -182,15 +190,16 @@ pub async fn run(
             }
 
             let limit_str = limit.to_string();
+            let mut query: Vec<(&str, &str)> = vec![
+                ("sessionId", sid),
+                ("channelName", channel.as_str()),
+                ("limit", limit_str.as_str()),
+            ];
+            if let Some(pid) = project_id.as_deref() {
+                query.push(("projectId", pid));
+            }
             let resp: MessagesResponse = client
-                .get_with_query(
-                    "/internal/channels/messages",
-                    &[
-                        ("sessionId", sid),
-                        ("channelName", channel.as_str()),
-                        ("limit", limit_str.as_str()),
-                    ],
-                )
+                .get_with_query("/internal/channels/messages", &query)
                 .await?;
 
             if human {
