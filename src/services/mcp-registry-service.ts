@@ -14,6 +14,7 @@ import type {
   CreateMCPServerInput,
   UpdateMCPServerInput,
 } from "@/types/agent";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 /**
  * Get all MCP servers for a user
@@ -114,12 +115,17 @@ export async function createServer(
   input: CreateMCPServerInput
 ): Promise<MCPServer> {
   const now = new Date();
+  // Dual-write Phase 3: populate projectId alongside folderId.
+  const resolvedProjectId = input.folderId
+    ? await translateFolderIdToProjectId(input.folderId, userId)
+    : null;
 
   const [server] = await db
     .insert(mcpServers)
     .values({
       userId,
       folderId: input.folderId ?? null,
+      projectId: resolvedProjectId,
       name: input.name,
       transport: input.transport,
       command: input.command,
@@ -246,6 +252,11 @@ export async function copyFolderServers(
 ): Promise<MCPServer[]> {
   const sourceServers = await getFolderServers(sourceFolderId, userId);
   const now = new Date();
+  // Dual-write Phase 3: translate the target folderId once.
+  const resolvedTargetProjectId = await translateFolderIdToProjectId(
+    targetFolderId,
+    userId
+  );
 
   const created: MCPServer[] = [];
   for (const server of sourceServers) {
@@ -254,6 +265,7 @@ export async function copyFolderServers(
       .values({
         userId,
         folderId: targetFolderId,
+        projectId: resolvedTargetProjectId,
         name: server.name,
         transport: server.transport,
         command: server.command,
