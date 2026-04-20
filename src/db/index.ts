@@ -10,7 +10,7 @@ ensureDataDirectories();
 // Priority: DATABASE_URL env var > RDV_DATA_DIR/sqlite.db > ~/.remote-dev/sqlite.db
 const databaseUrl = getDatabaseUrl();
 
-const client = createClient({
+export const client = createClient({
   url: databaseUrl,
 });
 
