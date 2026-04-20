@@ -3,6 +3,7 @@ pub mod browser;
 pub mod channel;
 pub mod context;
 pub mod folder;
+pub mod group;
 pub mod hook;
 pub mod indicator;
 pub mod notification;
