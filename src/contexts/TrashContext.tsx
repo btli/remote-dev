@@ -102,7 +102,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
     for (const item of trashItems) {
       if (item.resourceType === "worktree") {
         const worktreeItem = item as WorktreeTrashItem;
-        const folderId = worktreeItem.metadata?.originalFolderId ?? null;
+        const folderId = worktreeItem.metadata?.originalProjectId ?? null;
 
         if (!folderMap.has(folderId)) {
           folderMap.set(folderId, []);
@@ -113,7 +113,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
 
     return Array.from(folderMap.entries()).map(([folderId, items]) => ({
       folderId,
-      folderName: items[0]?.metadata?.originalFolderName ?? null,
+      folderName: items[0]?.metadata?.originalProjectName ?? null,
       items,
     }));
   }, [trashItems]);
@@ -124,7 +124,7 @@ export function TrashProvider({ children }: TrashProviderProps) {
       return trashItems.filter(
         (item) =>
           item.resourceType === "worktree" &&
-          (item as WorktreeTrashItem).metadata?.originalFolderId === folderId
+          (item as WorktreeTrashItem).metadata?.originalProjectId === folderId
       ) as WorktreeTrashItem[];
     },
     [trashItems]

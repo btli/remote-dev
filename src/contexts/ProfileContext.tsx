@@ -98,7 +98,7 @@ export function ProfileProvider({ children }: ProfileProviderProps) {
 
       // Handle both array format (new) and object format (legacy) for folderLinks
       const linksMap: Map<string, string> = Array.isArray(rawLinks)
-        ? new Map(rawLinks.map((l: FolderProfileLink) => [l.folderId, l.profileId]))
+        ? new Map(rawLinks.map((l: FolderProfileLink) => [l.projectId, l.profileId]))
         : new Map(Object.entries(rawLinks));
 
       setProfiles(profileList);

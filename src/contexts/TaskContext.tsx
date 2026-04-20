@@ -171,7 +171,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...input,
-            folderId: input.folderId ?? activeFolderId,
+            projectId: input.projectId ?? activeFolderId,
           }),
         });
         if (!response.ok) {
@@ -253,7 +253,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
 
         setAllTasks((prev) =>
           prev.filter((t) => {
-            if (t.folderId !== activeFolderId) return true;
+            if (t.projectId !== activeFolderId) return true;
             if (source && t.source !== source) return true;
             if (options?.sessionId && t.sessionId !== options.sessionId) return true;
             if (options?.completedOnly && t.status !== "done" && t.status !== "cancelled") return true;

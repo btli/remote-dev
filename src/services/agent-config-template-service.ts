@@ -522,7 +522,7 @@ export async function applyProjectTypeTemplates(
 
   for (const template of templates) {
     await AgentConfigService.upsertConfig(userId, {
-      folderId,
+      projectId: folderId,
       provider: template.provider,
       configType: template.configType,
       content: template.content,

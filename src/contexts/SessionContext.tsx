@@ -325,31 +325,17 @@ export function SessionProvider({
 
   const createSession = useCallback(
     async (input: CreateSessionInput): Promise<TerminalSession> => {
-      // Phase 4: derive projectId from the active node when the caller didn't
-      // pass one. Group nodes can't own sessions directly, so we only fill in
-      // for project nodes.
+      // Derive projectId from the active node when the caller didn't pass one.
+      // Group nodes can't own sessions directly, so we only fill in for project nodes.
       let derivedProjectId: string | null | undefined = input.projectId;
       if (derivedProjectId == null && activeNode?.type === "project") {
         derivedProjectId = activeNode.id;
-      }
-      // If we have a project but no folderId, backfill folderId from the
-      // project's legacyFolderId so downstream server-side mapping stays
-      // consistent while the two columns are dual-written.
-      let derivedFolderId: string | null | undefined = input.folderId;
-      if (!derivedFolderId && derivedProjectId) {
-        const project = getProject(derivedProjectId);
-        if (project?.legacyFolderId) {
-          derivedFolderId = project.legacyFolderId;
-        }
       }
 
       const payload: CreateSessionInput = {
         ...input,
         ...(derivedProjectId !== undefined
           ? { projectId: derivedProjectId }
-          : {}),
-        ...(derivedFolderId !== undefined
-          ? { folderId: derivedFolderId }
           : {}),
       };
 

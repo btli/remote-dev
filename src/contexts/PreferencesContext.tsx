@@ -326,8 +326,10 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       if (userSettings) {
         setUserSettings({
           ...userSettings,
-          activeFolderId: pinned ? null : folderId,
-          pinnedFolderId: pinned ? folderId : null,
+          activeNodeId: pinned ? null : folderId,
+          activeNodeType: pinned ? null : (folderId ? "project" : null),
+          pinnedNodeId: pinned ? folderId : null,
+          pinnedNodeType: pinned ? (folderId ? "project" : null) : null,
         });
       }
 
