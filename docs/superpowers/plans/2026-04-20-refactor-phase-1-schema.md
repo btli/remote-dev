@@ -382,9 +382,38 @@ export const projectProfileLinks = sqliteTable(
 );
 ```
 
-- [ ] **Step 2.16: (REMOVED — no `folder_repository` table exists)**
+- [ ] **Step 2.16: `folderRepositories` → new `projectRepositories`**
 
-Repository association today is stored in two places: `folder_preferences.githubRepoId` / `folder_preferences.localRepoPath` (text, refs `github_repository.id` or a manual path) and the global `github_repository` catalog. There is no `folderRepositories` table to migrate. Repo fields already live in `nodePreferences` (Step 1.3) as the per-node override, which is the project-only path after cutover. Skip this step.
+Source table (`folder_repository`, schema.ts lines 664-687) maps folders to repositories many-to-many. Columns: `id` (PK), `folderId`, `repositoryId`, `userId`, `createdAt`. Mirror to project-scoped equivalent:
+
+```typescript
+export const projectRepositories = sqliteTable(
+  "project_repository",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("project_repo_project_user_idx").on(table.projectId, table.userId),
+    index("project_repo_user_idx").on(table.userId),
+  ]
+);
+```
+
+Note: this is the many-to-many join table. The single-repo pointer that lives on `folder_preferences.githubRepoId` / `localRepoPath` migrates separately into `nodePreferences` (Step 1.3).
 
 - [ ] **Step 2.17: `userSettings` — add active/pinned node fields**
 
@@ -507,7 +536,8 @@ import {
   projectSecretsConfig,
   projectGitHubAccountLinks,
   projectProfileLinks,
-  // NOTE: no `projectRepositories` — repo info lives on `nodePreferences` project rows (see Step 2.16).
+  projectRepositories,
+  folderRepositories,
 } from "@/db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
@@ -1538,9 +1568,28 @@ git commit -m "feat(migration): copy folder_preferences into polymorphic node_pr
   }
   log.info("Migrated profile links", { rows: profileLinks.length });
 
-  // NOTE: No folderRepositories table exists. Repo fields are already carried on
-  // `folder_preferences` → `node_preferences` in Task 11. No additional migration
-  // needed here.
+  // folder_repository (many-to-many folder↔repo join) -> project_repository.
+  // Only migrate rows whose folder classified as a project; drop otherwise.
+  const folderRepos = await db.select().from(folderRepositories);
+  let droppedRepos = 0;
+  for (const fr of folderRepos) {
+    const pid = resolveProjectId(fr.folderId);
+    if (!pid) {
+      droppedRepos++;
+      continue;
+    }
+    await db.insert(projectRepositories).values({
+      id: fr.id,
+      projectId: pid,
+      repositoryId: fr.repositoryId,
+      userId: fr.userId,
+      createdAt: fr.createdAt,
+    });
+  }
+  log.info("Migrated folder repository links", {
+    rows: folderRepos.length,
+    dropped: droppedRepos,
+  });
 
   await setMigrationState(k("links-migrated"), "done");
 ```

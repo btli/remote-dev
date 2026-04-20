@@ -202,7 +202,7 @@ Delete the definitions of:
 - `folderSecretsConfig`
 - `folderGitHubAccountLinks`
 - `folderProfileLinks`
-(NOTE: there was never a `folderRepositories` table — repo fields lived on `folderPreferences` and migrate via `nodePreferences`. Nothing to drop here.)
+- `folderRepositories`
 
 - [ ] **Step 3.3: Drop legacy columns on `user_settings`**
 

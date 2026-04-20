@@ -1068,6 +1068,7 @@ Each downstream service gets a shared helper: if a caller passes `projectId`, us
 | PortRegistryService | `src/services/port-registry-service.ts` | `port_registry` |
 | TrashService | `src/services/trash-service.ts` | `trash_item` (where `ownerType === folder`) |
 | WorktreeTrashService | `src/services/worktree-trash-service.ts` | `worktree_trash_metadata` |
+| GitHubStatsService | `src/services/github-stats-service.ts` | `folder_repository` (dual-write to `project_repository`) |
 
 **Every single one** must set `projectId` at insert time during the transition window. A service that only sets `folderId` creates a row invisible to Phase 3/4 project-scoped readers until the next backfill runs — this was an explicit P1 finding in the review.
 
@@ -1501,7 +1502,7 @@ git commit -m "docs(changelog): note Phase 3 service + API additions"
   - `GET/PUT/PATCH/DELETE /api/secrets/folders/:folderId`, `GET /api/secrets/folders/:folderId/secrets`
   - `GET/POST /api/tasks?folderId=…`, `GET /api/channels?folderId=…`
   - These stay supported through **Phase 6**; only Phase 6 removes them. Phase 4 switches clients over to the project-scoped equivalents, but the folder routes stay live until the final cleanup.
-- [ ] Dual-write verified in every service in Task 10's dual-write scope table (SessionService, TemplateService, RecordingService, TaskService, ChannelService, PeerService, AgentConfigService, MCPRegistryService, PortRegistryService, TrashService, WorktreeTrashService) — inspect a fresh row in each table and confirm both `folder_id` and `project_id` are populated.
+- [ ] Dual-write verified in every service in Task 10's dual-write scope table (SessionService, TemplateService, RecordingService, TaskService, ChannelService, PeerService, AgentConfigService, MCPRegistryService, PortRegistryService, TrashService, WorktreeTrashService, GitHubStatsService) — inspect a fresh row in each table and confirm both `folder_id` and `project_id` are populated.
 - [ ] CHANGELOG updated
 
 **On success:** `bd update remote-dev-1efl.3 --status closed` and unblock Phases 4 & 5.
