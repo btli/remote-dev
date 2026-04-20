@@ -22,6 +22,7 @@ import {
   githubStatsPreferences,
   portRegistry,
   worktreeTrashMetadata,
+  userSettings,
   projectGroups,
   projects,
   nodePreferences,
@@ -787,6 +788,66 @@ async function main() {
 
     await setMigrationState(k("links-migrated"), "done");
   }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Task 13: Migrate user_settings.activeFolderId -> activeNodeId/Type
+  // ───────────────────────────────────────────────────────────────────────
+  const settingsMarker = await getMigrationState(k("user-settings-migrated"));
+  if (settingsMarker === "done") {
+    log.info("User settings already migrated; skipping Task 13.");
+  } else {
+    const allSettings = await db.select().from(userSettings);
+    for (const s of allSettings) {
+      const patch: {
+        activeNodeId?: string | null;
+        activeNodeType?: "group" | "project" | null;
+        pinnedNodeId?: string | null;
+        pinnedNodeType?: "group" | "project" | null;
+      } = {};
+      if (s.activeFolderId) {
+        const pid =
+          projectIdMap.get(s.activeFolderId) ??
+          defaultProjectIdsByGroup.get(s.activeFolderId);
+        const gid = groupIdMap.get(s.activeFolderId);
+        if (pid) {
+          patch.activeNodeId = pid;
+          patch.activeNodeType = "project";
+        } else if (gid) {
+          patch.activeNodeId = gid;
+          patch.activeNodeType = "group";
+        }
+      }
+      if (s.pinnedFolderId) {
+        const pid =
+          projectIdMap.get(s.pinnedFolderId) ??
+          defaultProjectIdsByGroup.get(s.pinnedFolderId);
+        const gid = groupIdMap.get(s.pinnedFolderId);
+        if (pid) {
+          patch.pinnedNodeId = pid;
+          patch.pinnedNodeType = "project";
+        } else if (gid) {
+          patch.pinnedNodeId = gid;
+          patch.pinnedNodeType = "group";
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        await db
+          .update(userSettings)
+          .set(patch)
+          .where(eq(userSettings.userId, s.userId));
+      }
+    }
+    log.info("Migrated user_settings active/pinned node", {
+      rows: allSettings.length,
+    });
+    await setMigrationState(k("user-settings-migrated"), "done");
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Task 14: Mark migration complete
+  // ───────────────────────────────────────────────────────────────────────
+  await setMigrationState(k("complete"), "done");
+  log.info("Migration complete ✓");
 }
 
 main().catch((err) => {
