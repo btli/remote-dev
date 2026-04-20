@@ -3,12 +3,26 @@
  */
 
 import { db } from "@/db";
-import { agentPeerMessages, terminalSessions } from "@/db/schema";
+import { agentPeerMessages, sessionFolders, terminalSessions } from "@/db/schema";
 import { eq, and, or, isNull, gt, inArray, sql, desc } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import { safeJsonParse } from "@/lib/utils";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 const log = createLogger("PeerService");
+
+/**
+ * Resolve the projectId for a folder for dual-write.
+ * Looks up the folder owner first, then translates via projects.legacyFolderId.
+ */
+async function resolveProjectIdForFolder(folderId: string): Promise<string | null> {
+  const row = await db.query.sessionFolders.findFirst({
+    where: eq(sessionFolders.id, folderId),
+    columns: { userId: true },
+  });
+  if (!row?.userId) return null;
+  return translateFolderIdToProjectId(folderId, row.userId);
+}
 
 const MAX_MESSAGE_LENGTH = 8192;
 
@@ -179,10 +193,13 @@ export async function sendMessage(params: {
   const messageId = crypto.randomUUID();
   const now = new Date();
   const resolvedBody = await resolveMentionsInBody(body, sender.folderId);
+  // Dual-write Phase 3: translate folderId → projectId once.
+  const resolvedProjectId = await resolveProjectIdForFolder(sender.folderId);
 
   await db.insert(agentPeerMessages).values({
     id: messageId,
     folderId: sender.folderId,
+    projectId: resolvedProjectId,
     fromSessionId,
     fromSessionName: sender.name,
     toSessionId: toSessionId ?? null,
@@ -325,10 +342,13 @@ export async function sendUserMessage(params: {
   const messageId = crypto.randomUUID();
   const now = new Date();
   const resolvedBody = await resolveMentionsInBody(body, folderId);
+  // Dual-write Phase 3: translate folderId → projectId once.
+  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
 
   const row = {
     id: messageId,
     folderId,
+    projectId: resolvedProjectId,
     fromSessionId: null,
     fromSessionName: fromName,
     toSessionId: null,
