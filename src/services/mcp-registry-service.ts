@@ -14,7 +14,6 @@ import type {
   CreateMCPServerInput,
   UpdateMCPServerInput,
 } from "@/types/agent";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 /**
  * Get all MCP servers for a user
@@ -33,7 +32,7 @@ export async function getServers(userId: string): Promise<MCPServer[]> {
  */
 export async function getGlobalServers(userId: string): Promise<MCPServer[]> {
   const servers = await db.query.mcpServers.findMany({
-    where: and(eq(mcpServers.userId, userId), isNull(mcpServers.folderId)),
+    where: and(eq(mcpServers.userId, userId), isNull(mcpServers.projectId)),
     orderBy: [asc(mcpServers.name)],
   });
 
@@ -50,7 +49,7 @@ export async function getFolderServers(
   const servers = await db.query.mcpServers.findMany({
     where: and(
       eq(mcpServers.userId, userId),
-      eq(mcpServers.folderId, folderId)
+      eq(mcpServers.projectId, folderId)
     ),
     orderBy: [asc(mcpServers.name)],
   });
@@ -115,17 +114,12 @@ export async function createServer(
   input: CreateMCPServerInput
 ): Promise<MCPServer> {
   const now = new Date();
-  // Dual-write Phase 3: populate projectId alongside folderId.
-  const resolvedProjectId = input.folderId
-    ? await translateFolderIdToProjectId(input.folderId, userId)
-    : null;
 
   const [server] = await db
     .insert(mcpServers)
     .values({
       userId,
-      folderId: input.folderId ?? null,
-      projectId: resolvedProjectId,
+      projectId: input.projectId ?? null,
       name: input.name,
       transport: input.transport,
       command: input.command,
@@ -252,11 +246,6 @@ export async function copyFolderServers(
 ): Promise<MCPServer[]> {
   const sourceServers = await getFolderServers(sourceFolderId, userId);
   const now = new Date();
-  // Dual-write Phase 3: translate the target folderId once.
-  const resolvedTargetProjectId = await translateFolderIdToProjectId(
-    targetFolderId,
-    userId
-  );
 
   const created: MCPServer[] = [];
   for (const server of sourceServers) {
@@ -264,8 +253,7 @@ export async function copyFolderServers(
       .insert(mcpServers)
       .values({
         userId,
-        folderId: targetFolderId,
-        projectId: resolvedTargetProjectId,
+        projectId: targetFolderId,
         name: server.name,
         transport: server.transport,
         command: server.command,
@@ -291,7 +279,7 @@ function mapDbToServer(record: typeof mcpServers.$inferSelect): MCPServer {
   return {
     id: record.id,
     userId: record.userId,
-    folderId: record.folderId ?? undefined,
+    projectId: record.projectId ?? undefined,
     name: record.name,
     transport: record.transport as MCPTransport,
     command: record.command,

@@ -1,7 +1,6 @@
 import { db, client } from "@/db";
 import { projectTasks, taskDependencies, terminalSessions } from "@/db/schema";
 import { eq, and, asc, isNull, inArray } from "drizzle-orm";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 import type {
   ProjectTask,
   CreateTaskInput,
@@ -22,7 +21,6 @@ function parseTaskRow(row: typeof projectTasks.$inferSelect): ProjectTask {
   return {
     id: row.id,
     userId: row.userId,
-    folderId: row.folderId,
     projectId: row.projectId ?? null,
     sessionId: row.sessionId ?? null,
     title: row.title,
@@ -54,7 +52,7 @@ export async function getSessionContext(sessionId: string) {
     .select({
       id: terminalSessions.id,
       userId: terminalSessions.userId,
-      folderId: terminalSessions.folderId,
+      projectId: terminalSessions.projectId,
     })
     .from(terminalSessions)
     .where(eq(terminalSessions.id, sessionId))
@@ -101,9 +99,9 @@ export async function getTasks(
 
   if (folderId !== undefined) {
     if (folderId === null) {
-      conditions.push(isNull(projectTasks.folderId));
+      conditions.push(isNull(projectTasks.projectId));
     } else {
-      conditions.push(eq(projectTasks.folderId, folderId));
+      conditions.push(eq(projectTasks.projectId, folderId));
     }
   }
 
@@ -244,20 +242,14 @@ export async function createTask(
   userId: string,
   input: CreateTaskInput
 ): Promise<ProjectTask> {
-  // Dual-write Phase 3: populate projectId alongside folderId.
-  const resolvedProjectId =
-    input.projectId ??
-    (input.folderId
-      ? await translateFolderIdToProjectId(input.folderId, userId)
-      : null);
+  const resolvedProjectId = input.projectId ?? null;
   if (!resolvedProjectId) {
-    throw new Error("createTask: projectId is required (no folderId→projectId mapping found)");
+    throw new Error("createTask: projectId is required");
   }
   const [row] = await db
     .insert(projectTasks)
     .values({
       userId,
-      folderId: input.folderId ?? null,
       projectId: resolvedProjectId,
       sessionId: input.sessionId ?? null,
       title: input.title,
@@ -391,7 +383,7 @@ export async function clearTasks(
 ): Promise<number> {
   const conditions = [
     eq(projectTasks.userId, userId),
-    eq(projectTasks.folderId, folderId),
+    eq(projectTasks.projectId, folderId),
   ];
 
   if (source) {

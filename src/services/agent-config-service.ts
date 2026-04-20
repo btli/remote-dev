@@ -14,7 +14,6 @@ import type {
   AgentConfigType,
   UpsertAgentConfigInput,
 } from "@/types/agent";
-import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 /**
  * Get all configs for a user (global and folder-specific)
@@ -38,7 +37,7 @@ export async function getFolderConfigs(
   const configs = await db.query.agentConfigs.findMany({
     where: and(
       eq(agentConfigs.userId, userId),
-      eq(agentConfigs.folderId, folderId)
+      eq(agentConfigs.projectId, folderId)
     ),
   });
 
@@ -50,7 +49,7 @@ export async function getFolderConfigs(
  */
 export async function getGlobalConfigs(userId: string): Promise<AgentConfig[]> {
   const configs = await db.query.agentConfigs.findMany({
-    where: and(eq(agentConfigs.userId, userId), isNull(agentConfigs.folderId)),
+    where: and(eq(agentConfigs.userId, userId), isNull(agentConfigs.projectId)),
   });
 
   return configs.map(mapDbToConfig);
@@ -70,7 +69,7 @@ export async function getConfig(
       eq(agentConfigs.userId, userId),
       eq(agentConfigs.provider, provider),
       eq(agentConfigs.configType, configType),
-      folderId ? eq(agentConfigs.folderId, folderId) : isNull(agentConfigs.folderId)
+      folderId ? eq(agentConfigs.projectId, folderId) : isNull(agentConfigs.projectId)
     ),
   });
 
@@ -154,7 +153,7 @@ export async function upsertConfig(
     userId,
     input.provider,
     input.configType,
-    input.folderId
+    input.projectId
   );
 
   if (existing) {
@@ -171,17 +170,11 @@ export async function upsertConfig(
     return mapDbToConfig(updated);
   }
 
-  // Create new — dual-write Phase 3: populate projectId alongside folderId.
-  const resolvedProjectId = input.folderId
-    ? await translateFolderIdToProjectId(input.folderId, userId)
-    : null;
-
   const [created] = await db
     .insert(agentConfigs)
     .values({
       userId,
-      folderId: input.folderId ?? null,
-      projectId: resolvedProjectId,
+      projectId: input.projectId ?? null,
       provider: input.provider,
       configType: input.configType,
       content: input.content,
@@ -217,7 +210,7 @@ export async function deleteFolderConfigs(
   const result = await db
     .delete(agentConfigs)
     .where(
-      and(eq(agentConfigs.folderId, folderId), eq(agentConfigs.userId, userId))
+      and(eq(agentConfigs.projectId, folderId), eq(agentConfigs.userId, userId))
     );
 
   return result.rowsAffected ?? 0;
@@ -234,20 +227,13 @@ export async function copyFolderConfigs(
   const sourceConfigs = await getFolderConfigs(sourceFolderId, userId);
   const now = new Date();
 
-  // Dual-write Phase 3: translate the target folderId once.
-  const resolvedTargetProjectId = await translateFolderIdToProjectId(
-    targetFolderId,
-    userId
-  );
-
   const created: AgentConfig[] = [];
   for (const config of sourceConfigs) {
     const [newConfig] = await db
       .insert(agentConfigs)
       .values({
         userId,
-        folderId: targetFolderId,
-        projectId: resolvedTargetProjectId,
+        projectId: targetFolderId,
         provider: config.provider,
         configType: config.configType,
         content: config.content,
@@ -257,7 +243,7 @@ export async function copyFolderConfigs(
       .onConflictDoUpdate({
         target: [
           agentConfigs.userId,
-          agentConfigs.folderId,
+          agentConfigs.projectId,
           agentConfigs.provider,
           agentConfigs.configType,
         ],
@@ -301,7 +287,7 @@ function mapDbToConfig(
   return {
     id: record.id,
     userId: record.userId,
-    folderId: record.folderId ?? undefined,
+    projectId: record.projectId ?? undefined,
     provider: record.provider as AgentProvider,
     configType: record.configType as AgentConfigType,
     content: record.content,

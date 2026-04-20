@@ -28,8 +28,6 @@ export interface TaskDependency {
 export interface ProjectTask {
   id: string;
   userId: string;
-  folderId: string | null;
-  /** Phase 3 dual-write: project id bridge, populated alongside folderId. */
   projectId: string | null;
   sessionId: string | null;
   title: string;
@@ -52,8 +50,6 @@ export interface ProjectTask {
 }
 
 export interface CreateTaskInput {
-  folderId?: string | null;
-  /** Project id override. When provided, translation from folderId is skipped. */
   projectId?: string | null;
   sessionId?: string | null;
   title: string;
