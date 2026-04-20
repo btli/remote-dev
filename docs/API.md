@@ -51,7 +51,7 @@ GET /api/sessions
       "projectPath": "/Users/me/projects/a",
       "githubRepoId": "uuid",
       "worktreeBranch": "feature/new-ui",
-      "folderId": "uuid",
+      "projectId": "uuid",
       "status": "active",
       "tabOrder": 0,
       "lastActivityAt": "2024-01-15T10:30:00Z",
@@ -77,7 +77,7 @@ POST /api/sessions
   "projectPath": "/path/to/project",
   "githubRepoId": "uuid",
   "worktreeBranch": "main",
-  "folderId": "uuid",
+  "projectId": "uuid",
   "startupCommand": "npm run dev",
   "featureDescription": "Feature branch description",
   "createWorktree": true,
@@ -87,11 +87,11 @@ POST /api/sessions
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | No | Display name (default: folder name or "Terminal") |
+| `name` | string | No | Display name (default: project name or "Terminal") |
 | `projectPath` | string | No | Working directory path (must be absolute) |
 | `githubRepoId` | string | No | Associated GitHub repository UUID |
 | `worktreeBranch` | string | No | Git worktree branch name |
-| `folderId` | string | No | Folder UUID to place session in |
+| `projectId` | string | No | Project UUID to place session in |
 | `startupCommand` | string | No | Command to run on session start |
 | `featureDescription` | string | No | Description for feature branch |
 | `createWorktree` | boolean | No | Create new worktree for branch |
@@ -212,22 +212,25 @@ POST /api/sessions/:id/resume
 - `404 Not Found` - Session doesn't exist
 - `410 Gone` - tmux session no longer exists
 
-### Move Session to Folder
+### Move Session to Project
 
-Move a session to a folder or remove from folder.
+Move a session to a project (or detach from any project).
 
 ```http
 PUT /api/sessions/:id/folder
 ```
 
+> **Note:** The endpoint path retains `/folder` for backwards compatibility,
+> but the underlying column is `terminal_session.project_id`. The body accepts
+> either `projectId` (preferred) or `folderId` (legacy alias) — both map to
+> the same column. Set the value to `null` to detach the session.
+
 **Request Body:**
 ```json
 {
-  "folderId": "uuid"
+  "projectId": "uuid"
 }
 ```
-
-Set `folderId` to `null` to remove from folder.
 
 **Response:**
 ```json
@@ -312,107 +315,192 @@ Authorization: Bearer rdv_<key>
 
 ---
 
-## Folders API
+## Project Groups API
 
-### List Folders
+Project groups are nestable containers. They hold preferences only — they
+cannot directly own sessions, tasks, or channels (those belong to projects).
 
-Get all folders and session-folder mappings for current user.
+> Implementation: see `src/app/api/groups/route.ts` and
+> `src/app/api/groups/[id]/route.ts`.
+
+### List Groups
 
 ```http
-GET /api/folders
+GET /api/groups
 ```
 
 **Response:**
 ```json
 {
-  "folders": [
+  "groups": [
     {
       "id": "uuid",
-      "name": "Work Projects",
-      "parentId": null,
-      "collapsed": false,
-      "sortOrder": 0,
       "userId": "uuid",
+      "name": "Work",
+      "parentGroupId": null,
+      "sortOrder": 0,
+      "collapsed": false,
       "createdAt": "2024-01-15T09:00:00Z",
       "updatedAt": "2024-01-15T09:00:00Z"
-    }
-  ],
-  "sessionFolders": [
-    {
-      "sessionId": "uuid",
-      "folderId": "uuid"
     }
   ]
 }
 ```
 
-### Create Folder
-
-Create a new folder.
+### Create Group
 
 ```http
-POST /api/folders
+POST /api/groups
 ```
 
 **Request Body:**
 ```json
 {
-  "name": "New Folder",
-  "parentId": "uuid"
+  "name": "Work",
+  "parentGroupId": null,
+  "sortOrder": 0
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Folder name |
-| `parentId` | string | No | Parent folder UUID for nesting |
+| `name` | string | Yes | Group name |
+| `parentGroupId` | string\|null | Yes | Parent group UUID, or `null` for root |
+| `sortOrder` | number | No | Position among siblings |
 
-**Response:** `201 Created`
+**Response:** `201 Created` `{ "group": { ... } }`
+
+### Get Group
+
+```http
+GET /api/groups/:id
+```
+
+### Update Group
+
+```http
+PATCH /api/groups/:id
+```
+
+**Request Body:** any subset of `{ name, collapsed, sortOrder }`.
+
+### Delete Group
+
+```http
+DELETE /api/groups/:id?force=true|false
+```
+
+`force=true` cascades to descendant groups and projects. Without `force`,
+groups containing children return `400`.
+
+### Move Group
+
+```http
+POST /api/groups/:id/move
+```
+
+**Request Body:**
+```json
+{ "newParentGroupId": "uuid-or-null" }
+```
+
+---
+
+## Projects API
+
+Projects are the leaves of the tree. They own sessions, tasks, channels,
+secrets configs, GitHub bindings, and repository associations.
+
+> Implementation: see `src/app/api/projects/route.ts` and
+> `src/app/api/projects/[id]/route.ts`.
+
+### List Projects
+
+```http
+GET /api/projects?groupId=uuid
+```
+
+Without `groupId`, returns every project owned by the current user.
+
+**Response:**
 ```json
 {
-  "id": "uuid",
-  "name": "New Folder",
-  "parentId": "uuid",
-  "collapsed": false,
-  "sortOrder": 0,
-  ...
+  "projects": [
+    {
+      "id": "uuid",
+      "userId": "uuid",
+      "groupId": "uuid",
+      "name": "remote-dev",
+      "sortOrder": 0,
+      "collapsed": false,
+      "createdAt": "2024-01-15T09:00:00Z",
+      "updatedAt": "2024-01-15T09:00:00Z"
+    }
+  ]
 }
 ```
 
-### Update Folder
-
-Update folder properties.
+### Create Project
 
 ```http
-PATCH /api/folders/:id
+POST /api/projects
 ```
 
 **Request Body:**
 ```json
 {
-  "name": "Renamed Folder",
-  "collapsed": true,
-  "sortOrder": 1,
-  "parentId": "uuid"
+  "groupId": "uuid",
+  "name": "remote-dev",
+  "sortOrder": 0
 }
 ```
 
-**Response:** Updated folder object
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `groupId` | string | Yes | Owning group UUID |
+| `name` | string | Yes | Project name |
+| `sortOrder` | number | No | Position among siblings |
 
-### Delete Folder
+**Response:** `201 Created` `{ "project": { ... } }`
 
-Delete a folder.
+### Get / Update / Delete Project
 
 ```http
-DELETE /api/folders/:id
+GET    /api/projects/:id
+PATCH  /api/projects/:id          { name?, collapsed?, sortOrder? }
+DELETE /api/projects/:id
 ```
 
-**Response:**
-```json
-{
-  "success": true
-}
+### Move Project
+
+```http
+POST /api/projects/:id/move
 ```
+
+**Request Body:**
+```json
+{ "newGroupId": "uuid" }
+```
+
+---
+
+## Node Preferences API
+
+Node preferences are polymorphic and keyed by an `(ownerType, ownerId)` pair
+where `ownerType` is `"group"` or `"project"`. Group preferences accept a
+restricted subset of fields (no `localRepoPath`); project preferences accept
+the full schema.
+
+```http
+GET    /api/node-preferences/:ownerType/:ownerId
+PUT    /api/node-preferences/:ownerType/:ownerId
+DELETE /api/node-preferences/:ownerType/:ownerId
+```
+
+`:ownerType` is `group` or `project`. `PUT` body fields depend on
+`ownerType` — see `NodePreferences.forGroup` and `NodePreferences.forProject`
+in `src/domain/value-objects/NodePreferences.ts` for the authoritative
+shapes.
 
 ---
 
@@ -420,7 +508,7 @@ DELETE /api/folders/:id
 
 ### Get Preferences
 
-Get user settings, all folder preferences, and active folder.
+Get user settings and all node preferences.
 
 ```http
 GET /api/preferences
@@ -438,127 +526,65 @@ GET /api/preferences
     "theme": "tokyo-night",
     "fontSize": 14,
     "fontFamily": "'JetBrainsMono Nerd Font Mono', monospace",
-    "activeFolderId": "uuid",
-    "pinnedFolderId": null,
+    "activeNodeId": "uuid",
+    "activeNodeType": "project",
     "autoFollowActiveSession": true,
     "createdAt": "2024-01-15T09:00:00Z",
     "updatedAt": "2024-01-15T09:00:00Z"
   },
-  "folderPreferences": [
+  "nodePreferences": [
     {
-      "id": "uuid",
-      "folderId": "uuid",
+      "ownerType": "project",
+      "ownerId": "uuid",
       "userId": "uuid",
-      "defaultWorkingDirectory": "/path/to/project",
-      "theme": "dracula",
-      "githubRepoId": "uuid",
-      "localRepoPath": "/path/to/repo",
-      ...
+      "fields": {
+        "defaultWorkingDirectory": "/path/to/project",
+        "theme": "dracula",
+        "githubRepoId": "uuid",
+        "localRepoPath": "/path/to/repo"
+      }
     }
-  ],
-  "activeFolder": {
-    "id": "uuid",
-    "name": "Active Folder"
-  }
+  ]
 }
 ```
 
 ### Update User Settings
 
-Update user-level preferences.
-
 ```http
 PATCH /api/preferences
 ```
 
-**Request Body:**
-```json
-{
-  "defaultWorkingDirectory": "/Users/me/projects",
-  "defaultShell": "/bin/zsh",
-  "startupCommand": "clear",
-  "theme": "tokyo-night",
-  "fontSize": 14,
-  "fontFamily": "'FiraCode Nerd Font Mono', monospace",
-  "activeFolderId": "uuid",
-  "pinnedFolderId": "uuid",
-  "autoFollowActiveSession": true
-}
-```
+**Request Body:** any subset of user settings fields. To switch the active
+node, use the dedicated endpoint below instead of patching `activeNodeId`
+directly.
 
-**Response:** Updated userSettings object
+### Set Active Node
 
-### Set Active Folder
-
-Set the active folder for quick terminal creation.
+Set the active group or project. Tasks, channels, and peer-message
+aggregations follow this selection — group nodes roll up across every
+descendant project.
 
 ```http
-POST /api/preferences/active-folder
+POST /api/preferences/active-node
 ```
 
 **Request Body:**
 ```json
 {
-  "folderId": "uuid",
-  "pinned": false
+  "nodeId": "uuid",
+  "nodeType": "group"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `folderId` | string | Folder UUID (null to clear) |
-| `pinned` | boolean | Pin folder (won't auto-follow) |
+| `nodeId` | string | Group or project UUID |
+| `nodeType` | `"group" \| "project"` | Discriminator |
 
-**Response:** Updated userSettings object
+**Response:** `{ "ok": true }`
 
-### Get Folder Preferences
-
-Get preferences for a specific folder.
-
-```http
-GET /api/preferences/folders/:folderId
-```
-
-**Response:** folderPreferences object
-
-### Set Folder Preferences
-
-Create or update folder-specific preferences.
-
-```http
-PUT /api/preferences/folders/:folderId
-```
-
-**Request Body:**
-```json
-{
-  "defaultWorkingDirectory": "/path/to/project",
-  "defaultShell": "/bin/bash",
-  "startupCommand": "npm run dev",
-  "theme": "dracula",
-  "fontSize": 16,
-  "fontFamily": "'Hack Nerd Font Mono', monospace",
-  "githubRepoId": "uuid",
-  "localRepoPath": "/path/to/repo"
-}
-```
-
-**Response:** Updated folderPreferences object
-
-### Delete Folder Preferences
-
-Reset folder preferences to inherit from user defaults.
-
-```http
-DELETE /api/preferences/folders/:folderId
-```
-
-**Response:**
-```json
-{
-  "success": true
-}
-```
+> See the [Node Preferences API](#node-preferences-api) for managing
+> per-node preference overrides.
 
 ---
 
@@ -1331,7 +1357,8 @@ All messages are JSON-encoded.
 - `REPOSITORY_NOT_FOUND` - Repository not in cache
 - `CLONE_FAILED` - Repository clone failed
 - `WORKTREE_FAILED` - Worktree creation failed
-- `FOLDER_NOT_FOUND` - Folder doesn't exist
+- `GROUP_NOT_FOUND` - Project group doesn't exist
+- `PROJECT_NOT_FOUND` - Project doesn't exist
 - `TEMPLATE_NOT_FOUND` - Template doesn't exist
 - `RECORDING_NOT_FOUND` - Recording doesn't exist
 - `API_KEY_NOT_FOUND` - API key doesn't exist or was revoked
