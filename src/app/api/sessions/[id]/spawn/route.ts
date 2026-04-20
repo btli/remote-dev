@@ -24,6 +24,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
       terminalType?: "shell" | "agent" | "file" | "browser";
       agentProvider?: string;
       folderId?: string;
+      projectId?: string;
       workingDirectory?: string;
       profileId?: string;
     }>(request);
@@ -43,6 +44,7 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
       terminalType: body.terminalType || parent.terminalType || "agent",
       agentProvider: (body.agentProvider || parent.agentProvider || "claude") as CreateSessionInput["agentProvider"],
       folderId: body.folderId || parent.folderId || undefined,
+      projectId: body.projectId ?? parent.projectId ?? undefined,
       projectPath: body.workingDirectory || parent.projectPath || undefined,
       profileId: body.profileId || parent.profileId || undefined,
       parentSessionId: parentId,

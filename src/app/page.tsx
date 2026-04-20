@@ -95,6 +95,7 @@ export default async function Home() {
     worktreeBranch: s.worktreeBranch,
     worktreeType: s.worktreeType ?? null,
     folderId: s.folderId,
+    projectId: s.projectId ?? null,
     profileId: s.profileId,
     terminalType: s.terminalType ?? "shell",
     agentProvider: s.agentProvider as "claude" | "codex" | "gemini" | "opencode" | "none" | null,

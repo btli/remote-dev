@@ -59,6 +59,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       githubRepoId?: string;
       worktreeBranch?: string;
       folderId?: string;
+      projectId?: string;
       startupCommand?: string;
       featureDescription?: string;
       createWorktree?: boolean;
@@ -99,6 +100,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
       folderId: body.folderId,
+      projectId: body.projectId,
       // Terminal type (shell, agent, file, browser, loop)
       terminalType: body.terminalType,
       filePath: validatedFilePath,

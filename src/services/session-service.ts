@@ -28,6 +28,7 @@ import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEn
 import { createApiKey } from "@/services/api-key-service";
 import { createLogger } from "@/lib/logger";
 import { ensureSoxShim } from "@/services/voice-shim-service";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
 
 const log = createLogger("SessionService");
 
@@ -512,6 +513,13 @@ export async function createSession(
   // Insert the database record - clean up tmux session and worktree if this fails
   try {
     const now = new Date();
+    // Dual-write: prefer explicit projectId; otherwise translate folderId via
+    // projects.legacyFolderId. Both columns are written during Phase 3.
+    const resolvedProjectId =
+      input.projectId ??
+      (input.folderId
+        ? await translateFolderIdToProjectId(input.folderId, userId)
+        : null);
     const [session] = await db
       .insert(terminalSessions)
       .values({
@@ -524,6 +532,7 @@ export async function createSession(
         worktreeBranch: branchName ?? null,
         worktreeType: input.worktreeType ?? null,
         folderId: input.folderId ?? null,
+        projectId: resolvedProjectId,
         profileId: input.profileId ?? null,
         parentSessionId: input.parentSessionId ?? null,
         terminalType,
@@ -1120,6 +1129,7 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
     worktreeBranch: dbSession.worktreeBranch,
     worktreeType: dbSession.worktreeType as WorktreeType | null,
     folderId: dbSession.folderId,
+    projectId: dbSession.projectId ?? null,
     profileId: dbSession.profileId,
     terminalType: dbSession.terminalType ?? "shell",
     agentProvider: dbSession.agentProvider as AgentProviderType | null,

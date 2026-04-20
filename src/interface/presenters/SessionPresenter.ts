@@ -23,6 +23,11 @@ export class SessionPresenter {
       worktreeBranch: session.worktreeBranch,
       worktreeType: (session.worktreeType as TerminalSession["worktreeType"]) ?? null,
       folderId: session.folderId,
+      // Phase 3: project id is not yet surfaced through the Session domain entity.
+      // It is dual-written at insert time and read directly from the DB row in
+      // SessionService; the presenter path (used by folder-oriented API routes)
+      // reports null until Phase 4 promotes Session to a project-aware entity.
+      projectId: null,
       profileId: session.profileId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,
