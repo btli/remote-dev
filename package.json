@@ -39,6 +39,7 @@
     "db:migrate-github-accounts": "bun run scripts/migrate-github-accounts.ts",
     "db:migrate-profile-gitconfigs": "bun run scripts/migrate-profile-gitconfigs.ts",
     "db:migrate-channels": "tsx src/db/migrations/migrate-channels.ts",
+    "db:migrate-folders": "bun run scripts/migrate-folders-to-projects.ts",
     "terminal:build": "bun build src/server/index.ts --outdir dist-terminal --target node --external node-pty --external better-sqlite3 --sourcemap",
     "electron:build": "tsc -p electron/tsconfig.json",
     "electron:dev": "bun run electron:build && concurrently --kill-others -n next,term,electron -c blue,green,yellow \"bun run dev:next\" \"bun run dev:terminal\" \"electron .\"",
