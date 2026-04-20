@@ -168,7 +168,13 @@ async function main() {
     await backupDatabase();
   }
 
-  const folders = await db
+  const marker = await getMigrationState(k("complete"));
+  if (marker === "done") {
+    log.info("Migration already completed on this DB; exiting.");
+    return;
+  }
+
+  const allFolders = await db
     .select({
       id: sessionFolders.id,
       userId: sessionFolders.userId,
@@ -176,12 +182,55 @@ async function main() {
       name: sessionFolders.name,
     })
     .from(sessionFolders);
+  log.info("Loaded folders", { count: allFolders.length });
 
-  validateFolderGraph(folders);
-  log.info("Folder graph preflight passed", { folders: folders.length });
+  validateFolderGraph(allFolders);
+  log.info("Folder graph preflight passed", { folders: allFolders.length });
 
-  // Subsequent steps added in later tasks.
-  log.info("Migration skeleton ready; no-op until subsequent tasks land.");
+  const { groupIds, projectIds } = classifyFolders(allFolders);
+  const groupIdSet = new Set(groupIds);
+  log.info("Classified", { groups: groupIds.length, projects: projectIds.length });
+
+  // Count direct contents per folder (sessions + tasks + channels + peer msgs + channel_groups)
+  const directCounts = new Map<string, number>();
+  const tablesWithFolder: Array<{ table: any; folderCol: any }> = [
+    { table: terminalSessions, folderCol: terminalSessions.folderId },
+    { table: projectTasks, folderCol: projectTasks.folderId },
+    { table: channelGroups, folderCol: channelGroups.folderId },
+    { table: channels, folderCol: channels.folderId },
+    { table: agentPeerMessages, folderCol: agentPeerMessages.folderId },
+  ];
+  for (const { table, folderCol } of tablesWithFolder) {
+    const rows = await db
+      .select({ folderId: folderCol, count: sql<number>`count(*)` })
+      .from(table)
+      .groupBy(folderCol);
+    for (const row of rows) {
+      if (!row.folderId) continue;
+      directCounts.set(
+        row.folderId,
+        (directCounts.get(row.folderId) ?? 0) + Number(row.count)
+      );
+    }
+  }
+
+  const defaultProjectPlan = planDefaultProjects(groupIdSet, directCounts);
+  log.info("Default projects to create", { count: defaultProjectPlan.size });
+
+  const rootLeaves = allFolders.filter(
+    (f) => f.parentId === null && !groupIdSet.has(f.id)
+  );
+  const workspacePlan = planWorkspaceGroup(rootLeaves);
+  log.info("Workspace groups to create", { count: workspacePlan.size });
+
+  if (DRY_RUN) {
+    log.info("Dry run complete — no writes performed.");
+    return;
+  }
+
+  // Writes happen in Task 9+
+  log.warn("Writes not yet implemented; marking in-progress.");
+  await setMigrationState(k("analyzed"), "done");
 }
 
 main().catch((err) => {
