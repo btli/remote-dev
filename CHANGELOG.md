@@ -9,7 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **Project/folder refactor Phase 6 (cleanup)**: legacy `session_folder`,
+  `folder_preferences`, `folder_secrets_config`, `folder_github_account_link`,
+  `folder_profile_link`, and `folder_repository` tables; `folder_id` columns
+  on every dependent table (terminal sessions, templates, tasks, channels,
+  channel groups, agent peer messages, agent configs, MCP servers, session
+  memory, GitHub stats preferences, port registry); `user_settings.active_folder_id`
+  and `pinned_folder_id`. Container, services, repositories, mappers, and
+  use-cases for the legacy folder domain (`FolderService`, `folder-scope-util`,
+  `DrizzleFolderRepository`, `Folder` entity, etc.). `FolderContext` is now a
+  thin compat shim over `ProjectTreeContext`. `FolderPreferencesModal` is gone
+  (replaced by `GroupPreferencesModal` + `ProjectPreferencesModal`). API
+  routes `/api/folders/*`, `/api/preferences/folders/*`, and
+  `/api/preferences/active-folder` removed. `rdv folder` subcommand removed —
+  use `rdv group` and `rdv project` instead.
 - Split pane feature (split groups, split pane layouts, split API endpoints, keyboard shortcuts)
+
+### Changed
+
+- **Project/folder refactor Phase 6 (schema tightening)**: `Session.folderId`
+  is now `Session.projectId` throughout the domain and infrastructure layers.
+  `project_id` is `NOT NULL` on the main dependent tables (`project_task`,
+  `channel_groups`, `channels`, `agent_peer_message`); other bridged tables
+  keep nullable `project_id` because user-scoped rows legitimately have no
+  project. Coverage was verified pre-drop via the audit script archived in
+  `scripts/archive/`.
 
 ### Added
 
