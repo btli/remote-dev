@@ -2,34 +2,16 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { db, client } from "@/db";
+import { db } from "@/db";
 import {
   sessionFolders,
-  folderPreferences,
-  folderSecretsConfig,
-  folderGitHubAccountLinks,
-  folderProfileLinks,
   terminalSessions,
-  sessionTemplates,
   projectTasks,
   channelGroups,
   channels,
   agentPeerMessages,
-  agentConfigs,
-  mcpServers,
-  sessionMemory,
-  githubStatsPreferences,
-  portRegistry,
-  worktreeTrashMetadata,
-  userSettings,
   projectGroups,
   projects,
-  nodePreferences,
-  projectSecretsConfig,
-  projectGitHubAccountLinks,
-  projectProfileLinks,
-  projectRepositories,
-  folderRepositories,
 } from "@/db/schema";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
@@ -228,9 +210,174 @@ async function main() {
     return;
   }
 
-  // Writes happen in Task 9+
-  log.warn("Writes not yet implemented; marking in-progress.");
-  await setMigrationState(k("analyzed"), "done");
+  // ───────────────────────────────────────────────────────────────────────
+  // Task 9: Insert groups and projects
+  // ───────────────────────────────────────────────────────────────────────
+  const treeInsertedMarker = await getMigrationState(k("tree-inserted"));
+  const workspaceGroupIds = new Map<string, string>(); // userId -> groupId
+  const groupIdMap = new Map<string, string>(); // legacyFolderId -> new projectGroupId
+  const projectIdMap = new Map<string, string>(); // legacyFolderId -> new projectId
+  const defaultProjectIdsByGroup = new Map<string, string>();
+  const foldersById = new Map(allFolders.map((f) => [f.id, f]));
+
+  if (treeInsertedMarker === "done") {
+    log.info("Tree already inserted; rebuilding in-memory id maps from DB.");
+    // Rebuild workspaceGroupIds: Workspace groups have no legacyFolderId,
+    // parent_group_id IS NULL, and name="Workspace".
+    const wsRows = await db
+      .select({
+        id: projectGroups.id,
+        userId: projectGroups.userId,
+      })
+      .from(projectGroups)
+      .where(
+        and(
+          isNull(projectGroups.parentGroupId),
+          isNull(projectGroups.legacyFolderId),
+          eq(projectGroups.name, "Workspace")
+        )
+      );
+    for (const row of wsRows) workspaceGroupIds.set(row.userId, row.id);
+
+    // Rebuild groupIdMap from rows with a legacyFolderId
+    const migGroupRows = await db
+      .select({
+        id: projectGroups.id,
+        legacyFolderId: projectGroups.legacyFolderId,
+      })
+      .from(projectGroups);
+    for (const row of migGroupRows) {
+      if (row.legacyFolderId) groupIdMap.set(row.legacyFolderId, row.id);
+    }
+
+    // Rebuild projectIdMap for legacy-folder-backed projects and Default projects
+    const migProjectRows = await db
+      .select({
+        id: projects.id,
+        legacyFolderId: projects.legacyFolderId,
+        groupId: projects.groupId,
+        isAutoCreated: projects.isAutoCreated,
+      })
+      .from(projects);
+    for (const row of migProjectRows) {
+      if (row.legacyFolderId) {
+        projectIdMap.set(row.legacyFolderId, row.id);
+      } else if (row.isAutoCreated) {
+        // Default project — reverse-map by its group's legacyFolderId
+        const parentLegacyFolderId = [...groupIdMap.entries()].find(
+          ([, gid]) => gid === row.groupId
+        )?.[0];
+        if (parentLegacyFolderId) {
+          defaultProjectIdsByGroup.set(parentLegacyFolderId, row.id);
+        }
+      }
+    }
+    log.info("Restored id maps", {
+      workspaceGroups: workspaceGroupIds.size,
+      groups: groupIdMap.size,
+      projects: projectIdMap.size,
+      defaults: defaultProjectIdsByGroup.size,
+    });
+  } else {
+    // 1. Insert Workspace groups (one per user with root leaves)
+    for (const [userId, { groupId }] of workspacePlan) {
+      await db.insert(projectGroups).values({
+        id: groupId,
+        userId,
+        parentGroupId: null,
+        name: "Workspace",
+        collapsed: false,
+        sortOrder: -1, // sorts above all migrated groups
+        legacyFolderId: null,
+      });
+      workspaceGroupIds.set(userId, groupId);
+    }
+    log.info("Inserted Workspace groups", { count: workspaceGroupIds.size });
+
+    // 2. Insert migrated groups in topo order (parents before children)
+    const insertedGroups = new Set<string>();
+
+    async function insertGroupAsync(folderId: string): Promise<string> {
+      if (insertedGroups.has(folderId)) return groupIdMap.get(folderId)!;
+      const folder = foldersById.get(folderId)!;
+      let parentGroupId: string | null = null;
+      if (folder.parentId) {
+        if (!groupIdSet.has(folder.parentId)) {
+          throw new Error(
+            `Consistency error: group ${folderId} has non-group parent ${folder.parentId}`
+          );
+        }
+        parentGroupId = await insertGroupAsync(folder.parentId);
+      }
+      const newId = randomUUID();
+      await db.insert(projectGroups).values({
+        id: newId,
+        userId: folder.userId,
+        parentGroupId,
+        name: folder.name,
+        collapsed: false,
+        sortOrder: 0,
+        legacyFolderId: folderId,
+      });
+      insertedGroups.add(folderId);
+      groupIdMap.set(folderId, newId);
+      return newId;
+    }
+
+    for (const gid of groupIds) {
+      await insertGroupAsync(gid);
+    }
+    log.info("Inserted migrated groups", { count: groupIdMap.size });
+
+    // 3. Insert projects (leaves)
+    for (const pid of projectIds) {
+      const folder = foldersById.get(pid)!;
+      let groupId: string | null = null;
+      if (folder.parentId) {
+        groupId = groupIdMap.get(folder.parentId) ?? null;
+      } else {
+        // root leaf — goes into Workspace group for its user
+        groupId = workspaceGroupIds.get(folder.userId) ?? null;
+      }
+      if (!groupId) {
+        throw new Error(`No parent group resolved for project-candidate folder ${pid}`);
+      }
+      const newId = randomUUID();
+      await db.insert(projects).values({
+        id: newId,
+        userId: folder.userId,
+        groupId,
+        name: folder.name,
+        collapsed: false,
+        sortOrder: 0,
+        isAutoCreated: false,
+        legacyFolderId: pid,
+      });
+      projectIdMap.set(pid, newId);
+    }
+    log.info("Inserted migrated projects", { count: projectIdMap.size });
+
+    // 4. Insert Default projects for groups with direct contents
+    for (const [legacyGroupFolderId, { defaultProjectId }] of defaultProjectPlan) {
+      const newGroupId = groupIdMap.get(legacyGroupFolderId);
+      if (!newGroupId) continue;
+      const folder = foldersById.get(legacyGroupFolderId)!;
+      await db.insert(projects).values({
+        id: defaultProjectId,
+        userId: folder.userId,
+        groupId: newGroupId,
+        name: "Default",
+        collapsed: false,
+        sortOrder: 0,
+        isAutoCreated: true,
+        legacyFolderId: null,
+      });
+      defaultProjectIdsByGroup.set(legacyGroupFolderId, defaultProjectId);
+    }
+    log.info("Inserted Default projects", { count: defaultProjectIdsByGroup.size });
+
+    await setMigrationState(k("tree-inserted"), "done");
+  }
 }
 
 main().catch((err) => {
