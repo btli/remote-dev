@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 import type { CIStatusState, PRState } from "@/types/github-stats";
@@ -1810,5 +1811,107 @@ export const litellmModels = sqliteTable(
   },
   (table) => [
     index("litellm_model_user_idx").on(table.userId),
+  ]
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// Project / Group Coupling (Phase 1 of folder refactor)
+// ─────────────────────────────────────────────────────────────────────────
+
+export const projectGroups = sqliteTable(
+  "project_group",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    parentGroupId: text("parent_group_id").references(
+      (): AnySQLiteColumn => projectGroups.id,
+      { onDelete: "set null" }
+    ),
+    name: text("name").notNull(),
+    collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    legacyFolderId: text("legacy_folder_id"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("project_group_user_idx").on(t.userId),
+    index("project_group_parent_idx").on(t.parentGroupId),
+    uniqueIndex("project_group_legacy_user_idx").on(t.userId, t.legacyFolderId),
+  ]
+);
+
+export const projects = sqliteTable(
+  "project",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => projectGroups.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isAutoCreated: integer("is_auto_created", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    legacyFolderId: text("legacy_folder_id"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("project_user_idx").on(t.userId),
+    index("project_group_idx").on(t.groupId),
+    uniqueIndex("project_legacy_user_idx").on(t.userId, t.legacyFolderId),
+  ]
+);
+
+export const nodePreferences = sqliteTable(
+  "node_preferences",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    ownerType: text("owner_type", { enum: ["group", "project"] }).notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    defaultWorkingDirectory: text("default_working_directory"),
+    defaultShell: text("default_shell"),
+    startupCommand: text("startup_command"),
+    theme: text("theme"),
+    fontSize: integer("font_size"),
+    fontFamily: text("font_family"),
+    githubRepoId: text("github_repo_id"),
+    localRepoPath: text("local_repo_path"),
+    defaultAgentProvider: text("default_agent_provider"),
+    environmentVars: text("environment_vars", { mode: "json" }),
+    pinnedFiles: text("pinned_files", { mode: "json" }),
+    gitIdentityName: text("git_identity_name"),
+    gitIdentityEmail: text("git_identity_email"),
+    isSensitive: integer("is_sensitive", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("node_pref_owner_idx").on(t.ownerId, t.ownerType),
+    uniqueIndex("node_pref_owner_user_idx").on(t.ownerId, t.ownerType, t.userId),
   ]
 );
