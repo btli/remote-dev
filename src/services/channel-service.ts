@@ -16,6 +16,23 @@ import {
 import { eq, and, sql, isNull, inArray } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 import type { ChannelType } from "@/types/channels";
+import { translateFolderIdToProjectId } from "@/services/project-scope-util";
+
+/** Look up the owner userId for a folder so we can translate folderId → projectId. */
+async function resolveFolderUserId(folderId: string): Promise<string | null> {
+  const row = await db.query.sessionFolders.findFirst({
+    where: eq(sessionFolders.id, folderId),
+    columns: { userId: true },
+  });
+  return row?.userId ?? null;
+}
+
+/** Resolve the projectId for a given folder, or null if no bridge row exists. */
+async function resolveProjectIdForFolder(folderId: string): Promise<string | null> {
+  const userId = await resolveFolderUserId(folderId);
+  if (!userId) return null;
+  return translateFolderIdToProjectId(folderId, userId);
+}
 
 const log = createLogger("ChannelService");
 
@@ -68,10 +85,13 @@ export async function ensureFolderChannels(
     }
   }
 
+  // Dual-write Phase 3: translate folderId → projectId once and reuse below.
+  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
+
   // Upsert the default group
   await db
     .insert(channelGroups)
-    .values({ folderId, name: DEFAULT_GROUP_NAME, position: 0 })
+    .values({ folderId, projectId: resolvedProjectId, name: DEFAULT_GROUP_NAME, position: 0 })
     .onConflictDoNothing({ target: [channelGroups.folderId, channelGroups.name] });
 
   const group = await db.query.channelGroups.findFirst({
@@ -91,6 +111,7 @@ export async function ensureFolderChannels(
     .insert(channels)
     .values({
       folderId,
+      projectId: resolvedProjectId,
       groupId: group.id,
       name: GENERAL_CHANNEL_NAME,
       displayName: "#general",
@@ -163,10 +184,14 @@ export async function createChannel(params: CreateChannelParams) {
 
   const displayName = params.displayName || `#${name}`;
 
+  // Dual-write Phase 3: populate projectId alongside folderId.
+  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
+
   const [channel] = await db
     .insert(channels)
     .values({
       folderId,
+      projectId: resolvedProjectId,
       groupId,
       name,
       displayName,
@@ -395,10 +420,13 @@ export async function findOrCreateDmChannel(
   });
   if (existing) return existing;
 
+  // Dual-write Phase 3: resolve projectId once for both group + channel inserts.
+  const resolvedProjectId = await resolveProjectIdForFolder(folderId);
+
   // Ensure DM group exists
   await db
     .insert(channelGroups)
-    .values({ folderId, name: DM_GROUP_NAME, position: 100 })
+    .values({ folderId, projectId: resolvedProjectId, name: DM_GROUP_NAME, position: 100 })
     .onConflictDoNothing({ target: [channelGroups.folderId, channelGroups.name] });
 
   const dmGroup = await db.query.channelGroups.findFirst({
@@ -415,6 +443,7 @@ export async function findOrCreateDmChannel(
     .insert(channels)
     .values({
       folderId,
+      projectId: resolvedProjectId,
       groupId: dmGroup.id,
       name: dmName,
       displayName: dmName, // Will be resolved to peer name at render time
