@@ -107,6 +107,22 @@ export function planDefaultProjects(
   return plan;
 }
 
+export function planWorkspaceGroup(
+  rootLeaves: FolderRow[]
+): Map<string, { groupId: string; childLeafIds: string[] }> {
+  const plan = new Map<string, { groupId: string; childLeafIds: string[] }>();
+  for (const leaf of rootLeaves) {
+    if (leaf.parentId !== null) continue;
+    let entry = plan.get(leaf.userId);
+    if (!entry) {
+      entry = { groupId: randomUUID(), childLeafIds: [] };
+      plan.set(leaf.userId, entry);
+    }
+    entry.childLeafIds.push(leaf.id);
+  }
+  return plan;
+}
+
 export function validateFolderGraph(folders: FolderRow[]): void {
   const byId = new Map<string, FolderRow>();
   for (const f of folders) byId.set(f.id, f);
