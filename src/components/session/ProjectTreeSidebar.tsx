@@ -1,73 +1,180 @@
 "use client";
-
 import { useMemo } from "react";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
-import { ProjectTreeRow } from "./ProjectTreeRow";
+import { useSessionContext } from "@/contexts/SessionContext";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
+import { useSecretsContext } from "@/contexts/SecretsContext";
+import { useNotificationContext } from "@/contexts/NotificationContext";
+import { GroupRow } from "./project-tree/GroupRow";
+import { ProjectRow } from "./project-tree/ProjectRow";
+import { SessionRow } from "./project-tree/SessionRow";
+import { TreeConnector } from "./project-tree/TreeConnector";
+import {
+  recursiveSessionCount,
+  rolledUpRepoStats,
+  sessionsForProject,
+  type RepoStats,
+} from "@/lib/project-tree-session-utils";
+import type { TerminalSession } from "@/types/session";
 
 interface Props {
-  /**
-   * Called when the user clicks the settings gear on a row. Receives the
-   * node's id, type, and display name so the caller can open the
-   * corresponding Group/ProjectPreferencesModal.
-   */
+  getProjectRepoStats: (projectId: string) => RepoStats | null;
   onOpenPreferences?: (node: {
     id: string;
     type: "group" | "project";
     name: string;
   }) => void;
+  onSessionClick: (sessionId: string) => void;
+  onSessionClose: (sessionId: string) => void;
+  onSessionStartEdit: (sessionId: string) => void;
 }
 
-export function ProjectTreeSidebar({ onOpenPreferences }: Props = {}) {
+export function ProjectTreeSidebar(props: Props) {
   const tree = useProjectTree();
-  const rootEntries = useMemo(() => tree.getChildrenOfGroup(null), [tree]);
+  const { sessions, activeSessionId, getAgentActivityStatus } = useSessionContext();
+  const { getFolderPreferences } = usePreferencesContext();
+  const { folderConfigs } = useSecretsContext();
+  const { notifications } = useNotificationContext();
 
-  function renderGroupSubtree(groupId: string, depth: number) {
-    const { groups: childGroups, projects: childProjects } = tree.getChildrenOfGroup(groupId);
-    return (
-      <>
-        {childGroups.map((g) => (
-          <ProjectTreeRow
-            key={g.id}
-            node={{ type: "group", id: g.id }}
-            depth={depth}
-            isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
-            onSelect={(n) => void tree.setActiveNode(n)}
-            onOpenPreferences={onOpenPreferences}
-          >
-            {renderGroupSubtree(g.id, depth + 1)}
-          </ProjectTreeRow>
-        ))}
-        {childProjects.map((p) => (
-          <ProjectTreeRow
-            key={p.id}
-            node={{ type: "project", id: p.id }}
-            depth={depth}
-            isActive={tree.activeNode?.id === p.id && tree.activeNode?.type === "project"}
-            onSelect={(n) => void tree.setActiveNode(n)}
-            onOpenPreferences={onOpenPreferences}
-          />
-        ))}
-      </>
-    );
-  }
+  const activeSessions = useMemo(
+    () => sessions.filter((s) => s.status !== "closed"),
+    [sessions]
+  );
+
+  const sessionUnread = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const n of notifications) {
+      if (n.readAt == null && n.sessionId) {
+        m.set(n.sessionId, (m.get(n.sessionId) ?? 0) + 1);
+      }
+    }
+    return m;
+  }, [notifications]);
 
   if (tree.isLoading) {
     return <div className="p-3 text-xs text-muted-foreground">Loading projects…</div>;
   }
 
+  const rootEntries = tree.getChildrenOfGroup(null);
+
+  const renderSessions = (projectId: string, depth: number) => {
+    const list = sessionsForProject(activeSessions, projectId) as TerminalSession[];
+    const pinned = list.filter((s) => s.pinned);
+    const unpinned = list.filter((s) => !s.pinned);
+    const ordered = [...pinned, ...unpinned];
+    return ordered.map((s, i) => (
+      <TreeConnector key={s.id} depth={depth} isLastChild={i === ordered.length - 1}>
+        <SessionRow
+          session={s}
+          depth={depth}
+          isActive={s.id === activeSessionId}
+          isEditing={false}
+          hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
+          agentStatus={s.terminalType === "agent" ? getAgentActivityStatus(s.id) : null}
+          scheduleCount={0}
+          onClick={() => props.onSessionClick(s.id)}
+          onClose={() => props.onSessionClose(s.id)}
+          onStartEdit={() => props.onSessionStartEdit(s.id)}
+        />
+      </TreeConnector>
+    ));
+  };
+
+  const renderGroupSubtree = (groupId: string, depth: number) => {
+    const { groups: childGroups, projects: childProjects } = tree.getChildrenOfGroup(groupId);
+    return (
+      <>
+        {childGroups.map((g, i) => (
+          <TreeConnector
+            key={g.id}
+            depth={depth}
+            isLastChild={i === childGroups.length - 1 && childProjects.length === 0}
+          >
+            <GroupRow
+              group={g}
+              depth={depth}
+              isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
+              sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
+              rolledStats={rolledUpRepoStats(
+                tree.groups,
+                tree.projects,
+                props.getProjectRepoStats,
+                { type: "group", id: g.id, collapsed: g.collapsed }
+              )}
+              hasCustomPrefs={false}
+              onSelect={() => void tree.setActiveNode({ id: g.id, type: "group" })}
+              onToggleCollapse={() => void tree.updateGroup({ id: g.id, collapsed: !g.collapsed })}
+              onOpenPreferences={
+                props.onOpenPreferences
+                  ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
+                  : undefined
+              }
+            >
+              {renderGroupSubtree(g.id, depth + 1)}
+            </GroupRow>
+          </TreeConnector>
+        ))}
+        {childProjects.map((p, i) => (
+          <TreeConnector key={p.id} depth={depth} isLastChild={i === childProjects.length - 1}>
+            <ProjectRow
+              project={p}
+              depth={depth}
+              isActive={tree.activeNode?.id === p.id && tree.activeNode?.type === "project"}
+              collapsed={p.collapsed}
+              sessionCount={sessionsForProject(activeSessions, p.id, { excludeFileSessions: true }).length}
+              ownStats={props.getProjectRepoStats(p.id)}
+              hasCustomPrefs={false}
+              hasActiveSecrets={folderConfigs.get(p.id)?.enabled ?? false}
+              hasLinkedRepo={getFolderPreferences(p.id)?.githubRepoId != null}
+              onSelect={() => void tree.setActiveNode({ id: p.id, type: "project" })}
+              onToggleCollapse={() =>
+                void tree.updateProject({ id: p.id, collapsed: !p.collapsed })
+              }
+              onOpenPreferences={
+                props.onOpenPreferences
+                  ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
+                  : undefined
+              }
+            >
+              {!p.collapsed && renderSessions(p.id, depth + 1)}
+            </ProjectRow>
+          </TreeConnector>
+        ))}
+      </>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-0.5 px-1 py-2">
-      {rootEntries.groups.map((g) => (
-        <ProjectTreeRow
+      {rootEntries.groups.map((g, i) => (
+        <TreeConnector
           key={g.id}
-          node={{ type: "group", id: g.id }}
           depth={0}
-          isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
-          onSelect={(n) => void tree.setActiveNode(n)}
-          onOpenPreferences={onOpenPreferences}
+          isLastChild={i === rootEntries.groups.length - 1}
         >
-          {renderGroupSubtree(g.id, 1)}
-        </ProjectTreeRow>
+          <GroupRow
+            group={g}
+            depth={0}
+            isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
+            sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
+            rolledStats={rolledUpRepoStats(
+              tree.groups,
+              tree.projects,
+              props.getProjectRepoStats,
+              { type: "group", id: g.id, collapsed: g.collapsed }
+            )}
+            hasCustomPrefs={false}
+            onSelect={() => void tree.setActiveNode({ id: g.id, type: "group" })}
+            onToggleCollapse={() => void tree.updateGroup({ id: g.id, collapsed: !g.collapsed })}
+            onOpenPreferences={
+              props.onOpenPreferences
+                ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
+                : undefined
+            }
+          >
+            {renderGroupSubtree(g.id, 1)}
+          </GroupRow>
+        </TreeConnector>
       ))}
     </div>
   );

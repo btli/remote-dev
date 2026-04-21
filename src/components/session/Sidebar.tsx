@@ -1732,7 +1732,13 @@ export function Sidebar({
                   <div className="px-2 pb-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
                     Projects
                   </div>
-                  <ProjectTreeSidebar onOpenPreferences={onOpenNodePreferences} />
+                  <ProjectTreeSidebar
+                    getProjectRepoStats={getFolderRepoStats}
+                    onOpenPreferences={onOpenNodePreferences}
+                    onSessionClick={onSessionClick}
+                    onSessionClose={(sid) => onSessionClose(sid)}
+                    onSessionStartEdit={() => {}}
+                  />
                 </div>
               )}
 
