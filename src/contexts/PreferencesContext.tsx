@@ -53,6 +53,25 @@ interface PreferencesContextValue {
   hasFolderPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
 
+  // Node-keyed accessors (project/group — owner-typed) ------------------------
+  // These mirror the folder-keyed helpers above but take an explicit owner
+  // discriminator. For ownerType='project', ownerId is the project's `id`
+  // (which is what the backend `node_preferences` table keys by). For
+  // ownerType='group', ownerId is the group's `id`. The current in-memory
+  // state is shared — `folderPreferences` is keyed by `ownerId` regardless
+  // of ownerType, and collisions are impossible since both ids are UUIDs.
+  // TODO(remote-dev-w1ed): once all callers are node-keyed, rename the
+  // underlying state map away from `folderPreferences`.
+  getNodePreferences: (
+    ownerType: "group" | "project",
+    ownerId: string
+  ) => FolderPreferences | null;
+  hasNodePreferences: (
+    ownerType: "group" | "project",
+    ownerId: string
+  ) => boolean;
+  nodeHasRepo: (ownerType: "group" | "project", ownerId: string) => boolean;
+
   // Active project management
   setActiveFolder: (folderId: string | null, pinned?: boolean) => void;
   resolvePreferencesForFolder: (folderId: string | null) => ResolvedPreferences;
@@ -218,6 +237,31 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     [folderPreferences, folders]
   );
 
+  // Node-keyed wrappers. The owner discriminator is accepted for API
+  // symmetry and future-proofing but is currently ignored because `ownerId`
+  // alone uniquely identifies a row in the shared preferences map.
+  const getNodePreferences = useCallback(
+    (_ownerType: "group" | "project", ownerId: string): FolderPreferences | null => {
+      return folderPreferences.get(ownerId) || null;
+    },
+    [folderPreferences]
+  );
+
+  const hasNodePreferences = useCallback(
+    (_ownerType: "group" | "project", ownerId: string): boolean => {
+      return folderPreferences.has(ownerId);
+    },
+    [folderPreferences]
+  );
+
+  const nodeHasRepo = useCallback(
+    (_ownerType: "group" | "project", ownerId: string): boolean => {
+      const chain = buildAncestryChain(ownerId, folderPreferences, folders);
+      return chain.some((prefs) => prefs.githubRepoId || prefs.localRepoPath);
+    },
+    [folderPreferences, folders]
+  );
+
   const updateFolderPreferencesHandler = useCallback(
     async (folderId: string, updates: UpdateFolderPreferencesInput): Promise<PortValidationResult | undefined> => {
       try {
@@ -376,6 +420,9 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       deleteFolderPreferences: deleteFolderPreferencesHandler,
       hasFolderPreferences,
       folderHasRepo,
+      getNodePreferences,
+      hasNodePreferences,
+      nodeHasRepo,
       setActiveFolder,
       resolvePreferencesForFolder,
       getEnvironmentForFolder,
@@ -396,6 +443,9 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       deleteFolderPreferencesHandler,
       hasFolderPreferences,
       folderHasRepo,
+      getNodePreferences,
+      hasNodePreferences,
+      nodeHasRepo,
       setActiveFolder,
       resolvePreferencesForFolder,
       getEnvironmentForFolder,
