@@ -236,6 +236,52 @@ export function ProjectTreeSidebar(props: Props) {
     props.onSessionMove(snap.drag.id, legacy);
   };
 
+  const handleProjectDropOnProject = (
+    snap: { drag: DragState; indicator: DropIndicator },
+    targetProject: ProjectNode,
+  ) => {
+    const { drag, indicator } = snap;
+    if (drag.type !== "project") return;
+    if (indicator.targetType !== "project") return;
+    if (indicator.position !== "before" && indicator.position !== "after") return;
+
+    const sourceProject = tree.projects.find((p) => p.id === drag.id);
+    if (!sourceProject) return;
+    // The hook's indicator already guards cross-group drops on project rows
+    // (extra.targetParentId must match drag.sourceParentId). Keep this
+    // defensive same-group check too, in case the caller wiring regresses.
+    if (sourceProject.groupId !== targetProject.groupId) return;
+
+    const siblings = tree.projects
+      .filter((p) => p.groupId === targetProject.groupId)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    const ids = siblings.map((s) => s.id);
+    const withoutDragged = ids.filter((id) => id !== drag.id);
+    const tIdx = withoutDragged.indexOf(targetProject.id);
+    const insertIdx = indicator.position === "before" ? tIdx : tIdx + 1;
+    withoutDragged.splice(insertIdx, 0, drag.id);
+
+    withoutDragged.forEach((id, idx) => {
+      const current = siblings.find((s) => s.id === id);
+      if (!current || current.sortOrder === idx) return;
+      void tree.updateProject({ id, sortOrder: idx });
+    });
+  };
+
+  const handleProjectDropOnGroup = (
+    snap: { drag: DragState; indicator: DropIndicator },
+    targetGroup: GroupNode,
+  ) => {
+    const { drag, indicator } = snap;
+    if (drag.type !== "project") return;
+    if (indicator.targetType !== "group" || indicator.position !== "nest") return;
+
+    const project = tree.projects.find((p) => p.id === drag.id);
+    if (!project) return;
+    if (project.groupId === targetGroup.id) return;
+    void tree.moveProject({ id: drag.id, newGroupId: targetGroup.id });
+  };
+
   if (tree.isLoading) {
     return <div className="p-3 text-xs text-muted-foreground">Loading projects…</div>;
   }
@@ -352,7 +398,28 @@ export function ProjectTreeSidebar(props: Props) {
               onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
               onDelete={() => handleDeleteGroup(g)}
             >
-              <div>
+              <div
+                onDragOver={(e) => {
+                  if (dnd.drag?.type !== "project") return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "move";
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  dnd.dragOver("group", g.id, e.clientY, {
+                    top: rect.top,
+                    height: rect.height,
+                  });
+                }}
+                onDragLeave={() => dnd.dragLeave()}
+                onDrop={(e) => {
+                  if (dnd.drag?.type !== "project") return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const snap = dnd.drop("group", g.id);
+                  if (!snap) return;
+                  handleProjectDropOnGroup(snap, g);
+                }}
+              >
                 <GroupRow
                   group={g}
                   depth={depth}
@@ -435,25 +502,59 @@ export function ProjectTreeSidebar(props: Props) {
               onDelete={() => handleDeleteProject(p)}
             >
               <div
+                draggable
+                onDragStart={(e) => {
+                  // Drag might have originated from a descendant SessionRow —
+                  // let the bubble reach us, but don't overwrite session drag
+                  // state with a project drag.
+                  if (e.target !== e.currentTarget) return;
+                  e.dataTransfer.setData("text/plain", p.id);
+                  e.dataTransfer.setData("type", "project");
+                  e.dataTransfer.effectAllowed = "move";
+                  dnd.startDrag("project", p.id, p.groupId);
+                }}
+                onDragEnd={() => dnd.cancel()}
                 onDragOver={(e) => {
-                  if (dnd.drag?.type !== "session") return;
+                  if (dnd.drag?.type === "session") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = "move";
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    dnd.dragOver("project", p.id, e.clientY, {
+                      top: rect.top,
+                      height: rect.height,
+                    });
+                    return;
+                  }
+                  if (dnd.drag?.type !== "project") return;
                   e.preventDefault();
                   e.stopPropagation();
                   e.dataTransfer.dropEffect = "move";
                   const rect = e.currentTarget.getBoundingClientRect();
-                  dnd.dragOver("project", p.id, e.clientY, {
-                    top: rect.top,
-                    height: rect.height,
-                  });
+                  dnd.dragOver(
+                    "project",
+                    p.id,
+                    e.clientY,
+                    { top: rect.top, height: rect.height },
+                    { targetParentId: p.groupId },
+                  );
                 }}
                 onDragLeave={() => dnd.dragLeave()}
                 onDrop={(e) => {
-                  if (dnd.drag?.type !== "session") return;
+                  if (dnd.drag?.type === "session") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const snap = dnd.drop("project", p.id);
+                    if (!snap) return;
+                    handleSessionDropOnProject(snap, p);
+                    return;
+                  }
+                  if (dnd.drag?.type !== "project") return;
                   e.preventDefault();
                   e.stopPropagation();
                   const snap = dnd.drop("project", p.id);
                   if (!snap) return;
-                  handleSessionDropOnProject(snap, p);
+                  handleProjectDropOnProject(snap, p);
                 }}
               >
                 <ProjectRow
@@ -526,7 +627,28 @@ export function ProjectTreeSidebar(props: Props) {
             onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
             onDelete={() => handleDeleteGroup(g)}
           >
-            <div>
+            <div
+              onDragOver={(e) => {
+                if (dnd.drag?.type !== "project") return;
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "move";
+                const rect = e.currentTarget.getBoundingClientRect();
+                dnd.dragOver("group", g.id, e.clientY, {
+                  top: rect.top,
+                  height: rect.height,
+                });
+              }}
+              onDragLeave={() => dnd.dragLeave()}
+              onDrop={(e) => {
+                if (dnd.drag?.type !== "project") return;
+                e.preventDefault();
+                e.stopPropagation();
+                const snap = dnd.drop("group", g.id);
+                if (!snap) return;
+                handleProjectDropOnGroup(snap, g);
+              }}
+            >
               <GroupRow
                 group={g}
                 depth={0}

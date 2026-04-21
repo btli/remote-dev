@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import type { GroupNode } from "@/contexts/ProjectTreeContext";
 import type { RepoStats } from "@/lib/project-tree-session-utils";
 
-interface GroupRowProps {
+export interface GroupRowProps {
   group: GroupNode;
   depth: number;
   isActive: boolean;
@@ -34,6 +34,14 @@ interface GroupRowProps {
   onCreateSubgroup?: () => void;
   onCreateProject?: () => void;
   children?: ReactNode;
+  // Drag handlers (Phase E3). All optional — surface used by parent to wire
+  // project-drop targets. Full drag source wiring lands in Phase E4.
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
 export function GroupRow({
@@ -53,6 +61,12 @@ export function GroupRow({
   onCreateSubgroup,
   onCreateProject,
   children,
+  draggable,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: GroupRowProps) {
   const isExpanded = !group.collapsed;
 
@@ -85,6 +99,12 @@ export function GroupRow({
           role="button"
           tabIndex={isEditing ? -1 : 0}
           aria-label={group.name}
+          draggable={draggable ?? false}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
           onClick={onSelect}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {

@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import type { ProjectNode } from "@/contexts/ProjectTreeContext";
 import type { RepoStats } from "@/lib/project-tree-session-utils";
 
-interface ProjectRowProps {
+export interface ProjectRowProps {
   project: ProjectNode;
   depth: number;
   isActive: boolean;
@@ -33,6 +33,15 @@ interface ProjectRowProps {
   onSaveEdit?: (value: string) => void;
   onCancelEdit?: () => void;
   children?: ReactNode;
+  // Drag handlers (Phase E3). All optional — row participates in drag only
+  // when props are supplied by the parent. Styling for drop indicators lives
+  // in the caller.
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
 export function ProjectRow({
@@ -52,6 +61,12 @@ export function ProjectRow({
   onSaveEdit,
   onCancelEdit,
   children,
+  draggable,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: ProjectRowProps) {
   const isExpanded = !collapsed;
 
@@ -84,6 +99,12 @@ export function ProjectRow({
           role="button"
           tabIndex={isEditing ? -1 : 0}
           aria-label={project.name}
+          draggable={draggable ?? false}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
           onClick={onSelect}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
