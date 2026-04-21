@@ -201,8 +201,6 @@ export function Sidebar({
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
   // Opens the project's default working directory in the OS file manager.
-  // The `projectId` arg is the project's `id` (post remote-dev-oqol.4.1);
-  // we look up the working directory via node-keyed preferences.
   const handleOpenFolder = useCallback(
     async (projectId: string) => {
       const prefs = getNodePreferences("project", projectId);
@@ -212,9 +210,7 @@ export function Sidebar({
         return;
       }
       try {
-        // TODO(remote-dev-w1ed Stage 2): the /api/folders/:id/open route was
-        // removed; replace with a node-scoped endpoint or a direct open call.
-        const res = await fetch(`/api/folders/${projectId}/open`, { method: "POST" });
+        const res = await fetch(`/api/projects/${projectId}/open`, { method: "POST" });
         if (!res.ok) {
           const data = await res.json().catch(() => null);
           console.error("Failed to open folder:", data?.error || res.statusText);
