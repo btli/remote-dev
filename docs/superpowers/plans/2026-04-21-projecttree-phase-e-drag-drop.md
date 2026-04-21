@@ -11,29 +11,43 @@
 
 ---
 
-## Task E0 (prereq): Verify `sortOrder` API for groups + projects
+## Task E0 (prereq): Widen `updateGroup`/`updateProject` TypeScript signatures
 
-Group-drag reorder needs to persist a new sort order. Check that the backend accepts it:
+**Verified state of the repo:**
+- Backend already accepts `sortOrder`: `PATCH /api/groups/:id` and `PATCH /api/projects/:id` both validate `sortOrder: z.number().int().optional()` (`src/app/api/groups/[id]/route.ts:9`, `src/app/api/projects/[id]/route.ts:9`). Services propagate it.
+- ProjectTreeContext implementation forwards `...patch` to the PATCH call (`src/contexts/ProjectTreeContext.tsx:119-126, 167-174`), so runtime is fine.
+- **The gap is the TypeScript surface:** `ProjectTreeContextValue.updateGroup`/`updateProject` signatures (`src/contexts/ProjectTreeContext.tsx:54, 58`) only declare `id, name?, collapsed?` — they do NOT declare `sortOrder`. Drag handlers calling `updateGroup({ id, sortOrder: n })` won't typecheck.
 
-```bash
-grep -n "sortOrder" src/app/api/groups/[id]/route.ts src/app/api/projects/[id]/route.ts src/services/group-service.ts src/services/project-service.ts
+**Files (scope: frontend TypeScript only — do NOT touch backend):**
+- Modify: `src/contexts/ProjectTreeContext.tsx` — add `sortOrder?: number` to both method signatures in `ProjectTreeContextValue`.
+
+- [ ] **Step 1: Failing test**
+
+```ts
+// tests/contexts/ProjectTreeContext.sortOrder.test.ts
+import { describe, it, expectTypeOf } from "vitest";
+import type { ProjectTreeContextValue } from "@/contexts/ProjectTreeContext";
+
+describe("ProjectTreeContext signatures accept sortOrder", () => {
+  it("updateGroup accepts sortOrder", () => {
+    expectTypeOf<ProjectTreeContextValue["updateGroup"]>().parameter(0).toHaveProperty("sortOrder");
+  });
+  it("updateProject accepts sortOrder", () => {
+    expectTypeOf<ProjectTreeContextValue["updateProject"]>().parameter(0).toHaveProperty("sortOrder");
+  });
+});
 ```
 
-- If `PATCH /api/groups/:id` and `PATCH /api/projects/:id` already accept `sortOrder`, no backend work.
-- If not, add `sortOrder?: number` to the request schema + service method + drizzle update.
+- [ ] **Step 2: Run fail** (typecheck surfaces the missing property).
 
-Also verify `updateGroup`/`updateProject` in `ProjectTreeContext.tsx` forward a `sortOrder` field:
+- [ ] **Step 3: Implement** — add the field. (One-line change each.)
 
-```bash
-grep -n "sortOrder" src/contexts/ProjectTreeContext.tsx
-```
+- [ ] **Step 4: Also add a runtime test with mocked `fetch` asserting the PATCH body contains `sortOrder: 2` when `updateGroup({ id: "g1", sortOrder: 2 })` is called.**
 
-Fix in this task if needed. TDD with a test that mocks `fetch` and asserts `PATCH /api/groups/g1` body includes `sortOrder: 2`.
-
-- [ ] **TDD loop + commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git commit -m "feat(project-tree): accept sortOrder in updateGroup/updateProject for drag reorder"
+git commit -m "refactor(project-tree): declare sortOrder on updateGroup/updateProject signatures"
 ```
 
 ---
@@ -208,4 +222,4 @@ git commit -m "feat(project-tree): drop indicators for reorder + nest"
 
 - **Reorder algorithm correctness for sortOrder:** rebuilding full sort sequence vs. patching one record. Chosen: patch only affected records. If two clients reorder concurrently, last-write-wins is acceptable for this UI.
 - **Virtualized lists:** not used today; when the tree grows large, drag may become sluggish. Not a Phase E concern.
-- **`dataTransfer` in happy-dom:** happy-dom's `DataTransfer` implementation is partial. Some tests may need `fireEvent.drop` with explicit `dataTransfer` mock. Verify early; if blocked, add a follow-up bd issue to switch to Playwright for drag tests.
+- **`dataTransfer` in happy-dom:** happy-dom exposes `DataTransfer.setData/getData`, so basic object existence is fine. The real risk is event-simulation fidelity (types, file transfer, bubbling). If a specific test can't simulate a drop reliably, inject a `resolveDropPayload(event)` function into `useTreeDragDrop` that tests can mock — prefer this over switching to Playwright.

@@ -132,7 +132,22 @@ Implement:
 
 ```tsx
 const [local, setLocal] = useState(editValue ?? group.name);
-useEffect(() => { if (isEditing) setLocal(editValue ?? group.name); }, [isEditing, editValue, group.name]);
+const committedRef = useRef(false); // guards against double-submit (Enter then blur)
+
+useEffect(() => {
+  if (isEditing) {
+    setLocal(editValue ?? group.name);
+    committedRef.current = false;
+  }
+}, [isEditing, editValue, group.name]);
+
+const commit = (value: string) => {
+  if (committedRef.current) return;
+  committedRef.current = true;
+  const trimmed = value.trim();
+  if (trimmed && trimmed !== group.name) onSaveEdit?.(trimmed);
+  else onCancelEdit?.();
+};
 
 // in render:
 {isEditing ? (
@@ -141,19 +156,29 @@ useEffect(() => { if (isEditing) setLocal(editValue ?? group.name); }, [isEditin
     value={local}
     onChange={(e) => setLocal(e.target.value)}
     onKeyDown={(e) => {
-      if (e.key === "Enter") { e.preventDefault(); onSaveEdit?.(local.trim()); }
-      else if (e.key === "Escape") { e.preventDefault(); onCancelEdit?.(); }
+      if (e.key === "Enter") { e.preventDefault(); commit(local); }
+      else if (e.key === "Escape") { e.preventDefault(); committedRef.current = true; onCancelEdit?.(); }
     }}
-    onBlur={() => {
-      const trimmed = local.trim();
-      if (trimmed && trimmed !== group.name) onSaveEdit?.(trimmed);
-      else onCancelEdit?.();
-    }}
+    onBlur={() => commit(local)}
     className="bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
   />
 ) : (
   <span onDoubleClick={() => onStartEdit?.()} className="truncate text-sm">{group.name}</span>
 )}
+```
+
+**Add a test** proving Enter + immediate blur only fires `onSaveEdit` once:
+
+```tsx
+it("does not double-submit when Enter fires then blur fires", () => {
+  const onSaveEdit = vi.fn();
+  render(<GroupRow {...baseProps} isEditing editValue="Workspace" onSaveEdit={onSaveEdit} />);
+  const input = screen.getByRole("textbox");
+  fireEvent.change(input, { target: { value: "Renamed" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.blur(input);
+  expect(onSaveEdit).toHaveBeenCalledTimes(1);
+});
 ```
 
 - [ ] **Step 4: Run pass.**
@@ -200,13 +225,11 @@ git commit -m "feat(project-tree): inline rename for projects"
 
 ## Task C4: Inline rename for sessions
 
-Sessions don't have a tree-context update; `onSaveEdit` bubbles up through `ProjectTreeSidebar` → `Sidebar.tsx` → existing `onSessionRename(sessionId, newName)` handler (which already exists as `onSessionRename` or similar — verify in `SessionManager.tsx`).
+**Confirmed (no investigation needed):**
+- Endpoint exists: `PATCH /api/sessions/:id` accepts `{ name }` (`src/app/api/sessions/[id]/route.ts:36-53`).
+- Sidebar already exposes the prop `onSessionRename(sessionId, name)` (`src/components/session/Sidebar.tsx:99, 196`); `SessionManager` wires it (`src/components/session/SessionManager.tsx:740-748, 1555`).
 
-- [ ] **Investigate first** — grep for how the legacy code calls rename:
-
-```bash
-grep -n "onSessionRename\|handleSaveEdit" src/components/session/Sidebar.tsx src/components/session/SessionManager.tsx
-```
+`onSaveEdit` on `SessionRow` bubbles through `ProjectTreeSidebar` via a new callback prop `onSessionRename(sid, name)` that Sidebar passes in; reuse the existing handler — don't create a new one.
 
 - [ ] **TDD loop + commit**
 
@@ -234,7 +257,27 @@ interface CreateNodeInlineProps {
 }
 ```
 
-Behavior: autofocused text input, Enter submits (trim, reject empty), Escape cancels, blur with empty cancels, blur with value submits.
+Behavior: autofocused text input, Enter submits (trim, reject empty), Escape cancels, blur with empty cancels, blur with value submits. **Must guard against double-submit** (Enter + blur): track a `submitted` ref so blur after Enter is a no-op.
+
+Reference implementation sketch:
+
+```tsx
+const [value, setValue] = useState("");
+const submittedRef = useRef(false);
+
+const submit = async () => {
+  if (submittedRef.current) return;
+  const trimmed = value.trim();
+  if (!trimmed) { onCancel(); return; }
+  submittedRef.current = true;
+  await onSubmit(trimmed);
+};
+
+// input handlers:
+//  onKeyDown Enter  => submit()
+//  onKeyDown Escape => submittedRef.current = true; onCancel()
+//  onBlur           => submit()
+```
 
 - [ ] **Step 1: Failing tests**
 
@@ -253,18 +296,35 @@ it("calls onSubmit with trimmed value on Enter", async () => {
   expect(onSubmit).toHaveBeenCalledWith("new-proj");
 });
 
-it("does not submit empty name on Enter", () => {
-  const onSubmit = vi.fn();
-  render(<CreateNodeInline depth={0} kind="group" onSubmit={onSubmit} onCancel={() => {}} />);
-  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-  expect(onSubmit).not.toHaveBeenCalled();
+it("does not double-submit when Enter then blur fire", async () => {
+  const onSubmit = vi.fn().mockResolvedValue(undefined);
+  render(<CreateNodeInline depth={0} kind="project" onSubmit={onSubmit} onCancel={() => {}} />);
+  const input = screen.getByRole("textbox");
+  fireEvent.change(input, { target: { value: "x" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.blur(input);
+  expect(onSubmit).toHaveBeenCalledTimes(1);
 });
 
-it("cancels on Escape", () => {
+it("cancels (not submits) on Enter with empty name", () => {
+  const onSubmit = vi.fn();
   const onCancel = vi.fn();
-  render(<CreateNodeInline depth={0} kind="group" onSubmit={async () => {}} onCancel={onCancel} />);
-  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  render(<CreateNodeInline depth={0} kind="group" onSubmit={onSubmit} onCancel={onCancel} />);
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+  expect(onSubmit).not.toHaveBeenCalled();
   expect(onCancel).toHaveBeenCalled();
+});
+
+it("cancels on Escape without submitting", () => {
+  const onSubmit = vi.fn();
+  const onCancel = vi.fn();
+  render(<CreateNodeInline depth={0} kind="group" onSubmit={onSubmit} onCancel={onCancel} />);
+  const input = screen.getByRole("textbox");
+  fireEvent.change(input, { target: { value: "typed" } });
+  fireEvent.keyDown(input, { key: "Escape" });
+  fireEvent.blur(input);
+  expect(onCancel).toHaveBeenCalled();
+  expect(onSubmit).not.toHaveBeenCalled();
 });
 ```
 

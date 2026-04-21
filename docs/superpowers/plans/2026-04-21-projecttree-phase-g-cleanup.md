@@ -11,7 +11,37 @@
 
 ---
 
-## Task G0 (prereq): Visual parity verification
+## Task G0a (HARD BLOCKER): Backfill + lock down `terminal_session.project_id`
+
+**Codex found:** `terminal_session.project_id` is nullable (`src/db/schema.ts:326-330`), `POST /api/sessions` still accepts a missing `projectId` (`src/app/api/sessions/route.ts:56-63, 97-103`; `SessionContext.tsx:328-339`), and legacy Sidebar still renders root-level pinned/unpinned sessions (`Sidebar.tsx:390-394, 1722-1725, 2253-2256`). Deleting the legacy rendering block without fixing this will hide live sessions.
+
+**Required before Phase G1:**
+
+1. **SQL audit:**
+   ```sql
+   SELECT COUNT(*) FROM terminal_session
+   WHERE project_id IS NULL AND status != 'closed';
+   ```
+   If > 0, proceed to step 2. If 0, you may proceed, but still complete steps 3–5.
+
+2. **Backfill migration** — for each group, create (or reuse) an auto-created `(Unassigned)` project and point orphan sessions at it. Script pattern:
+   - Pick a stable group (root group with id of earliest-created) or create a new "Unassigned" group.
+   - Insert one project per user with `is_auto_created = true`, `name = "(Unassigned)"`.
+   - `UPDATE terminal_session SET project_id = $unassignedProjectId WHERE project_id IS NULL AND user_id = $userId`.
+
+3. **Schema change:** add `.notNull()` to `terminal_session.project_id` in `src/db/schema.ts:328-330`. Run `bun run db:push`.
+
+4. **API change:** make `projectId` required in `POST /api/sessions` (`src/app/api/sessions/route.ts`) and in `SessionContext.createSession` (`src/contexts/SessionContext.tsx`). Update any client that didn't provide it.
+
+5. **Re-run SQL audit** — must return 0. Commit:
+
+```bash
+git commit -m "feat(sessions): enforce project_id NOT NULL after backfilling orphans"
+```
+
+---
+
+## Task G0b (prereq): Visual parity verification
 
 Before deleting 800 lines, manually verify in the browser that the new `ProjectTreeSidebar` rendered above the legacy tree looks and behaves the same.
 
@@ -56,9 +86,9 @@ Regions to delete (approximate line ranges; let git blame and the plan's invento
    - `renderFolderNode` / `renderSession` / `renderSessionsWithSplits` / `countSessionsRecursively` / `getRolledUpStats`
    - All folder ContextMenu JSX
    - All session ContextMenu JSX (unless sessions are rendered outside the tree — verify pinned-root-sessions section stays if it's outside the tree)
-8. **Root-pinned / root-unpinned session blocks** (lines ~1722-1725, 2253-2256) — these render sessions with `projectId == null`. In the new model, all sessions must have a projectId. If any root-level sessions still exist in the DB, they need a migration or a displayed warning. **Decision:** file a bd follow-up to backfill any remaining root sessions into an "(Unassigned)" project; for Phase G, assume zero root sessions (covered by Phase 1/2 of prior refactor, but verify with a one-time SQL check).
+8. **Root-pinned / root-unpinned session blocks** (lines ~1722-1725, 2253-2256) — these render sessions with `projectId == null`. **Task G0a must have already enforced `project_id NOT NULL`** before this deletion is safe; re-run the SQL audit (`SELECT COUNT(*) FROM terminal_session WHERE project_id IS NULL AND status != 'closed'`) and confirm it returns 0 before proceeding.
 
-**Step 1: SQL sanity check** — `SELECT COUNT(*) FROM terminal_session WHERE project_id IS NULL AND status != 'closed'` must return 0. If not 0, block Phase G and file the migration issue.
+**Step 1: SQL sanity check (re-confirmation)** — must return 0. If not 0, return to Task G0a.
 
 - [ ] **Step 2: Delete props from Sidebar interface**
 
@@ -186,7 +216,7 @@ If all green:
 
 ## Risks / Open Questions
 
-- **Root-level sessions:** if `project_id IS NULL` count > 0, Phase G must block on a backfill migration. File immediately as a blocker.
+- **Root-level sessions:** addressed by Task G0a. Phase G1 MUST NOT run before G0a completes (audit returns 0 and `project_id` is `NOT NULL`).
 - **Test breakage avalanche:** deleting 800 lines at once may cascade into many test failures. If more than 10 tests break, consider splitting Phase G into "delete JSX" and "delete props" sub-commits so each is independently bisectable.
 - **Header / footer / collapsed-mode regressions:** these were *not* touched by Phases A–F. Run a targeted manual check that the collapsed sidebar, resize handle, and footer buttons still work after Phase G deletions.
 - **SessionManager prop signature churn:** G1 renames `onFolder*` to `onProject*`. Downstream callers (if any) need updates. Check `grep -n "onFolderNewSession\|onFolderNewAgent" src/`.

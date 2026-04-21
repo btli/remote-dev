@@ -1,31 +1,27 @@
-# Phase F — Mobile (Touch Drag + Swipe-to-Close)
+# Phase F — Mobile-Enhanced (New Phone Features, Not Parity)
 
 > **Parent plan:** [2026-04-21-projecttree-feature-parity.md](2026-04-21-projecttree-feature-parity.md)
 > **Beads issue:** `remote-dev-oqol.6` (depends on `remote-dev-oqol.5`)
 
-**Goal:** Port two mobile-specific features from the legacy tree:
-1. **Long-press touch drag** for groups and projects (legacy ports `handleFolderTouchStart/Move/End` at `Sidebar.tsx:629-757`, gated on `!isMobile` for phones).
-2. **Swipe-reveal close** on session rows (leftward drag reveals a red Close button, commits at -40px; `Sidebar.tsx:1224-1289`).
+**⚠️ Scope note — this is NOT parity work.** The legacy `handleFolderTouchStart/Move/End` handlers at `Sidebar.tsx:629-757` are explicitly gated on `!isMobile` (`Sidebar.tsx:1840`), meaning they ONLY run on tablet/desktop touch, never on phones. Phase F **adds** phone-native drag + swipe-to-close that didn't exist before. Acceptance criteria reflect a new feature, not a preserved one.
+
+**Goal:** Introduce two mobile-native tree interactions:
+1. **Long-press touch drag** for groups and projects on phones (new behavior; legacy path was desktop-touch only).
+2. **Swipe-reveal close** on session rows — leftward drag reveals a red Close button, commits at -40px. Loosely mirrors the legacy swipe code at `Sidebar.tsx:1224-1289` but that code also ran only on non-mobile.
 
 **Architecture:** Two new hooks:
-- `useTreeTouchDrag` — long-press + clone-element + `elementFromPoint` drag. Delegates drop resolution to `useTreeDragDrop` from Phase E.
+- `useTreeTouchDrag` — long-press + clone-element + `elementFromPoint` drag. Delegates drop resolution to `useTreeDragDrop` from Phase E. Runs ONLY when `useMobile()` returns true.
 - `useSwipeToClose` — tracks per-row swipe state and renders the red reveal.
 
-Mobile detection uses the existing `useMobile()` hook (check `src/hooks/` for exact name).
+Mobile detection uses `useMobile()` from `src/hooks/useMobile.ts:35` (verified the canonical hook).
 
 **Exit criteria:** On a mobile phone or emulated mobile, users can long-press a group/project to drag it, and leftward-swipe a session to reveal + commit a Close button. Desktop mouse drag (Phase E) is unaffected.
 
 ---
 
-## Task F0 (prereq): Confirm mobile detection hook
+## Task F0: (removed — settled)
 
-```bash
-grep -rn "useMobile\|isMobile\|useBreakpoint" src/hooks/ src/lib/
-```
-
-Identify the canonical mobile-detection hook. Use it uniformly in F1 and F2.
-
-- [ ] **No commit** — investigative step only.
+Canonical hook is `useMobile()` at `src/hooks/useMobile.ts:35`. Use it directly in F1 and F2; no investigation task needed.
 
 ---
 
@@ -145,6 +141,6 @@ git commit -m "feat(project-tree): swipe-to-close on mobile session rows"
 
 ## Risks / Open Questions
 
-- **`elementFromPoint` quirks in happy-dom:** layout is not computed in happy-dom, so `elementFromPoint` returns nothing meaningful in unit tests. The hook must be tested with a different mechanism (mock the helper + inject a `resolveDropTarget(x, y)` function).
+- **`elementFromPoint` in happy-dom:** `document.elementFromPoint` exists but happy-dom doesn't compute layout, so it returns nothing useful in unit tests. **Required design:** the hook must accept an injectable `resolveDropTarget(x, y)` resolver; default implementation calls `document.elementFromPoint` in production, tests pass a mock. This is not optional — don't try to mock `elementFromPoint` globally.
 - **Haptic API coverage:** `navigator.vibrate` not available on iOS Safari. Keep it optional-chained.
 - **Scroll interference:** mobile sidebar is scrollable vertically. Horizontal swipe must not hijack vertical scroll — the `pan-y` touch-action class plus the "decide axis on first move > 10px" logic protect against this.

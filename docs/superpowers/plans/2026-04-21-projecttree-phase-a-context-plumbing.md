@@ -84,7 +84,7 @@ git commit -m "refactor(project-tree): export context for test injection"
 
 ## Task A2: Session lookup + recursive count helpers
 
-**Why:** Row components need "sessions for this project" and "recursive session count under this group" without talking to `ProjectTreeContext` (which would force a circular import with `SessionContext`).
+**Why:** Row components need "sessions for this project" and "recursive session count under this group". Keep these as **pure module-scope helpers** (no context dependencies, type-only imports). Note: `SessionContext` already depends on `useProjectTree()`; do NOT add a reverse dependency. Row components will `useSessionContext()` directly in Phase B and pass results into the helpers.
 
 **Files:**
 - Create: `src/lib/project-tree-session-utils.ts`

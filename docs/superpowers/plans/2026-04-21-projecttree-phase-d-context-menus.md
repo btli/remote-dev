@@ -11,6 +11,30 @@
 
 ---
 
+## ⚠️ Backing-store key shim (MUST read before D1–D5)
+
+**The blocker codex flagged:** all existing downstream state for prefs, secrets, repo bindings, and open-in-OS is still keyed by **folder id**, not project id. Concretely (verified against the repo):
+
+- `src/contexts/PreferencesContext.tsx:135-140` — `activeFolderId`, `getFolderPreferences(folderId)`
+- `src/contexts/SecretsContext.tsx:28-39` — `folderConfigs: Map<folderId, …>`
+- `src/components/session/SessionManager.tsx:898-946` — `onFolderNewSession`, `onFolderOpenRepo` etc. all take `folderId`
+- `src/app/api/secrets/folders/[folderId]/...` — secrets routes are folder-keyed
+- `src/app/api/profiles/folders/[folderId]/...` — profile routes are folder-keyed
+- Legacy open-in-OS call: `POST /api/folders/${folderId}/open` (`Sidebar.tsx:547`). No `/api/projects/:id/open` route exists.
+
+**`ProjectNode` already carries `legacyFolderId?: string | null`** (`ProjectTreeContext.tsx:34`) specifically for this bridging phase.
+
+**Rules for every menu item in Phases D1–D3:**
+
+1. Any handler that reads or writes folder-scoped state (prefs, secrets, repo binding, open-in-OS) MUST resolve through `project.legacyFolderId`. If `legacyFolderId` is nullish, the handler SHOULD be hidden or disabled with a tooltip explaining that the project has no folder bridge yet.
+2. Handlers that only talk to new project/group APIs (`createGroup`, `moveProject`, `deleteGroup`, `updateGroup({ name })`, etc.) route by project/group id directly — no shim needed.
+3. `GroupContextMenu` has no folder shim: groups never had folder-scoped state.
+4. All hasX predicates (`hasCustomPrefs`, `hasActiveSecrets`, `hasLinkedRepo`) must look up by `legacyFolderId`, not `project.id`, for the duration of Phase D.
+
+**Follow-up issue to file before starting D1** (add to bd as `remote-dev-oqol.4.1`): "Migrate Preferences/Secrets/Repo/open-in-OS backing stores to node-aware keying (groupId | projectId) so `legacyFolderId` can be removed." This is out of Phase D scope but must be tracked.
+
+---
+
 ## Task D1: GroupContextMenu
 
 Menu items (see parent-plan Decision D4):
@@ -180,7 +204,7 @@ Menu items (14 — see parent-plan Decision D5):
 7. Preferences — `onOpenPreferences` (Custom badge if `hasCustomPrefs`)
 8. Secrets — `onOpenSecrets` (Active badge if `hasActiveSecrets`)
 9. Repository — `onOpenRepository` (Linked badge if `hasLinkedRepo`)
-10. Open Folder — `onOpenFolderInOS` (only if `hasWorkingDirectory`)
+10. Open Folder — `onOpenFolderInOS` (only if `hasWorkingDirectory` AND `project.legacyFolderId != null`)
 11. View Issues — `onViewIssues` (only if `onViewIssues` provided AND `hasLinkedRepo`)
 12. View PRs — `onViewPRs` (same guard)
 13. Rename — `onStartEdit`
@@ -244,7 +268,7 @@ Handler ownership map:
 | `onDelete(groupId)` | ProjectTreeSidebar | `tree.deleteGroup(id, /* force prompt */)` — adds a confirm dialog |
 | `onNewTerminal/Agent/Worktree/Advanced/Resume(projectId)` | Sidebar.tsx prop | Proxied through existing `onFolderNewSession`/etc. handlers — renamed to `onProjectNewSession`/etc. in this task |
 | `onOpenSecrets(projectId)` | Sidebar.tsx prop | Opens SecretsConfigModal |
-| `onOpenFolderInOS(projectId)` | ProjectTreeSidebar | POSTs to `/api/projects/:id/open` (verify this route exists; if only `/api/folders/:id/open` exists, file a bd issue for backend parity) |
+| `onOpenFolderInOS(project)` | ProjectTreeSidebar | Resolves to `project.legacyFolderId`, then POSTs to `/api/folders/${legacyFolderId}/open` (verified existing call site: `Sidebar.tsx:547`). The `/api/projects/:id/open` variant does NOT exist. Hidden when `legacyFolderId` is null. Filed as follow-up `remote-dev-oqol.4.1`. |
 | `onViewIssues/PRs(projectId)` | Sidebar.tsx prop | Already present |
 | `onSessionTogglePin(id)` | Sidebar.tsx prop | Existing `onSessionTogglePin` |
 | `onSessionMove(sid, projectId\|null)` | Sidebar.tsx prop | Existing `onSessionMove` |
@@ -307,5 +331,5 @@ git commit -m "feat(project-tree): confirm before group/project delete"
 
 ## Risks / Open Questions
 
-- **Missing backend for project open-in-OS:** if `/api/projects/:id/open` doesn't exist, either (a) keep calling `/api/folders/:id/open` with the project's legacy-folder-id bridge, or (b) add a new route. Decision logged in task D4; adds a bd follow-up either way.
+- **Backend for project open-in-OS:** `/api/projects/:id/open` does not exist; `/api/folders/:id/open` is the live endpoint (see `Sidebar.tsx:547`). Phase D uses the folder-id bridge via `project.legacyFolderId`. Backend parity is tracked by the follow-up `remote-dev-oqol.4.1`.
 - **Schedule context import:** still hard-coded 0 in SessionRow at end of Phase B; Phase D should wire `useScheduleContext()` in `ProjectTreeSidebar` and pass `scheduleCount` as prop. Include in D4.

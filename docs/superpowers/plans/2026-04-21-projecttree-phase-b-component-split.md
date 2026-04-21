@@ -83,7 +83,14 @@ git commit -m "test(project-tree): add render helper that injects ProjectTreeCon
 
 - [ ] **Step 1: Extract the icon-color helper first**
 
-Create `src/components/session/project-tree/sessionIconColor.ts`. Copy `getSessionIconColor` from `Sidebar.tsx:154-179` verbatim. Export as named export. Types come from `@/types/session` and `@/contexts/SessionContext`.
+Create `src/components/session/project-tree/sessionIconColor.ts`. Copy `getSessionIconColor` from `Sidebar.tsx:154-179` verbatim. Export as named export.
+
+**Correct imports** (verified against the repo):
+
+```ts
+import type { TerminalSession } from "@/types/session";           // NOT `Session`
+import type { AgentActivityStatus } from "@/types/terminal-type"; // NOT `@/contexts/SessionContext`
+```
 
 Add a tiny test at `tests/components/project-tree/sessionIconColor.test.ts` covering: agent+running returns green-breathing class; agent+waiting returns yellow-breathing; agent+error returns red (no breathing); non-agent+active returns primary; non-agent+inactive returns muted.
 
@@ -414,7 +421,7 @@ DOM:
 - Hover gear when `onOpenPreferences` provided
 - Session children below when `!collapsed`
 
-**Key decision:** projects have `collapsed` state, but currently `ProjectNode` type doesn't include it (only `GroupNode.collapsed` exists). Resolution: use `project.collapsed` once Task B4.5 adds the field to `ProjectNode` + the API payload. Until then, pass `collapsed={false}` from `ProjectTreeSidebar` — follow-up issue filed.
+**Key decision:** projects have `collapsed` state. Schema already has `project.collapsed` (`src/db/schema.ts:1690`), domain entity supports it (`src/domain/entities/Project.ts`), and PATCH route accepts it (`src/app/api/projects/[id]/route.ts:8`). Only the frontend `ProjectNode` type in `src/contexts/ProjectTreeContext.tsx:23-35` is missing the field. Task B4.5 adds only the TS field + ensures the context mapper forwards it; no DB migration, no API change required.
 
 Tests: mirror GroupRow's list, substituting project-specific behaviors.
 
@@ -427,29 +434,32 @@ git commit -m "feat(project-tree): add ProjectRow with own repo stats + session 
 
 ---
 
-## Task B4.5: Add `collapsed` to ProjectNode
+## Task B4.5: Add `collapsed` to frontend `ProjectNode` type
 
-**Why:** ProjectRow needs per-project collapse state. `GroupNode` has it; `ProjectNode` doesn't. Add it as an optional field that defaults to `false`.
+**Why:** ProjectRow needs per-project collapse state. Schema + domain + PATCH route already support it (verified). The gap is narrow: the frontend `ProjectNode` TS type in `ProjectTreeContext.tsx` doesn't include the field, and the mapper that builds `ProjectNode` from the API payload doesn't copy it through.
 
-**Files:**
-- Modify: `src/contexts/ProjectTreeContext.tsx` — add `collapsed: boolean` to `ProjectNode`
-- Modify: `src/app/api/projects/route.ts` (if payload shape is defined here) — include `collapsed`
-- Modify: `src/app/api/projects/[id]/route.ts` — PATCH should accept `collapsed`
-- Verify: `src/db/schema.ts` — does `project.collapsed` exist? If not, add migration.
+**Files (scope is this narrow — do NOT touch schema, API route, or domain entity):**
+- Modify: `src/contexts/ProjectTreeContext.tsx` — add `collapsed: boolean` to the `ProjectNode` interface; ensure the fetch/load mapper copies `collapsed` from the API response; `updateProject` already accepts `collapsed` (line 58).
 
-Investigation steps (do these first, one-shot):
+- [ ] **Step 1: Failing test**
 
-```bash
-grep -n "collapsed" src/db/schema.ts src/domain/entities/Project.ts src/app/api/projects/
+```ts
+// tests/contexts/ProjectTreeContext.collapsed.test.ts
+import { describe, it, expect } from "vitest";
+// Mount ProjectTreeProvider with mocked fetch returning
+// { projects: [{ id: "p1", groupId: "g1", name: "p", collapsed: true, sortOrder: 0, ... }] }
+// Read tree.projects via a render hook.
+// Expect result.current.projects[0].collapsed === true.
 ```
 
-- If `collapsed` already exists in schema + domain entity, just expose it through the API route and context.
-- If it does not exist, add a drizzle migration + field on the Project entity before wiring through.
+- [ ] **Step 2: Run fail** (`.collapsed` is undefined because the mapper drops it).
 
-- [ ] **TDD loop** — write a test asserting `updateProject({ id, collapsed: true })` round-trips via the mock `fetch`. Then implement. Commit.
+- [ ] **Step 3: Implement** — add `collapsed: boolean` to `ProjectNode`; in the loader, map `collapsed: p.collapsed ?? false`.
+
+- [ ] **Step 4: Run pass + commit**
 
 ```bash
-git commit -m "feat(project-tree): persist per-project collapse state"
+git commit -m "feat(project-tree): expose project.collapsed through frontend context"
 ```
 
 ---
@@ -645,7 +655,7 @@ export function ProjectTreeSidebar(props: Props) {
 ```tsx
 // tests/components/project-tree/ProjectTreeSidebar.render.test.tsx
 import { describe, it, expect } from "vitest";
-import { renderWithProjectTree } from "@/../tests/helpers/renderWithProjectTree";
+import { renderWithProjectTree } from "@tests/helpers/renderWithProjectTree";
 import { ProjectTreeSidebar } from "@/components/session/ProjectTreeSidebar";
 // Stub the other contexts via jest.mock / vi.mock per vitest convention
 
