@@ -280,18 +280,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const {
     folders,
     createFolder,
-    updateFolder,
-    deleteFolder,
-    toggleFolder,
     moveSessionToFolder,
-    moveFolderToParent,
-    reorderFolders,
     registerSessionFolder,
     debouncedRefreshFolders,
   } = useFolderContext();
 
   // Trash state from context
-  const { count: trashCount, trashSession, getTrashForFolder, deleteItem: deleteTrashItem } = useTrashContext();
+  const { count: trashCount, trashSession } = useTrashContext();
   const [isTrashOpen, setIsTrashOpen] = useState(false);
 
   // Resume Claude Session modal state
@@ -334,30 +329,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     repositoryUrl?: string;
     initialPRNumber?: number;
   } | null>(null);
-
-  // Get trash count for a specific folder
-  const getFolderTrashCount = useCallback(
-    (folderId: string) => getTrashForFolder(folderId).length,
-    [getTrashForFolder]
-  );
-
-  // Empty all trash items in a specific folder
-  const handleEmptyTrash = useCallback(
-    async (folderId: string) => {
-      const trashItems = getTrashForFolder(folderId);
-      if (trashItems.length === 0) return;
-
-      // Delete all trash items for this folder
-      const results = await Promise.allSettled(
-        trashItems.map((item) => deleteTrashItem(item.id))
-      );
-      const failures = results.filter((r) => r.status === "rejected");
-      if (failures.length > 0) {
-        console.error("Some trash items failed to delete:", failures);
-      }
-    },
-    [getTrashForFolder, deleteTrashItem]
-  );
 
   // Preferences state from context
   const {
@@ -817,49 +788,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [createFolder]
   );
 
-  const handleMoveFolder = useCallback(
-    async (folderId: string, newParentId: string | null) => {
-      try {
-        await moveFolderToParent(folderId, newParentId);
-      } catch (error) {
-        console.error("Failed to move folder:", error);
-      }
-    },
-    [moveFolderToParent]
-  );
-
-  const handleReorderFolders = useCallback(
-    async (folderIds: string[]) => {
-      try {
-        await reorderFolders(folderIds);
-      } catch (error) {
-        console.error("Failed to reorder folders:", error);
-      }
-    },
-    [reorderFolders]
-  );
-
-  const handleRenameFolder = useCallback(
-    async (folderId: string, newName: string) => {
-      await updateFolder(folderId, { name: newName });
-    },
-    [updateFolder]
-  );
-
-  const handleDeleteFolder = useCallback(
-    async (folderId: string) => {
-      await deleteFolder(folderId);
-    },
-    [deleteFolder]
-  );
-
-  const handleToggleFolder = useCallback(
-    async (folderId: string) => {
-      await toggleFolder(folderId);
-    },
-    [toggleFolder]
-  );
-
   const handleFolderSettings = useCallback(
     (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => {
       setFolderSettingsModal({ folderId, folderName, initialTab });
@@ -872,24 +800,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setNodeSettingsModal(node);
     },
     []
-  );
-
-  // Empty all sessions in a folder (used for .trash folder)
-  const handleEmptyFolder = useCallback(
-    async (folderId: string) => {
-      const folderSessions = sessions.filter((s) => s.projectId === folderId && s.status !== "closed");
-      if (folderSessions.length === 0) return;
-
-      // Close all sessions in the folder permanently
-      const results = await Promise.allSettled(
-        folderSessions.map((s) => closeSession(s.id, { deleteWorktree: true }))
-      );
-      const failures = results.filter((r) => r.status === "rejected");
-      if (failures.length > 0) {
-        console.error("Some sessions failed to close:", failures);
-      }
-    },
-    [sessions, closeSession]
   );
 
   // Get repo stats for a folder (for sidebar badges)
@@ -1236,13 +1146,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setActiveFolder,
       logSessionError,
     ]
-  );
-
-  const handleFolderClick = useCallback(
-    (folderId: string) => {
-      setActiveFolder(folderId);
-    },
-    [setActiveFolder]
   );
 
   // Handle restarting a session with the same configuration
