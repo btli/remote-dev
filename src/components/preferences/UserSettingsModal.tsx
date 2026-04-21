@@ -25,7 +25,7 @@ import {
 import { UnsavedChangesDialog } from "@/components/common/UnsavedChangesDialog";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import { useFolderContext } from "@/contexts/FolderContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { AppearanceModeToggle, ColorSchemeDualSelector } from "@/components/appearance";
 import { TmuxSessionManager } from "@/components/tmux";
 import { AgentCLIStatusPanel } from "@/components/agents";
@@ -80,7 +80,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
     activeProject,
     setActiveFolder,
   } = usePreferencesContext();
-  const { folders } = useFolderContext();
+  const { projects } = useProjectTree();
   const { permissionState, requestPermission } = useNotificationPermission();
 
   const [localSettings, setLocalSettings] = useState<UpdateUserSettingsInput>({});
@@ -431,19 +431,19 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
             {/* Active project display */}
             <div className="space-y-2">
               <Label className="text-foreground">Active Project</Label>
-              {folders.length === 0 ? (
+              {projects.length === 0 ? (
                 <p className="text-sm text-muted-foreground p-3 rounded-lg bg-muted/50 border border-border">
-                  No folders created yet. Create a folder to set it as active.
+                  No projects created yet. Create a project to set it as active.
                 </p>
               ) : (
                 <div className="space-y-1">
-                  {folders.map((folder) => {
-                    const isActive = activeProject.folderId === folder.id;
+                  {projects.map((project) => {
+                    const isActive = activeProject.folderId === project.id;
                     const isPinned = isActive && activeProject.isPinned;
 
                     return (
                       <div
-                        key={folder.id}
+                        key={project.id}
                         className={cn(
                           "flex items-center justify-between p-2 rounded-lg",
                           "transition-colors cursor-pointer",
@@ -451,7 +451,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                             ? "bg-primary/20 border border-primary/30"
                             : "bg-muted/50 border border-border hover:bg-muted"
                         )}
-                        onClick={() => setActiveFolder(folder.id, false)}
+                        onClick={() => setActiveFolder(project.id, false)}
                       >
                         <div className="flex items-center gap-2">
                           <Folder
@@ -468,7 +468,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                               isActive ? "text-foreground" : "text-muted-foreground"
                             )}
                           >
-                            {folder.name}
+                            {project.name}
                           </span>
                         </div>
                         {isActive && (
@@ -478,7 +478,7 @@ export function UserSettingsModal({ open, onClose }: UserSettingsModalProps) {
                             className="h-6 w-6 text-muted-foreground hover:text-foreground"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setActiveFolder(folder.id, !isPinned);
+                              setActiveFolder(project.id, !isPinned);
                             }}
                             title={isPinned ? "Unpin project" : "Pin project"}
                           >

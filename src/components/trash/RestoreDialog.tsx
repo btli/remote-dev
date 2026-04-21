@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { RotateCcw, Folder, AlertCircle, GitBranch } from "lucide-react";
 import type { WorktreeTrashItem } from "@/types/trash";
-import { useFolderContext } from "@/contexts/FolderContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import {
   Dialog,
   DialogContent,
@@ -43,7 +43,7 @@ export function RestoreDialog({
   isProcessing,
   error,
 }: RestoreDialogProps) {
-  const { folders } = useFolderContext();
+  const { projects } = useProjectTree();
   // Track user's override selection - undefined means use original
   const [folderOverride, setFolderOverride] = useState<string | null | undefined>(undefined);
 
@@ -110,8 +110,8 @@ export function RestoreDialog({
             </div>
           )}
 
-          {/* Folder selection */}
-          {needsFolderSelection && folders.length > 0 && (
+          {/* Project selection — worktrees always restore to a leaf project. */}
+          {needsFolderSelection && projects.length > 0 && (
             <div className="space-y-2">
               <Label className="text-sm text-muted-foreground">
                 <div className="flex items-center gap-2 mb-2">
@@ -126,19 +126,19 @@ export function RestoreDialog({
                 }
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select folder" />
+                  <SelectValue placeholder="Select project" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__root__">
                     <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">(No folder)</span>
+                      <span className="text-muted-foreground">(No project)</span>
                     </div>
                   </SelectItem>
-                  {folders.map((folder) => (
-                    <SelectItem key={folder.id} value={folder.id}>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
                       <div className="flex items-center gap-2">
                         <Folder className="w-3.5 h-3.5 text-primary" />
-                        {folder.name}
+                        {project.name}
                       </div>
                     </SelectItem>
                   ))}

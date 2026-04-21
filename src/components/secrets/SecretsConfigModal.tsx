@@ -41,7 +41,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import { useFolderContext } from "@/contexts/FolderContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import {
   SUPPORTED_SECRETS_PROVIDERS,
   getProviderInfo,
@@ -59,7 +59,7 @@ interface SecretsConfigModalProps {
 
 export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsConfigModalProps) {
   const { activeProject } = usePreferencesContext();
-  const { folders } = useFolderContext();
+  const { projects } = useProjectTree();
   const {
     folderConfigs,
     getConfigForFolder,
@@ -82,10 +82,10 @@ export function SecretsConfigModal({ open, onClose, initialFolderId }: SecretsCo
   // Active tab
   const [activeTab, setActiveTab] = useState<"overview" | "configure">("overview");
 
-  // Get folders that can be configured (all folders for now)
+  // Secrets live on leaf projects — groups don't own their own credentials.
   const availableFolders = useMemo(() => {
-    return [...folders].sort((a, b) => a.name.localeCompare(b.name));
-  }, [folders]);
+    return [...projects].sort((a, b) => a.name.localeCompare(b.name));
+  }, [projects]);
 
   // Get folders with existing configs
   const configuredFolders = useMemo(() => {
