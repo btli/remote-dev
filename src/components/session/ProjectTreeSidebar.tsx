@@ -9,6 +9,7 @@ import { GroupRow } from "./project-tree/GroupRow";
 import { ProjectRow } from "./project-tree/ProjectRow";
 import { SessionRow } from "./project-tree/SessionRow";
 import { TreeConnector } from "./project-tree/TreeConnector";
+import { CreateNodeInline } from "./project-tree/CreateNodeInline";
 import {
   recursiveSessionCount,
   rolledUpRepoStats,
@@ -33,6 +34,7 @@ interface Props {
 export function ProjectTreeSidebar(props: Props) {
   const tree = useProjectTree();
   const [editingNode, setEditingNode] = useState<{ id: string; type: "group" | "project" | "session" } | null>(null);
+  const [creating, setCreating] = useState<{ parentGroupId: string | null; kind: "group" | "project" } | null>(null);
   const { sessions, activeSessionId, getAgentActivityStatus } = useSessionContext();
   const { getFolderPreferences } = usePreferencesContext();
   const { folderConfigs } = useSecretsContext();
@@ -98,7 +100,7 @@ export function ProjectTreeSidebar(props: Props) {
           <TreeConnector
             key={g.id}
             depth={depth}
-            isLastChild={i === childGroups.length - 1 && childProjects.length === 0}
+            isLastChild={i === childGroups.length - 1 && childProjects.length === 0 && creating?.parentGroupId !== groupId}
           >
             <GroupRow
               group={g}
@@ -126,13 +128,26 @@ export function ProjectTreeSidebar(props: Props) {
                 setEditingNode(null);
               }}
               onCancelEdit={() => setEditingNode(null)}
+              onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
+              onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
             >
               {renderGroupSubtree(g.id, depth + 1)}
             </GroupRow>
           </TreeConnector>
         ))}
+        {creating?.parentGroupId === groupId && creating.kind === "group" && (
+          <CreateNodeInline
+            depth={depth}
+            kind="group"
+            onSubmit={async (name) => {
+              await tree.createGroup({ name, parentGroupId: groupId });
+              setCreating(null);
+            }}
+            onCancel={() => setCreating(null)}
+          />
+        )}
         {childProjects.map((p, i) => (
-          <TreeConnector key={p.id} depth={depth} isLastChild={i === childProjects.length - 1}>
+          <TreeConnector key={p.id} depth={depth} isLastChild={i === childProjects.length - 1 && creating?.parentGroupId !== groupId}>
             <ProjectRow
               project={p}
               depth={depth}
@@ -164,6 +179,17 @@ export function ProjectTreeSidebar(props: Props) {
             </ProjectRow>
           </TreeConnector>
         ))}
+        {creating?.parentGroupId === groupId && creating.kind === "project" && (
+          <CreateNodeInline
+            depth={depth}
+            kind="project"
+            onSubmit={async (name) => {
+              await tree.createProject({ name, groupId });
+              setCreating(null);
+            }}
+            onCancel={() => setCreating(null)}
+          />
+        )}
       </>
     );
   };
@@ -202,11 +228,24 @@ export function ProjectTreeSidebar(props: Props) {
               setEditingNode(null);
             }}
             onCancelEdit={() => setEditingNode(null)}
+            onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
+            onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
           >
             {renderGroupSubtree(g.id, 1)}
           </GroupRow>
         </TreeConnector>
       ))}
+      {creating?.parentGroupId === null && creating.kind === "group" && (
+        <CreateNodeInline
+          depth={0}
+          kind="group"
+          onSubmit={async (name) => {
+            await tree.createGroup({ name, parentGroupId: null });
+            setCreating(null);
+          }}
+          onCancel={() => setCreating(null)}
+        />
+      )}
     </div>
   );
 }

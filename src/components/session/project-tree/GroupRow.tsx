@@ -6,8 +6,10 @@ import {
   ChevronRight,
   Folder,
   FolderOpen,
+  FolderPlus,
   GitPullRequest,
   CircleDot,
+  Plus,
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,6 +31,8 @@ interface GroupRowProps {
   onStartEdit?: () => void;
   onSaveEdit?: (value: string) => void;
   onCancelEdit?: () => void;
+  onCreateSubgroup?: () => void;
+  onCreateProject?: () => void;
   children?: ReactNode;
 }
 
@@ -46,6 +50,8 @@ export function GroupRow({
   onStartEdit,
   onSaveEdit,
   onCancelEdit,
+  onCreateSubgroup,
+  onCreateProject,
   children,
 }: GroupRowProps) {
   const isExpanded = !group.collapsed;
@@ -180,6 +186,34 @@ export function GroupRow({
             <span className="text-[10px] text-muted-foreground ml-auto">
               {sessionCount}
             </span>
+          )}
+
+          {/* Temporary inline-create affordance (Phase D will replace with context menu) */}
+          {onCreateSubgroup !== undefined && (
+            <button
+              type="button"
+              aria-label="New subgroup"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateSubgroup();
+              }}
+              className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-foreground transition shrink-0"
+            >
+              <FolderPlus className="h-3 w-3" />
+            </button>
+          )}
+          {onCreateProject !== undefined && (
+            <button
+              type="button"
+              aria-label="New project"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCreateProject();
+              }}
+              className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-foreground transition shrink-0"
+            >
+              <Plus className="h-3 w-3" />
+            </button>
           )}
 
           {/* Gear button */}
