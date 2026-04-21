@@ -55,17 +55,24 @@ export interface FolderRepoStats {
 
 interface SidebarProps {
   sessions: TerminalSession[];
-  folders: SessionFolder[];
   activeSessionId: string | null;
+  /**
+   * Legacy folder id of the currently-active project (used by the header
+   * "New Worktree" shortcut and the FilesSection). Renaming to
+   * `activeProjectFolderId` is deferred to the Phase G3 type cleanup.
+   */
   activeFolderId: string | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   width?: number;
   onWidthChange?: (width: number) => void;
+  /**
+   * Predicates/stats still keyed by legacy folder id for back-compat with
+   * ProjectTreeSidebar's current prop API. They resolve per-project.
+   */
   folderHasPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
   getFolderRepoStats: (folderId: string) => FolderRepoStats | null;
-  getFolderTrashCount: (folderId: string) => number;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
@@ -75,21 +82,17 @@ interface SidebarProps {
   onNewSession: () => void;
   onQuickNewSession: () => void;
   onNewAgent: () => void;
-  onFolderCreate: (name: string, parentId?: string | null) => void;
-  onFolderRename: (folderId: string, newName: string) => void;
-  onFolderDelete: (folderId: string) => void;
-  onFolderToggle: (folderId: string) => void;
-  onFolderClick: (folderId: string) => void;
-  onFolderSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
-  onFolderNewSession: (folderId: string) => void;
-  onFolderNewAgent: (folderId: string) => void;
-  onFolderResumeClaudeSession: (folderId: string) => void;
-  onFolderAdvancedSession: (folderId: string) => void;
-  onFolderNewWorktree: (folderId: string) => void;
-  onFolderMove: (folderId: string, newParentId: string | null) => void;
-  onFolderReorder: (folderIds: string[]) => void;
-  onFolderEmpty: (folderId: string) => void;
-  onEmptyTrash: (folderId: string) => void;
+  /**
+   * Project-level handlers forwarded to ProjectTreeSidebar. All receive a
+   * legacyFolderId; the underlying DB record is the project's
+   * legacy_folder_id bridge column.
+   */
+  onProjectSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
+  onProjectNewSession: (folderId: string) => void;
+  onProjectNewAgent: (folderId: string) => void;
+  onProjectResumeClaudeSession: (folderId: string) => void;
+  onProjectAdvancedSession: (folderId: string) => void;
+  onProjectNewWorktree: (folderId: string) => void;
   trashCount: number;
   onTrashOpen: () => void;
   onSessionSchedule?: (sessionId: string) => void;
@@ -100,8 +103,8 @@ interface SidebarProps {
   getFolderPinnedFiles?: (folderId: string) => PinnedFile[];
   onOpenPinnedFile?: (folderId: string, file: PinnedFile) => void;
   /**
-   * Phase 4: invoked when the user clicks the settings gear on a ProjectTree
-   * row (group or project). Opens the corresponding
+   * Invoked when the user clicks the settings gear on a ProjectTree row
+   * (group or project). Opens the corresponding
    * Group/ProjectPreferencesModal. When omitted, gear icons are hidden.
    */
   onOpenNodePreferences?: (node: {
@@ -113,7 +116,6 @@ interface SidebarProps {
 
 export function Sidebar({
   sessions,
-  folders,
   activeSessionId,
   activeFolderId,
   collapsed,
@@ -123,7 +125,6 @@ export function Sidebar({
   folderHasPreferences,
   folderHasRepo,
   getFolderRepoStats,
-  getFolderTrashCount,
   onSessionClick,
   onSessionClose,
   onSessionRename,
@@ -133,21 +134,12 @@ export function Sidebar({
   onNewSession,
   onQuickNewSession,
   onNewAgent,
-  onFolderCreate,
-  onFolderRename,
-  onFolderDelete,
-  onFolderToggle,
-  onFolderClick,
-  onFolderSettings,
-  onFolderNewSession,
-  onFolderNewAgent,
-  onFolderResumeClaudeSession,
-  onFolderAdvancedSession,
-  onFolderNewWorktree,
-  onFolderMove,
-  onFolderReorder,
-  onFolderEmpty,
-  onEmptyTrash,
+  onProjectSettings,
+  onProjectNewSession,
+  onProjectNewAgent,
+  onProjectResumeClaudeSession,
+  onProjectAdvancedSession,
+  onProjectNewWorktree,
   trashCount,
   onTrashOpen,
   onSessionSchedule,
@@ -298,7 +290,7 @@ export function Sidebar({
                     <DropdownMenuItem
                       onClick={() => {
                         if (activeFolderId && folderHasRepo(activeFolderId)) {
-                          onFolderNewWorktree(activeFolderId);
+                          onProjectNewWorktree(activeFolderId);
                         }
                       }}
                       disabled={!activeFolderId || !folderHasRepo(activeFolderId)}
@@ -384,17 +376,17 @@ export function Sidebar({
                   onSessionStartEdit={() => {}}
                   onSessionRename={onSessionRename}
                   folderHasPreferences={folderHasPreferences}
-                  onProjectNewSession={onFolderNewSession}
-                  onProjectNewAgent={onFolderNewAgent}
-                  onProjectResumeClaudeSession={onFolderResumeClaudeSession}
-                  onProjectAdvancedSession={onFolderAdvancedSession}
-                  onProjectNewWorktree={onFolderNewWorktree}
+                  onProjectNewSession={onProjectNewSession}
+                  onProjectNewAgent={onProjectNewAgent}
+                  onProjectResumeClaudeSession={onProjectResumeClaudeSession}
+                  onProjectAdvancedSession={onProjectAdvancedSession}
+                  onProjectNewWorktree={onProjectNewWorktree}
                   onProjectOpenSecrets={(fid) => {
                     setSecretsModalFolderId(fid);
                     setSecretsModalOpen(true);
                   }}
                   onProjectOpenRepository={(fid, name) =>
-                    onFolderSettings(fid, name, "repository")
+                    onProjectSettings(fid, name, "repository")
                   }
                   onProjectOpenFolderInOS={handleOpenFolder}
                   onProjectViewIssues={onViewIssues}
