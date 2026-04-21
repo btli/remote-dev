@@ -7,8 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Project tree sidebar (Phases A–G)**: Replaced the legacy folder-based
+  sidebar tree with a new group/project-aware `ProjectTreeSidebar`, dropping
+  ~1900 lines of duplicated rendering in `Sidebar.tsx` while preserving
+  drag/drop, context menus, repo stats rollup, inline editing, active-node
+  selection, and mobile touch gestures. Adds mobile-only long-press touch drag
+  for groups/projects and swipe-to-close on sessions that did not exist in the
+  legacy tree.
+
+### Added
+
+- `terminal_session.project_id` is now `NOT NULL` with `onDelete: "cascade"`.
+  Historical orphan sessions are backfilled by a one-time migration script
+  (`bun run db:migrate-session-project-id`); new sessions must declare their
+  project or the API rejects them with `PROJECT_ID_REQUIRED`.
+
 ### Removed
 
+- Legacy `SessionFolder` / `FolderNode` type surface in `Sidebar.tsx` and the
+  folder-tree rendering block. `FolderContext` and `PreferencesContext`
+  folder-keyed state remain as temporary shims (tracked by `remote-dev-w1ed`)
+  until all consumers migrate to node-keyed APIs.
 - **Project/folder refactor Phase 6 (cleanup)**: legacy `session_folder`,
   `folder_preferences`, `folder_secrets_config`, `folder_github_account_link`,
   `folder_profile_link`, and `folder_repository` tables; `folder_id` columns
