@@ -21,6 +21,15 @@ export interface SessionRowProps {
   onStartEdit: () => void;
   onSaveEdit?: (value: string) => void;
   onCancelEdit?: () => void;
+  // Drag handlers (Phase E2). All optional — row participates in drag only when
+  // these props are supplied by the parent. Opacity / drop-indicator styling is
+  // owned by the caller.
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
+  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
 export function SessionRow({
@@ -37,6 +46,12 @@ export function SessionRow({
   onStartEdit,
   onSaveEdit,
   onCancelEdit,
+  draggable,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
 }: SessionRowProps) {
   const [local, setLocal] = useState(editValue ?? session.name);
   const committedRef = useRef(false);
@@ -85,6 +100,12 @@ export function SessionRow({
       role="button"
       tabIndex={isEditing ? -1 : 0}
       aria-label={session.name}
+      draggable={draggable ?? false}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       onClick={onClick}
       onKeyDown={(e) => {
         if (isEditing) return;

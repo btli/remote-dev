@@ -14,6 +14,11 @@ import { GroupContextMenu } from "./project-tree/GroupContextMenu";
 import { ProjectContextMenu } from "./project-tree/ProjectContextMenu";
 import { SessionContextMenu } from "./project-tree/SessionContextMenu";
 import {
+  useTreeDragDrop,
+  type DragState,
+  type DropIndicator,
+} from "./project-tree/useTreeDragDrop";
+import {
   recursiveSessionCount,
   rolledUpRepoStats,
   sessionsForProject,
@@ -47,6 +52,7 @@ interface Props {
   // Session handlers
   onSessionTogglePin: (sessionId: string) => void;
   onSessionMove: (sessionId: string, folderId: string | null) => void;
+  onSessionReorder: (sessionIds: string[]) => void;
   onSessionSchedule?: (sessionId: string) => void;
   // Predicates (folder-keyed)
   folderHasPreferences: (folderId: string) => boolean;
@@ -65,6 +71,27 @@ export function ProjectTreeSidebar(props: Props) {
     () => sessions.filter((s) => s.status !== "closed"),
     [sessions]
   );
+
+  // Phase E2: drag-and-drop state. Sessions can be dragged to reorder within
+  // their project, or dropped onto a project row to move cross-project. The
+  // hook itself is pure — we compute descendant-group closures for cycle
+  // guards (group drag is Phase E3 but the hook still requires the callback).
+  const dnd = useTreeDragDrop({
+    collectDescendantGroupIds: (rootId) => {
+      const out = new Set<string>([rootId]);
+      const stack = [rootId];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        for (const g of tree.groups) {
+          if (g.parentGroupId === cur && !out.has(g.id)) {
+            out.add(g.id);
+            stack.push(g.id);
+          }
+        }
+      }
+      return out;
+    },
+  });
 
   const sessionUnread = useMemo(() => {
     const m = new Map<string, number>();
@@ -122,6 +149,93 @@ export function ProjectTreeSidebar(props: Props) {
     void tree.deleteProject(p.id);
   };
 
+  // Handle drop of a session row on another session row. Same-project +
+  // same-pin partition → reorder within the partition; otherwise route to the
+  // cross-project move path (for defensive consistency, though the hook's
+  // indicator guards should prevent that case).
+  const handleSessionDropOnSession = (
+    snap: { drag: DragState; indicator: DropIndicator },
+    targetSession: TerminalSession,
+  ) => {
+    const { drag, indicator } = snap;
+    if (drag.type !== "session") return;
+    if (indicator.targetType !== "session") return;
+
+    const draggedSession = activeSessions.find((s) => s.id === drag.id);
+    if (!draggedSession) return;
+
+    const draggedFolderId = draggedSession.projectId ?? null;
+    const targetFolderId = targetSession.projectId ?? null;
+
+    if (draggedFolderId !== targetFolderId) {
+      // Cross-project drop on a session row — treat as cross-project move.
+      const targetProject = targetFolderId
+        ? tree.projects.find((p) => p.id === targetFolderId)
+        : null;
+      const targetLegacyFolderId = targetProject?.legacyFolderId ?? null;
+      props.onSessionMove(drag.id, targetLegacyFolderId);
+      return;
+    }
+
+    // Same project + same pin partition — reorder within the partition and
+    // rebuild the full cross-project session-id list in render order.
+    const draggedPinned = draggedSession.pinned ?? false;
+    const samePartition = activeSessions.filter(
+      (s) =>
+        (s.projectId ?? null) === targetFolderId &&
+        (s.pinned ?? false) === draggedPinned,
+    );
+    const currentOrder = samePartition.map((s) => s.id);
+    const newOrder = currentOrder.filter((id) => id !== drag.id);
+    const targetIdx = newOrder.indexOf(targetSession.id);
+    const insertIdx =
+      indicator.position === "before" ? targetIdx : targetIdx + 1;
+    newOrder.splice(insertIdx, 0, drag.id);
+
+    const otherPartition = activeSessions
+      .filter(
+        (s) =>
+          (s.projectId ?? null) === targetFolderId &&
+          (s.pinned ?? false) !== draggedPinned,
+      )
+      .map((s) => s.id);
+
+    const fullOrder: string[] = [];
+    const emitProjectSlot = (projectId: string | null) => {
+      if (projectId === targetFolderId) {
+        if (draggedPinned) fullOrder.push(...newOrder, ...otherPartition);
+        else fullOrder.push(...otherPartition, ...newOrder);
+      } else {
+        const pinned = activeSessions
+          .filter(
+            (s) => (s.projectId ?? null) === projectId && (s.pinned ?? false),
+          )
+          .map((s) => s.id);
+        const unpinned = activeSessions
+          .filter(
+            (s) => (s.projectId ?? null) === projectId && !(s.pinned ?? false),
+          )
+          .map((s) => s.id);
+        fullOrder.push(...pinned, ...unpinned);
+      }
+    };
+
+    for (const p of tree.projects) emitProjectSlot(p.id);
+    emitProjectSlot(null);
+
+    props.onSessionReorder(fullOrder);
+  };
+
+  const handleSessionDropOnProject = (
+    snap: { drag: DragState; indicator: DropIndicator },
+    targetProject: ProjectNode,
+  ) => {
+    if (snap.drag.type !== "session") return;
+    const legacy = targetProject.legacyFolderId ?? null;
+    if (legacy == null) return; // cannot move into a project without a legacy folder id during the shim
+    props.onSessionMove(snap.drag.id, legacy);
+  };
+
   if (tree.isLoading) {
     return <div className="p-3 text-xs text-muted-foreground">Loading projects…</div>;
   }
@@ -171,6 +285,42 @@ export function ProjectTreeSidebar(props: Props) {
                 setEditingNode(null);
               }}
               onCancelEdit={() => setEditingNode(null)}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/plain", s.id);
+                e.dataTransfer.setData("type", "session");
+                e.dataTransfer.effectAllowed = "move";
+                dnd.startDrag("session", s.id, s.projectId ?? null);
+              }}
+              onDragEnd={() => dnd.cancel()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "move";
+                const rect = e.currentTarget.getBoundingClientRect();
+                dnd.dragOver(
+                  "session",
+                  s.id,
+                  e.clientY,
+                  { top: rect.top, height: rect.height },
+                  {
+                    targetParentId: s.projectId ?? null,
+                    draggedPinned:
+                      dnd.drag?.type === "session"
+                        ? activeSessions.find((x) => x.id === dnd.drag!.id)?.pinned ?? false
+                        : undefined,
+                    targetPinned: s.pinned ?? false,
+                  },
+                );
+              }}
+              onDragLeave={() => dnd.dragLeave()}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const snap = dnd.drop("session", s.id);
+                if (!snap) return;
+                handleSessionDropOnSession(snap, s);
+              }}
             />
           </div>
         </SessionContextMenu>
@@ -284,7 +434,28 @@ export function ProjectTreeSidebar(props: Props) {
               onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
               onDelete={() => handleDeleteProject(p)}
             >
-              <div>
+              <div
+                onDragOver={(e) => {
+                  if (dnd.drag?.type !== "session") return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "move";
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  dnd.dragOver("project", p.id, e.clientY, {
+                    top: rect.top,
+                    height: rect.height,
+                  });
+                }}
+                onDragLeave={() => dnd.dragLeave()}
+                onDrop={(e) => {
+                  if (dnd.drag?.type !== "session") return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const snap = dnd.drop("project", p.id);
+                  if (!snap) return;
+                  handleSessionDropOnProject(snap, p);
+                }}
+              >
                 <ProjectRow
                   project={p}
                   depth={depth}

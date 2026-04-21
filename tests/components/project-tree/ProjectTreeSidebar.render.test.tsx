@@ -65,6 +65,7 @@ const requiredHandlerProps = {
   onProjectOpenFolderInOS: vi.fn(),
   onSessionTogglePin: vi.fn(),
   onSessionMove: vi.fn(),
+  onSessionReorder: vi.fn(),
 };
 
 const treeOverride = {

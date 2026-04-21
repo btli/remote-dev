@@ -1757,6 +1757,7 @@ export function Sidebar({
                     onProjectViewPRs={onViewPRs}
                     onSessionTogglePin={onSessionTogglePin}
                     onSessionMove={onSessionMove}
+                    onSessionReorder={onSessionReorder}
                     onSessionSchedule={onSessionSchedule}
                   />
                 </div>
