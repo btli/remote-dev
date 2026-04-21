@@ -29,6 +29,8 @@ import { resolveEnvironmentVariables } from "@/lib/environment";
 interface PreferencesContextValue {
   // State
   userSettings: UserSettings | null;
+  // TODO(remote-dev-w1ed): drop folder-keyed shim state; callers should use
+  // node-keyed preferences (owner='project') directly.
   folderPreferences: Map<string, FolderPreferences>;
   folders: Map<string, FolderWithAncestry>;
   activeProject: ActiveProject;

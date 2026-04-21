@@ -7,6 +7,11 @@
  * ProjectTreeContext. Components that still speak the old "folder" vocabulary
  * use this shim; it flattens groups+projects into a single list and maps
  * folder operations onto their group/project equivalents.
+ *
+ * TODO(remote-dev-w1ed): Remove this shim by migrating remaining consumers
+ * (FrameworkDetectionTab, SecretsConfigModal, UserSettingsModal,
+ * ProjectSection, SecretsSection, RestoreDialog, SessionManager) to use
+ * ProjectTreeContext directly.
  */
 
 import { useCallback, useMemo, useRef, type ReactNode } from "react";
