@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
+  readNodeAttrsFromElement,
   useTreeTouchDrag,
   type ResolvedDropTarget,
   type UseTreeTouchDragInput,
@@ -343,5 +344,60 @@ describe("useTreeTouchDrag", () => {
     });
     expect(ctx.dragOver).not.toHaveBeenCalled();
     expect(ctx.resolveDropTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("readNodeAttrsFromElement", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("normalizes empty-string data-node-parent-id to null for root-level rows", () => {
+    // Root-level groups render with data-node-parent-id="" (see GroupRow /
+    // ProjectRow). The raw dataset value round-trips as "" rather than
+    // undefined, so the resolver has to normalize explicitly or equality with
+    // `drag.sourceParentId: null` silently fails.
+    const gA = document.createElement("div");
+    gA.setAttribute("data-node-id", "gA");
+    gA.setAttribute("data-node-type", "group");
+    gA.setAttribute("data-node-parent-id", "");
+    document.body.appendChild(gA);
+
+    const gB = document.createElement("div");
+    gB.setAttribute("data-node-id", "gB");
+    gB.setAttribute("data-node-type", "group");
+    gB.setAttribute("data-node-parent-id", "");
+    document.body.appendChild(gB);
+
+    const resolvedA = readNodeAttrsFromElement(gA);
+    const resolvedB = readNodeAttrsFromElement(gB);
+
+    expect(resolvedA).not.toBeNull();
+    expect(resolvedA!.nodeId).toBe("gA");
+    expect(resolvedA!.nodeType).toBe("group");
+    expect(resolvedA!.parentId).toBeNull();
+
+    expect(resolvedB).not.toBeNull();
+    expect(resolvedB!.parentId).toBeNull();
+  });
+
+  it("preserves a non-empty data-node-parent-id", () => {
+    const child = document.createElement("div");
+    child.setAttribute("data-node-id", "p1");
+    child.setAttribute("data-node-type", "project");
+    child.setAttribute("data-node-parent-id", "g1");
+    document.body.appendChild(child);
+    const resolved = readNodeAttrsFromElement(child);
+    expect(resolved?.parentId).toBe("g1");
+  });
+
+  it("returns null when element has no data-node-id ancestor", () => {
+    const bare = document.createElement("div");
+    document.body.appendChild(bare);
+    expect(readNodeAttrsFromElement(bare)).toBeNull();
+  });
+
+  it("returns null for null input", () => {
+    expect(readNodeAttrsFromElement(null)).toBeNull();
   });
 });

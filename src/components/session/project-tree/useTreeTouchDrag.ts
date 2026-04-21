@@ -102,12 +102,19 @@ const INITIAL_STATE: TouchDragRefState = {
   lastTarget: null,
 };
 
-function defaultResolveDropTarget(
-  clientX: number,
-  clientY: number,
+/**
+ * Reads node identity attributes off a row element (or any element with the
+ * `data-node-id` host up the tree). Exported so unit tests can feed a stub
+ * element directly — happy-dom doesn't implement `document.elementFromPoint`,
+ * so we can't reliably test `defaultResolveDropTarget` end-to-end.
+ *
+ * Normalizes an empty-string `data-node-parent-id` (emitted for root-level
+ * rows by GroupRow/ProjectRow) to `null` so downstream equality with
+ * `drag.sourceParentId: null` matches.
+ */
+export function readNodeAttrsFromElement(
+  el: Element | null,
 ): ResolvedDropTarget | null {
-  if (typeof document === "undefined") return null;
-  const el = document.elementFromPoint(clientX, clientY);
   if (!el) return null;
   const host = (el as HTMLElement).closest(
     "[data-node-id]",
@@ -120,7 +127,8 @@ function defaultResolveDropTarget(
     | "session"
     | undefined;
   if (!nodeId || !nodeType) return null;
-  const parentId = host.dataset.nodeParentId ?? null;
+  const rawParent = host.dataset.nodeParentId;
+  const parentId = rawParent == null || rawParent === "" ? null : rawParent;
   const rect = host.getBoundingClientRect();
   return {
     nodeId,
@@ -128,6 +136,15 @@ function defaultResolveDropTarget(
     rect: { top: rect.top, height: rect.height },
     parentId,
   };
+}
+
+export function defaultResolveDropTarget(
+  clientX: number,
+  clientY: number,
+): ResolvedDropTarget | null {
+  if (typeof document === "undefined") return null;
+  const el = document.elementFromPoint(clientX, clientY);
+  return readNodeAttrsFromElement(el);
 }
 
 function defaultHaptic(pattern: number | number[] = 50): void {
