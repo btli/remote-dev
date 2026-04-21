@@ -7,8 +7,6 @@ import { db } from "@/db";
 import { terminalSessions, accounts, githubAccountMetadata } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
-import { FolderProvider } from "@/contexts/FolderContext";
-// FolderProvider is a legacy shim; the real provider is ProjectTreeProvider.
 import { ProjectTreeProvider } from "@/contexts/ProjectTreeContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { TemplateProvider } from "@/contexts/TemplateContext";
@@ -46,18 +44,6 @@ export default async function Home() {
     ),
     orderBy: (sessions, { asc }) => [asc(sessions.tabOrder)],
   });
-
-  // Phase 6: folders/projects are loaded client-side via ProjectTreeContext.
-  // The legacy FolderProvider is a passthrough shim and no longer hydrates
-  // server-side data.
-  const initialFolders: Array<{
-    id: string;
-    parentId: string | null;
-    name: string;
-    collapsed: boolean;
-    sortOrder: number;
-  }> = [];
-  const sessionFoldersMap: Record<string, string> = {};
 
   // Check if GitHub is connected (any OAuth account or metadata entries)
   const githubAccount = await db.query.accounts.findFirst({
@@ -106,7 +92,6 @@ export default async function Home() {
 
   return (
     <PreferencesProvider>
-      <FolderProvider initialFolders={initialFolders} initialSessionFolders={sessionFoldersMap}>
         <ProjectTreeProvider>
         <SecretsProvider>
           <LiteLLMProvider>
@@ -156,7 +141,6 @@ export default async function Home() {
           </LiteLLMProvider>
         </SecretsProvider>
         </ProjectTreeProvider>
-      </FolderProvider>
     </PreferencesProvider>
   );
 }
