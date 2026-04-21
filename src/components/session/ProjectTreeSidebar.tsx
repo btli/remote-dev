@@ -20,7 +20,7 @@ import {
   type RepoStats,
 } from "@/lib/project-tree-session-utils";
 import type { TerminalSession } from "@/types/session";
-import type { ProjectNode } from "@/contexts/ProjectTreeContext";
+import type { GroupNode, ProjectNode } from "@/contexts/ProjectTreeContext";
 
 interface Props {
   getProjectRepoStats: (projectId: string) => RepoStats | null;
@@ -97,6 +97,30 @@ export function ProjectTreeSidebar(props: Props) {
 
   const hasWorkingDirectory = (p: ProjectNode): boolean =>
     fid(p) != null && getFolderPreferences(fid(p)!)?.defaultWorkingDirectory != null;
+
+  // Delete helpers with confirmation prompts
+  const handleDeleteGroup = (g: GroupNode) => {
+    const { groups: childGroups, projects: childProjects } = tree.getChildrenOfGroup(g.id);
+    const childCount = childGroups.length + childProjects.length;
+    const msg =
+      childCount > 0
+        ? `Delete group "${g.name}" and ${childCount} descendant ${childCount === 1 ? "item" : "items"}? This cannot be undone.`
+        : `Delete group "${g.name}"?`;
+    if (!window.confirm(msg)) return;
+    void tree.deleteGroup(g.id, childCount > 0);
+  };
+
+  const handleDeleteProject = (p: ProjectNode) => {
+    const sessionCount = sessionsForProject(activeSessions, p.id, {
+      excludeFileSessions: true,
+    }).length;
+    const msg =
+      sessionCount > 0
+        ? `Delete project "${p.name}" and close ${sessionCount} open ${sessionCount === 1 ? "session" : "sessions"}? This cannot be undone.`
+        : `Delete project "${p.name}"?`;
+    if (!window.confirm(msg)) return;
+    void tree.deleteProject(p.id);
+  };
 
   if (tree.isLoading) {
     return <div className="p-3 text-xs text-muted-foreground">Loading projects…</div>;
@@ -176,7 +200,7 @@ export function ProjectTreeSidebar(props: Props) {
               }
               onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
               onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
-              onDelete={() => void tree.deleteGroup(g.id)}
+              onDelete={() => handleDeleteGroup(g)}
             >
               <div>
                 <GroupRow
@@ -258,7 +282,7 @@ export function ProjectTreeSidebar(props: Props) {
                   : undefined
               }
               onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
-              onDelete={() => void tree.deleteProject(p.id)}
+              onDelete={() => handleDeleteProject(p)}
             >
               <div>
                 <ProjectRow
@@ -329,7 +353,7 @@ export function ProjectTreeSidebar(props: Props) {
             }
             onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
             onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
-            onDelete={() => void tree.deleteGroup(g.id)}
+            onDelete={() => handleDeleteGroup(g)}
           >
             <div>
               <GroupRow
