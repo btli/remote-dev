@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createEvent, fireEvent, within } from "@testing-library/react";
+import { within } from "@testing-library/react";
 import { renderWithProjectTree } from "../../helpers/renderWithProjectTree";
+import { fireDragEvent } from "../../helpers/dragEvent";
 import { ProjectTreeSidebar } from "@/components/session/ProjectTreeSidebar";
 import type { GroupNode, ProjectNode } from "@/contexts/ProjectTreeContext";
 
@@ -145,26 +146,6 @@ function stubRects(top = 0, height = 40) {
   };
 }
 
-// happy-dom aliases DragEvent → Event, and Event's constructor ignores
-// non-standard init fields like clientY. Fire events with clientY patched on
-// explicitly so the drop-band math works.
-function fireDragEvent(
-  kind: "dragStart" | "dragOver" | "drop" | "dragEnd" | "dragLeave",
-  node: Element,
-  init: { clientY?: number; dataTransfer?: unknown } = {},
-) {
-  const event = createEvent[kind](node, {
-    dataTransfer: init.dataTransfer as never,
-  });
-  if (init.clientY != null) {
-    Object.defineProperty(event, "clientY", {
-      value: init.clientY,
-      configurable: true,
-    });
-  }
-  fireEvent(node, event);
-}
-
 function makeDT() {
   const store = new Map<string, string>();
   return {
@@ -227,9 +208,9 @@ describe("ProjectTreeSidebar project drag", () => {
     const pCWrapper = getProjectWrapper(container, "projC");
 
     // Drop pA onto pC's top 25% → "before" band (clientY=5 on 40-tall rect).
-    fireDragEvent("dragStart", pAWrapper, { dataTransfer: makeDT() });
-    fireDragEvent("dragOver", pCWrapper, { clientY: 5, dataTransfer: makeDT() });
-    fireDragEvent("drop", pCWrapper, { clientY: 5, dataTransfer: makeDT() });
+    fireDragEvent(pAWrapper, "dragStart", { dataTransfer: makeDT() });
+    fireDragEvent(pCWrapper, "dragOver", { clientY: 5, dataTransfer: makeDT() });
+    fireDragEvent(pCWrapper, "drop", { clientY: 5, dataTransfer: makeDT() });
 
     expect(moveProject).not.toHaveBeenCalled();
     // Target order: [pB, pA, pC] → pA sortOrder becomes 1.
@@ -257,9 +238,9 @@ describe("ProjectTreeSidebar project drag", () => {
     const pBWrapper = getProjectWrapper(container, "projB");
 
     // Drop pA onto pB's bottom 25% → "after" band (clientY=35 on 40-tall rect).
-    fireDragEvent("dragStart", pAWrapper, { dataTransfer: makeDT() });
-    fireDragEvent("dragOver", pBWrapper, { clientY: 35, dataTransfer: makeDT() });
-    fireDragEvent("drop", pBWrapper, { clientY: 35, dataTransfer: makeDT() });
+    fireDragEvent(pAWrapper, "dragStart", { dataTransfer: makeDT() });
+    fireDragEvent(pBWrapper, "dragOver", { clientY: 35, dataTransfer: makeDT() });
+    fireDragEvent(pBWrapper, "drop", { clientY: 35, dataTransfer: makeDT() });
 
     expect(moveProject).not.toHaveBeenCalled();
     // Target order: [pB, pA, pC]
@@ -283,9 +264,9 @@ describe("ProjectTreeSidebar project drag", () => {
     const pAWrapper = getProjectWrapper(container, "projA");
     const g2Wrapper = getGroupWrapper(container, "Beta");
 
-    fireDragEvent("dragStart", pAWrapper, { dataTransfer: makeDT() });
-    fireDragEvent("dragOver", g2Wrapper, { clientY: 20, dataTransfer: makeDT() });
-    fireDragEvent("drop", g2Wrapper, { clientY: 20, dataTransfer: makeDT() });
+    fireDragEvent(pAWrapper, "dragStart", { dataTransfer: makeDT() });
+    fireDragEvent(g2Wrapper, "dragOver", { clientY: 20, dataTransfer: makeDT() });
+    fireDragEvent(g2Wrapper, "drop", { clientY: 20, dataTransfer: makeDT() });
 
     expect(updateProject).not.toHaveBeenCalled();
     expect(moveProject).toHaveBeenCalledTimes(1);
@@ -306,9 +287,9 @@ describe("ProjectTreeSidebar project drag", () => {
     const pAWrapper = getProjectWrapper(container, "projA");
     const pDWrapper = getProjectWrapper(container, "projD");
 
-    fireDragEvent("dragStart", pAWrapper, { dataTransfer: makeDT() });
-    fireDragEvent("dragOver", pDWrapper, { clientY: 5, dataTransfer: makeDT() });
-    fireDragEvent("drop", pDWrapper, { clientY: 5, dataTransfer: makeDT() });
+    fireDragEvent(pAWrapper, "dragStart", { dataTransfer: makeDT() });
+    fireDragEvent(pDWrapper, "dragOver", { clientY: 5, dataTransfer: makeDT() });
+    fireDragEvent(pDWrapper, "drop", { clientY: 5, dataTransfer: makeDT() });
 
     expect(updateProject).not.toHaveBeenCalled();
     expect(moveProject).not.toHaveBeenCalled();

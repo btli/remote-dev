@@ -282,6 +282,47 @@ export function ProjectTreeSidebar(props: Props) {
     void tree.moveProject({ id: drag.id, newGroupId: targetGroup.id });
   };
 
+  const handleGroupDropOnGroup = (
+    snap: { drag: DragState; indicator: DropIndicator },
+    targetGroup: GroupNode,
+  ) => {
+    const { drag, indicator } = snap;
+    if (drag.type !== "group") return;
+    if (indicator.targetType !== "group") return;
+
+    if (indicator.position === "nest") {
+      // Nest dragged group under target group. The hook's indicator already
+      // applied the cycle check (returned null if the drop would create a
+      // cycle), so if we're here the move is safe.
+      if (targetGroup.id === drag.id) return;
+      const source = tree.groups.find((g) => g.id === drag.id);
+      if (!source) return;
+      if (source.parentGroupId === targetGroup.id) return; // already nested there
+      void tree.moveGroup({ id: drag.id, newParentGroupId: targetGroup.id });
+      return;
+    }
+
+    // Reorder among siblings — must share parentGroupId (hook already enforced).
+    const source = tree.groups.find((g) => g.id === drag.id);
+    if (!source) return;
+    if (source.parentGroupId !== targetGroup.parentGroupId) return;
+
+    const siblings = tree.groups
+      .filter((g) => g.parentGroupId === targetGroup.parentGroupId)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    const ids = siblings.map((s) => s.id);
+    const withoutDragged = ids.filter((id) => id !== drag.id);
+    const tIdx = withoutDragged.indexOf(targetGroup.id);
+    const insertIdx = indicator.position === "before" ? tIdx : tIdx + 1;
+    withoutDragged.splice(insertIdx, 0, drag.id);
+
+    withoutDragged.forEach((id, idx) => {
+      const current = siblings.find((s) => s.id === id);
+      if (!current || current.sortOrder === idx) return;
+      void tree.updateGroup({ id, sortOrder: idx });
+    });
+  };
+
   if (tree.isLoading) {
     return <div className="p-3 text-xs text-muted-foreground">Loading projects…</div>;
   }
@@ -399,25 +440,59 @@ export function ProjectTreeSidebar(props: Props) {
               onDelete={() => handleDeleteGroup(g)}
             >
               <div
+                draggable
+                onDragStart={(e) => {
+                  // Only register this as a group drag if the dragstart originated
+                  // on the wrapper itself, not bubbled up from a nested ProjectRow
+                  // or SessionRow inside this group's subtree.
+                  if (e.target !== e.currentTarget) return;
+                  e.dataTransfer.setData("text/plain", g.id);
+                  e.dataTransfer.setData("type", "group");
+                  e.dataTransfer.effectAllowed = "move";
+                  dnd.startDrag("group", g.id, g.parentGroupId);
+                }}
+                onDragEnd={() => dnd.cancel()}
                 onDragOver={(e) => {
-                  if (dnd.drag?.type !== "project") return;
+                  if (dnd.drag?.type === "project") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = "move";
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    dnd.dragOver("group", g.id, e.clientY, {
+                      top: rect.top,
+                      height: rect.height,
+                    });
+                    return;
+                  }
+                  if (dnd.drag?.type !== "group") return;
                   e.preventDefault();
                   e.stopPropagation();
                   e.dataTransfer.dropEffect = "move";
                   const rect = e.currentTarget.getBoundingClientRect();
-                  dnd.dragOver("group", g.id, e.clientY, {
-                    top: rect.top,
-                    height: rect.height,
-                  });
+                  dnd.dragOver(
+                    "group",
+                    g.id,
+                    e.clientY,
+                    { top: rect.top, height: rect.height },
+                    { targetParentId: g.parentGroupId },
+                  );
                 }}
                 onDragLeave={() => dnd.dragLeave()}
                 onDrop={(e) => {
-                  if (dnd.drag?.type !== "project") return;
+                  if (dnd.drag?.type === "project") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const snap = dnd.drop("group", g.id);
+                    if (!snap) return;
+                    handleProjectDropOnGroup(snap, g);
+                    return;
+                  }
+                  if (dnd.drag?.type !== "group") return;
                   e.preventDefault();
                   e.stopPropagation();
                   const snap = dnd.drop("group", g.id);
                   if (!snap) return;
-                  handleProjectDropOnGroup(snap, g);
+                  handleGroupDropOnGroup(snap, g);
                 }}
               >
                 <GroupRow
@@ -606,7 +681,30 @@ export function ProjectTreeSidebar(props: Props) {
   };
 
   return (
-    <div className="flex flex-col gap-0.5 px-1 py-2">
+    <div
+      className="flex flex-col gap-0.5 px-1 py-2"
+      onDragOver={(e) => {
+        if (dnd.drag?.type !== "group") return;
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(e) => {
+        if (dnd.drag?.type !== "group") return;
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const draggedId = dnd.drag.id;
+        // Clear drag state (drop() without a matching indicator returns null
+        // but still clears — we use cancel() here for clarity since the
+        // indicator may not be set on whitespace drops).
+        dnd.cancel();
+        const current = tree.groups.find((g) => g.id === draggedId);
+        if (!current || current.parentGroupId === null) return;
+        void tree.moveGroup({ id: draggedId, newParentGroupId: null });
+      }}
+    >
       {rootEntries.groups.map((g, i) => (
         <TreeConnector
           key={g.id}
@@ -628,25 +726,59 @@ export function ProjectTreeSidebar(props: Props) {
             onDelete={() => handleDeleteGroup(g)}
           >
             <div
+              draggable
+              onDragStart={(e) => {
+                // Only register this as a group drag if the dragstart originated
+                // on the wrapper itself, not bubbled up from a nested ProjectRow
+                // or SessionRow inside this group's subtree.
+                if (e.target !== e.currentTarget) return;
+                e.dataTransfer.setData("text/plain", g.id);
+                e.dataTransfer.setData("type", "group");
+                e.dataTransfer.effectAllowed = "move";
+                dnd.startDrag("group", g.id, g.parentGroupId);
+              }}
+              onDragEnd={() => dnd.cancel()}
               onDragOver={(e) => {
-                if (dnd.drag?.type !== "project") return;
+                if (dnd.drag?.type === "project") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "move";
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  dnd.dragOver("group", g.id, e.clientY, {
+                    top: rect.top,
+                    height: rect.height,
+                  });
+                  return;
+                }
+                if (dnd.drag?.type !== "group") return;
                 e.preventDefault();
                 e.stopPropagation();
                 e.dataTransfer.dropEffect = "move";
                 const rect = e.currentTarget.getBoundingClientRect();
-                dnd.dragOver("group", g.id, e.clientY, {
-                  top: rect.top,
-                  height: rect.height,
-                });
+                dnd.dragOver(
+                  "group",
+                  g.id,
+                  e.clientY,
+                  { top: rect.top, height: rect.height },
+                  { targetParentId: g.parentGroupId },
+                );
               }}
               onDragLeave={() => dnd.dragLeave()}
               onDrop={(e) => {
-                if (dnd.drag?.type !== "project") return;
+                if (dnd.drag?.type === "project") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const snap = dnd.drop("group", g.id);
+                  if (!snap) return;
+                  handleProjectDropOnGroup(snap, g);
+                  return;
+                }
+                if (dnd.drag?.type !== "group") return;
                 e.preventDefault();
                 e.stopPropagation();
                 const snap = dnd.drop("group", g.id);
                 if (!snap) return;
-                handleProjectDropOnGroup(snap, g);
+                handleGroupDropOnGroup(snap, g);
               }}
             >
               <GroupRow
