@@ -42,6 +42,15 @@ export interface ProjectRowProps {
   onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
+  // Touch handlers (Phase F1). Optional — populated on mobile by the
+  // `useTreeTouchDrag` hook in the sidebar to power long-press drag.
+  onTouchStart?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  onTouchMove?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  onTouchEnd?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  // Parent group id, rendered as a data-* attribute so the touch-drag resolver
+  // (which uses `document.elementFromPoint`) can recover it without needing a
+  // separate lookup table.
+  parentGroupId?: string | null;
   // Drop indicator styling (Phase E5). When non-null, renders either a
   // before/after bar above/below the row or overrides the row background/border
   // for nest.
@@ -71,6 +80,10 @@ export function ProjectRow({
   onDragOver,
   onDragLeave,
   onDrop,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
+  parentGroupId,
   dropIndicator = null,
 }: ProjectRowProps) {
   const isExpanded = !collapsed;
@@ -110,12 +123,18 @@ export function ProjectRow({
           role="button"
           tabIndex={isEditing ? -1 : 0}
           aria-label={project.name}
+          data-node-type="project"
+          data-node-id={project.id}
+          data-node-parent-id={parentGroupId ?? ""}
           draggable={draggable ?? false}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
           onDrop={onDrop}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
           onClick={onSelect}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {

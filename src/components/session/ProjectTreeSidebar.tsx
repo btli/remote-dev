@@ -18,6 +18,8 @@ import {
   type DragState,
   type DropIndicator,
 } from "./project-tree/useTreeDragDrop";
+import { useTreeTouchDrag } from "./project-tree/useTreeTouchDrag";
+import { useMobile } from "@/hooks/useMobile";
 import {
   recursiveSessionCount,
   rolledUpRepoStats,
@@ -334,6 +336,38 @@ export function ProjectTreeSidebar(props: Props) {
     });
   };
 
+  // Phase F1: mobile long-press touch drag. The hook is a no-op when not on
+  // mobile, so instantiation is unconditional. Drops are dispatched to the
+  // same handler family used by the desktop mouse drag paths.
+  const isMobile = useMobile();
+  const touch = useTreeTouchDrag({
+    enabled: isMobile,
+    startDrag: dnd.startDrag,
+    dragOver: dnd.dragOver,
+    drop: dnd.drop,
+    cancel: dnd.cancel,
+    onDropResolved: (snap) => {
+      if (snap.drag.type === "group" && snap.indicator.targetType === "group") {
+        const targetGroup = tree.groups.find((g) => g.id === snap.indicator.targetId);
+        if (targetGroup) handleGroupDropOnGroup(snap, targetGroup);
+      } else if (
+        snap.drag.type === "project" &&
+        snap.indicator.targetType === "project"
+      ) {
+        const targetProject = tree.projects.find(
+          (p) => p.id === snap.indicator.targetId,
+        );
+        if (targetProject) handleProjectDropOnProject(snap, targetProject);
+      } else if (
+        snap.drag.type === "project" &&
+        snap.indicator.targetType === "group"
+      ) {
+        const targetGroup = tree.groups.find((g) => g.id === snap.indicator.targetId);
+        if (targetGroup) handleProjectDropOnGroup(snap, targetGroup);
+      }
+    },
+  });
+
   if (tree.isLoading) {
     return <div className="p-3 text-xs text-muted-foreground">Loading projects…</div>;
   }
@@ -510,6 +544,12 @@ export function ProjectTreeSidebar(props: Props) {
                 <GroupRow
                   group={g}
                   depth={depth}
+                  parentGroupId={g.parentGroupId}
+                  onTouchStart={(e) =>
+                    touch.handleTouchStart(e, "group", g.id, g.parentGroupId)
+                  }
+                  onTouchMove={touch.handleTouchMove}
+                  onTouchEnd={touch.handleTouchEnd}
                   dropIndicator={indicatorFor("group", g.id)}
                   isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
                   isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
@@ -648,6 +688,12 @@ export function ProjectTreeSidebar(props: Props) {
                 <ProjectRow
                   project={p}
                   depth={depth}
+                  parentGroupId={p.groupId}
+                  onTouchStart={(e) =>
+                    touch.handleTouchStart(e, "project", p.id, p.groupId)
+                  }
+                  onTouchMove={touch.handleTouchMove}
+                  onTouchEnd={touch.handleTouchEnd}
                   dropIndicator={indicatorFor("project", p.id)}
                   isActive={tree.activeNode?.id === p.id && tree.activeNode?.type === "project"}
                   isEditing={editingNode?.id === p.id && editingNode?.type === "project"}
@@ -798,6 +844,12 @@ export function ProjectTreeSidebar(props: Props) {
               <GroupRow
                 group={g}
                 depth={0}
+                parentGroupId={g.parentGroupId}
+                onTouchStart={(e) =>
+                  touch.handleTouchStart(e, "group", g.id, g.parentGroupId)
+                }
+                onTouchMove={touch.handleTouchMove}
+                onTouchEnd={touch.handleTouchEnd}
                 dropIndicator={indicatorFor("group", g.id)}
                 isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
                 isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
