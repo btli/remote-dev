@@ -23,7 +23,7 @@ import { useRecordingContext } from "@/contexts/RecordingContext";
 import { useRecording } from "@/hooks/useRecording";
 import { useMobile } from "@/hooks/useMobile";
 import { usePWA } from "@/hooks/usePWA";
-import { useFolderContext } from "@/contexts/FolderContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useTrashContext } from "@/contexts/TrashContext";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
@@ -276,14 +276,35 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // setSidebarCollapsed and setSidebarWidth already persist to localStorage
   // and trigger re-renders via useSyncExternalStore
 
-  // Folder state from context (persisted in database)
-  const {
-    folders,
-    createFolder,
-    moveSessionToFolder,
-    registerSessionFolder,
-    debouncedRefreshFolders,
-  } = useFolderContext();
+  // Project tree state (persisted in database). Flatten groups+projects into a
+  // unified list for legacy "folder" lookups (name-by-id, tree refresh, etc.).
+  const projectTree = useProjectTree();
+  const folders = useMemo(
+    () => [
+      ...projectTree.groups.map((g) => ({ id: g.id, name: g.name })),
+      ...projectTree.projects.map((p) => ({ id: p.id, name: p.name })),
+    ],
+    [projectTree.groups, projectTree.projects]
+  );
+  const debouncedRefreshFolders = useCallback(() => {
+    void projectTree.refresh();
+  }, [projectTree]);
+
+  // Move a session to a project via the sessions API. Sessions are always
+  // associated with a leaf project (never a group) on the backend.
+  const moveSessionToFolder = useCallback(
+    async (sessionId: string, folderId: string | null) => {
+      const response = await fetch(`/api/sessions/${sessionId}/folder`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: folderId }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to move session: ${response.status}`);
+      }
+    },
+    []
+  );
 
   // Trash state from context
   const { count: trashCount, trashSession } = useTrashContext();
@@ -334,7 +355,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const {
     userSettings,
     activeProject,
-    hasFolderPreferences,
     folderHasRepo,
     currentPreferences,
     setActiveFolder,
@@ -631,10 +651,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       // Strip any legacy folderId field to avoid excess-property errors.
       delete (sessionData as Record<string, unknown>).folderId;
       const newSession = await createSession(sessionData);
-      // Register session-folder mapping in FolderContext for UI update
-      if (newSession && effectiveFolderId) {
-        registerSessionFolder(newSession.id, effectiveFolderId);
-      }
       if (newSession) {
         maybeAutoFollowFolder(sessionData.projectId ?? null);
       }
@@ -646,7 +662,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       wizardFolderId,
       sessions,
       activeProject.folderId,
-      registerSessionFolder,
       maybeAutoFollowFolder,
     ]
   );
@@ -656,16 +671,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const name = generateSessionName(folderId);
     // Pass empty startupCommand to get a plain shell (no agent/startup command)
     try {
-      const newSession = await createSession({
+      await createSession({
         name,
         projectPath: currentPreferences.defaultWorkingDirectory || undefined,
         projectId: folderId,
         startupCommand: "", // Explicitly skip startup command for plain terminal
       });
-      // Register session-folder mapping in FolderContext for UI update
-      if (newSession && folderId) {
-        registerSessionFolder(newSession.id, folderId);
-      }
       maybeAutoFollowFolder(folderId ?? null);
     } catch (error) {
       logSessionError("create session", error);
@@ -675,7 +686,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     generateSessionName,
     currentPreferences.defaultWorkingDirectory,
     activeProject.folderId,
-    registerSessionFolder,
     logSessionError,
     maybeAutoFollowFolder,
   ]);
@@ -782,10 +792,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   );
 
   const handleCreateFolder = useCallback(
-    async (name: string, parentId?: string | null) => {
-      await createFolder(name, parentId);
+    async (name: string, parentId: string | null = null) => {
+      // Legacy "create folder" action creates a top-level group; groups are
+      // the containers in the new project-tree model.
+      await projectTree.createGroup({ name, parentGroupId: parentId });
     },
-    [createFolder]
+    [projectTree]
   );
 
   const handleFolderSettings = useCallback(
@@ -947,16 +959,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       const name = generateSessionName(folderId);
       // Pass empty startupCommand to get a plain shell (no agent/startup command)
       try {
-        const newSession = await createSession({
+        await createSession({
           name,
           projectPath: prefs.defaultWorkingDirectory || undefined,
           projectId: folderId,
           startupCommand: "", // Explicitly skip startup command for plain terminal
         });
-        // Register session-folder mapping in FolderContext for UI update
-        if (newSession) {
-          registerSessionFolder(newSession.id, folderId);
-        }
         setActiveFolder(folderId);
       } catch (error) {
         logSessionError("create session", error);
@@ -967,7 +975,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       generateSessionName,
       resolvePreferencesForFolder,
       setActiveFolder,
-      registerSessionFolder,
       logSessionError,
     ]
   );
@@ -1010,14 +1017,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           worktreeType: worktreeTypeInput,
         });
         if (newSession) {
-          registerSessionFolder(newSession.id, folderId);
           setActiveFolder(folderId);
         }
       } catch (error) {
         console.error("Failed to create worktree session:", error);
       }
     },
-    [worktreePrompt, worktreeNameInput, worktreeTypeInput, createSession, resolvePreferencesForFolder, generateSessionName, registerSessionFolder, setActiveFolder]
+    [worktreePrompt, worktreeNameInput, worktreeTypeInput, createSession, resolvePreferencesForFolder, generateSessionName, setActiveFolder]
   );
 
   // Handler for opening the wizard from Plus button or command palette
@@ -1032,15 +1038,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     const folderId = activeProject.folderId || undefined;
     const name = generateSessionName(folderId);
     try {
-      const newSession = await createSession({
+      await createSession({
         name,
         projectPath: currentPreferences.defaultWorkingDirectory || undefined,
         projectId: folderId,
         terminalType: "agent",
       });
-      if (newSession && folderId) {
-        registerSessionFolder(newSession.id, folderId);
-      }
       maybeAutoFollowFolder(folderId ?? null);
     } catch (error) {
       logSessionError("create agent session", error);
@@ -1050,7 +1053,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     generateSessionName,
     currentPreferences.defaultWorkingDirectory,
     activeProject.folderId,
-    registerSessionFolder,
     logSessionError,
     maybeAutoFollowFolder,
   ]);
@@ -1067,7 +1069,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           terminalType: "agent",
         });
         if (newSession) {
-          registerSessionFolder(newSession.id, folderId);
           setActiveFolder(folderId);
         }
       } catch (error) {
@@ -1079,7 +1080,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       generateSessionName,
       resolvePreferencesForFolder,
       setActiveFolder,
-      registerSessionFolder,
       logSessionError,
     ]
   );
@@ -1128,7 +1128,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           profileId: resumeModalProfileId || undefined,
         });
         if (newSession && folderId) {
-          registerSessionFolder(newSession.id, folderId);
           setActiveFolder(folderId);
         }
       } catch (error) {
@@ -1142,7 +1141,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       resumeModalProfileId,
       resolvePreferencesForFolder,
       createSession,
-      registerSessionFolder,
       setActiveFolder,
       logSessionError,
     ]
