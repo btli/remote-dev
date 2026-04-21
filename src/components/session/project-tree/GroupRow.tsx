@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -19,12 +19,16 @@ interface GroupRowProps {
   depth: number;
   isActive: boolean;
   isEditing?: boolean;
+  editValue?: string;
   sessionCount: number;
   rolledStats: RepoStats | null;
   hasCustomPrefs: boolean;
   onSelect: () => void;
   onToggleCollapse: () => void;
   onOpenPreferences?: () => void;
+  onStartEdit?: () => void;
+  onSaveEdit?: (value: string) => void;
+  onCancelEdit?: () => void;
   children?: ReactNode;
 }
 
@@ -33,14 +37,37 @@ export function GroupRow({
   depth,
   isActive,
   isEditing = false,
+  editValue,
   sessionCount,
   rolledStats,
   onSelect,
   onToggleCollapse,
   onOpenPreferences,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
   children,
 }: GroupRowProps) {
   const isExpanded = !group.collapsed;
+
+  const [local, setLocal] = useState(editValue ?? group.name);
+  const committedRef = useRef(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset input value when editing session starts
+      setLocal(editValue ?? group.name);
+      committedRef.current = false;
+    }
+  }, [isEditing, editValue, group.name]);
+
+  const commit = (value: string) => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== group.name) onSaveEdit?.(trimmed);
+    else onCancelEdit?.();
+  };
 
   return (
     <div className="space-y-0.5">
@@ -96,9 +123,36 @@ export function GroupRow({
           )}
 
           {/* Name */}
-          <span className="flex-1 text-sm truncate">
-            {group.name}
-          </span>
+          {isEditing ? (
+            <input
+              autoFocus
+              value={local}
+              onChange={(e) => setLocal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commit(local);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  committedRef.current = true;
+                  onCancelEdit?.();
+                }
+              }}
+              onBlur={() => commit(local)}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          ) : (
+            <span
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                onStartEdit?.();
+              }}
+              className="flex-1 text-sm truncate"
+            >
+              {group.name}
+            </span>
+          )}
 
           {/* Right-side badges */}
           {rolledStats && (

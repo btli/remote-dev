@@ -1,5 +1,5 @@
 "use client";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
@@ -31,6 +31,7 @@ interface Props {
 
 export function ProjectTreeSidebar(props: Props) {
   const tree = useProjectTree();
+  const [editingNode, setEditingNode] = useState<{ id: string; type: "group" | "project" | "session" } | null>(null);
   const { sessions, activeSessionId, getAgentActivityStatus } = useSessionContext();
   const { getFolderPreferences } = usePreferencesContext();
   const { folderConfigs } = useSecretsContext();
@@ -94,6 +95,7 @@ export function ProjectTreeSidebar(props: Props) {
               group={g}
               depth={depth}
               isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
+              isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
               sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
               rolledStats={rolledUpRepoStats(
                 tree.groups,
@@ -109,6 +111,12 @@ export function ProjectTreeSidebar(props: Props) {
                   ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
                   : undefined
               }
+              onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
+              onSaveEdit={async (name) => {
+                await tree.updateGroup({ id: g.id, name });
+                setEditingNode(null);
+              }}
+              onCancelEdit={() => setEditingNode(null)}
             >
               {renderGroupSubtree(g.id, depth + 1)}
             </GroupRow>
@@ -156,6 +164,7 @@ export function ProjectTreeSidebar(props: Props) {
             group={g}
             depth={0}
             isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
+            isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
             sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
             rolledStats={rolledUpRepoStats(
               tree.groups,
@@ -171,6 +180,12 @@ export function ProjectTreeSidebar(props: Props) {
                 ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
                 : undefined
             }
+            onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
+            onSaveEdit={async (name) => {
+              await tree.updateGroup({ id: g.id, name });
+              setEditingNode(null);
+            }}
+            onCancelEdit={() => setEditingNode(null)}
           >
             {renderGroupSubtree(g.id, 1)}
           </GroupRow>
