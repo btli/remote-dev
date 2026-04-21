@@ -72,4 +72,31 @@ describe("SessionRow", () => {
     render(<SessionRow {...baseProps} session={shellSession} scheduleCount={3} />);
     expect(screen.getByText("3")).toBeInTheDocument();
   });
+
+  it("has aria-label matching session name", () => {
+    render(<SessionRow {...baseProps} session={shellSession} />);
+    expect(screen.getByRole("button", { name: shellSession.name })).toBeInTheDocument();
+  });
+
+  it("calls onClick and calls preventDefault when Enter is pressed", () => {
+    const onClick = vi.fn();
+    render(<SessionRow {...baseProps} session={shellSession} onClick={onClick} />);
+    const row = screen.getByRole("button", { name: shellSession.name });
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    const preventDefaultSpy = vi.spyOn(event, "preventDefault");
+    row.dispatchEvent(event);
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(preventDefaultSpy).toHaveBeenCalled();
+  });
+
+  it("calls onClick and calls preventDefault when Space is pressed", () => {
+    const onClick = vi.fn();
+    render(<SessionRow {...baseProps} session={shellSession} onClick={onClick} />);
+    const row = screen.getByRole("button", { name: shellSession.name });
+    const event = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    const preventDefaultSpy = vi.spyOn(event, "preventDefault");
+    row.dispatchEvent(event);
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(preventDefaultSpy).toHaveBeenCalled();
+  });
 });

@@ -153,4 +153,21 @@ describe("ProjectRow", () => {
     const { container } = render(<ProjectRow {...baseProps} project={baseProject} isActive />);
     expect(container.querySelector('[data-active="true"]')).toBeTruthy();
   });
+
+  it("fires onSelect when Enter is pressed on the focused row", () => {
+    const onSelect = vi.fn();
+    render(<ProjectRow {...baseProps} project={baseProject} onSelect={onSelect} />);
+    const row = screen.getByRole("button", { name: baseProject.name });
+    row.focus();
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+
+  it("fires onSelect when Space is pressed", () => {
+    const onSelect = vi.fn();
+    render(<ProjectRow {...baseProps} project={baseProject} onSelect={onSelect} />);
+    const row = screen.getByRole("button", { name: baseProject.name });
+    fireEvent.keyDown(row, { key: " " });
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
 });

@@ -58,10 +58,14 @@ export function SessionRow({
   return (
     <div
       role="button"
-      tabIndex={0}
+      tabIndex={isEditing ? -1 : 0}
+      aria-label={session.name}
       onClick={onClick}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onClick();
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
       }}
       style={{ marginLeft: depth > 0 ? `${depth * 12}px` : undefined }}
       className={cn(

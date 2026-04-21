@@ -18,6 +18,7 @@ interface GroupRowProps {
   group: GroupNode;
   depth: number;
   isActive: boolean;
+  isEditing?: boolean;
   sessionCount: number;
   rolledStats: RepoStats | null;
   hasCustomPrefs: boolean;
@@ -31,6 +32,7 @@ export function GroupRow({
   group,
   depth,
   isActive,
+  isEditing = false,
   sessionCount,
   rolledStats,
   onSelect,
@@ -47,6 +49,16 @@ export function GroupRow({
         data-active={isActive ? "true" : undefined}
       >
         <div
+          role="button"
+          tabIndex={isEditing ? -1 : 0}
+          aria-label={group.name}
+          onClick={onSelect}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onSelect();
+            }
+          }}
           style={{ paddingLeft: depth * 12 + "px" }}
           className={cn(
             "flex items-center gap-1.5 px-2 py-1 rounded-md",
@@ -84,10 +96,7 @@ export function GroupRow({
           )}
 
           {/* Name */}
-          <span
-            className="flex-1 text-sm truncate cursor-pointer"
-            onClick={onSelect}
-          >
+          <span className="flex-1 text-sm truncate">
             {group.name}
           </span>
 

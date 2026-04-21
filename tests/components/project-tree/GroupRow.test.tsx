@@ -142,4 +142,21 @@ describe("GroupRow", () => {
     // At minimum an active class marker on the row container
     expect(container.querySelector('[data-active="true"], .bg-accent\\/50, .ring-primary\\/50')).toBeTruthy();
   });
+
+  it("fires onSelect when Enter is pressed on the focused row", () => {
+    const onSelect = vi.fn();
+    render(<GroupRow {...baseProps} group={baseGroup} onSelect={onSelect} />);
+    const row = screen.getByRole("button", { name: baseGroup.name });
+    row.focus();
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+
+  it("fires onSelect when Space is pressed", () => {
+    const onSelect = vi.fn();
+    render(<GroupRow {...baseProps} group={baseGroup} onSelect={onSelect} />);
+    const row = screen.getByRole("button", { name: baseGroup.name });
+    fireEvent.keyDown(row, { key: " " });
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
 });

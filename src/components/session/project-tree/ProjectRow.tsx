@@ -18,6 +18,7 @@ interface ProjectRowProps {
   project: ProjectNode;
   depth: number;
   isActive: boolean;
+  isEditing?: boolean;
   collapsed: boolean;
   sessionCount: number;
   ownStats: RepoStats | null;
@@ -34,6 +35,7 @@ export function ProjectRow({
   project,
   depth,
   isActive,
+  isEditing = false,
   collapsed,
   sessionCount,
   ownStats,
@@ -52,6 +54,16 @@ export function ProjectRow({
         data-active={isActive ? "true" : undefined}
       >
         <div
+          role="button"
+          tabIndex={isEditing ? -1 : 0}
+          aria-label={project.name}
+          onClick={onSelect}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onSelect();
+            }
+          }}
           style={{ paddingLeft: depth * 12 + "px" }}
           className={cn(
             "flex items-center gap-1.5 px-2 py-1 rounded-md",
@@ -85,10 +97,7 @@ export function ProjectRow({
           </div>
 
           {/* Name */}
-          <span
-            className="flex-1 text-sm truncate cursor-pointer"
-            onClick={onSelect}
-          >
+          <span className="flex-1 text-sm truncate">
             {project.name}
           </span>
 
