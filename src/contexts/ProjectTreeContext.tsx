@@ -62,7 +62,7 @@ interface ProjectTreeContextValue {
   refresh(): Promise<void>;
 }
 
-const Ctx = createContext<ProjectTreeContextValue | null>(null);
+export const ProjectTreeContext = createContext<ProjectTreeContextValue | null>(null);
 
 export function ProjectTreeProvider({ children }: { children: ReactNode }) {
   const [groups, setGroups] = useState<GroupNode[]>([]);
@@ -247,11 +247,11 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return <ProjectTreeContext.Provider value={value}>{children}</ProjectTreeContext.Provider>;
 }
 
 export function useProjectTree(): ProjectTreeContextValue {
-  const ctx = useContext(Ctx);
+  const ctx = useContext(ProjectTreeContext);
   if (!ctx) throw new Error("useProjectTree must be used inside ProjectTreeProvider");
   return ctx;
 }
