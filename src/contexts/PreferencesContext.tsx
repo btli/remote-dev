@@ -359,11 +359,20 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         });
       }
 
-      // Persist to server with proper error handling
-      fetch("/api/preferences/active-folder", {
+      // Persist to server with proper error handling. The legacy
+      // /api/preferences/active-folder endpoint is gone — the node-keyed
+      // endpoint accepts `{ nodeId, nodeType, pinned }`. When clearing the
+      // selection (`folderId === null`) both fields are null. Until group
+      // nodes are supported in the active-node UI, any non-null folderId is
+      // treated as a project id.
+      fetch("/api/preferences/active-node", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderId, pinned }),
+        body: JSON.stringify({
+          nodeId: folderId,
+          nodeType: folderId ? "project" : null,
+          pinned,
+        }),
       })
         .then((res) => {
           if (!res.ok) {
