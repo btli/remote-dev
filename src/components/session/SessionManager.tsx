@@ -355,12 +355,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const {
     userSettings,
     activeProject,
-    folderHasRepo,
+    nodeHasRepo,
     currentPreferences,
     setActiveFolder,
     resolvePreferencesForFolder,
     getEnvironmentForFolder,
-    getFolderPreferences,
+    getNodePreferences,
   } = usePreferencesContext();
 
   // Secrets state from context
@@ -869,13 +869,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [getRepoInfoForFolder]
   );
 
-  // Get pinned files for a folder
+  // Get pinned files for a folder (always a project id in the new model)
   const handleGetFolderPinnedFiles = useCallback(
     (folderId: string): PinnedFile[] => {
-      const prefs = getFolderPreferences(folderId);
+      const prefs = getNodePreferences("project", folderId);
       return prefs?.pinnedFiles ?? [];
     },
-    [getFolderPreferences]
+    [getNodePreferences]
   );
 
   // Open a pinned file as a file editor session, reusing an existing session if one matches
@@ -1446,7 +1446,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             }}
             width={sidebarWidth}
             onWidthChange={setSidebarWidth}
-            folderHasRepo={folderHasRepo}
+            folderHasRepo={(id: string) => nodeHasRepo("project", id)}
             getFolderRepoStats={getFolderRepoStats}
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}

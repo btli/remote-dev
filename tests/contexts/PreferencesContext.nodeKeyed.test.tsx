@@ -52,7 +52,7 @@ describe("PreferencesContext node-keyed accessors", () => {
     vi.restoreAllMocks();
   });
 
-  it("getNodePreferences returns the same preferences as getFolderPreferences for a project id", async () => {
+  it("getNodePreferences returns the preferences for a project id", async () => {
     mockPreferencesFetch([
       { folderId: "proj-1", defaultWorkingDirectory: "/repos/app" },
     ]);
@@ -64,13 +64,12 @@ describe("PreferencesContext node-keyed accessors", () => {
     });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    const folderView = result.current.getFolderPreferences("proj-1");
     const nodeView = result.current.getNodePreferences("project", "proj-1");
     expect(nodeView).not.toBeNull();
-    expect(nodeView).toEqual(folderView);
+    expect(nodeView?.defaultWorkingDirectory).toBe("/repos/app");
   });
 
-  it("hasNodePreferences matches hasFolderPreferences", async () => {
+  it("hasNodePreferences reflects presence", async () => {
     mockPreferencesFetch([{ folderId: "proj-1" }]);
 
     const { result } = renderHook(() => usePreferencesContext(), {
@@ -87,7 +86,7 @@ describe("PreferencesContext node-keyed accessors", () => {
     expect(result.current.hasNodePreferences("group", "proj-1")).toBe(true); // ownerType ignored; id alone uniquely identifies
   });
 
-  it("nodeHasRepo walks the ancestry chain like folderHasRepo", async () => {
+  it("nodeHasRepo walks the ancestry chain", async () => {
     mockPreferencesFetch(
       [
         { folderId: "parent", githubRepoId: "repo-123" },

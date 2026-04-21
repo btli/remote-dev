@@ -28,10 +28,6 @@ import { resolveEnvironmentVariables } from "@/lib/environment";
 interface PreferencesContextValue {
   // State
   userSettings: UserSettings | null;
-  // TODO(remote-dev-w1ed): drop folder-keyed shim state; callers should use
-  // node-keyed preferences (owner='project') directly.
-  folderPreferences: Map<string, FolderPreferences>;
-  folders: Map<string, FolderWithAncestry>;
   activeProject: ActiveProject;
   loading: boolean;
   error: string | null;
@@ -42,25 +38,11 @@ interface PreferencesContextValue {
   // User settings actions
   updateUserSettings: (updates: UpdateUserSettingsInput) => Promise<void>;
 
-  // Folder preferences actions
-  getFolderPreferences: (folderId: string) => FolderPreferences | null;
-  updateFolderPreferences: (
-    folderId: string,
-    updates: UpdateFolderPreferencesInput
-  ) => Promise<void>;
-  deleteFolderPreferences: (folderId: string) => Promise<void>;
-  hasFolderPreferences: (folderId: string) => boolean;
-  folderHasRepo: (folderId: string) => boolean;
-
-  // Node-keyed accessors (project/group — owner-typed) ------------------------
-  // These mirror the folder-keyed helpers above but take an explicit owner
-  // discriminator. For ownerType='project', ownerId is the project's `id`
-  // (which is what the backend `node_preferences` table keys by). For
-  // ownerType='group', ownerId is the group's `id`. The current in-memory
-  // state is shared — `folderPreferences` is keyed by `ownerId` regardless
-  // of ownerType, and collisions are impossible since both ids are UUIDs.
-  // TODO(remote-dev-w1ed): once all callers are node-keyed, rename the
-  // underlying state map away from `folderPreferences`.
+  // Node-keyed preference actions. ownerType discriminates between a group
+  // and a project node in the project tree. The underlying DB state is
+  // keyed by (ownerType, ownerId) in the `node_preferences` table, but the
+  // in-memory state is keyed by `ownerId` alone — collisions are
+  // impossible since both project and group ids are UUIDs.
   getNodePreferences: (
     ownerType: "group" | "project",
     ownerId: string
@@ -70,6 +52,15 @@ interface PreferencesContextValue {
     ownerId: string
   ) => boolean;
   nodeHasRepo: (ownerType: "group" | "project", ownerId: string) => boolean;
+
+  // Update/delete currently only target projects (groups own preferences
+  // too, but mutation is driven by GroupPreferencesModal directly via the
+  // /api/node-preferences/group/:id route).
+  updateFolderPreferences: (
+    projectId: string,
+    updates: UpdateFolderPreferencesInput
+  ) => Promise<void>;
+  deleteFolderPreferences: (projectId: string) => Promise<void>;
 
   // Active project management
   setActiveFolder: (folderId: string | null, pinned?: boolean) => void;
@@ -91,9 +82,15 @@ interface PreferencesProviderProps {
 
 export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
-  const [folderPreferences, setFolderPreferences] = useState<
+  // Preferences keyed by ownerId (project or group UUID — unique across both
+  // tables). The original `folderPreferences` name referred to the legacy
+  // folders table; post-migration this stores rows from node_preferences.
+  const [nodePreferences, setNodePreferences] = useState<
     Map<string, FolderPreferences>
   >(new Map());
+  // Flattened ancestry map (groups + projects) used to resolve inherited
+  // preferences. Each entry stores the node's parent id so we can walk
+  // upward to the root.
   const [folders, setFolders] = useState<Map<string, FolderWithAncestry>>(
     new Map()
   );
@@ -129,14 +126,16 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       const userData = await userRes.json();
       setUserSettings(userData.userSettings);
 
-      // Set folder preferences map
-      const folderPrefsMap = new Map<string, FolderPreferences>();
+      // Set node preferences map. The API still serializes the payload
+      // under `folderPreferences` for back-compat; each row is keyed by
+      // the owner id (project or group UUID).
+      const nodePrefsMap = new Map<string, FolderPreferences>();
       if (userData.folderPreferences) {
         for (const pref of userData.folderPreferences) {
-          folderPrefsMap.set(pref.folderId, pref);
+          nodePrefsMap.set(pref.folderId, pref);
         }
       }
-      setFolderPreferences(folderPrefsMap);
+      setNodePreferences(nodePrefsMap);
 
       // Set folders map for hierarchy traversal
       const foldersMap = new Map<string, FolderWithAncestry>();
@@ -210,55 +209,30 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     [userSettings, refreshPreferences]
   );
 
-  const getFolderPreferencesById = useCallback(
-    (folderId: string): FolderPreferences | null => {
-      return folderPreferences.get(folderId) || null;
-    },
-    [folderPreferences]
-  );
-
-  const hasFolderPreferences = useCallback(
-    (folderId: string): boolean => {
-      return folderPreferences.has(folderId);
-    },
-    [folderPreferences]
-  );
-
-  /**
-   * Check if a folder has a repository associated (directly or inherited from ancestors)
-   */
-  const folderHasRepo = useCallback(
-    (folderId: string): boolean => {
-      // Build the ancestry chain and check if any folder has a repo
-      const chain = buildAncestryChain(folderId, folderPreferences, folders);
-      return chain.some((prefs) => prefs.githubRepoId || prefs.localRepoPath);
-    },
-    [folderPreferences, folders]
-  );
-
-  // Node-keyed wrappers. The owner discriminator is accepted for API
+  // Node-keyed accessors. The owner discriminator is accepted for API
   // symmetry and future-proofing but is currently ignored because `ownerId`
-  // alone uniquely identifies a row in the shared preferences map.
+  // alone uniquely identifies a row in the shared preferences map (project
+  // and group ids are both UUIDs and never collide).
   const getNodePreferences = useCallback(
     (_ownerType: "group" | "project", ownerId: string): FolderPreferences | null => {
-      return folderPreferences.get(ownerId) || null;
+      return nodePreferences.get(ownerId) || null;
     },
-    [folderPreferences]
+    [nodePreferences]
   );
 
   const hasNodePreferences = useCallback(
     (_ownerType: "group" | "project", ownerId: string): boolean => {
-      return folderPreferences.has(ownerId);
+      return nodePreferences.has(ownerId);
     },
-    [folderPreferences]
+    [nodePreferences]
   );
 
   const nodeHasRepo = useCallback(
     (_ownerType: "group" | "project", ownerId: string): boolean => {
-      const chain = buildAncestryChain(ownerId, folderPreferences, folders);
+      const chain = buildAncestryChain(ownerId, nodePreferences, folders);
       return chain.some((prefs) => prefs.githubRepoId || prefs.localRepoPath);
     },
-    [folderPreferences, folders]
+    [nodePreferences, folders]
   );
 
   const updateFolderPreferencesHandler = useCallback(
@@ -281,7 +255,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
         // consumers see the change without a full refresh. The node-
         // preferences PUT response is `{ ok: true }` and does not echo the
         // merged record, so we fold updates in manually.
-        setFolderPreferences((prev) => {
+        setNodePreferences((prev) => {
           const next = new Map(prev);
           const existing = next.get(folderId);
           const merged: FolderPreferences = {
@@ -310,7 +284,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           throw new Error("Failed to delete folder preferences");
         }
 
-        setFolderPreferences((prev) => {
+        setNodePreferences((prev) => {
           const next = new Map(prev);
           next.delete(folderId);
           return next;
@@ -334,12 +308,12 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       }
 
       // Build the ancestry chain using the shared utility
-      const chain = buildAncestryChain(folderId, folderPreferences, folders);
+      const chain = buildAncestryChain(folderId, nodePreferences, folders);
 
       // Use the shared resolution function
       return resolvePreferences(userSettings, chain);
     },
-    [userSettings, folderPreferences, folders]
+    [userSettings, nodePreferences, folders]
   );
 
   /**
@@ -351,13 +325,13 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       if (!folderId) return null;
 
       // Build the ancestry chain
-      const chain = buildAncestryChain(folderId, folderPreferences, folders);
+      const chain = buildAncestryChain(folderId, nodePreferences, folders);
 
       // Resolve environment variables through the chain
       const resolved = resolveEnvironmentVariables(null, chain);
       return resolved?.variables ?? null;
     },
-    [folderPreferences, folders]
+    [nodePreferences, folders]
   );
 
   const setActiveFolder = useCallback(
@@ -412,18 +386,13 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const contextValue = useMemo(
     () => ({
       userSettings,
-      folderPreferences,
-      folders,
       activeProject,
       loading,
       error,
       currentPreferences,
       updateUserSettings,
-      getFolderPreferences: getFolderPreferencesById,
       updateFolderPreferences: updateFolderPreferencesHandler,
       deleteFolderPreferences: deleteFolderPreferencesHandler,
-      hasFolderPreferences,
-      folderHasRepo,
       getNodePreferences,
       hasNodePreferences,
       nodeHasRepo,
@@ -435,18 +404,13 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
     }),
     [
       userSettings,
-      folderPreferences,
-      folders,
       activeProject,
       loading,
       error,
       currentPreferences,
       updateUserSettings,
-      getFolderPreferencesById,
       updateFolderPreferencesHandler,
       deleteFolderPreferencesHandler,
-      hasFolderPreferences,
-      folderHasRepo,
       getNodePreferences,
       hasNodePreferences,
       nodeHasRepo,
