@@ -60,13 +60,13 @@ interface SidebarProps {
   width?: number;
   onWidthChange?: (width: number) => void;
   /**
-   * Predicates/stats still keyed by legacy folder id for back-compat with
-   * SessionManager's existing prop API. ProjectTreeSidebar itself is now
-   * node-keyed; these props are only consumed by the "New Worktree" header
-   * shortcut and the FilesSection below.
+   * Predicates/stats on the currently-active project. Kept with the
+   * legacy "folder" prop name for now since the shared FilesSection /
+   * FolderRepoStats consumers still speak that vocabulary; internally
+   * the callbacks receive a project id.
    */
-  folderHasRepo: (folderId: string) => boolean;
-  getFolderRepoStats: (folderId: string) => FolderRepoStats | null;
+  folderHasRepo: (projectId: string) => boolean;
+  getFolderRepoStats: (projectId: string) => FolderRepoStats | null;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
@@ -78,15 +78,14 @@ interface SidebarProps {
   onNewAgent: () => void;
   /**
    * Project-level handlers forwarded to ProjectTreeSidebar. Each receives
-   * the project's `id` (the folderId prop name is retained for now —
-   * see commit rename in remote-dev-w1ed stage 2).
+   * the project's `id`.
    */
-  onProjectSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
-  onProjectNewSession: (folderId: string) => void;
-  onProjectNewAgent: (folderId: string) => void;
-  onProjectResumeClaudeSession: (folderId: string) => void;
-  onProjectAdvancedSession: (folderId: string) => void;
-  onProjectNewWorktree: (folderId: string) => void;
+  onProjectSettings: (projectId: string, projectName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
+  onProjectNewSession: (projectId: string) => void;
+  onProjectNewAgent: (projectId: string) => void;
+  onProjectResumeClaudeSession: (projectId: string) => void;
+  onProjectAdvancedSession: (projectId: string) => void;
+  onProjectNewWorktree: (projectId: string) => void;
   trashCount: number;
   onTrashOpen: () => void;
   onSessionSchedule?: (sessionId: string) => void;
