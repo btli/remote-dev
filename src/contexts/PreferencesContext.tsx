@@ -18,7 +18,6 @@ import type {
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
 } from "@/types/preferences";
-import type { PortValidationResult } from "@/types/environment";
 import {
   resolvePreferences,
   buildAncestryChain,
@@ -48,7 +47,7 @@ interface PreferencesContextValue {
   updateFolderPreferences: (
     folderId: string,
     updates: UpdateFolderPreferencesInput
-  ) => Promise<PortValidationResult | undefined>;
+  ) => Promise<void>;
   deleteFolderPreferences: (folderId: string) => Promise<void>;
   hasFolderPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
@@ -263,9 +262,12 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   );
 
   const updateFolderPreferencesHandler = useCallback(
-    async (folderId: string, updates: UpdateFolderPreferencesInput): Promise<PortValidationResult | undefined> => {
+    async (folderId: string, updates: UpdateFolderPreferencesInput): Promise<void> => {
       try {
-        const response = await fetch(`/api/preferences/folders/${folderId}`, {
+        // Route through the node-keyed preferences API. The legacy
+        // /api/preferences/folders/:id route no longer exists; all state is
+        // keyed on project id post-migration.
+        const response = await fetch(`/api/node-preferences/project/${folderId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updates),
@@ -275,18 +277,20 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
           throw new Error("Failed to update folder preferences");
         }
 
-        const result = await response.json();
-        // Extract portValidation from response (rest is the preferences)
-        const { portValidation, ...preferences } = result;
-
+        // Optimistically merge the applied updates into the local map so
+        // consumers see the change without a full refresh. The node-
+        // preferences PUT response is `{ ok: true }` and does not echo the
+        // merged record, so we fold updates in manually.
         setFolderPreferences((prev) => {
           const next = new Map(prev);
-          next.set(folderId, preferences);
+          const existing = next.get(folderId);
+          const merged: FolderPreferences = {
+            ...(existing ?? { folderId }),
+            ...updates,
+          } as FolderPreferences;
+          next.set(folderId, merged);
           return next;
         });
-
-        // Return port validation for UI to display warnings
-        return portValidation as PortValidationResult | undefined;
       } catch (error) {
         console.error("Error updating folder preferences:", error);
         throw error;
@@ -298,7 +302,7 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
   const deleteFolderPreferencesHandler = useCallback(
     async (folderId: string) => {
       try {
-        const response = await fetch(`/api/preferences/folders/${folderId}`, {
+        const response = await fetch(`/api/node-preferences/project/${folderId}`, {
           method: "DELETE",
         });
 
