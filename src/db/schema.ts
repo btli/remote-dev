@@ -1663,6 +1663,10 @@ export const projectGroups = sqliteTable(
     name: text("name").notNull(),
     collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
+    // Transitional bridge column from the pre-refactor `folders` table. All
+    // new rows are written with `null`; the column + unique index are
+    // retained through v<NEXT> for back-compat and dropped in the
+    // follow-up tracked by bd remote-dev-lylj.
     legacyFolderId: text("legacy_folder_id"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
@@ -1674,6 +1678,9 @@ export const projectGroups = sqliteTable(
   (t) => [
     index("project_group_user_idx").on(t.userId),
     index("project_group_parent_idx").on(t.parentGroupId),
+    // Unique-per-user bridge index. NULL != NULL under SQLite unique
+    // semantics, so the constraint only enforces uniqueness for
+    // already-migrated rows. Drop in bd remote-dev-lylj.
     uniqueIndex("project_group_legacy_user_idx").on(t.userId, t.legacyFolderId),
   ]
 );
@@ -1694,6 +1701,10 @@ export const projects = sqliteTable(
     isAutoCreated: integer("is_auto_created", { mode: "boolean" })
       .notNull()
       .default(false),
+    // Transitional bridge column from the pre-refactor `folders` table. All
+    // new rows are written with `null`; the column + unique index are
+    // retained through v<NEXT> for back-compat and dropped in the
+    // follow-up tracked by bd remote-dev-lylj.
     legacyFolderId: text("legacy_folder_id"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
@@ -1705,6 +1716,9 @@ export const projects = sqliteTable(
   (t) => [
     index("project_user_idx").on(t.userId),
     index("project_group_idx").on(t.groupId),
+    // Unique-per-user bridge index. NULL != NULL under SQLite unique
+    // semantics, so the constraint only enforces uniqueness for
+    // already-migrated rows. Drop in bd remote-dev-lylj.
     uniqueIndex("project_legacy_user_idx").on(t.userId, t.legacyFolderId),
   ]
 );
