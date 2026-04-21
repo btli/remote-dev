@@ -40,7 +40,7 @@ export interface ActiveNode {
   type: NodeType;
 }
 
-interface ProjectTreeContextValue {
+export interface ProjectTreeContextValue {
   groups: GroupNode[];
   projects: ProjectNode[];
   isLoading: boolean;
@@ -52,11 +52,21 @@ interface ProjectTreeContextValue {
     projects: ProjectNode[];
   };
   createGroup(input: { name: string; parentGroupId: string | null }): Promise<GroupNode>;
-  updateGroup(input: { id: string; name?: string; collapsed?: boolean }): Promise<void>;
+  updateGroup(input: {
+    id: string;
+    name?: string;
+    collapsed?: boolean;
+    sortOrder?: number;
+  }): Promise<void>;
   deleteGroup(id: string, force?: boolean): Promise<void>;
   moveGroup(input: { id: string; newParentGroupId: string | null }): Promise<void>;
   createProject(input: { groupId: string; name: string }): Promise<ProjectNode>;
-  updateProject(input: { id: string; name?: string; collapsed?: boolean }): Promise<void>;
+  updateProject(input: {
+    id: string;
+    name?: string;
+    collapsed?: boolean;
+    sortOrder?: number;
+  }): Promise<void>;
   deleteProject(id: string): Promise<void>;
   moveProject(input: { id: string; newGroupId: string }): Promise<void>;
   setActiveNode(node: ActiveNode): Promise<void>;
