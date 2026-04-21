@@ -28,7 +28,6 @@ interface ContentProps {
   hasActiveSecrets: boolean;
   hasLinkedRepo: boolean;
   hasWorkingDirectory: boolean;
-  legacyFolderAvailable: boolean;
   onNewTerminal: () => void;
   onNewAgent: () => void;
   onResume: () => void;
@@ -53,7 +52,6 @@ export function ProjectContextMenuContent({
   hasActiveSecrets,
   hasLinkedRepo,
   hasWorkingDirectory,
-  legacyFolderAvailable,
   onNewTerminal,
   onNewAgent,
   onResume,
@@ -117,7 +115,7 @@ export function ProjectContextMenuContent({
           <span className="ml-auto text-[10px] text-primary">Linked</span>
         )}
       </button>
-      {hasWorkingDirectory && legacyFolderAvailable && (
+      {hasWorkingDirectory && (
         <button role="menuitem" onClick={onOpenFolderInOS}>
           <ExternalLink className="mr-2 h-4 w-4" /> Open Folder
         </button>
@@ -157,7 +155,6 @@ export function ProjectContextMenu({
   hasActiveSecrets,
   hasLinkedRepo,
   hasWorkingDirectory,
-  legacyFolderAvailable,
   onNewTerminal,
   onNewAgent,
   onResume,
@@ -218,7 +215,7 @@ export function ProjectContextMenu({
             <span className="ml-auto text-[10px] text-primary">Linked</span>
           )}
         </ContextMenuItem>
-        {hasWorkingDirectory && legacyFolderAvailable && (
+        {hasWorkingDirectory && (
           <ContextMenuItem onSelect={onOpenFolderInOS}>
             <ExternalLink className="mr-2 h-4 w-4" /> Open Folder
           </ContextMenuItem>

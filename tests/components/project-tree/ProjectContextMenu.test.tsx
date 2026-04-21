@@ -10,7 +10,6 @@ const baseProject: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 0,
   collapsed: false,
-  legacyFolderId: "folder1",
 };
 
 function setup(
@@ -35,7 +34,6 @@ function setup(
     hasActiveSecrets: false,
     hasLinkedRepo: false,
     hasWorkingDirectory: false,
-    legacyFolderAvailable: true,
     ...handlers,
   };
   const utils = render(<ProjectContextMenuContent {...props} {...override} />);
@@ -88,13 +86,13 @@ describe("ProjectContextMenuContent", () => {
     expect(screen.getByText("Linked")).toBeInTheDocument();
   });
 
-  it("shows Open Folder only when hasWorkingDirectory AND legacyFolderAvailable", () => {
+  it("shows Open Folder when hasWorkingDirectory is true", () => {
     setup({ hasWorkingDirectory: true });
     expect(screen.getByText("Open Folder")).toBeInTheDocument();
   });
 
-  it("hides Open Folder when hasWorkingDirectory=true but legacyFolderAvailable=false", () => {
-    setup({ hasWorkingDirectory: true, legacyFolderAvailable: false });
+  it("hides Open Folder when hasWorkingDirectory is false", () => {
+    setup({ hasWorkingDirectory: false });
     expect(screen.queryByText("Open Folder")).not.toBeInTheDocument();
   });
 

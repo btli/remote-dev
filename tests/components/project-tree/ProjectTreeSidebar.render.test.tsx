@@ -52,7 +52,6 @@ const project: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 0,
   collapsed: false,
-  legacyFolderId: "f1",
 };
 
 /** No-op props for all new required handlers */
@@ -214,7 +213,6 @@ describe("delete confirmation gate", () => {
           hasActiveSecrets={false}
           hasLinkedRepo={false}
           hasWorkingDirectory={false}
-          legacyFolderAvailable={false}
           onNewTerminal={() => {}}
           onNewAgent={() => {}}
           onResume={() => {}}
@@ -243,7 +241,6 @@ describe("delete confirmation gate", () => {
           hasActiveSecrets={false}
           hasLinkedRepo={false}
           hasWorkingDirectory={false}
-          legacyFolderAvailable={false}
           onNewTerminal={() => {}}
           onNewAgent={() => {}}
           onResume={() => {}}

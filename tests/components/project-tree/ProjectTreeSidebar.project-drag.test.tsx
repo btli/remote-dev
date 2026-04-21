@@ -54,7 +54,6 @@ const pA: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 0,
   collapsed: true,
-  legacyFolderId: "f-pA",
 };
 const pB: ProjectNode = {
   id: "pB",
@@ -63,7 +62,6 @@ const pB: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 1,
   collapsed: true,
-  legacyFolderId: "f-pB",
 };
 const pC: ProjectNode = {
   id: "pC",
@@ -72,7 +70,6 @@ const pC: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 2,
   collapsed: true,
-  legacyFolderId: "f-pC",
 };
 const pD: ProjectNode = {
   id: "pD",
@@ -81,7 +78,6 @@ const pD: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 0,
   collapsed: true,
-  legacyFolderId: "f-pD",
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- partial ctx override intentionally loose for test fixture

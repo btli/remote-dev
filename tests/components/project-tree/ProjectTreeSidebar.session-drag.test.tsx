@@ -48,7 +48,6 @@ const p1: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 0,
   collapsed: false,
-  legacyFolderId: "f-p1",
 };
 const p2: ProjectNode = {
   id: "p2",
@@ -57,7 +56,6 @@ const p2: ProjectNode = {
   isAutoCreated: false,
   sortOrder: 1,
   collapsed: false,
-  legacyFolderId: "f-p2",
 };
 
 const treeOverride = {

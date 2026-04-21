@@ -613,9 +613,6 @@ export function ProjectTreeSidebar(props: Props) {
               hasActiveSecrets={hasActiveSecrets(p)}
               hasLinkedRepo={hasLinkedRepo(p)}
               hasWorkingDirectory={hasWorkingDirectory(p)}
-              // Project ids always exist; the legacyFolderAvailable gate is
-              // retained for prop compatibility and pinned to true.
-              legacyFolderAvailable={true}
               onNewTerminal={() => props.onProjectNewSession(p.id)}
               onNewAgent={() => props.onProjectNewAgent(p.id)}
               onResume={() => props.onProjectResumeClaudeSession(p.id)}

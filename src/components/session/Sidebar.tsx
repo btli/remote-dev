@@ -77,9 +77,9 @@ interface SidebarProps {
   onQuickNewSession: () => void;
   onNewAgent: () => void;
   /**
-   * Project-level handlers forwarded to ProjectTreeSidebar. All receive a
-   * legacyFolderId; the underlying DB record is the project's
-   * legacy_folder_id bridge column.
+   * Project-level handlers forwarded to ProjectTreeSidebar. Each receives
+   * the project's `id` (the folderId prop name is retained for now —
+   * see commit rename in remote-dev-w1ed stage 2).
    */
   onProjectSettings: (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onProjectNewSession: (folderId: string) => void;
