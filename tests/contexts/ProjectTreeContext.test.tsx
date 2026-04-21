@@ -4,20 +4,16 @@ import { ProjectTreeProvider, useProjectTree } from "@/contexts/ProjectTreeConte
 
 describe("ProjectTreeContext", () => {
   beforeEach(() => {
+    const makeResponse = (body: unknown, ok = true, status = 200) =>
+      Promise.resolve({ ok, status, json: () => Promise.resolve(body) } as Response);
     global.fetch = vi.fn((url: string | URL | Request) => {
       if (String(url).includes("/api/groups")) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ groups: [{ id: "g1", name: "Root", parentGroupId: null }] }),
-        }) as any;
+        return makeResponse({ groups: [{ id: "g1", name: "Root", parentGroupId: null }] });
       }
       if (String(url).includes("/api/projects")) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ projects: [{ id: "p1", name: "App", groupId: "g1" }] }),
-        }) as any;
+        return makeResponse({ projects: [{ id: "p1", name: "App", groupId: "g1" }] });
       }
-      return Promise.resolve({ ok: false, status: 404 }) as any;
+      return makeResponse({}, false, 404);
     }) as unknown as typeof fetch;
   });
 

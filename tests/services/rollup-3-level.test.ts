@@ -14,23 +14,32 @@ import { NodeRef } from "@/domain/value-objects/NodeRef";
  * Resolving from the root must return ALL descendant projects (p3, p4).
  * Uses mocked repositories to avoid the tmpdir SQLite harness.
  */
+import type { ProjectGroupRepository } from "@/application/ports/ProjectGroupRepository";
+import type { ProjectRepository } from "@/application/ports/ProjectRepository";
+
+type GroupRepoMock = Pick<ProjectGroupRepository, "listDescendantGroupIds">;
+type ProjectRepoMock = Pick<ProjectRepository, "listByGroupIds">;
+
 describe("ResolveProjectScope — 3-level rollup", () => {
   it("collects projects from every descendant group", async () => {
-    const groupRepo: any = {
+    const groupRepo: GroupRepoMock = {
       listDescendantGroupIds: vi.fn().mockResolvedValue([
         "g2",
         "g3",
         "g4",
       ]),
     };
-    const projectRepo: any = {
+    const projectRepo: ProjectRepoMock = {
       listByGroupIds: vi.fn().mockResolvedValue([
         { id: "p3", groupId: "g3" },
         { id: "p4", groupId: "g4" },
       ]),
     };
 
-    const uc = new ResolveProjectScope(groupRepo, projectRepo);
+    const uc = new ResolveProjectScope(
+      groupRepo as ProjectGroupRepository,
+      projectRepo as ProjectRepository
+    );
     const ids = await uc.execute(NodeRef.group("g1"));
 
     expect(ids.sort()).toEqual(["p3", "p4"]);
@@ -46,9 +55,12 @@ describe("ResolveProjectScope — 3-level rollup", () => {
   });
 
   it("returns a direct project id without walking groups", async () => {
-    const groupRepo: any = { listDescendantGroupIds: vi.fn() };
-    const projectRepo: any = { listByGroupIds: vi.fn() };
-    const uc = new ResolveProjectScope(groupRepo, projectRepo);
+    const groupRepo: GroupRepoMock = { listDescendantGroupIds: vi.fn() };
+    const projectRepo: ProjectRepoMock = { listByGroupIds: vi.fn() };
+    const uc = new ResolveProjectScope(
+      groupRepo as ProjectGroupRepository,
+      projectRepo as ProjectRepository
+    );
     const ids = await uc.execute(NodeRef.project("p-direct"));
     expect(ids).toEqual(["p-direct"]);
     expect(groupRepo.listDescendantGroupIds).not.toHaveBeenCalled();
