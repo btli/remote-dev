@@ -132,15 +132,15 @@ git add src/contexts/ProjectTreeContext.tsx tests/contexts/ProjectTreeContext.lo
 git commit -m "refactor(project-tree): export context for test injection"
 ```
 
-### Task A2: Add session lookups to ProjectTreeContext
+### Task A2: Pure session-lookup helpers (no context changes)
 
-Goal: expose session-per-project and recursive-session-count without importing `SessionContext` (to avoid circular deps we inject a `sessionAccessor` at provider mount time, and read it from context).
+Goal: expose session-per-project and recursive-session-count as pure helpers. No context modifications. `SessionContext` already depends on `useProjectTree()` (verified), so there is nothing to add to either context here — row components will call `useSessionContext()` directly in Phase B and pass results through these helpers.
 
 **Files:**
-- Modify: `src/contexts/ProjectTreeContext.tsx`
-- Modify: `src/contexts/SessionContext.tsx` — pass a registration callback upward, or expose `sessions` via a read-only getter subscribed to by `ProjectTreeProvider`
+- Create: `src/lib/project-tree-session-utils.ts`
+- Create: `tests/lib/project-tree-session-utils.test.ts`
 
-Approach: **Define a pure helper outside both contexts** so there's no import cycle:
+Approach: **pure module-scope helpers, type-only imports**:
 
 ```ts
 // src/lib/project-tree-session-utils.ts
@@ -367,11 +367,11 @@ import { Terminal, Sparkles, MessageCircle, GitBranch, Pin, X } from "lucide-rea
 import { SessionMetadataBar } from "@/components/session/SessionMetadataBar";
 import { SessionStatusBadge } from "@/components/session/SessionStatusBadge";
 import { SessionProgressBar } from "@/components/session/SessionProgressBar";
-import type { Session } from "@/types/session";
-import type { AgentActivityStatus } from "@/contexts/SessionContext";
+import type { TerminalSession } from "@/types/session";
+import type { AgentActivityStatus } from "@/types/terminal-type";
 
 interface Props {
-  session: Session;
+  session: TerminalSession;
   depth: number;
   isActive: boolean;
   isEditing: boolean;
@@ -478,7 +478,7 @@ git commit -m "feat(project-tree): add GroupRow with recursive counts + rolled s
 
 ProjectRow renders: briefcase icon (or folder+repo overlay), editable name, session count badge (non-recursive), repo stats badges (own stats), hover gear, child SessionRows.
 
-Note: projects have `collapsed` (in domain entity, via `NodePreferences` or project row prefs). The old folders exposed `collapsed` directly on the folder — in the new model, projects have their own `collapsed`. Check `ProjectTreeContext.ProjectNode` — if no `collapsed` field, add one via Task A-prequel or default-expand projects. **Decision:** projects always start expanded and persist `collapsed` via `updateProject({ collapsed })`.
+Note: projects have `collapsed`. Schema column, domain entity, and `PATCH /api/projects/:id` already support it. The only gap is the frontend `ProjectNode` TS type — Phase B4.5 (see `2026-04-21-projecttree-phase-b-component-split.md`) adds the field + mapper copy. No migration, no API work needed.
 
 Required tests:
 - Renders name
@@ -623,6 +623,8 @@ git commit -m "feat(project-tree): inline create for subgroup + project"
 
 ## Phase D — Context Menus
 
+> **⚠️ Read the folder-key shim preamble in `2026-04-21-projecttree-phase-d-context-menus.md` before executing any task in this phase.** All folder-scoped handlers (prefs, secrets, repo binding, open-in-OS) route via `project.legacyFolderId` during Phase D. Migration to node-aware keying is tracked as follow-up `remote-dev-oqol.4.1`.
+
 ### Task D1: GroupContextMenu
 
 **Files:**
@@ -667,7 +669,7 @@ Menu items (D5):
 7. Preferences — `onOpenPreferences` (Custom badge if `hasCustomPrefs`)
 8. Secrets — `onOpenSecrets` (Active badge if `hasActiveSecrets`)
 9. Repository — `onOpenRepository` (Linked badge if `hasRepo`)
-10. Open Folder — `onOpenFolder` (only if `defaultWorkingDirectory`)
+10. Open Folder — `onOpenFolder` (only if `defaultWorkingDirectory` AND `project.legacyFolderId != null`; POSTs `/api/folders/${legacyFolderId}/open`)
 11. View Issues — `onViewIssues` (only if `onViewIssues && hasRepo`)
 12. View PRs — `onViewPRs` (only if `onViewPRs && hasRepo`)
 13. Rename — `onStartEdit`
@@ -779,12 +781,7 @@ Tests:
 - Nest group a into group b → `moveGroup({ id: "a", newParentGroupId: "b" })`
 - Cycle: nest group b into descendant c — blocked with no API call
 
-- [ ] **Prereq: extend ProjectTreeContext with `reorderGroup(id, newSortOrder)` if not already present.** Inspect `PATCH /api/groups/:id` — does the route accept `sortOrder`? If yes, call it via `updateGroup({ id, sortOrder })` (add field to type). If no, add backend support in a follow-up bd issue and block E3.
-
-Verify with:
-```bash
-grep -n 'sortOrder' src/app/api/groups/*.ts
-```
+- [ ] **Prereq (already verified — see Phase E Task E0):** Backend accepts `sortOrder` on `PATCH /api/groups/:id` and `PATCH /api/projects/:id` (`src/app/api/groups/[id]/route.ts:9`, `src/app/api/projects/[id]/route.ts:9`). Gap is only the TypeScript signature on `updateGroup` / `updateProject`, addressed by Task E0.
 
 - [ ] **TDD loop + commit.**
 
@@ -809,11 +806,13 @@ git commit -m "feat(project-tree): drop indicators for drag feedback"
 
 ---
 
-## Phase F — Mobile
+## Phase F — Mobile-Enhanced (New Phone Features, Not Parity)
 
-### Task F1: Touch drag for groups/projects
+> **Scope note:** The legacy `handleFolderTouchStart/Move/End` code is itself gated on `!isMobile` (`Sidebar.tsx:1840`), i.e., it only runs on desktop/tablet touch, never on phones. Phase F adds phone-native behavior that didn't exist before. See `2026-04-21-projecttree-phase-f-mobile.md` for acceptance criteria.
 
-Port `handleFolderTouchStart/Move/End` (629-757). Gate desktop-class drag behind `!isMobile`; touch drag runs on long-press (400ms).
+### Task F1: Touch drag for groups/projects (new on phones)
+
+Port `handleFolderTouchStart/Move/End` (629-757) but gate the new hook on `isMobile` so it activates on phones (the inverse of the legacy gate). Long-press (400ms) starts the drag.
 
 Create `useTreeTouchDrag.ts` shared hook.
 
@@ -838,6 +837,8 @@ git commit -m "feat(project-tree): swipe-to-close on mobile session rows"
 ---
 
 ## Phase G — Cleanup
+
+> **HARD BLOCKER:** Phase G has a prerequisite `Task G0a` in `2026-04-21-projecttree-phase-g-cleanup.md` that must complete before G1. G0a backfills orphan sessions (`terminal_session.project_id IS NULL`) into auto-created "(Unassigned)" projects, adds `.notNull()` to the schema, and requires `projectId` on `POST /api/sessions`. Without this, deleting the legacy rendering block hides live sessions. See `remote-dev-oqol.7.1`.
 
 ### Task G1: Delete legacy folderTree from Sidebar.tsx
 
@@ -930,6 +931,10 @@ The plan is complete when all of the following hold:
    - [ ] `Sidebar.tsx` no longer imports or references `SessionFolder`, `FolderNode`, `folderTree`, legacy folder handlers
    - [ ] Old `ProjectTreeRow.tsx` is deleted
    - [ ] CHANGELOG updated
+5. **Data-integrity gate (G0a):**
+   - [ ] `terminal_session.project_id` is `NOT NULL` in schema
+   - [ ] `POST /api/sessions` + `SessionContext.createSession` require `projectId`
+   - [ ] `SELECT COUNT(*) FROM terminal_session WHERE project_id IS NULL AND status != 'closed'` returns `0`
 
 ---
 
@@ -959,4 +964,5 @@ The plan is complete when all of the following hold:
 - Move-to-group submenu for projects (to let users change a project's group via context menu)
 - Collapsed-sidebar tree rendering (currently only sessions render when sidebar collapses)
 - Whether projects should support nesting (product decision — current answer: no)
-- `sortOrder` API on groups (needed for group reorder drag — verify in Task E3 prereq)
+- `remote-dev-oqol.4.1` — retire the `legacyFolderId` shim: migrate `PreferencesContext.activeFolderId`, `SecretsContext`, and `/api/folders/:id/open` to node-aware keys
+- `remote-dev-oqol.7.1` — enforce `terminal_session.project_id NOT NULL` (Phase G hard blocker, covered by Task G0a)
