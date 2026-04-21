@@ -150,17 +150,22 @@ export async function setActiveFolder(
 // ============================================================================
 
 /**
- * Get folder preferences (returns null if no overrides set)
+ * Get node preferences (returns null if no overrides set).
+ *
+ * Defaults to `ownerType="project"` for backward compatibility with
+ * existing callers that pass a project id. Callers mutating group nodes
+ * MUST pass `ownerType="group"`; otherwise the lookup will miss and a
+ * subsequent insert will collide on the unique index.
  */
 export async function getFolderPreferences(
   folderId: string,
-  userId: string
+  userId: string,
+  ownerType: "group" | "project" = "project"
 ): Promise<FolderPreferences | null> {
-  // After the project refactor, folderId is treated as a project id.
   const prefs = await db.query.nodePreferences.findFirst({
     where: and(
       eq(nodePreferences.ownerId, folderId),
-      eq(nodePreferences.ownerType, "project"),
+      eq(nodePreferences.ownerType, ownerType),
       eq(nodePreferences.userId, userId)
     ),
   });
@@ -272,7 +277,7 @@ export async function updateFolderPreferences(
     dbUpdates.pinnedFiles = serializePinnedFiles(updates.pinnedFiles ?? null);
   }
 
-  const existing = await getFolderPreferences(folderId, userId);
+  const existing = await getFolderPreferences(folderId, userId, ownerType);
   let result: FolderPreferences;
 
   if (existing) {
