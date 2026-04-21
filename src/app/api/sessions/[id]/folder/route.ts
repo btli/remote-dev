@@ -9,6 +9,9 @@ import { and, eq } from "drizzle-orm";
  * PUT /api/sessions/:id/folder - Move a session to a project (legacy "folder").
  *
  * Accepts `folderId` (legacy) and/or `projectId`. Both map to terminal_session.projectId.
+ *
+ * Phase G0a: terminal_session.project_id is NOT NULL. We reject null/undefined
+ * values — sessions must always be scoped to a project.
  */
 export const PUT = withAuth(async (request, { userId, params }) => {
   const body = await request.json();
@@ -29,6 +32,14 @@ export const PUT = withAuth(async (request, { userId, params }) => {
 
   const resolvedProjectId =
     projectId !== undefined ? projectId : folderId ?? null;
+
+  if (!resolvedProjectId) {
+    return errorResponse(
+      "projectId is required (cannot unassign a session from a project)",
+      400,
+      "PROJECT_ID_REQUIRED"
+    );
+  }
 
   const result = await db
     .update(terminalSessions)

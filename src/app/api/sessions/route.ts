@@ -77,6 +77,17 @@ export const POST = withApiAuth(async (request, { userId }) => {
     if ("error" in result) return result.error;
     const body = result.data;
 
+    // Phase G0a: terminal_session.project_id is NOT NULL. Require a project.
+    // Accept legacy `folderId` as an alias during the rename migration window.
+    const resolvedProjectId = body.projectId ?? body.folderId;
+    if (!resolvedProjectId || typeof resolvedProjectId !== "string") {
+      return errorResponse(
+        "projectId is required to create a session",
+        400,
+        "PROJECT_ID_REQUIRED"
+      );
+    }
+
     // Validate worktreeType against allowlist
     if (body.worktreeType && !WORKTREE_TYPES.some((t) => t.id === body.worktreeType)) {
       return errorResponse("Invalid worktree type", 400, "INVALID_WORKTREE_TYPE");
@@ -99,7 +110,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       projectPath: validatedPath,
       githubRepoId: body.githubRepoId,
       worktreeBranch: body.worktreeBranch,
-      projectId: body.projectId ?? body.folderId,
+      projectId: resolvedProjectId,
       // Terminal type (shell, agent, file, browser, loop)
       terminalType: body.terminalType,
       filePath: validatedFilePath,

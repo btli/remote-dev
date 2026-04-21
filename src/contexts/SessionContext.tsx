@@ -15,7 +15,7 @@ import type {
   TerminalSession,
   SessionAction,
   SessionState,
-  CreateSessionInput,
+  ClientCreateSessionInput,
   SessionStatus,
 } from "@/types/session";
 import { checkAuthResponse } from "@/lib/api-client";
@@ -60,7 +60,7 @@ interface CloseSessionOptions {
 }
 
 interface SessionContextValue extends SessionState {
-  createSession: (input: CreateSessionInput) => Promise<TerminalSession>;
+  createSession: (input: ClientCreateSessionInput) => Promise<TerminalSession>;
   updateSession: (sessionId: string, updates: Partial<TerminalSession>) => Promise<void>;
   closeSession: (sessionId: string, options?: CloseSessionOptions) => Promise<void>;
   suspendSession: (sessionId: string) => Promise<void>;
@@ -200,7 +200,7 @@ export function SessionProvider({
 
   // Active project tree node is used to auto-scope new sessions when the
   // caller didn't pass an explicit projectId/folderId.
-  const { activeNode, getProject } = useProjectTree();
+  const { activeNode } = useProjectTree();
 
   // Agent activity statuses (client-side only, not persisted)
   const [agentActivityStatuses, setAgentActivityStatuses] = useState<Record<string, AgentActivityStatus>>({});
@@ -324,19 +324,24 @@ export function SessionProvider({
   }, [refreshSessions]);
 
   const createSession = useCallback(
-    async (input: CreateSessionInput): Promise<TerminalSession> => {
+    async (input: ClientCreateSessionInput): Promise<TerminalSession> => {
       // Derive projectId from the active node when the caller didn't pass one.
       // Group nodes can't own sessions directly, so we only fill in for project nodes.
-      let derivedProjectId: string | null | undefined = input.projectId;
-      if (derivedProjectId == null && activeNode?.type === "project") {
-        derivedProjectId = activeNode.id;
+      let resolvedProjectId: string | null | undefined = input.projectId;
+      if (!resolvedProjectId && activeNode?.type === "project") {
+        resolvedProjectId = activeNode.id;
       }
 
-      const payload: CreateSessionInput = {
+      // Phase G0a: projectId is required (terminal_session.project_id NOT NULL).
+      if (!resolvedProjectId) {
+        throw new Error(
+          "Cannot create a session without a project. Select or create a project first."
+        );
+      }
+
+      const payload = {
         ...input,
-        ...(derivedProjectId !== undefined
-          ? { projectId: derivedProjectId }
-          : {}),
+        projectId: resolvedProjectId,
       };
 
       const response = await fetch("/api/sessions", {
@@ -356,7 +361,7 @@ export function SessionProvider({
       dispatch({ type: "CREATE", session });
       return session;
     },
-    [activeNode, getProject]
+    [activeNode]
   );
 
   const updateSession = useCallback(

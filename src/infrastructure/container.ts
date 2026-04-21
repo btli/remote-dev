@@ -265,7 +265,11 @@ export const moveProjectUseCase = new MoveProject(
   projectRepository,
   projectGroupRepository
 );
-export const deleteProjectUseCase = new DeleteProject(projectRepository);
+export const deleteProjectUseCase = new DeleteProject(
+  projectRepository,
+  sessionRepository,
+  tmuxGateway
+);
 export const resolveProjectScopeUseCase = new ResolveProjectScope(
   projectGroupRepository,
   projectRepository

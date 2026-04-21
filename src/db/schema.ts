@@ -325,9 +325,11 @@ export const terminalSessions = sqliteTable(
     }),
     worktreeBranch: text("worktree_branch"),
     worktreeType: text("worktree_type").$type<WorktreeType>(),
-    projectId: text("project_id").references(() => projects.id, {
-      onDelete: "set null",
-    }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     // Agent profile for environment isolation
     profileId: text("profile_id").references(() => agentProfiles.id, {
       onDelete: "set null",

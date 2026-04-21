@@ -233,12 +233,14 @@ export async function trashWorktreeSession(
     originalProjectName,
   });
 
-  // Update session status to trashed
+  // Update session status to trashed. Phase G0a: terminal_session.project_id is
+  // NOT NULL, so we keep the original project_id on the trashed row — the
+  // worktreeTrashMetadata table independently records originalProjectId for
+  // restore purposes, and trashed sessions are filtered out of UI listings.
   await db
     .update(terminalSessions)
     .set({
       status: "trashed",
-      projectId: null, // Unlink from project
       updatedAt: new Date(),
     })
     .where(eq(terminalSessions.id, sessionId));
@@ -363,13 +365,15 @@ export async function restoreWorktreeFromTrash(
     }
   }
 
-  // Determine target project
-  // Priority: provided targetFolderId > original project (if still exists) > null
+  // Determine target project.
+  // Priority: provided targetFolderId > original project (if still exists) >
+  // current session.projectId (preserved across trash under Phase G0a).
+  // terminal_session.project_id is NOT NULL so we must always resolve to a
+  // concrete project id.
   let projectId: string | null = null;
-  if (targetFolderId !== undefined) {
+  if (targetFolderId !== undefined && targetFolderId !== null) {
     projectId = targetFolderId;
   } else if (metadata.originalProjectId) {
-    // Check if original project still exists and belongs to this user
     const originalProject = await db.query.projects.findFirst({
       where: and(
         eq(projects.id, metadata.originalProjectId),
@@ -379,6 +383,16 @@ export async function restoreWorktreeFromTrash(
     if (originalProject) {
       projectId = metadata.originalProjectId;
     }
+  }
+  if (!projectId) {
+    projectId = session.projectId;
+  }
+  if (!projectId) {
+    throw new WorktreeTrashServiceError(
+      "Unable to resolve target project for restore (project NOT NULL constraint)",
+      "PROJECT_ID_REQUIRED",
+      trashItem.resourceId
+    );
   }
 
   // Update session back to active and delete trash records

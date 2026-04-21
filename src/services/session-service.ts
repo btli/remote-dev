@@ -125,6 +125,15 @@ export async function createSession(
   userId: string,
   input: CreateSessionInput
 ): Promise<TerminalSession> {
+  // Phase G0a: terminal_session.project_id is NOT NULL. Reject upfront with a
+  // clear error instead of letting the DB insert fail with an opaque FK message.
+  if (!input.projectId) {
+    throw new SessionServiceError(
+      "projectId is required to create a session",
+      "PROJECT_ID_REQUIRED"
+    );
+  }
+
   const sessionId = crypto.randomUUID();
   const tmuxSessionName = TmuxService.generateSessionName(sessionId);
 
@@ -523,7 +532,7 @@ export async function createSession(
         githubRepoId: input.githubRepoId ?? null,
         worktreeBranch: branchName ?? null,
         worktreeType: input.worktreeType ?? null,
-        projectId: input.projectId ?? null,
+        projectId: input.projectId,
         profileId: input.profileId ?? null,
         parentSessionId: input.parentSessionId ?? null,
         terminalType,

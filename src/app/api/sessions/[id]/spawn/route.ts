@@ -39,11 +39,23 @@ export const POST = withApiAuth(async (request, { userId, params }) => {
 
     const name = body.name || `${parent.name}-child`;
 
+    // Phase G0a: projectId is required. Fall back through body/legacy/parent
+    // but error out explicitly if none is resolvable.
+    const resolvedProjectId =
+      body.projectId ?? body.folderId ?? parent.projectId ?? undefined;
+    if (!resolvedProjectId) {
+      return errorResponse(
+        "projectId is required to spawn a child session",
+        400,
+        "PROJECT_ID_REQUIRED"
+      );
+    }
+
     const input: CreateSessionInput = {
       name,
       terminalType: body.terminalType || parent.terminalType || "agent",
       agentProvider: (body.agentProvider || parent.agentProvider || "claude") as CreateSessionInput["agentProvider"],
-      projectId: body.projectId ?? body.folderId ?? parent.projectId ?? undefined,
+      projectId: resolvedProjectId,
       projectPath: body.workingDirectory || parent.projectPath || undefined,
       profileId: body.profileId || parent.profileId || undefined,
       parentSessionId: parentId,
