@@ -55,6 +55,7 @@ describe("ProjectTreeSidebar", () => {
         onSessionClick={() => {}}
         onSessionClose={() => {}}
         onSessionStartEdit={() => {}}
+        onSessionRename={() => {}}
       />,
       {
         tree: {

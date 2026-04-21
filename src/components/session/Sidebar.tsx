@@ -1738,6 +1738,7 @@ export function Sidebar({
                     onSessionClick={onSessionClick}
                     onSessionClose={(sid) => onSessionClose(sid)}
                     onSessionStartEdit={() => {}}
+                    onSessionRename={onSessionRename}
                   />
                 </div>
               )}

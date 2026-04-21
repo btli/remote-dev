@@ -27,6 +27,7 @@ interface Props {
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string) => void;
   onSessionStartEdit: (sessionId: string) => void;
+  onSessionRename: (sessionId: string, newName: string) => void;
 }
 
 export function ProjectTreeSidebar(props: Props) {
@@ -69,13 +70,21 @@ export function ProjectTreeSidebar(props: Props) {
           session={s}
           depth={depth}
           isActive={s.id === activeSessionId}
-          isEditing={false}
+          isEditing={editingNode?.id === s.id && editingNode?.type === "session"}
           hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
           agentStatus={s.terminalType === "agent" ? getAgentActivityStatus(s.id) : null}
           scheduleCount={0}
           onClick={() => props.onSessionClick(s.id)}
           onClose={() => props.onSessionClose(s.id)}
-          onStartEdit={() => props.onSessionStartEdit(s.id)}
+          onStartEdit={() => {
+            props.onSessionStartEdit(s.id);
+            setEditingNode({ id: s.id, type: "session" });
+          }}
+          onSaveEdit={(name) => {
+            props.onSessionRename(s.id, name);
+            setEditingNode(null);
+          }}
+          onCancelEdit={() => setEditingNode(null)}
         />
       </TreeConnector>
     ));

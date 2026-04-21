@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { Terminal, Sparkles, GitBranch, MessageCircle, Pin, X, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -11,12 +12,15 @@ export interface SessionRowProps {
   depth: number;
   isActive: boolean;
   isEditing: boolean;
+  editValue?: string;
   hasUnread: boolean;
   agentStatus: AgentActivityStatus | null;
   scheduleCount: number;
   onClick: () => void;
   onClose: () => void;
   onStartEdit: () => void;
+  onSaveEdit?: (value: string) => void;
+  onCancelEdit?: () => void;
 }
 
 export function SessionRow({
@@ -24,13 +28,34 @@ export function SessionRow({
   depth,
   isActive,
   isEditing,
+  editValue,
   hasUnread,
   agentStatus,
   scheduleCount,
   onClick,
   onClose,
   onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
 }: SessionRowProps) {
+  const [local, setLocal] = useState(editValue ?? session.name);
+  const committedRef = useRef(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset input value when editing starts
+      setLocal(editValue ?? session.name);
+      committedRef.current = false;
+    }
+  }, [isEditing, editValue, session.name]);
+
+  const commit = (value: string) => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== session.name) onSaveEdit?.(trimmed);
+    else onCancelEdit?.();
+  };
   const iconColor = getSessionIconColor(
     session,
     isActive,
@@ -62,6 +87,7 @@ export function SessionRow({
       aria-label={session.name}
       onClick={onClick}
       onKeyDown={(e) => {
+        if (isEditing) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onClick();
@@ -83,18 +109,39 @@ export function SessionRow({
       {/* Session name */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1">
-          <span
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              onStartEdit();
-            }}
-            className={cn(
-              "block truncate text-sm",
-              isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
-            )}
-          >
-            {session.name}
-          </span>
+          {isEditing ? (
+            <input
+              autoFocus
+              value={local}
+              onChange={(e) => setLocal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commit(local);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  committedRef.current = true;
+                  onCancelEdit?.();
+                }
+              }}
+              onBlur={() => commit(local)}
+              onClick={(e) => e.stopPropagation()}
+              className="block w-full bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          ) : (
+            <span
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                onStartEdit();
+              }}
+              className={cn(
+                "block truncate text-sm",
+                isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+              )}
+            >
+              {session.name}
+            </span>
+          )}
           {/* Unread notification dot */}
           {hasUnread && (
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
