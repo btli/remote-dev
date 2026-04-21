@@ -32,14 +32,6 @@ import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
 import { ProjectTreeSidebar } from "./ProjectTreeSidebar";
 
-export interface SessionFolder {
-  id: string;
-  parentId: string | null;
-  name: string;
-  collapsed: boolean;
-  sortOrder: number;
-}
-
 // Sidebar width constraints
 const MIN_SIDEBAR_WIDTH = 180;
 const MAX_SIDEBAR_WIDTH = 400;
