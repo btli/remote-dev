@@ -1739,6 +1739,25 @@ export function Sidebar({
                     onSessionClose={(sid) => onSessionClose(sid)}
                     onSessionStartEdit={() => {}}
                     onSessionRename={onSessionRename}
+                    folderHasPreferences={folderHasPreferences}
+                    onProjectNewSession={onFolderNewSession}
+                    onProjectNewAgent={onFolderNewAgent}
+                    onProjectResumeClaudeSession={onFolderResumeClaudeSession}
+                    onProjectAdvancedSession={onFolderAdvancedSession}
+                    onProjectNewWorktree={onFolderNewWorktree}
+                    onProjectOpenSecrets={(fid) => {
+                      setSecretsModalFolderId(fid);
+                      setSecretsModalOpen(true);
+                    }}
+                    onProjectOpenRepository={(fid, name) =>
+                      onFolderSettings(fid, name, "repository")
+                    }
+                    onProjectOpenFolderInOS={handleOpenFolder}
+                    onProjectViewIssues={onViewIssues}
+                    onProjectViewPRs={onViewPRs}
+                    onSessionTogglePin={onSessionTogglePin}
+                    onSessionMove={onSessionMove}
+                    onSessionSchedule={onSessionSchedule}
                   />
                 </div>
               )}
