@@ -37,3 +37,51 @@ export function recursiveSessionCount(
   );
   return directCount + descendantCount;
 }
+
+export interface RepoStats {
+  prCount: number;
+  issueCount: number;
+  hasChanges: boolean;
+}
+
+export function rolledUpRepoStats(
+  groups: GroupNode[],
+  projects: ProjectNode[],
+  getProjectStats: (projectId: string) => RepoStats | null,
+  node:
+    | { type: "project"; id: string }
+    | { type: "group"; id: string; collapsed: boolean }
+): RepoStats | null {
+  if (node.type === "project") return getProjectStats(node.id);
+  if (!node.collapsed) return null;
+  const descendantProjectIds = collectDescendantProjectIds(groups, projects, node.id);
+  const acc: RepoStats = { prCount: 0, issueCount: 0, hasChanges: false };
+  for (const pid of descendantProjectIds) {
+    const s = getProjectStats(pid);
+    if (!s) continue;
+    acc.prCount += s.prCount;
+    acc.issueCount += s.issueCount;
+    acc.hasChanges = acc.hasChanges || s.hasChanges;
+  }
+  if (acc.prCount === 0 && acc.issueCount === 0 && !acc.hasChanges) return null;
+  return acc;
+}
+
+function collectDescendantProjectIds(
+  groups: GroupNode[],
+  projects: ProjectNode[],
+  rootGroupId: string
+): string[] {
+  const seen = new Set<string>([rootGroupId]);
+  const queue = [rootGroupId];
+  while (queue.length) {
+    const gid = queue.shift()!;
+    for (const child of groups) {
+      if (child.parentGroupId === gid && !seen.has(child.id)) {
+        seen.add(child.id);
+        queue.push(child.id);
+      }
+    }
+  }
+  return projects.filter((p) => seen.has(p.groupId)).map((p) => p.id);
+}
