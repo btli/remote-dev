@@ -27,6 +27,7 @@ import {
 import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
@@ -60,9 +61,10 @@ interface SidebarProps {
   onWidthChange?: (width: number) => void;
   /**
    * Predicates/stats still keyed by legacy folder id for back-compat with
-   * ProjectTreeSidebar's current prop API. They resolve per-project.
+   * SessionManager's existing prop API. ProjectTreeSidebar itself is now
+   * node-keyed; these props are only consumed by the "New Worktree" header
+   * shortcut and the FilesSection below.
    */
-  folderHasPreferences: (folderId: string) => boolean;
   folderHasRepo: (folderId: string) => boolean;
   getFolderRepoStats: (folderId: string) => FolderRepoStats | null;
   onSessionClick: (sessionId: string) => void;
@@ -114,7 +116,6 @@ export function Sidebar({
   onCollapsedChange,
   width = DEFAULT_SIDEBAR_WIDTH,
   onWidthChange,
-  folderHasPreferences,
   folderHasRepo,
   getFolderRepoStats,
   onSessionClick,
@@ -147,11 +148,14 @@ export function Sidebar({
   const resizeStartXRef = useRef<number>(0);
   const resizeStartWidthRef = useRef<number>(0);
 
-  // Secrets modal state
+  // Secrets modal state. `secretsModalProjectId` holds the target project's
+  // id (SecretsConfigModal's internal prop is still named `initialFolderId`
+  // for historical reasons; a rename is deferred to Stage 2).
   const [secretsModalOpen, setSecretsModalOpen] = useState(false);
-  const [secretsModalFolderId, setSecretsModalFolderId] = useState<string | null>(null);
+  const [secretsModalProjectId, setSecretsModalProjectId] = useState<string | null>(null);
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
+  const { getNodePreferences } = usePreferencesContext();
 
   // Resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -196,17 +200,31 @@ export function Sidebar({
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
 
-  const handleOpenFolder = useCallback(async (folderId: string) => {
-    try {
-      const res = await fetch(`/api/folders/${folderId}/open`, { method: "POST" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        console.error("Failed to open folder:", data?.error || res.statusText);
+  // Opens the project's default working directory in the OS file manager.
+  // The `projectId` arg is the project's `id` (post remote-dev-oqol.4.1);
+  // we look up the working directory via node-keyed preferences.
+  const handleOpenFolder = useCallback(
+    async (projectId: string) => {
+      const prefs = getNodePreferences("project", projectId);
+      const cwd = prefs?.defaultWorkingDirectory;
+      if (!cwd) {
+        console.error("Failed to open folder: no working directory set for project", projectId);
+        return;
       }
-    } catch (err) {
-      console.error("Failed to open folder:", err);
-    }
-  }, []);
+      try {
+        // TODO(remote-dev-w1ed Stage 2): the /api/folders/:id/open route was
+        // removed; replace with a node-scoped endpoint or a direct open call.
+        const res = await fetch(`/api/folders/${projectId}/open`, { method: "POST" });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          console.error("Failed to open folder:", data?.error || res.statusText);
+        }
+      } catch (err) {
+        console.error("Failed to open folder:", err);
+      }
+    },
+    [getNodePreferences],
+  );
 
 
   return (
@@ -372,8 +390,8 @@ export function Sidebar({
                   onProjectResumeClaudeSession={onProjectResumeClaudeSession}
                   onProjectAdvancedSession={onProjectAdvancedSession}
                   onProjectNewWorktree={onProjectNewWorktree}
-                  onProjectOpenSecrets={(fid) => {
-                    setSecretsModalFolderId(fid);
+                  onProjectOpenSecrets={(projectId) => {
+                    setSecretsModalProjectId(projectId);
                     setSecretsModalOpen(true);
                   }}
                   onProjectOpenRepository={(fid, name) =>
@@ -480,14 +498,16 @@ export function Sidebar({
     </div>
     </TooltipProvider>
 
-      {/* Secrets configuration modal */}
+      {/* Secrets configuration modal. `initialFolderId` is a legacy prop
+          name on the modal itself — the value we pass is the project's id,
+          which is what the backend secrets tables key on. */}
       <SecretsConfigModal
         open={secretsModalOpen}
         onClose={() => {
           setSecretsModalOpen(false);
-          setSecretsModalFolderId(null);
+          setSecretsModalProjectId(null);
         }}
-        initialFolderId={secretsModalFolderId}
+        initialFolderId={secretsModalProjectId}
       />
     </>
   );

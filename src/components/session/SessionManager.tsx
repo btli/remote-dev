@@ -1448,7 +1448,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             }}
             width={sidebarWidth}
             onWidthChange={setSidebarWidth}
-            folderHasPreferences={hasFolderPreferences}
             folderHasRepo={folderHasRepo}
             getFolderRepoStats={getFolderRepoStats}
             onSessionClick={handleSessionClick}
