@@ -9,6 +9,7 @@ const baseProject: ProjectNode = {
   groupId: "g1",
   isAutoCreated: false,
   sortOrder: 0,
+  collapsed: false,
 };
 
 const baseProps = {

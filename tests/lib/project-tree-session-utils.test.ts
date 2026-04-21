@@ -17,8 +17,8 @@ const groups = [
   { id: "g2", parentGroupId: "g1", name: "g2", collapsed: false, sortOrder: 0 },
 ];
 const projects = [
-  { id: "p1", groupId: "g1", name: "p1", isAutoCreated: false, sortOrder: 0 },
-  { id: "p2", groupId: "g2", name: "p2", isAutoCreated: false, sortOrder: 0 },
+  { id: "p1", groupId: "g1", name: "p1", isAutoCreated: false, sortOrder: 0, collapsed: false },
+  { id: "p2", groupId: "g2", name: "p2", isAutoCreated: false, sortOrder: 0, collapsed: false },
 ];
 
 describe("sessionsForProject", () => {
@@ -56,8 +56,8 @@ describe("rolledUpRepoStats", () => {
     { id: "g2", parentGroupId: "g1", name: "g2", collapsed: false, sortOrder: 0 },
   ];
   const projects = [
-    { id: "p1", groupId: "g1", name: "p1", isAutoCreated: false, sortOrder: 0 },
-    { id: "p2", groupId: "g2", name: "p2", isAutoCreated: false, sortOrder: 0 },
+    { id: "p1", groupId: "g1", name: "p1", isAutoCreated: false, sortOrder: 0, collapsed: false },
+    { id: "p2", groupId: "g2", name: "p2", isAutoCreated: false, sortOrder: 0, collapsed: false },
   ];
 
   it("returns the project's own stats for project nodes", () => {
