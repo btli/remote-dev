@@ -19,6 +19,7 @@ import {
   type DropIndicator,
 } from "./project-tree/useTreeDragDrop";
 import { useTreeTouchDrag } from "./project-tree/useTreeTouchDrag";
+import { useSwipeToClose } from "./project-tree/useSwipeToClose";
 import { useMobile } from "@/hooks/useMobile";
 import {
   recursiveSessionCount,
@@ -368,6 +369,14 @@ export function ProjectTreeSidebar(props: Props) {
     },
   });
 
+  // Phase F2: mobile swipe-to-close on session rows. Like touch drag, the hook
+  // is a no-op on desktop.
+  const swipe = useSwipeToClose({
+    enabled: isMobile,
+    onClose: (sid) => props.onSessionClose(sid),
+    canSwipe: () => true,
+  });
+
   if (tree.isLoading) {
     return <div className="p-3 text-xs text-muted-foreground">Loading projects…</div>;
   }
@@ -407,8 +416,16 @@ export function ProjectTreeSidebar(props: Props) {
               hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
               agentStatus={s.terminalType === "agent" ? getAgentActivityStatus(s.id) : null}
               scheduleCount={0}
+              dragTranslateStyle={swipe.getRowStyle(s.id)}
+              swipeRevealed={swipe.swipedSessionId === s.id}
+              onTouchStart={(e) => swipe.handleTouchStart(e, s.id)}
+              onTouchMove={swipe.handleTouchMove}
+              onTouchEnd={swipe.handleTouchEnd}
               onClick={() => props.onSessionClick(s.id)}
-              onClose={() => props.onSessionClose(s.id)}
+              onClose={() => {
+                props.onSessionClose(s.id);
+                swipe.clearSwipe();
+              }}
               onStartEdit={() => {
                 props.onSessionStartEdit(s.id);
                 setEditingNode({ id: s.id, type: "session" });

@@ -33,6 +33,15 @@ export interface SessionRowProps {
   // Drop indicator styling (Phase E5). When non-null, renders either a
   // before/after bar or overrides the row background/border for nest.
   dropIndicator?: "before" | "after" | "nest" | null;
+  // Swipe-to-close (Phase F2). When supplied by the parent, the row renders
+  // inside a relative wrapper that exposes a reveal-button on the right when
+  // `swipeRevealed` is true. `dragTranslateStyle` drives the transient
+  // translate during an active drag.
+  dragTranslateStyle?: React.CSSProperties;
+  swipeRevealed?: boolean;
+  onTouchStart?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  onTouchMove?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  onTouchEnd?: (e: React.TouchEvent<HTMLDivElement>) => void;
 }
 
 export function SessionRow({
@@ -56,6 +65,11 @@ export function SessionRow({
   onDragLeave,
   onDrop,
   dropIndicator = null,
+  dragTranslateStyle,
+  swipeRevealed = false,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
 }: SessionRowProps) {
   const [local, setLocal] = useState(editValue ?? session.name);
   const committedRef = useRef(false);
@@ -99,42 +113,64 @@ export function SessionRow({
     return <Terminal className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
   }
 
+  const mergedInnerStyle: React.CSSProperties = {
+    marginLeft: depth > 0 ? `${depth * 12}px` : undefined,
+    ...(dragTranslateStyle ?? {}),
+  };
+
   return (
-    <div
-      role="button"
-      tabIndex={isEditing ? -1 : 0}
-      aria-label={session.name}
-      draggable={draggable ?? false}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (isEditing) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-      style={{ marginLeft: depth > 0 ? `${depth * 12}px` : undefined }}
-      className={cn(
-        "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
-        "transition-all duration-200",
-        isActive
-          ? "bg-primary/20 border border-border"
-          : "hover:bg-accent/50 border border-transparent",
-        isAgentAlertState && "ring-2 ring-yellow-400/70 animate-pulse",
-        dropIndicator === "nest" && "bg-primary/20 border border-primary/30"
+    <div className="relative">
+      {swipeRevealed && scheduleCount === 0 && (
+        <button
+          type="button"
+          aria-label="Close session"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="absolute right-0 top-0 bottom-0 w-[72px] bg-destructive text-destructive-foreground flex items-center justify-center rounded-md"
+        >
+          <X className="w-4 h-4" />
+        </button>
       )}
-    >
-      {dropIndicator === "before" && (
-        <div className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
-      )}
-      {dropIndicator === "after" && (
-        <div className="pointer-events-none absolute -bottom-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
-      )}
+      <div
+        role="button"
+        tabIndex={isEditing ? -1 : 0}
+        aria-label={session.name}
+        draggable={draggable ?? false}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onClick={onClick}
+        onKeyDown={(e) => {
+          if (isEditing) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        }}
+        style={mergedInnerStyle}
+        className={cn(
+          "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
+          "transition-all duration-200",
+          isActive
+            ? "bg-primary/20 border border-border"
+            : "hover:bg-accent/50 border border-transparent",
+          isAgentAlertState && "ring-2 ring-yellow-400/70 animate-pulse",
+          dropIndicator === "nest" && "bg-primary/20 border border-primary/30"
+        )}
+      >
+        {dropIndicator === "before" && (
+          <div className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
+        )}
+        {dropIndicator === "after" && (
+          <div className="pointer-events-none absolute -bottom-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
+        )}
       {/* Status icon */}
       {renderIcon()}
 
@@ -194,23 +230,24 @@ export function SessionRow({
         <Pin className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />
       )}
 
-      {/* Close button */}
-      {!isEditing && (
-        <button
-          aria-label="Close session"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          className={cn(
-            "p-0.5 rounded opacity-0 group-hover:opacity-100",
-            "hover:bg-accent transition-all duration-150",
-            "text-muted-foreground hover:text-destructive"
-          )}
-        >
-          <X className="w-3 h-3" />
-        </button>
-      )}
+        {/* Close button */}
+        {!isEditing && (
+          <button
+            aria-label="Close session"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className={cn(
+              "p-0.5 rounded opacity-0 group-hover:opacity-100",
+              "hover:bg-accent transition-all duration-150",
+              "text-muted-foreground hover:text-destructive"
+            )}
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
