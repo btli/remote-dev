@@ -150,15 +150,17 @@ export function PreferencesProvider({ children }: PreferencesProviderProps) {
       }
       setFolders(foldersMap);
 
-      // Set active project
-      const activeFolderId =
-        userData.userSettings?.pinnedFolderId ||
-        userData.userSettings?.activeFolderId;
-      if (activeFolderId && userData.activeFolder) {
+      // Set active project. After the project refactor, the API returns
+      // `pinnedNodeId` / `activeNodeId` on userSettings (replacing the
+      // legacy `pinnedFolderId` / `activeFolderId` fields).
+      const activeNodeId =
+        userData.userSettings?.pinnedNodeId ||
+        userData.userSettings?.activeNodeId;
+      if (activeNodeId && userData.activeFolder) {
         setActiveProject({
-          folderId: activeFolderId,
+          folderId: activeNodeId,
           folderName: userData.activeFolder.name,
-          isPinned: !!userData.userSettings?.pinnedFolderId,
+          isPinned: !!userData.userSettings?.pinnedNodeId,
         });
       } else {
         setActiveProject({
