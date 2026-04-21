@@ -16,11 +16,18 @@ vi.mock("@/contexts/SessionContext", () => ({
 }));
 
 vi.mock("@/contexts/PreferencesContext", () => ({
-  usePreferencesContext: () => ({ getFolderPreferences: () => null }),
+  usePreferencesContext: () => ({
+    getFolderPreferences: () => null,
+    getNodePreferences: () => null,
+    hasNodePreferences: () => false,
+  }),
 }));
 
 vi.mock("@/contexts/SecretsContext", () => ({
-  useSecretsContext: () => ({ folderConfigs: new Map() }),
+  useSecretsContext: () => ({
+    folderConfigs: new Map(),
+    nodeHasActiveSecrets: () => false,
+  }),
 }));
 
 vi.mock("@/contexts/NotificationContext", () => ({
@@ -74,7 +81,6 @@ function makeProps(overrides: Record<string, unknown> = {}) {
     onSessionClose: vi.fn(),
     onSessionStartEdit: vi.fn(),
     onSessionRename: vi.fn(),
-    folderHasPreferences: vi.fn(() => false),
     onProjectNewSession: vi.fn(),
     onProjectNewAgent: vi.fn(),
     onProjectResumeClaudeSession: vi.fn(),
@@ -254,7 +260,9 @@ describe("ProjectTreeSidebar session drag", () => {
 
     expect(onSessionReorder).not.toHaveBeenCalled();
     expect(onSessionMove).toHaveBeenCalledTimes(1);
-    expect(onSessionMove).toHaveBeenCalledWith("s1", "f-p2");
+    // Post remote-dev-oqol.4.1: session move target is the project's id,
+    // not its legacy folder id.
+    expect(onSessionMove).toHaveBeenCalledWith("s1", "p2");
   });
 
   it("does not reorder or move when dragging across pin partitions", () => {

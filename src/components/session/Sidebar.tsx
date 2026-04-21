@@ -367,7 +367,6 @@ export function Sidebar({
                   onSessionClose={(sid) => onSessionClose(sid)}
                   onSessionStartEdit={() => {}}
                   onSessionRename={onSessionRename}
-                  folderHasPreferences={folderHasPreferences}
                   onProjectNewSession={onProjectNewSession}
                   onProjectNewAgent={onProjectNewAgent}
                   onProjectResumeClaudeSession={onProjectResumeClaudeSession}

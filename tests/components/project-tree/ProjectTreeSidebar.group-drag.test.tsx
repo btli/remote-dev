@@ -14,11 +14,18 @@ vi.mock("@/contexts/SessionContext", () => ({
 }));
 
 vi.mock("@/contexts/PreferencesContext", () => ({
-  usePreferencesContext: () => ({ getFolderPreferences: () => null }),
+  usePreferencesContext: () => ({
+    getFolderPreferences: () => null,
+    getNodePreferences: () => null,
+    hasNodePreferences: () => false,
+  }),
 }));
 
 vi.mock("@/contexts/SecretsContext", () => ({
-  useSecretsContext: () => ({ folderConfigs: new Map() }),
+  useSecretsContext: () => ({
+    folderConfigs: new Map(),
+    nodeHasActiveSecrets: () => false,
+  }),
 }));
 
 vi.mock("@/contexts/NotificationContext", () => ({
@@ -97,7 +104,6 @@ function makeProps(overrides: Record<string, unknown> = {}) {
     onSessionClose: vi.fn(),
     onSessionStartEdit: vi.fn(),
     onSessionRename: vi.fn(),
-    folderHasPreferences: vi.fn(() => false),
     onProjectNewSession: vi.fn(),
     onProjectNewAgent: vi.fn(),
     onProjectResumeClaudeSession: vi.fn(),

@@ -41,24 +41,26 @@ interface Props {
   onSessionClose: (sessionId: string) => void;
   onSessionStartEdit: (sessionId: string) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
-  // Project handlers (take legacyFolderId)
-  onProjectNewSession: (legacyFolderId: string) => void;
-  onProjectNewAgent: (legacyFolderId: string) => void;
-  onProjectResumeClaudeSession: (legacyFolderId: string) => void;
-  onProjectAdvancedSession: (legacyFolderId: string) => void;
-  onProjectNewWorktree: (legacyFolderId: string) => void;
-  onProjectOpenSecrets: (legacyFolderId: string) => void;
-  onProjectOpenRepository: (legacyFolderId: string, name: string) => void;
-  onProjectOpenFolderInOS: (legacyFolderId: string) => void;
-  onProjectViewIssues?: (legacyFolderId: string) => void;
-  onProjectViewPRs?: (legacyFolderId: string) => void;
-  // Session handlers
+  // Project handlers — all take `projectId` (i.e. the project's `id`, which
+  // is what node-scoped backend APIs key on). This replaces the former
+  // `legacyFolderId` contract; see remote-dev-oqol.4.1 / remote-dev-w1ed.
+  onProjectNewSession: (projectId: string) => void;
+  onProjectNewAgent: (projectId: string) => void;
+  onProjectResumeClaudeSession: (projectId: string) => void;
+  onProjectAdvancedSession: (projectId: string) => void;
+  onProjectNewWorktree: (projectId: string) => void;
+  onProjectOpenSecrets: (projectId: string) => void;
+  onProjectOpenRepository: (projectId: string, name: string) => void;
+  onProjectOpenFolderInOS: (projectId: string) => void;
+  onProjectViewIssues?: (projectId: string) => void;
+  onProjectViewPRs?: (projectId: string) => void;
+  // Session handlers. `onSessionMove` takes the target project's `id` (or
+  // null for the legacy no-project slot). The backend
+  // /api/sessions/:id/folder route accepts `projectId` as of Phase G0a.
   onSessionTogglePin: (sessionId: string) => void;
-  onSessionMove: (sessionId: string, folderId: string | null) => void;
+  onSessionMove: (sessionId: string, projectId: string | null) => void;
   onSessionReorder: (sessionIds: string[]) => void;
   onSessionSchedule?: (sessionId: string) => void;
-  // Predicates (folder-keyed)
-  folderHasPreferences: (folderId: string) => boolean;
 }
 
 export function ProjectTreeSidebar(props: Props) {
@@ -66,8 +68,8 @@ export function ProjectTreeSidebar(props: Props) {
   const [editingNode, setEditingNode] = useState<{ id: string; type: "group" | "project" | "session" } | null>(null);
   const [creating, setCreating] = useState<{ parentGroupId: string | null; kind: "group" | "project" } | null>(null);
   const { sessions, activeSessionId, getAgentActivityStatus } = useSessionContext();
-  const { getFolderPreferences } = usePreferencesContext();
-  const { folderConfigs } = useSecretsContext();
+  const { getNodePreferences, hasNodePreferences } = usePreferencesContext();
+  const { nodeHasActiveSecrets } = useSecretsContext();
   const { notifications } = useNotificationContext();
 
   const activeSessions = useMemo(
@@ -123,21 +125,20 @@ export function ProjectTreeSidebar(props: Props) {
     [tree.projects]
   );
 
-  // Helper: get legacyFolderId for a project node
-  const fid = (p: ProjectNode): string | null => p.legacyFolderId ?? null;
-
-  // Predicates (folder-keyed via legacyFolderId shim)
+  // Predicates — node-keyed by project.id. The backend
+  // `node_preferences` / `project_secrets_config` tables are both keyed by
+  // project.id, so we no longer need the legacy_folder_id indirection.
   const hasCustomPrefs = (p: ProjectNode): boolean =>
-    fid(p) != null && props.folderHasPreferences(fid(p)!);
+    hasNodePreferences("project", p.id);
 
   const hasLinkedRepo = (p: ProjectNode): boolean =>
-    fid(p) != null && getFolderPreferences(fid(p)!)?.githubRepoId != null;
+    getNodePreferences("project", p.id)?.githubRepoId != null;
 
   const hasActiveSecrets = (p: ProjectNode): boolean =>
-    fid(p) != null && (folderConfigs.get(fid(p)!)?.enabled ?? false);
+    nodeHasActiveSecrets("project", p.id);
 
   const hasWorkingDirectory = (p: ProjectNode): boolean =>
-    fid(p) != null && getFolderPreferences(fid(p)!)?.defaultWorkingDirectory != null;
+    getNodePreferences("project", p.id)?.defaultWorkingDirectory != null;
 
   // Delete helpers with confirmation prompts
   const handleDeleteGroup = (g: GroupNode) => {
@@ -183,11 +184,9 @@ export function ProjectTreeSidebar(props: Props) {
 
     if (draggedFolderId !== targetFolderId) {
       // Cross-project drop on a session row — treat as cross-project move.
-      const targetProject = targetFolderId
-        ? tree.projects.find((p) => p.id === targetFolderId)
-        : null;
-      const targetLegacyFolderId = targetProject?.legacyFolderId ?? null;
-      props.onSessionMove(drag.id, targetLegacyFolderId);
+      // `projectId` on a session is the destination key; pass it through
+      // directly (the target project's `id`).
+      props.onSessionMove(drag.id, targetFolderId);
       return;
     }
 
@@ -245,9 +244,7 @@ export function ProjectTreeSidebar(props: Props) {
     targetProject: ProjectNode,
   ) => {
     if (snap.drag.type !== "session") return;
-    const legacy = targetProject.legacyFolderId ?? null;
-    if (legacy == null) return; // cannot move into a project without a legacy folder id during the shim
-    props.onSessionMove(snap.drag.id, legacy);
+    props.onSessionMove(snap.drag.id, targetProject.id);
   };
 
   const handleProjectDropOnProject = (
@@ -396,12 +393,9 @@ export function ProjectTreeSidebar(props: Props) {
           onStartEdit={() => setEditingNode({ id: s.id, type: "session" })}
           onTogglePin={() => props.onSessionTogglePin(s.id)}
           onMove={(targetProjectId) => {
-            // onSessionMove takes a folderId, not projectId — resolve via legacyFolderId
-            const proj = targetProjectId
-              ? tree.projects.find((p) => p.id === targetProjectId)
-              : null;
-            const folderId = proj?.legacyFolderId ?? null;
-            props.onSessionMove(s.id, folderId);
+            // onSessionMove now takes the target project's `id` directly
+            // (post remote-dev-oqol.4.1).
+            props.onSessionMove(s.id, targetProjectId);
           }}
           onSchedule={props.onSessionSchedule ? () => props.onSessionSchedule!(s.id) : undefined}
           onClose={() => props.onSessionClose(s.id)}
@@ -490,7 +484,7 @@ export function ProjectTreeSidebar(props: Props) {
           >
             <GroupContextMenu
               group={g}
-              hasCustomPrefs={props.folderHasPreferences(g.id)}
+              hasCustomPrefs={hasNodePreferences("group", g.id)}
               onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
               onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
               onOpenPreferences={
@@ -619,28 +613,30 @@ export function ProjectTreeSidebar(props: Props) {
               hasActiveSecrets={hasActiveSecrets(p)}
               hasLinkedRepo={hasLinkedRepo(p)}
               hasWorkingDirectory={hasWorkingDirectory(p)}
-              legacyFolderAvailable={fid(p) != null}
-              onNewTerminal={() => { const f = fid(p); if (f) props.onProjectNewSession(f); }}
-              onNewAgent={() => { const f = fid(p); if (f) props.onProjectNewAgent(f); }}
-              onResume={() => { const f = fid(p); if (f) props.onProjectResumeClaudeSession(f); }}
-              onAdvanced={() => { const f = fid(p); if (f) props.onProjectAdvancedSession(f); }}
-              onNewWorktree={() => { const f = fid(p); if (f) props.onProjectNewWorktree(f); }}
+              // Project ids always exist; the legacyFolderAvailable gate is
+              // retained for prop compatibility and pinned to true.
+              legacyFolderAvailable={true}
+              onNewTerminal={() => props.onProjectNewSession(p.id)}
+              onNewAgent={() => props.onProjectNewAgent(p.id)}
+              onResume={() => props.onProjectResumeClaudeSession(p.id)}
+              onAdvanced={() => props.onProjectAdvancedSession(p.id)}
+              onNewWorktree={() => props.onProjectNewWorktree(p.id)}
               onOpenPreferences={
                 props.onOpenPreferences
                   ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
                   : () => {}
               }
-              onOpenSecrets={() => { const f = fid(p); if (f) props.onProjectOpenSecrets(f); }}
-              onOpenRepository={() => { const f = fid(p); if (f) props.onProjectOpenRepository(f, p.name); }}
-              onOpenFolderInOS={() => { const f = fid(p); if (f) props.onProjectOpenFolderInOS(f); }}
+              onOpenSecrets={() => props.onProjectOpenSecrets(p.id)}
+              onOpenRepository={() => props.onProjectOpenRepository(p.id, p.name)}
+              onOpenFolderInOS={() => props.onProjectOpenFolderInOS(p.id)}
               onViewIssues={
-                props.onProjectViewIssues && fid(p)
-                  ? () => props.onProjectViewIssues!(fid(p)!)
+                props.onProjectViewIssues
+                  ? () => props.onProjectViewIssues!(p.id)
                   : undefined
               }
               onViewPRs={
-                props.onProjectViewPRs && fid(p)
-                  ? () => props.onProjectViewPRs!(fid(p)!)
+                props.onProjectViewPRs
+                  ? () => props.onProjectViewPRs!(p.id)
                   : undefined
               }
               onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
@@ -790,7 +786,7 @@ export function ProjectTreeSidebar(props: Props) {
         >
           <GroupContextMenu
             group={g}
-            hasCustomPrefs={props.folderHasPreferences(g.id)}
+            hasCustomPrefs={hasNodePreferences("group", g.id)}
             onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
             onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
             onOpenPreferences={

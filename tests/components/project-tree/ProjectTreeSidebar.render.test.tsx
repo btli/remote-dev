@@ -20,12 +20,15 @@ vi.mock("@/contexts/SessionContext", () => ({
 vi.mock("@/contexts/PreferencesContext", () => ({
   usePreferencesContext: () => ({
     getFolderPreferences: () => null,
+    getNodePreferences: () => null,
+    hasNodePreferences: () => false,
   }),
 }));
 
 vi.mock("@/contexts/SecretsContext", () => ({
   useSecretsContext: () => ({
     folderConfigs: new Map(),
+    nodeHasActiveSecrets: () => false,
   }),
 }));
 
@@ -54,7 +57,6 @@ const project: ProjectNode = {
 
 /** No-op props for all new required handlers */
 const requiredHandlerProps = {
-  folderHasPreferences: vi.fn(() => false),
   onProjectNewSession: vi.fn(),
   onProjectNewAgent: vi.fn(),
   onProjectResumeClaudeSession: vi.fn(),
