@@ -128,6 +128,7 @@ export function ProjectTreeSidebar(props: Props) {
               project={p}
               depth={depth}
               isActive={tree.activeNode?.id === p.id && tree.activeNode?.type === "project"}
+              isEditing={editingNode?.id === p.id && editingNode?.type === "project"}
               collapsed={p.collapsed}
               sessionCount={sessionsForProject(activeSessions, p.id, { excludeFileSessions: true }).length}
               ownStats={props.getProjectRepoStats(p.id)}
@@ -143,6 +144,12 @@ export function ProjectTreeSidebar(props: Props) {
                   ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
                   : undefined
               }
+              onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
+              onSaveEdit={async (name) => {
+                await tree.updateProject({ id: p.id, name });
+                setEditingNode(null);
+              }}
+              onCancelEdit={() => setEditingNode(null)}
             >
               {!p.collapsed && renderSessions(p.id, depth + 1)}
             </ProjectRow>

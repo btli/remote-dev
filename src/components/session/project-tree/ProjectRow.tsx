@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -19,6 +19,7 @@ interface ProjectRowProps {
   depth: number;
   isActive: boolean;
   isEditing?: boolean;
+  editValue?: string;
   collapsed: boolean;
   sessionCount: number;
   ownStats: RepoStats | null;
@@ -28,6 +29,9 @@ interface ProjectRowProps {
   onSelect: () => void;
   onToggleCollapse: () => void;
   onOpenPreferences?: () => void;
+  onStartEdit?: () => void;
+  onSaveEdit?: (value: string) => void;
+  onCancelEdit?: () => void;
   children?: ReactNode;
 }
 
@@ -36,6 +40,7 @@ export function ProjectRow({
   depth,
   isActive,
   isEditing = false,
+  editValue,
   collapsed,
   sessionCount,
   ownStats,
@@ -43,9 +48,31 @@ export function ProjectRow({
   onSelect,
   onToggleCollapse,
   onOpenPreferences,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
   children,
 }: ProjectRowProps) {
   const isExpanded = !collapsed;
+
+  const [local, setLocal] = useState(editValue ?? project.name);
+  const committedRef = useRef(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset input value when editing session starts
+      setLocal(editValue ?? project.name);
+      committedRef.current = false;
+    }
+  }, [isEditing, editValue, project.name]);
+
+  const commit = (value: string) => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    const trimmed = value.trim();
+    if (trimmed && trimmed !== project.name) onSaveEdit?.(trimmed);
+    else onCancelEdit?.();
+  };
 
   return (
     <div className="space-y-0.5">
@@ -97,9 +124,36 @@ export function ProjectRow({
           </div>
 
           {/* Name */}
-          <span className="flex-1 text-sm truncate">
-            {project.name}
-          </span>
+          {isEditing ? (
+            <input
+              autoFocus
+              value={local}
+              onChange={(e) => setLocal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commit(local);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  committedRef.current = true;
+                  onCancelEdit?.();
+                }
+              }}
+              onBlur={() => commit(local)}
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          ) : (
+            <span
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                onStartEdit?.();
+              }}
+              className="truncate text-sm flex-1"
+            >
+              {project.name}
+            </span>
+          )}
 
           {/* Right-side badges */}
           {ownStats && (
