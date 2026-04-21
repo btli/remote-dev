@@ -30,6 +30,9 @@ export interface SessionRowProps {
   onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
+  // Drop indicator styling (Phase E5). When non-null, renders either a
+  // before/after bar or overrides the row background/border for nest.
+  dropIndicator?: "before" | "after" | "nest" | null;
 }
 
 export function SessionRow({
@@ -52,6 +55,7 @@ export function SessionRow({
   onDragOver,
   onDragLeave,
   onDrop,
+  dropIndicator = null,
 }: SessionRowProps) {
   const [local, setLocal] = useState(editValue ?? session.name);
   const committedRef = useRef(false);
@@ -121,9 +125,16 @@ export function SessionRow({
         isActive
           ? "bg-primary/20 border border-border"
           : "hover:bg-accent/50 border border-transparent",
-        isAgentAlertState && "ring-2 ring-yellow-400/70 animate-pulse"
+        isAgentAlertState && "ring-2 ring-yellow-400/70 animate-pulse",
+        dropIndicator === "nest" && "bg-primary/20 border border-primary/30"
       )}
     >
+      {dropIndicator === "before" && (
+        <div className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
+      )}
+      {dropIndicator === "after" && (
+        <div className="pointer-events-none absolute -bottom-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
+      )}
       {/* Status icon */}
       {renderIcon()}
 

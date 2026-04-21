@@ -42,6 +42,10 @@ export interface GroupRowProps {
   onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDragLeave?: (e: React.DragEvent<HTMLDivElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
+  // Drop indicator styling (Phase E5). When non-null, renders either a
+  // before/after bar above/below the row or overrides the row background/border
+  // for nest.
+  dropIndicator?: "before" | "after" | "nest" | null;
 }
 
 export function GroupRow({
@@ -67,6 +71,7 @@ export function GroupRow({
   onDragOver,
   onDragLeave,
   onDrop,
+  dropIndicator = null,
 }: GroupRowProps) {
   const isExpanded = !group.collapsed;
 
@@ -90,7 +95,13 @@ export function GroupRow({
   };
 
   return (
-    <div className="space-y-0.5">
+    <div className="relative space-y-0.5">
+      {dropIndicator === "before" && (
+        <div className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
+      )}
+      {dropIndicator === "after" && (
+        <div className="pointer-events-none absolute -bottom-0.5 left-2 right-2 h-0.5 bg-primary rounded-full" />
+      )}
       <div
         className="group"
         data-active={isActive ? "true" : undefined}
@@ -116,7 +127,8 @@ export function GroupRow({
           className={cn(
             "flex items-center gap-1.5 px-2 py-1 rounded-md",
             "hover:bg-accent/50 transition-all duration-150",
-            isActive && "bg-accent/50"
+            isActive && "bg-accent/50",
+            dropIndicator === "nest" && "bg-primary/20 border border-primary/30"
           )}
         >
           {/* Chevron toggle */}

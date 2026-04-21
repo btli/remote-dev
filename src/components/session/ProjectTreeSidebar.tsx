@@ -93,6 +93,17 @@ export function ProjectTreeSidebar(props: Props) {
     },
   });
 
+  const indicatorFor = (
+    type: "session" | "project" | "group",
+    id: string,
+  ): "before" | "after" | "nest" | null => {
+    const ind = dnd.indicator;
+    if (!ind) return null;
+    if (ind.targetType !== type) return null;
+    if (ind.targetId !== id) return null;
+    return ind.position;
+  };
+
   const sessionUnread = useMemo(() => {
     const m = new Map<string, number>();
     for (const n of notifications) {
@@ -356,6 +367,7 @@ export function ProjectTreeSidebar(props: Props) {
             <SessionRow
               session={s}
               depth={depth}
+              dropIndicator={indicatorFor("session", s.id)}
               isActive={s.id === activeSessionId}
               isEditing={editingNode?.id === s.id && editingNode?.type === "session"}
               hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
@@ -498,6 +510,7 @@ export function ProjectTreeSidebar(props: Props) {
                 <GroupRow
                   group={g}
                   depth={depth}
+                  dropIndicator={indicatorFor("group", g.id)}
                   isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
                   isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
                   sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
@@ -635,6 +648,7 @@ export function ProjectTreeSidebar(props: Props) {
                 <ProjectRow
                   project={p}
                   depth={depth}
+                  dropIndicator={indicatorFor("project", p.id)}
                   isActive={tree.activeNode?.id === p.id && tree.activeNode?.type === "project"}
                   isEditing={editingNode?.id === p.id && editingNode?.type === "project"}
                   collapsed={p.collapsed}
@@ -784,6 +798,7 @@ export function ProjectTreeSidebar(props: Props) {
               <GroupRow
                 group={g}
                 depth={0}
+                dropIndicator={indicatorFor("group", g.id)}
                 isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
                 isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
                 sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
