@@ -16,7 +16,7 @@ export class ProjectService {
 
   static async create(input: {
     userId: string;
-    groupId: string;
+    groupId: string | null;
     name: string;
     sortOrder?: number;
   }): Promise<Project> {
@@ -34,7 +34,7 @@ export class ProjectService {
 
   static async move(input: {
     id: string;
-    newGroupId: string;
+    newGroupId: string | null;
   }): Promise<void> {
     return container.useCases.moveProject.execute(input);
   }

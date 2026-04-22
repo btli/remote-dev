@@ -20,8 +20,9 @@ describe("Project", () => {
     expect(p.groupId).toBe("g1");
   });
 
-  it("rejects missing groupId", () => {
-    expect(() => Project.create({ ...base, groupId: "" })).toThrow();
+  it("accepts null groupId (root-level project)", () => {
+    const p = Project.create({ ...base, groupId: null });
+    expect(p.groupId).toBeNull();
   });
 
   it("rejects empty name", () => {
@@ -32,6 +33,13 @@ describe("Project", () => {
     const p = Project.create(base);
     const moved = p.moveTo("g2");
     expect(moved.groupId).toBe("g2");
+    expect(p.groupId).toBe("g1");
+  });
+
+  it("moveTo(null) moves project to tree root", () => {
+    const p = Project.create(base);
+    const moved = p.moveTo(null);
+    expect(moved.groupId).toBeNull();
     expect(p.groupId).toBe("g1");
   });
 

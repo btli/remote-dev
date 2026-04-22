@@ -4,7 +4,8 @@ import { ProjectHierarchyError } from "@/domain/errors/ProjectHierarchyError";
 
 export interface MoveProjectInput {
   id: string;
-  newGroupId: string;
+  // Null means move the project to the tree root.
+  newGroupId: string | null;
 }
 
 export class MoveProject {
@@ -16,18 +17,20 @@ export class MoveProject {
   async execute(input: MoveProjectInput): Promise<void> {
     const project = await this.projectRepo.findById(input.id);
     if (!project) throw new Error(`Project ${input.id} not found`);
-    const group = await this.groupRepo.findById(input.newGroupId);
-    if (!group) {
-      throw new ProjectHierarchyError(
-        `Group ${input.newGroupId} not found`,
-        "MISSING_GROUP"
-      );
-    }
-    if (group.userId !== project.userId) {
-      throw new ProjectHierarchyError(
-        "Cross-user move is forbidden",
-        "SCOPE_MISMATCH"
-      );
+    if (input.newGroupId !== null) {
+      const group = await this.groupRepo.findById(input.newGroupId);
+      if (!group) {
+        throw new ProjectHierarchyError(
+          `Group ${input.newGroupId} not found`,
+          "MISSING_GROUP"
+        );
+      }
+      if (group.userId !== project.userId) {
+        throw new ProjectHierarchyError(
+          "Cross-user move is forbidden",
+          "SCOPE_MISMATCH"
+        );
+      }
     }
     await this.projectRepo.save(project.moveTo(input.newGroupId));
   }
