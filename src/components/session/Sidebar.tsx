@@ -55,28 +55,26 @@ interface SidebarProps {
   sessions: TerminalSession[];
   activeSessionId: string | null;
   /**
-   * Legacy folder id of the currently-active project (used by the header
-   * "New Worktree" shortcut and the FilesSection). Renaming to
-   * `activeProjectFolderId` is deferred to the Phase G3 type cleanup.
+   * Project id of the currently-active node (used by the header "New
+   * Worktree" shortcut and the FilesSection).
    */
-  activeFolderId: string | null;
+  activeProjectId: string | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   width?: number;
   onWidthChange?: (width: number) => void;
   /**
-   * Predicates/stats on the currently-active project. Kept with the
-   * legacy "folder" prop name for now since the shared FilesSection /
-   * FolderRepoStats consumers still speak that vocabulary; internally
-   * the callbacks receive a project id.
+   * Predicates/stats on the currently-active project. The FilesSection /
+   * FolderRepoStats types still use the legacy "folder" vocabulary; the
+   * callbacks receive a project id.
    */
-  folderHasRepo: (projectId: string) => boolean;
+  projectHasRepo: (projectId: string) => boolean;
   getFolderRepoStats: (projectId: string) => FolderRepoStats | null;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
   onSessionTogglePin: (sessionId: string) => void;
-  onSessionMove: (sessionId: string, folderId: string | null) => void;
+  onSessionMove: (sessionId: string, projectId: string | null) => void;
   onSessionReorder: (sessionIds: string[]) => void;
   onNewSession: () => void;
   onQuickNewSession: () => void;
@@ -115,12 +113,12 @@ interface SidebarProps {
 export function Sidebar({
   sessions,
   activeSessionId,
-  activeFolderId,
+  activeProjectId,
   collapsed,
   onCollapsedChange,
   width = DEFAULT_SIDEBAR_WIDTH,
   onWidthChange,
-  folderHasRepo,
+  projectHasRepo,
   getFolderRepoStats,
   onSessionClick,
   onSessionClose,
@@ -360,11 +358,11 @@ export function Sidebar({
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
-                        if (activeFolderId && folderHasRepo(activeFolderId)) {
-                          onProjectNewWorktree(activeFolderId);
+                        if (activeProjectId && projectHasRepo(activeProjectId)) {
+                          onProjectNewWorktree(activeProjectId);
                         }
                       }}
-                      disabled={!activeFolderId || !folderHasRepo(activeFolderId)}
+                      disabled={!activeProjectId || !projectHasRepo(activeProjectId)}
                     >
                       <GitBranch className="w-3.5 h-3.5 mr-2" />
                       New Worktree
@@ -498,7 +496,7 @@ export function Sidebar({
       {/* Files Section - default + pinned files for active folder */}
       {getFolderPinnedFiles && onOpenPinnedFile && (
         <FilesSection
-          activeFolderId={activeFolderId}
+          activeFolderId={activeProjectId}
           collapsed={collapsed}
           getFolderPinnedFiles={getFolderPinnedFiles}
           onOpenFile={onOpenPinnedFile}

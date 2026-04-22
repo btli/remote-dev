@@ -68,8 +68,8 @@ export function ProfilesSection() {
     return profiles.find((p) => p.id === selectedProfileId) || null;
   }, [profiles, selectedProfileId]);
 
-  // Count linked folders per profile
-  const linkedFolderCounts = useMemo(() => {
+  // Count linked projects per profile
+  const linkedProjectCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const [, profileId] of folderProfileLinks) {
       counts[profileId] = (counts[profileId] || 0) + 1;
@@ -218,8 +218,8 @@ export function ProfilesSection() {
                       <ProfileCard
                         key={profile.id}
                         profile={profile}
-                        linkedFolderCount={
-                          linkedFolderCounts[profile.id] || 0
+                        linkedProjectCount={
+                          linkedProjectCounts[profile.id] || 0
                         }
                         isSelected={false}
                         onSelect={() => handleSelectProfile(profile.id)}
