@@ -212,6 +212,16 @@ export function GroupRow({
             </span>
           )}
 
+          {/* Changes indicator: pulses beside the name when any descendant
+              project has uncommitted changes. */}
+          {rolledStats?.hasChanges && !isEditing && (
+            <span
+              data-testid="row-stat-changes"
+              aria-label="Has uncommitted changes"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400 animate-pulse"
+            />
+          )}
+
           {/* Right-side stat cluster: four fixed-width slots aligned across rows.
               Empty slots still reserve width so numbers line up vertically. */}
           <div className="flex items-center gap-1 shrink-0 ml-auto">
@@ -235,14 +245,6 @@ export function GroupRow({
                   <CircleDot className="w-2.5 h-2.5" />
                   {rolledStats.issueCount}
                 </>
-              ) : null}
-            </span>
-            <span
-              data-testid="row-stat-changes"
-              className="flex items-center gap-0.5 justify-end min-w-[12px]"
-            >
-              {rolledStats?.hasChanges ? (
-                <span className="h-1.5 w-1.5 rounded-full bg-orange-400 animate-pulse" />
               ) : null}
             </span>
             <span

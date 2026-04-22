@@ -137,12 +137,24 @@ describe("GroupRow", () => {
     expect(container.querySelector(".animate-pulse.bg-orange-400")).toBeNull();
   });
 
-  it("always renders four right-anchored stat slots (pr/issue/changes/sessions)", () => {
+  it("always renders three right-anchored stat slots (pr/issue/sessions)", () => {
     render(<GroupRow {...baseProps} group={baseGroup} rolledStats={null} sessionCount={0} />);
     expect(screen.getByTestId("row-stat-pr")).toBeInTheDocument();
     expect(screen.getByTestId("row-stat-issue")).toBeInTheDocument();
-    expect(screen.getByTestId("row-stat-changes")).toBeInTheDocument();
     expect(screen.getByTestId("row-stat-sessions")).toBeInTheDocument();
+    // changes dot is rendered inline beside the name, not in the stat cluster
+    expect(screen.queryByTestId("row-stat-changes")).not.toBeInTheDocument();
+  });
+
+  it("renders the changes dot inline beside the name when hasChanges is true", () => {
+    render(
+      <GroupRow
+        {...baseProps}
+        group={baseGroup}
+        rolledStats={{ prCount: 0, issueCount: 0, hasChanges: true }}
+      />
+    );
+    expect(screen.getByTestId("row-stat-changes")).toBeInTheDocument();
   });
 
   it("populates the pr slot only when prCount > 0", () => {
