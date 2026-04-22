@@ -252,7 +252,9 @@ export function GroupRow({
             </span>
           </div>
 
-          {/* Temporary inline-create affordance (Phase D will replace with context menu) */}
+          {/* Hover-only action buttons. `hidden group-hover:flex` keeps them
+              out of the layout when not hovered, so the stat cluster above
+              stays right-anchored at a consistent X position across all rows. */}
           {onCreateSubgroup !== undefined && (
             <button
               type="button"
@@ -261,7 +263,7 @@ export function GroupRow({
                 e.stopPropagation();
                 onCreateSubgroup();
               }}
-              className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-foreground transition shrink-0"
+              className="hidden group-hover:flex items-center p-1 text-muted-foreground hover:text-foreground transition shrink-0"
             >
               <FolderPlus className="h-3 w-3" />
             </button>
@@ -274,7 +276,7 @@ export function GroupRow({
                 e.stopPropagation();
                 onCreateProject();
               }}
-              className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-foreground transition shrink-0"
+              className="hidden group-hover:flex items-center p-1 text-muted-foreground hover:text-foreground transition shrink-0"
             >
               <Plus className="h-3 w-3" />
             </button>
@@ -289,7 +291,7 @@ export function GroupRow({
                 e.stopPropagation();
                 onOpenPreferences();
               }}
-              className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-foreground transition shrink-0"
+              className="hidden group-hover:flex items-center p-1 text-muted-foreground hover:text-foreground transition shrink-0"
             >
               <Settings className="h-3 w-3" />
             </button>

@@ -248,7 +248,7 @@ export function SessionRow({
               onClose();
             }}
             className={cn(
-              "p-0.5 rounded opacity-0 group-hover:opacity-100",
+              "hidden group-hover:flex items-center p-0.5 rounded",
               "hover:bg-accent transition-all duration-150",
               "text-muted-foreground hover:text-destructive"
             )}
