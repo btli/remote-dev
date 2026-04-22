@@ -137,6 +137,40 @@ describe("GroupRow", () => {
     expect(container.querySelector(".animate-pulse.bg-orange-400")).toBeNull();
   });
 
+  it("always renders four right-anchored stat slots (pr/issue/changes/sessions)", () => {
+    render(<GroupRow {...baseProps} group={baseGroup} rolledStats={null} sessionCount={0} />);
+    expect(screen.getByTestId("row-stat-pr")).toBeInTheDocument();
+    expect(screen.getByTestId("row-stat-issue")).toBeInTheDocument();
+    expect(screen.getByTestId("row-stat-changes")).toBeInTheDocument();
+    expect(screen.getByTestId("row-stat-sessions")).toBeInTheDocument();
+  });
+
+  it("populates the pr slot only when prCount > 0", () => {
+    const { rerender } = render(
+      <GroupRow
+        {...baseProps}
+        group={baseGroup}
+        rolledStats={{ prCount: 0, issueCount: 0, hasChanges: false }}
+      />
+    );
+    expect(screen.getByTestId("row-stat-pr").textContent).toBe("");
+    rerender(
+      <GroupRow
+        {...baseProps}
+        group={baseGroup}
+        rolledStats={{ prCount: 4, issueCount: 0, hasChanges: false }}
+      />
+    );
+    expect(screen.getByTestId("row-stat-pr").textContent).toContain("4");
+  });
+
+  it("populates the session slot only when sessionCount > 0", () => {
+    const { rerender } = render(<GroupRow {...baseProps} group={baseGroup} sessionCount={0} />);
+    expect(screen.getByTestId("row-stat-sessions").textContent).toBe("");
+    rerender(<GroupRow {...baseProps} group={baseGroup} sessionCount={7} />);
+    expect(screen.getByTestId("row-stat-sessions").textContent).toContain("7");
+  });
+
   it("applies active styling when isActive is true", () => {
     const { container } = render(<GroupRow {...baseProps} group={baseGroup} isActive />);
     // At minimum an active class marker on the row container
