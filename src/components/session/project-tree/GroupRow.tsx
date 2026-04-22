@@ -11,6 +11,7 @@ import {
   CircleDot,
   Plus,
   Settings,
+  Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GroupNode } from "@/contexts/ProjectTreeContext";
@@ -246,9 +247,14 @@ export function GroupRow({
             </span>
             <span
               data-testid="row-stat-sessions"
-              className="flex items-center gap-0.5 justify-end text-[10px] text-muted-foreground min-w-[16px]"
+              className="flex items-center gap-0.5 justify-end text-[9px] text-muted-foreground min-w-[24px]"
             >
-              {sessionCount > 0 ? sessionCount : null}
+              {sessionCount > 0 ? (
+                <>
+                  <Terminal className="w-2.5 h-2.5" />
+                  {sessionCount}
+                </>
+              ) : null}
             </span>
           </div>
 
