@@ -239,6 +239,9 @@ export function Sidebar({
 
   // Empty the trash permanently. Used by the right-click affordance on the
   // footer Trash button; see remote-dev-mtv7.7.
+  //
+  // Calls DELETE /api/trash — NOT POST (which only purges items whose TTL
+  // already elapsed). See remote-dev-nmw4 for the regression this fixes.
   const handleEmptyTrashPermanently = useCallback(async () => {
     if (
       !window.confirm(
@@ -248,9 +251,16 @@ export function Sidebar({
       return;
     }
     try {
-      await fetch("/api/trash", { method: "POST" });
+      const res = await fetch("/api/trash", { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const detail = body?.error ? `: ${String(body.error)}` : "";
+        console.error("Failed to empty trash" + detail);
+        window.alert(`Failed to empty trash${detail}`);
+      }
     } catch (err) {
       console.error("Failed to empty trash:", err);
+      window.alert("Failed to empty trash");
     }
   }, []);
 
