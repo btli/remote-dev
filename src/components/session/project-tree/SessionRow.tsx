@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { getSessionIconColor } from "./sessionIconColor";
+import { SessionMetadataBar } from "../SessionMetadataBar";
 
 export interface SessionRowProps {
   session: TerminalSession;
@@ -42,6 +43,10 @@ export interface SessionRowProps {
   onTouchStart?: (e: React.TouchEvent<HTMLDivElement>) => void;
   onTouchMove?: (e: React.TouchEvent<HTMLDivElement>) => void;
   onTouchEnd?: (e: React.TouchEvent<HTMLDivElement>) => void;
+  // Whether the outer sidebar is rendered in collapsed mode. Passed through to
+  // SessionMetadataBar, which hides itself when true. Defaults to false since
+  // the new project tree does not yet expose a collapsed mode.
+  isCollapsed?: boolean;
 }
 
 export function SessionRow({
@@ -70,6 +75,7 @@ export function SessionRow({
   onTouchStart,
   onTouchMove,
   onTouchEnd,
+  isCollapsed = false,
 }: SessionRowProps) {
   const [local, setLocal] = useState(editValue ?? session.name);
   const committedRef = useRef(false);
@@ -174,8 +180,8 @@ export function SessionRow({
       {/* Status icon */}
       {renderIcon()}
 
-      {/* Session name */}
-      <div className="flex-1 min-w-0">
+      {/* Session name + metadata bar (stacked column) */}
+      <div className="flex-1 min-w-0 flex flex-col">
         <div className="flex items-center gap-1">
           {isEditing ? (
             <input
@@ -215,6 +221,9 @@ export function SessionRow({
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
           )}
         </div>
+        {!isEditing && (
+          <SessionMetadataBar session={session} isCollapsed={isCollapsed} />
+        )}
       </div>
 
       {/* Schedule count indicator */}
