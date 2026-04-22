@@ -902,9 +902,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
       });
 
-      const MIN_WIDTH = 100;
-      const MIN_HEIGHT = 80;
-
       let settleSeq = 0;
       const handleResize = () => {
         const mySeq = ++settleSeq;
@@ -951,8 +948,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           // Only trigger resize when dimensions are above minimum threshold
           // and actually change to new values
           if (
-            width >= MIN_WIDTH &&
-            height >= MIN_HEIGHT &&
+            width >= SETTLE_MIN_WIDTH &&
+            height >= SETTLE_MIN_HEIGHT &&
             (width !== lastWidth || height !== lastHeight)
           ) {
             lastWidth = width;
