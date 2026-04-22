@@ -153,24 +153,24 @@ export function Sidebar({
   // Queued "create at root" action fired from the collapsed-mode dropdown.
   // We can't call projectTreeRef directly while collapsed because
   // <ProjectTreeSidebar/> isn't mounted — stash the intent and fire it once
-  // the tree remounts after expanding.
-  const [pendingRootCreate, setPendingRootCreate] = useState<
-    "group" | "project" | null
-  >(null);
+  // the tree remounts after expanding. Ref (not state) so the effect can
+  // read-and-clear without triggering a cascading render.
+  const pendingRootCreateRef = useRef<"group" | "project" | null>(null);
   useEffect(() => {
-    if (!pendingRootCreate) return;
     if (collapsed) return;
+    const pending = pendingRootCreateRef.current;
+    if (!pending) return;
     const handle = projectTreeRef.current;
     if (!handle) return;
-    if (pendingRootCreate === "group") handle.startCreateGroupAtRoot();
+    pendingRootCreateRef.current = null;
+    if (pending === "group") handle.startCreateGroupAtRoot();
     else handle.startCreateProjectAtRoot();
-    setPendingRootCreate(null);
-  }, [pendingRootCreate, collapsed]);
+  }, [collapsed]);
 
   const handleNewGroup = useCallback(() => {
     if (collapsed) {
+      pendingRootCreateRef.current = "group";
       onCollapsedChange(false);
-      setPendingRootCreate("group");
     } else {
       projectTreeRef.current?.startCreateGroupAtRoot();
     }
@@ -178,8 +178,8 @@ export function Sidebar({
 
   const handleNewProject = useCallback(() => {
     if (collapsed) {
+      pendingRootCreateRef.current = "project";
       onCollapsedChange(false);
-      setPendingRootCreate("project");
     } else {
       projectTreeRef.current?.startCreateProjectAtRoot();
     }
