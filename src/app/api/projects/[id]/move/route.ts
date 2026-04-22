@@ -3,7 +3,8 @@ import { z } from "zod";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { ProjectService } from "@/services/project-service";
 
-const schema = z.object({ newGroupId: z.string().min(1) });
+// Null newGroupId means move the project to the tree root.
+const schema = z.object({ newGroupId: z.string().min(1).nullable() });
 
 export const POST = withApiAuth(async (req, { params }) => {
   const result = await parseJsonBody<unknown>(req);

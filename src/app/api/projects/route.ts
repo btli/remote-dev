@@ -4,7 +4,9 @@ import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { ProjectService } from "@/services/project-service";
 
 const createSchema = z.object({
-  groupId: z.string().min(1),
+  // Null means create the project at the tree root. When provided as a
+  // string, it must be non-empty (same as before).
+  groupId: z.string().min(1).nullable(),
   name: z.string().min(1),
   sortOrder: z.number().int().optional(),
 });
