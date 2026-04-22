@@ -251,10 +251,6 @@ export const restartAgentUseCase = new RestartAgentUseCase(
 export const createProjectGroupUseCase = new CreateProjectGroup(projectGroupRepository);
 export const updateProjectGroupUseCase = new UpdateProjectGroup(projectGroupRepository);
 export const moveProjectGroupUseCase = new MoveProjectGroup(projectGroupRepository);
-export const deleteProjectGroupUseCase = new DeleteProjectGroup(
-  projectGroupRepository,
-  projectRepository
-);
 
 export const createProjectUseCase = new CreateProject(
   projectRepository,
@@ -269,6 +265,14 @@ export const deleteProjectUseCase = new DeleteProject(
   projectRepository,
   sessionRepository,
   tmuxGateway
+);
+
+// DeleteProjectGroup depends on DeleteProject to cascade descendant projects
+// (remote-dev-nmw4). Must be wired AFTER deleteProjectUseCase.
+export const deleteProjectGroupUseCase = new DeleteProjectGroup(
+  projectGroupRepository,
+  projectRepository,
+  deleteProjectUseCase
 );
 export const resolveProjectScopeUseCase = new ResolveProjectScope(
   projectGroupRepository,
