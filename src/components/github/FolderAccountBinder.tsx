@@ -1,10 +1,13 @@
 "use client";
 
 /**
- * FolderAccountBinder - Select which GitHub account a folder should use.
+ * FolderAccountBinder - Select which GitHub account a project should use.
  *
- * Shown inside FolderPreferencesModal. Allows the user to bind
- * a specific GitHub account to a folder, or use the default.
+ * Shown inside the project preferences modal. Allows the user to bind
+ * a specific GitHub account to a project, or use the default. The
+ * `folderId` prop name is retained for now since the backing bindings
+ * map on the context is still exposed under the legacy name, but the
+ * value is a project id post-refactor.
  */
 
 import { useState } from "react";
@@ -22,29 +25,29 @@ import { useGitHubAccounts } from "@/contexts/GitHubAccountContext";
 const USE_DEFAULT = "__default__";
 
 interface FolderAccountBinderProps {
-  folderId: string;
+  projectId: string;
 }
 
-export function FolderAccountBinder({ folderId }: FolderAccountBinderProps) {
+export function FolderAccountBinder({ projectId }: FolderAccountBinderProps) {
   const {
     accounts,
     folderBindings,
-    bindFolder,
-    unbindFolder,
+    bindProject,
+    unbindProject,
     defaultAccount,
   } = useGitHubAccounts();
 
   const [saving, setSaving] = useState(false);
 
-  const boundAccountId = folderBindings[folderId] ?? USE_DEFAULT;
+  const boundAccountId = folderBindings[projectId] ?? USE_DEFAULT;
 
   const handleChange = async (value: string) => {
     setSaving(true);
     try {
       if (value === USE_DEFAULT) {
-        await unbindFolder(folderId);
+        await unbindProject(projectId);
       } else {
-        await bindFolder(folderId, value);
+        await bindProject(projectId, value);
       }
     } finally {
       setSaving(false);

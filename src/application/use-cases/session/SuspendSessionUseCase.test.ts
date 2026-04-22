@@ -30,7 +30,7 @@ describe("SuspendSessionUseCase", () => {
       findByUser: vi.fn(),
       count: vi.fn(),
       findByIds: vi.fn(),
-      findByFolder: vi.fn(),
+      findByProject: vi.fn(),
       save: vi.fn().mockImplementation((session: Session) =>
         Promise.resolve(session)
       ),
@@ -123,7 +123,7 @@ describe("SuspendSessionUseCase", () => {
       const activeSession = createTestSession({
         name: "My Session",
         projectPath: "/special/path",
-        folderId: "folder-456",
+        projectId: "folder-456",
       });
       (mockSessionRepository.findById as Mock).mockResolvedValue(activeSession);
 
@@ -136,7 +136,7 @@ describe("SuspendSessionUseCase", () => {
 
       expect(result.name).toBe("My Session");
       expect(result.projectPath).toBe("/special/path");
-      expect(result.folderId).toBe("folder-456");
+      expect(result.projectId).toBe("folder-456");
     });
   });
 

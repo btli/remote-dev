@@ -36,14 +36,14 @@ describe("Session Entity", () => {
         projectPath: "/home/user/project",
         githubRepoId: "repo-456",
         worktreeBranch: "feature/test",
-        folderId: "folder-789",
+        projectId: "folder-789",
         tabOrder: 5,
       });
 
       expect(session.projectPath).toBe("/home/user/project");
       expect(session.githubRepoId).toBe("repo-456");
       expect(session.worktreeBranch).toBe("feature/test");
-      expect(session.folderId).toBe("folder-789");
+      expect(session.projectId).toBe("folder-789");
       expect(session.tabOrder).toBe(5);
     });
 
@@ -56,7 +56,7 @@ describe("Session Entity", () => {
       expect(session.projectPath).toBeNull();
       expect(session.githubRepoId).toBeNull();
       expect(session.worktreeBranch).toBeNull();
-      expect(session.folderId).toBeNull();
+      expect(session.projectId).toBeNull();
       expect(session.tabOrder).toBe(0);
     });
 
@@ -221,20 +221,20 @@ describe("Session Entity", () => {
     describe("folder operations", () => {
       it("moves session to folder", () => {
         const session = Session.create({ userId: "u1", name: "Test" });
-        const moved = session.moveToFolder("folder-123");
+        const moved = session.moveToProject("folder-123");
 
-        expect(moved.folderId).toBe("folder-123");
+        expect(moved.projectId).toBe("folder-123");
       });
 
       it("removes session from folder", () => {
         const session = Session.create({
           userId: "u1",
           name: "Test",
-          folderId: "folder-123",
+          projectId: "folder-123",
         });
-        const removed = session.removeFromFolder();
+        const removed = session.removeFromProject();
 
-        expect(removed.folderId).toBeNull();
+        expect(removed.projectId).toBeNull();
       });
     });
 
@@ -278,7 +278,7 @@ describe("Session Entity", () => {
       const original = Session.create({ userId: "u1", name: "Original" });
 
       const renamed = original.rename("New");
-      const moved = original.moveToFolder("folder");
+      const moved = original.moveToProject("folder");
       const suspended = original.suspend();
 
       // All should be different instances
@@ -288,7 +288,7 @@ describe("Session Entity", () => {
 
       // Original should be unchanged
       expect(original.name).toBe("Original");
-      expect(original.folderId).toBeNull();
+      expect(original.projectId).toBeNull();
       expect(original.isActive()).toBe(true);
     });
   });

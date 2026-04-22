@@ -22,7 +22,7 @@ export interface CreateSessionInput {
   userId: string;
   name: string;
   projectPath?: string;
-  folderId?: string;
+  projectId?: string;
   profileId?: string;
   agentProvider?: AgentProviderType;
   // Worktree options
@@ -101,7 +101,7 @@ export class CreateSessionUseCase {
       userId: input.userId,
       name: input.name,
       projectPath: workingPath,
-      folderId: input.folderId,
+      projectId: input.projectId,
       profileId: input.profileId,
       agentProvider: input.agentProvider,
       worktreeBranch,

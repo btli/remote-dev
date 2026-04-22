@@ -13,12 +13,6 @@ export type {
 } from "./SessionRepository";
 
 export type {
-  FolderRepository,
-  FolderFilters,
-  FolderOrderBy,
-} from "./FolderRepository";
-
-export type {
   TmuxGateway,
   TmuxSessionInfo,
   CreateTmuxSessionOptions,

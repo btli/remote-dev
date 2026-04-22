@@ -152,9 +152,16 @@ pub async fn run(
         .session_id()
         .ok_or("RDV_SESSION_ID not set — run inside an agent session")?;
 
+    // Optional project scope from env (server falls back to session's project
+    // if unset). During transition the server accepts either.
+    let project_id = std::env::var("RDV_PROJECT_ID").ok();
+
     match args.command {
         PeerCommand::List => {
-            let query = [("sessionId", sid)];
+            let mut query: Vec<(&str, &str)> = vec![("sessionId", sid)];
+            if let Some(pid) = project_id.as_deref() {
+                query.push(("projectId", pid));
+            }
             let resp: PeerListResponse = client
                 .get_with_query("/internal/peers/list", &query)
                 .await?;
@@ -174,6 +181,7 @@ pub async fn run(
             let payload = json!({
                 "fromSessionId": sid,
                 "toSessionId": to,
+                "projectId": project_id,
                 "body": body,
             });
             let result: serde_json::Value =
@@ -190,7 +198,11 @@ pub async fn run(
         }
         PeerCommand::Messages { since } => {
             let since_str = since.unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string());
-            let query = [("sessionId", sid), ("since", since_str.as_str())];
+            let mut query: Vec<(&str, &str)> =
+                vec![("sessionId", sid), ("since", since_str.as_str())];
+            if let Some(pid) = project_id.as_deref() {
+                query.push(("projectId", pid));
+            }
             let resp: MessageListResponse = client
                 .get_with_query("/internal/peers/messages/poll", &query)
                 .await?;
@@ -210,6 +222,7 @@ pub async fn run(
         PeerCommand::Summary { text } => {
             let payload = json!({
                 "sessionId": sid,
+                "projectId": project_id,
                 "summary": text,
             });
             client

@@ -43,6 +43,19 @@ interface SecretsContextValue {
   ) => Promise<SecretsValidationResult>;
   refreshConfigs: () => Promise<void>;
 
+  // Node-keyed accessors (project-scoped — groups don't carry secrets).
+  // These mirror the folder-keyed helpers above; for ownerType='project',
+  // ownerId is the project's `id` (which is what `project_secrets_config`
+  // keys by on the backend). See remote-dev-oqol.4.1 / remote-dev-w1ed.
+  getNodeSecretsConfig: (
+    ownerType: "project",
+    ownerId: string
+  ) => FolderSecretsConfig | null;
+  nodeHasActiveSecrets: (
+    ownerType: "project",
+    ownerId: string
+  ) => boolean;
+
   /**
    * Fetch actual secret values for a folder from the configured provider.
    * Returns null if no secrets are configured or provider is disabled.
@@ -98,6 +111,24 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
   const getConfigForFolder = useCallback(
     (folderId: string): FolderSecretsConfig | null => {
       return folderConfigs.get(folderId) || null;
+    },
+    [folderConfigs]
+  );
+
+  // Node-keyed wrappers. The `ownerType` argument is accepted for API
+  // symmetry (and restricted to 'project' since groups don't carry secrets),
+  // but the underlying lookup is by id alone.
+  const getNodeSecretsConfig = useCallback(
+    (_ownerType: "project", ownerId: string): FolderSecretsConfig | null => {
+      return folderConfigs.get(ownerId) || null;
+    },
+    [folderConfigs]
+  );
+
+  const nodeHasActiveSecrets = useCallback(
+    (_ownerType: "project", ownerId: string): boolean => {
+      const cfg = folderConfigs.get(ownerId);
+      return cfg?.enabled ?? false;
     },
     [folderConfigs]
   );
@@ -267,6 +298,8 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
       fetchSecretsForFolder: fetchSecretsForFolderFn,
       hasAnyConfigs,
       configuredFolderIds,
+      getNodeSecretsConfig,
+      nodeHasActiveSecrets,
     }),
     [
       folderConfigs,
@@ -281,6 +314,8 @@ export function SecretsProvider({ children }: SecretsProviderProps) {
       fetchSecretsForFolderFn,
       hasAnyConfigs,
       configuredFolderIds,
+      getNodeSecretsConfig,
+      nodeHasActiveSecrets,
     ]
   );
 

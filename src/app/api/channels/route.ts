@@ -6,21 +6,33 @@ import { createLogger } from "@/lib/logger";
 
 const log = createLogger("api/channels");
 
-// GET /api/channels?folderId= — list channel groups with unread counts
+// GET /api/channels?projectId= — list channel groups with unread counts.
+// Also accepts ?nodeId=&nodeType=(group|project) for node-scoped listing
+// (group nodes aggregate across all descendant projects).
 export const GET = withApiAuth(async (request, { userId }) => {
   try {
     const { searchParams } = new URL(request.url);
-    const folderId = searchParams.get("folderId");
+    const projectId = searchParams.get("projectId");
+    const nodeId = searchParams.get("nodeId");
+    const nodeType = searchParams.get("nodeType");
 
-    if (!folderId) {
-      return errorResponse("folderId is required", 400);
+    if (nodeId && (nodeType === "group" || nodeType === "project")) {
+      const groups = await ChannelService.listChannelGroupsForNode(
+        { id: nodeId, type: nodeType },
+        userId
+      );
+      return NextResponse.json({ groups });
     }
 
-    if (!(await ChannelService.verifyFolderOwnership(folderId, userId))) {
-      return errorResponse("Folder not found", 404);
+    if (!projectId) {
+      return errorResponse("projectId or nodeId is required", 400);
     }
 
-    const groups = await ChannelService.listChannelGroups(folderId, userId);
+    if (!(await ChannelService.verifyProjectOwnership(projectId, userId))) {
+      return errorResponse("Project not found", 404);
+    }
+
+    const groups = await ChannelService.listChannelGroups(projectId, userId);
     return NextResponse.json({ groups });
   } catch (err) {
     log.error("Failed to list channel groups", { error: String(err) });
@@ -28,22 +40,22 @@ export const GET = withApiAuth(async (request, { userId }) => {
   }
 });
 
-// POST /api/channels — create channel { folderId, name, topic? }
+// POST /api/channels — create channel { projectId, name, topic? }
 export const POST = withApiAuth(async (request, { userId }) => {
   try {
-    const result = await parseJsonBody<{ folderId: string; name: string; topic?: string }>(request);
+    const result = await parseJsonBody<{ projectId: string; name: string; topic?: string }>(request);
     if ("error" in result) return result.error;
-    const { folderId, name, topic } = result.data;
+    const { projectId, name, topic } = result.data;
 
-    if (!folderId || !name) {
-      return errorResponse("folderId and name are required", 400);
+    if (!projectId || !name) {
+      return errorResponse("projectId and name are required", 400);
     }
 
-    if (!(await ChannelService.verifyFolderOwnership(folderId, userId))) {
-      return errorResponse("Folder not found", 404);
+    if (!(await ChannelService.verifyProjectOwnership(projectId, userId))) {
+      return errorResponse("Project not found", 404);
     }
 
-    const channel = await ChannelService.createChannel({ folderId, name, topic });
+    const channel = await ChannelService.createChannel({ projectId, name, topic });
     return NextResponse.json({ channel }, { status: 201 });
   } catch (err) {
     if (err instanceof ChannelValidationError) {

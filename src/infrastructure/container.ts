@@ -9,9 +9,11 @@
  */
 
 import { DrizzleSessionRepository } from "./persistence/repositories/DrizzleSessionRepository";
-import { DrizzleFolderRepository } from "./persistence/repositories/DrizzleFolderRepository";
 import { DrizzleGitHubIssueRepository } from "./persistence/repositories/DrizzleGitHubIssueRepository";
 import { DrizzleGitHubAccountRepository } from "./persistence/repositories/DrizzleGitHubAccountRepository";
+import { DrizzleProjectGroupRepository } from "./persistence/repositories/DrizzleProjectGroupRepository";
+import { DrizzleProjectRepository } from "./persistence/repositories/DrizzleProjectRepository";
+import { DrizzleNodePreferencesRepository } from "./persistence/repositories/DrizzleNodePreferencesRepository";
 import { TmuxGatewayImpl } from "./external/tmux/TmuxGatewayImpl";
 import { WorktreeGatewayImpl } from "./external/worktree/WorktreeGatewayImpl";
 import { GitHubIssueGatewayImpl } from "./external/github/GitHubIssueGatewayImpl";
@@ -19,8 +21,6 @@ import { GhCliConfigGatewayImpl } from "./external/github/GhCliConfigGatewayImpl
 import { SessionGitConfigGatewayImpl } from "./external/git/SessionGitConfigGatewayImpl";
 import { SystemEnvironmentGateway } from "./external/environment/SystemEnvironmentGateway";
 import type { SessionRepository } from "@/application/ports/SessionRepository";
-import type { SessionFolderQueryPort } from "@/application/ports/SessionFolderQueryPort";
-import type { FolderRepository } from "@/application/ports/FolderRepository";
 import type { TmuxGateway } from "@/application/ports/TmuxGateway";
 import type { WorktreeGateway } from "@/application/ports/WorktreeGateway";
 import type { EnvironmentGateway } from "@/application/ports/EnvironmentGateway";
@@ -39,15 +39,23 @@ import { CloseSessionUseCase } from "@/application/use-cases/session/CloseSessio
 import { ListSessionsUseCase } from "@/application/use-cases/session/ListSessionsUseCase";
 import { GetSessionUseCase } from "@/application/use-cases/session/GetSessionUseCase";
 import { UpdateSessionUseCase } from "@/application/use-cases/session/UpdateSessionUseCase";
-import { MoveSessionToFolderUseCase } from "@/application/use-cases/session/MoveSessionToFolderUseCase";
 
-// Folder Use Cases
-import { CreateFolderUseCase } from "@/application/use-cases/folder/CreateFolderUseCase";
-import { UpdateFolderUseCase } from "@/application/use-cases/folder/UpdateFolderUseCase";
-import { MoveFolderUseCase } from "@/application/use-cases/folder/MoveFolderUseCase";
-import { DeleteFolderUseCase } from "@/application/use-cases/folder/DeleteFolderUseCase";
-import { ReorderFoldersUseCase } from "@/application/use-cases/folder/ReorderFoldersUseCase";
-import { ListFoldersUseCase } from "@/application/use-cases/folder/ListFoldersUseCase";
+// ProjectGroup Use Cases
+import { CreateProjectGroup } from "@/application/use-cases/project-group/CreateProjectGroup";
+import { UpdateProjectGroup } from "@/application/use-cases/project-group/UpdateProjectGroup";
+import { MoveProjectGroup } from "@/application/use-cases/project-group/MoveProjectGroup";
+import { DeleteProjectGroup } from "@/application/use-cases/project-group/DeleteProjectGroup";
+
+// Project Use Cases
+import { CreateProject } from "@/application/use-cases/project/CreateProject";
+import { UpdateProject } from "@/application/use-cases/project/UpdateProject";
+import { MoveProject } from "@/application/use-cases/project/MoveProject";
+import { DeleteProject } from "@/application/use-cases/project/DeleteProject";
+import { ResolveProjectScope } from "@/application/use-cases/project/ResolveProjectScope";
+
+import type { ProjectGroupRepository } from "@/application/ports/ProjectGroupRepository";
+import type { ProjectRepository as ProjectRepositoryPort } from "@/application/ports/ProjectRepository";
+import type { NodePreferencesRepository } from "@/application/ports/NodePreferencesRepository";
 
 // Tmux Use Cases
 import {
@@ -67,9 +75,9 @@ import {
   LinkGitHubAccountUseCase,
   UnlinkGitHubAccountUseCase,
   SetDefaultGitHubAccountUseCase,
-  BindFolderToGitHubAccountUseCase,
-  UnbindFolderFromGitHubAccountUseCase,
   ListGitHubAccountsUseCase,
+  BindProjectToGitHubAccountUseCase,
+  UnbindProjectFromGitHubAccountUseCase,
 } from "@/application/use-cases/github-accounts";
 
 // Agent Use Cases
@@ -122,17 +130,8 @@ import {
 /**
  * Session repository instance.
  * Uses Drizzle ORM for SQLite persistence.
- * DrizzleSessionRepository implements both SessionRepository and SessionFolderQueryPort.
  */
-const drizzleSessionRepository = new DrizzleSessionRepository();
-export const sessionRepository: SessionRepository = drizzleSessionRepository;
-export const sessionFolderQueryPort: SessionFolderQueryPort = drizzleSessionRepository;
-
-/**
- * Folder repository instance.
- * Uses Drizzle ORM for SQLite persistence.
- */
-export const folderRepository: FolderRepository = new DrizzleFolderRepository();
+export const sessionRepository: SessionRepository = new DrizzleSessionRepository();
 
 /**
  * GitHub issue repository instance.
@@ -141,6 +140,14 @@ export const folderRepository: FolderRepository = new DrizzleFolderRepository();
 export const githubIssueRepository: GitHubIssueRepository = new DrizzleGitHubIssueRepository();
 
 export const githubAccountRepository: GitHubAccountRepository = new DrizzleGitHubAccountRepository();
+
+/**
+ * Project / ProjectGroup / NodePreferences repositories.
+ * Phase 3 additions for the project-folder refactor.
+ */
+export const projectGroupRepository: ProjectGroupRepository = new DrizzleProjectGroupRepository();
+export const projectRepository: ProjectRepositoryPort = new DrizzleProjectRepository();
+export const nodePreferencesRepository: NodePreferencesRepository = new DrizzleNodePreferencesRepository();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gateway Instances
@@ -229,14 +236,6 @@ export const getSessionUseCase = new GetSessionUseCase(sessionRepository);
 export const updateSessionUseCase = new UpdateSessionUseCase(sessionRepository);
 
 /**
- * Move session to folder use case.
- */
-export const moveSessionToFolderUseCase = new MoveSessionToFolderUseCase(
-  sessionRepository,
-  folderRepository
-);
-
-/**
  * Restart agent use case.
  * Handles restarting agent CLI processes with environment preservation.
  */
@@ -246,43 +245,34 @@ export const restartAgentUseCase = new RestartAgentUseCase(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Folder Use Case Instances
+// Project / ProjectGroup Use Cases (Phase 3)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Create folder use case.
- */
-export const createFolderUseCase = new CreateFolderUseCase(folderRepository);
-
-/**
- * Update folder use case.
- */
-export const updateFolderUseCase = new UpdateFolderUseCase(folderRepository);
-
-/**
- * Move folder use case.
- */
-export const moveFolderUseCase = new MoveFolderUseCase(folderRepository);
-
-/**
- * Delete folder use case.
- */
-export const deleteFolderUseCase = new DeleteFolderUseCase(
-  folderRepository,
-  sessionRepository
+export const createProjectGroupUseCase = new CreateProjectGroup(projectGroupRepository);
+export const updateProjectGroupUseCase = new UpdateProjectGroup(projectGroupRepository);
+export const moveProjectGroupUseCase = new MoveProjectGroup(projectGroupRepository);
+export const deleteProjectGroupUseCase = new DeleteProjectGroup(
+  projectGroupRepository,
+  projectRepository
 );
 
-/**
- * Reorder folders use case.
- */
-export const reorderFoldersUseCase = new ReorderFoldersUseCase(folderRepository);
-
-/**
- * List folders use case.
- */
-export const listFoldersUseCase = new ListFoldersUseCase(
-  folderRepository,
-  sessionFolderQueryPort
+export const createProjectUseCase = new CreateProject(
+  projectRepository,
+  projectGroupRepository
+);
+export const updateProjectUseCase = new UpdateProject(projectRepository);
+export const moveProjectUseCase = new MoveProject(
+  projectRepository,
+  projectGroupRepository
+);
+export const deleteProjectUseCase = new DeleteProject(
+  projectRepository,
+  sessionRepository,
+  tmuxGateway
+);
+export const resolveProjectScopeUseCase = new ResolveProjectScope(
+  projectGroupRepository,
+  projectRepository
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -347,19 +337,15 @@ export const setDefaultGitHubAccountUseCase = new SetDefaultGitHubAccountUseCase
   githubAccountRepository
 );
 
-export const bindFolderToGitHubAccountUseCase = new BindFolderToGitHubAccountUseCase(
-  githubAccountRepository,
-  folderRepository
-);
-
-export const unbindFolderFromGitHubAccountUseCase = new UnbindFolderFromGitHubAccountUseCase(
-  githubAccountRepository,
-  folderRepository
-);
-
 export const listGitHubAccountsUseCase = new ListGitHubAccountsUseCase(
   githubAccountRepository
 );
+
+export const bindProjectToGitHubAccountUseCase =
+  new BindProjectToGitHubAccountUseCase(githubAccountRepository);
+
+export const unbindProjectFromGitHubAccountUseCase =
+  new UnbindProjectFromGitHubAccountUseCase(githubAccountRepository);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Log System
@@ -462,6 +448,32 @@ export const autoUpdateOrchestrator = new AutoUpdateOrchestrator(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Grouped container access (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Grouped container access for Phase 3+ service facades. Existing code that uses
+ * the named exports (e.g. `import { createSessionUseCase } from ...`) continues
+ * to work; new code may reach for `container.projectRepository` etc.
+ */
+export const container = {
+  projectGroupRepository,
+  projectRepository,
+  nodePreferencesRepository,
+  useCases: {
+    createProjectGroup: createProjectGroupUseCase,
+    updateProjectGroup: updateProjectGroupUseCase,
+    moveProjectGroup: moveProjectGroupUseCase,
+    deleteProjectGroup: deleteProjectGroupUseCase,
+    createProject: createProjectUseCase,
+    updateProject: updateProjectUseCase,
+    moveProject: moveProjectUseCase,
+    deleteProject: deleteProjectUseCase,
+    resolveProjectScope: resolveProjectScopeUseCase,
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -471,7 +483,6 @@ export const autoUpdateOrchestrator = new AutoUpdateOrchestrator(
  */
 export interface Container {
   sessionRepository: SessionRepository;
-  folderRepository: FolderRepository;
   githubIssueRepository: GitHubIssueRepository;
   githubAccountRepository: GitHubAccountRepository;
   tmuxGateway: TmuxGateway;
@@ -496,7 +507,6 @@ export interface Container {
  */
 export const defaultContainer: Container = {
   sessionRepository,
-  folderRepository,
   githubIssueRepository,
   githubAccountRepository,
   tmuxGateway,

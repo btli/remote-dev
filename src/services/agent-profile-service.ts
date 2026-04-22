@@ -11,7 +11,7 @@
 import { db } from "@/db";
 import {
   agentProfiles,
-  folderProfileLinks,
+  projectProfileLinks,
   profileGitIdentities,
   profileSecretsConfig,
   terminalSessions,
@@ -182,18 +182,35 @@ export async function getDefaultProfile(
 }
 
 /**
- * Get the profile linked to a folder
+ * Get the profile linked to a folder.
+ *
+ * Phase 3 project-first: if a project_profile_link exists for the
+ * folder's bridged project, that takes precedence over the legacy
+ * folder_profile_link row.
  */
 export async function getFolderProfile(
   folderId: string,
   userId: string
 ): Promise<AgentProfile | null> {
-  const link = await db.query.folderProfileLinks.findFirst({
-    where: eq(folderProfileLinks.folderId, folderId),
+  // folderId is now treated as projectId (Phase 6)
+  const projectLink = await db.query.projectProfileLinks.findFirst({
+    where: eq(projectProfileLinks.projectId, folderId),
   });
+  if (!projectLink) return null;
+  return getProfile(projectLink.profileId, userId);
+}
 
+/**
+ * Phase 3: get the profile linked to a project node directly.
+ */
+export async function getProjectProfile(
+  projectId: string,
+  userId: string
+): Promise<AgentProfile | null> {
+  const link = await db.query.projectProfileLinks.findFirst({
+    where: eq(projectProfileLinks.projectId, projectId),
+  });
   if (!link) return null;
-
   return getProfile(link.profileId, userId);
 }
 
@@ -310,28 +327,40 @@ export async function deleteProfile(
 }
 
 /**
- * Link a folder to a profile
+ * Link a folder to a profile.
+ *
+ * Phase 3 dual-write: mirror the link into project_profile_link when the
+ * folder has a bridged project row. The project-first read path in
+ * getFolderProfile relies on this mirror.
  */
 export async function linkFolderToProfile(
   folderId: string,
-  profileId: string
+  profileId: string,
+  _userId?: string
 ): Promise<void> {
+  // folderId is now treated as projectId (Phase 6)
   await db
-    .insert(folderProfileLinks)
-    .values({ folderId, profileId })
+    .insert(projectProfileLinks)
+    .values({ projectId: folderId, profileId })
     .onConflictDoUpdate({
-      target: folderProfileLinks.folderId,
+      target: projectProfileLinks.projectId,
       set: { profileId, createdAt: new Date() },
     });
 }
 
 /**
- * Unlink a folder from its profile
+ * Unlink a folder from its profile.
+ * Phase 3 dual-write: also removes the mirrored project_profile_link row
+ * when the caller supplies a userId.
  */
-export async function unlinkFolderFromProfile(folderId: string): Promise<void> {
+export async function unlinkFolderFromProfile(
+  folderId: string,
+  _userId?: string
+): Promise<void> {
+  // folderId is now treated as projectId (Phase 6)
   await db
-    .delete(folderProfileLinks)
-    .where(eq(folderProfileLinks.folderId, folderId));
+    .delete(projectProfileLinks)
+    .where(eq(projectProfileLinks.projectId, folderId));
 }
 
 /**
@@ -347,13 +376,14 @@ export async function getFolderProfileLinks(
   });
   const profileIds = new Set(userProfiles.map((p) => p.id));
 
-  // Get all links
-  const links = await db.query.folderProfileLinks.findMany();
+  // Get all project-profile links
+  const links = await db.query.projectProfileLinks.findMany();
 
-  // Filter to only links for user's profiles and return as array
+  // Filter to only links for user's profiles and return as array.
+  // Surface projectId under the legacy folderId key for downstream compatibility.
   return links
     .filter((link) => profileIds.has(link.profileId))
-    .map((link) => ({ folderId: link.folderId, profileId: link.profileId }));
+    .map((link) => ({ folderId: link.projectId, profileId: link.profileId }));
 }
 
 /**

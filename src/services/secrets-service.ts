@@ -6,7 +6,7 @@
  */
 
 import { db } from "@/db";
-import { folderSecretsConfig, sessionFolders } from "@/db/schema";
+import { projectSecretsConfig, projects } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createSecretsProvider, isProviderSupported } from "./secrets";
 import { SecretsServiceError } from "@/lib/errors";
@@ -25,21 +25,37 @@ import type {
 // Re-export for convenience
 export { SecretsServiceError };
 
+type ProjectSecretsRow = typeof projectSecretsConfig.$inferSelect;
+
 /**
- * Get secrets configuration for a specific folder
+ * Get secrets configuration for a specific project (legacy "folder" identifier).
  */
 export async function getFolderSecretsConfig(
-  folderId: string,
+  projectId: string,
   userId: string
 ): Promise<FolderSecretsConfig | null> {
-  const config = await db.query.folderSecretsConfig.findFirst({
+  const config = await db.query.projectSecretsConfig.findFirst({
     where: and(
-      eq(folderSecretsConfig.folderId, folderId),
-      eq(folderSecretsConfig.userId, userId)
+      eq(projectSecretsConfig.projectId, projectId),
+      eq(projectSecretsConfig.userId, userId)
     ),
   });
 
   return config ? mapDbSecretsConfig(config) : null;
+}
+
+/**
+ * Phase 3+ helper retained for compatibility. Both ids now resolve to the
+ * same project_secrets_config row.
+ */
+export async function getConfigByProjectOrFolder(
+  projectId: string | null,
+  folderId: string | null,
+  userId: string
+): Promise<FolderSecretsConfig | null> {
+  const id = projectId ?? folderId;
+  if (!id) return null;
+  return getFolderSecretsConfig(id, userId);
 }
 
 /**
@@ -48,46 +64,45 @@ export async function getFolderSecretsConfig(
 export async function getAllFolderSecretsConfigs(
   userId: string
 ): Promise<FolderSecretsConfig[]> {
-  const configs = await db.query.folderSecretsConfig.findMany({
-    where: eq(folderSecretsConfig.userId, userId),
+  const configs = await db.query.projectSecretsConfig.findMany({
+    where: eq(projectSecretsConfig.userId, userId),
   });
 
   return configs.map(mapDbSecretsConfig);
 }
 
 /**
- * Get secrets configurations with folder names (for UI)
+ * Get secrets configurations with folder (project) names (for UI)
  */
 export async function getAllFolderSecretsConfigsWithFolders(
   userId: string
 ): Promise<(FolderSecretsConfig & { folderName: string })[]> {
-  const configs = await db.query.folderSecretsConfig.findMany({
-    where: eq(folderSecretsConfig.userId, userId),
+  const configs = await db.query.projectSecretsConfig.findMany({
+    where: eq(projectSecretsConfig.userId, userId),
   });
 
-  // Get folder names
-  const folderIds = configs.map((c) => c.folderId);
-  if (folderIds.length === 0) {
+  const projectIds = configs.map((c) => c.projectId);
+  if (projectIds.length === 0) {
     return [];
   }
 
-  const folders = await db.query.sessionFolders.findMany({
-    where: eq(sessionFolders.userId, userId),
+  const projectRows = await db.query.projects.findMany({
+    where: eq(projects.userId, userId),
   });
 
-  const folderMap = new Map(folders.map((f) => [f.id, f.name]));
+  const nameMap = new Map(projectRows.map((p) => [p.id, p.name]));
 
   return configs.map((config) => ({
     ...mapDbSecretsConfig(config),
-    folderName: folderMap.get(config.folderId) || "Unknown Folder",
+    folderName: nameMap.get(config.projectId) || "Unknown Project",
   }));
 }
 
 /**
- * Create or update folder secrets configuration
+ * Create or update folder (project) secrets configuration
  */
 export async function updateFolderSecretsConfig(
-  folderId: string,
+  projectId: string,
   userId: string,
   input: UpdateFolderSecretsConfigInput
 ): Promise<FolderSecretsConfig> {
@@ -116,12 +131,12 @@ export async function updateFolderSecretsConfig(
   const now = new Date();
 
   // Check for existing config
-  const existing = await getFolderSecretsConfig(folderId, userId);
+  const existing = await getFolderSecretsConfig(projectId, userId);
 
   if (existing) {
     // Update existing
     const [updated] = await db
-      .update(folderSecretsConfig)
+      .update(projectSecretsConfig)
       .set({
         provider: input.provider,
         providerConfig: encryptedConfig,
@@ -130,8 +145,8 @@ export async function updateFolderSecretsConfig(
       })
       .where(
         and(
-          eq(folderSecretsConfig.folderId, folderId),
-          eq(folderSecretsConfig.userId, userId)
+          eq(projectSecretsConfig.projectId, projectId),
+          eq(projectSecretsConfig.userId, userId)
         )
       )
       .returning();
@@ -141,9 +156,10 @@ export async function updateFolderSecretsConfig(
 
   // Create new
   const [created] = await db
-    .insert(folderSecretsConfig)
+    .insert(projectSecretsConfig)
     .values({
-      folderId,
+      id: crypto.randomUUID(),
+      projectId,
       userId,
       provider: input.provider,
       providerConfig: encryptedConfig,
@@ -160,15 +176,15 @@ export async function updateFolderSecretsConfig(
  * Delete folder secrets configuration
  */
 export async function deleteFolderSecretsConfig(
-  folderId: string,
+  projectId: string,
   userId: string
 ): Promise<boolean> {
   const result = await db
-    .delete(folderSecretsConfig)
+    .delete(projectSecretsConfig)
     .where(
       and(
-        eq(folderSecretsConfig.folderId, folderId),
-        eq(folderSecretsConfig.userId, userId)
+        eq(projectSecretsConfig.projectId, projectId),
+        eq(projectSecretsConfig.userId, userId)
       )
     );
 
@@ -179,25 +195,25 @@ export async function deleteFolderSecretsConfig(
  * Toggle enabled state for folder secrets
  */
 export async function toggleFolderSecretsEnabled(
-  folderId: string,
+  projectId: string,
   userId: string,
   enabled: boolean
 ): Promise<FolderSecretsConfig | null> {
-  const existing = await getFolderSecretsConfig(folderId, userId);
+  const existing = await getFolderSecretsConfig(projectId, userId);
   if (!existing) {
     return null;
   }
 
   const [updated] = await db
-    .update(folderSecretsConfig)
+    .update(projectSecretsConfig)
     .set({
       enabled,
       updatedAt: new Date(),
     })
     .where(
       and(
-        eq(folderSecretsConfig.folderId, folderId),
-        eq(folderSecretsConfig.userId, userId)
+        eq(projectSecretsConfig.projectId, projectId),
+        eq(projectSecretsConfig.userId, userId)
       )
     )
     .returning();
@@ -232,14 +248,14 @@ export async function validateProviderConfig(
 }
 
 /**
- * Fetch secrets for a folder
+ * Fetch secrets for a folder (project)
  * Returns null if no secrets config or disabled
  */
 export async function fetchSecretsForFolder(
-  folderId: string,
+  projectId: string,
   userId: string
 ): Promise<FetchSecretsResult | null> {
-  const config = await getFolderSecretsConfig(folderId, userId);
+  const config = await getFolderSecretsConfig(projectId, userId);
 
   if (!config || !config.enabled) {
     return null;
@@ -256,12 +272,12 @@ export async function fetchSecretsForFolder(
 
     // Update last fetched timestamp
     await db
-      .update(folderSecretsConfig)
+      .update(projectSecretsConfig)
       .set({ lastFetchedAt: fetchedAt })
       .where(
         and(
-          eq(folderSecretsConfig.folderId, folderId),
-          eq(folderSecretsConfig.userId, userId)
+          eq(projectSecretsConfig.projectId, projectId),
+          eq(projectSecretsConfig.userId, userId)
         )
       );
 
@@ -293,10 +309,10 @@ export async function fetchSecretsForFolder(
  * Check if a folder has secrets configured
  */
 export async function hasFolderSecretsConfig(
-  folderId: string,
+  projectId: string,
   userId: string
 ): Promise<boolean> {
-  const config = await getFolderSecretsConfig(folderId, userId);
+  const config = await getFolderSecretsConfig(projectId, userId);
   return config !== null && config.enabled;
 }
 
@@ -304,29 +320,38 @@ export async function hasFolderSecretsConfig(
  * Map database record to TypeScript type.
  * Decrypts provider config (handles both encrypted and legacy plaintext).
  */
-function mapDbSecretsConfig(
-  dbRecord: typeof folderSecretsConfig.$inferSelect
-): FolderSecretsConfig {
-  // Decrypt provider config - handles both encrypted and legacy plaintext
-  const decryptedConfig = decryptSafe(dbRecord.providerConfig);
+function mapDbSecretsConfig(dbRecord: ProjectSecretsRow): FolderSecretsConfig {
+  // providerConfig is stored as JSON (mode: "json") — it can be either a string
+  // (legacy encrypted blob) or an object. Normalize both cases.
+  const raw = dbRecord.providerConfig as unknown;
   let providerConfig: Record<string, string>;
-  
-  try {
-    providerConfig = JSON.parse(decryptedConfig ?? "{}");
-  } catch {
-    // If JSON parsing fails after decryption, config may be corrupted
-    log.error("Failed to parse provider config for folder", { folderId: dbRecord.folderId });
+
+  if (typeof raw === "string") {
+    const decrypted = decryptSafe(raw);
+    try {
+      providerConfig = JSON.parse(decrypted ?? "{}");
+    } catch {
+      log.error("Failed to parse provider config for project", {
+        projectId: dbRecord.projectId,
+      });
+      providerConfig = {};
+    }
+  } else if (raw && typeof raw === "object") {
+    providerConfig = raw as Record<string, string>;
+  } else {
     providerConfig = {};
   }
 
   return {
     id: dbRecord.id,
-    folderId: dbRecord.folderId,
+    folderId: dbRecord.projectId,
     userId: dbRecord.userId,
     provider: dbRecord.provider as SecretsProviderType,
     providerConfig,
     enabled: dbRecord.enabled ?? true,
-    lastFetchedAt: dbRecord.lastFetchedAt ? new Date(dbRecord.lastFetchedAt) : null,
+    lastFetchedAt: dbRecord.lastFetchedAt
+      ? new Date(dbRecord.lastFetchedAt)
+      : null,
     createdAt: new Date(dbRecord.createdAt),
     updatedAt: new Date(dbRecord.updatedAt),
   };

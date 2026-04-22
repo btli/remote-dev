@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse } from "@/lib/api";
 import { db } from "@/db";
-import { sessionFolders } from "@/db/schema";
+import { projects } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import * as PeerService from "@/services/peer-service";
 import { createLogger } from "@/lib/logger";
@@ -18,19 +18,19 @@ export const GET = withApiAuth(async (request, { userId }) => {
       return errorResponse("folderId is required", 400);
     }
 
-    const folder = await db.query.sessionFolders.findFirst({
+    const project = await db.query.projects.findFirst({
       where: and(
-        eq(sessionFolders.id, folderId),
-        eq(sessionFolders.userId, userId)
+        eq(projects.id, folderId),
+        eq(projects.userId, userId)
       ),
       columns: { id: true },
     });
 
-    if (!folder) {
+    if (!project) {
       return errorResponse("Folder not found", 404);
     }
 
-    const peers = await PeerService.getFolderPeers(folderId);
+    const peers = await PeerService.getProjectPeers(folderId);
     return NextResponse.json({ peers });
   } catch (err) {
     log.error("Failed to list folder peers", { error: String(err) });

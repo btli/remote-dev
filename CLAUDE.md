@@ -7,11 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Remote Dev is a web-based terminal interface built with **Next.js 16**, **React 19**, **xterm.js**, and **NextAuth v5**. It provides:
 - Multiple persistent terminal sessions via tmux
 - GitHub OAuth integration with repository browsing
-- **Multi-GitHub account** linking with per-folder account binding
+- **Multi-GitHub account** linking with per-project account binding
 - Git worktree support for branch isolation
 - Session recording and playback
 - Session templates for reusable configurations
-- Hierarchical folder organization with preference inheritance
+- Two-level **project group + project** organization with preference inheritance
 - **Multi-agent CLI support** (Claude Code, Codex, Gemini, OpenCode)
 - **Agent profiles** with isolated environments and per-profile theming
 - Modern glassmorphism UI with shadcn/ui components
@@ -195,7 +195,9 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv session list` | List active sessions |
 | `rdv session create` | Create new session |
 | `rdv session exec <id> <cmd>` | Run command in session |
-| `rdv agent start <folder-id>` | Start agent session using folder's preferred provider |
+| `rdv agent start <project-id>` | Start agent session using project's preferred provider |
+| `rdv group list` / `create` / `update` / `delete` / `move` | Manage project groups (containers) |
+| `rdv project list` / `create` / `update` / `delete` / `move` | Manage projects (leaves with sessions/tasks/channels) |
 | `rdv agent list` | List agent sessions |
 | `rdv worktree create` | Create git worktree |
 | `rdv notification list` | List notifications |
@@ -207,7 +209,7 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv browser click` | Click at coordinates |
 | `rdv browser type` | Type text in browser |
 | `rdv browser evaluate` | Evaluate JavaScript |
-| `rdv peer list` | List peer agents in same project folder |
+| `rdv peer list` | List peer agents in same project |
 | `rdv peer send` | Send message to peers (direct or broadcast) |
 | `rdv peer messages` | Poll for new peer messages |
 | `rdv peer summary` | Set work summary visible to peers |
@@ -222,7 +224,7 @@ Rust CLI for agent interaction with the terminal server. Agents use `rdv` comman
 | `rdv hook validate` | Validate hooks: check connectivity + auto-repair |
 | `rdv status` | System dashboard |
 | `rdv context` | Show current session context |
-| `rdv channel list` | List channels in project folder |
+| `rdv channel list` | List channels in current project |
 | `rdv channel create` | Create new channel |
 | `rdv channel send` | Send message to channel |
 | `rdv channel messages` | Read channel messages |
@@ -253,14 +255,14 @@ Plugin structure for marketplace distribution:
 
 ### Clean Architecture (Domain Layer)
 
-The codebase follows Clean Architecture principles with a domain-driven core for session and folder management. This provides better testability, maintainability, and separation of concerns.
+The codebase follows Clean Architecture principles with a domain-driven core for session, project group, and project management. This provides better testability, maintainability, and separation of concerns.
 
 **Layer Structure:**
 ```
 src/
   domain/                    # Layer 1: Pure business logic (no dependencies)
-    entities/                # Session, Folder domain entities
-    value-objects/           # SessionStatus, TmuxSessionName
+    entities/                # Session, Group, Project domain entities
+    value-objects/           # SessionStatus, NodeRef, NodePreferences
     errors/                  # Domain-specific errors
 
   application/               # Layer 2: Use cases (depends only on domain)
@@ -291,8 +293,11 @@ src/
 | File | Purpose |
 |------|---------|
 | `src/domain/entities/Session.ts` | Session entity with state machine |
-| `src/domain/entities/Folder.ts` | Folder entity with hierarchy validation |
+| `src/domain/entities/Group.ts` | Project group entity (container, preferences only) |
+| `src/domain/entities/Project.ts` | Project entity (leaf, owns sessions/tasks/channels) |
 | `src/domain/value-objects/SessionStatus.ts` | Type-safe session status |
+| `src/domain/value-objects/NodeRef.ts` | Polymorphic reference to a group or project |
+| `src/domain/value-objects/NodePreferences.ts` | Discriminated preferences (group vs project) |
 | `src/application/use-cases/session/*.ts` | Session use cases |
 | `src/application/ports/*.ts` | Repository and gateway interfaces |
 | `src/infrastructure/container.ts` | DI container with singleton instances |
@@ -309,23 +314,26 @@ src/
 | `user` | NextAuth users |
 | `account` | OAuth accounts (GitHub) |
 | `authorized_user` | Email allowlist |
-| `terminal_session` | Session metadata, tmux names, status, worktree info |
+| `terminal_session` | Session metadata, tmux names, status, worktree info, `project_id` scope |
 | `github_repository` | Cached repository data with local paths |
-| `session_folder` | Hierarchical folder organization |
-| `folder_preferences` | Per-folder preference overrides |
-| `user_settings` | User-level preferences |
+| `project_group` | Nestable grouping containers (preferences only, no own sessions) |
+| `project` | Leaf project nodes (own sessions, tasks, channels, secrets, repo binding) |
+| `node_preferences` | Polymorphic preferences keyed by (`ownerType`, `ownerId`); replaces `folder_preferences` |
+| `user_settings` | User-level preferences (includes `active_node_id` + `active_node_type`) |
 | `session_template` | Reusable session configurations |
 | `session_recording` | Terminal session recordings |
 | `api_key` | API keys for programmatic access |
 | `trash_item` | Polymorphic trash items with 30-day retention |
 | `worktree_trash_metadata` | Worktree-specific trash metadata |
 | `port_registry` | Port allocations for environment variable conflict detection |
-| `folder_secrets_config` | Per-folder secrets provider configuration |
+| `project_secrets_config` | Per-project secrets provider configuration |
 | `github_account_metadata` | Linked GitHub account metadata (login, avatar, default flag, config dir) |
-| `folder_github_account_link` | Per-folder GitHub account bindings |
+| `project_github_account_link` | Per-project GitHub account bindings |
+| `project_profile_link` | Per-project agent profile binding |
+| `project_repository` | Per-project GitHub repository + local clone path association |
 | `project_task` | Project tasks with priority, labels, subtasks, dependencies, and due dates |
 | `task_dependency` | Junction table for task blocked-by relationships |
-| `agent_peer_message` | Folder-scoped inter-agent messages with 24h TTL |
+| `agent_peer_message` | Project-scoped inter-agent messages with 24h TTL |
 | `channel_groups` | Channel group containers (e.g., "Channels", "Direct Messages") |
 | `channels` | Individual channels within groups |
 | `channel_read_state` | Per-user/channel unread tracking |
@@ -340,8 +348,9 @@ Located in `src/services/`:
 | `TmuxService` | tmux session lifecycle, commands |
 | `GitHubService` | GitHub API, repository operations |
 | `WorktreeService` | Git worktree management |
-| `FolderService` | Folder CRUD, hierarchy management |
-| `PreferencesService` | User settings and folder preferences |
+| `GroupService` | Project group CRUD, hierarchy management, move/delete (force) |
+| `ProjectService` | Project CRUD, group placement, sort order, move |
+| `PreferencesService` | User settings and node preferences (group + project) |
 | `TemplateService` | Session template management |
 | `RecordingService` | Session recording storage |
 | `ApiKeyService` | API key management and validation |
@@ -354,9 +363,9 @@ Located in `src/services/`:
 | `AgentProfileAppearanceService` | Per-profile appearance settings |
 | `AgentConfigTemplateService` | Templates for agent config files (CLAUDE.md, AGENTS.md, etc.) |
 | `ClaudeSessionService` | Discover resumable Claude Code sessions from `.jsonl` files |
-| `TaskService` | Project task CRUD, folder-scoped queries, dependency management, bulk archival |
+| `TaskService` | Project task CRUD, project-scoped queries, dependency management, bulk archival |
 | `NotificationService` | Notification CRUD, debounced creation, read/delete management |
-| `PeerService` | Folder-scoped inter-agent peer discovery and messaging |
+| `PeerService` | Project-scoped inter-agent peer discovery and messaging |
 | `BrowserService` | Headless browser automation (navigate, click, type, screenshot) |
 | `ChannelService` | Channel/group lifecycle, unread tracking, migration support |
 
@@ -397,7 +406,7 @@ Remote Dev supports multiple AI coding agents with unified management:
 
 ### Agent Peer Communication
 
-Folder-scoped inter-agent messaging allows agents in the same project folder to discover each other and coordinate work. Push-first architecture: messages arrive instantly via MCP push notifications, with PreToolUse hook as a reliable fallback.
+Project-scoped inter-agent messaging allows agents in the same project to discover each other and coordinate work. Push-first architecture: messages arrive instantly via MCP push notifications, with PreToolUse hook as a reliable fallback.
 
 **Architecture:**
 - `rdv` MCP server (v2) auto-registered in each agent's `settings.json` at session creation
@@ -423,7 +432,7 @@ Folder-scoped inter-agent messaging allows agents in the same project folder to 
 | `crates/rdv/src/commands/peer.rs` | `rdv peer` CLI for non-MCP agents |
 
 **Internal API:**
-- `GET /internal/peers/list?sessionId=` — List peers in same folder
+- `GET /internal/peers/list?sessionId=` — List peers in same project
 - `POST /internal/peers/messages/send` — Send message (+ MCP socket push)
 - `GET /internal/peers/messages/poll?sessionId=&since=` — Poll new messages
 - `POST /internal/peers/summary` — Set work summary
@@ -486,15 +495,18 @@ bun run test:coverage  # Run tests with coverage
 | `TerminalWithKeyboard.tsx` | Terminal with mobile support: xterm.js rendering + native input bar on mobile |
 | `MobileInputBar.tsx` | Native textarea with autocorrect, voice dictation, and predictive text |
 | `RecordingPlayer.tsx` | Playback recorded terminal sessions |
-| `Sidebar.tsx` | Session/folder tree with context menus |
+| `Sidebar.tsx` | Outer sidebar shell hosting the project tree and global controls |
+| `ProjectTreeSidebar.tsx` | Group + project tree with context menus, drag/drop, active-node selection |
+| `ProjectTreeRow.tsx` | Row renderer for a single group or project node |
 | `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
 | `NewSessionWizard.tsx` | Multi-step session creation flow |
 | `SaveTemplateModal.tsx` | Save session as reusable template |
 | `RecordingsModal.tsx` | Browse and manage recordings |
 | `SaveRecordingModal.tsx` | Save current recording |
-| `FolderPreferencesModal.tsx` | Per-folder preference overrides |
+| `GroupPreferencesModal.tsx` | Per-group preference overrides (subset of fields) |
+| `ProjectPreferencesModal.tsx` | Per-project preference overrides (full field set incl. repo path) |
 | `UserSettingsModal.tsx` | User-level preferences |
-| `SecretsConfigModal.tsx` | Configure secrets providers per folder |
+| `SecretsConfigModal.tsx` | Configure secrets providers per project |
 | `SecretsStatusButton.tsx` | Header indicator for secrets connection status |
 | `DirectoryBrowser.tsx` | Modal for visual filesystem directory navigation |
 | `PathInput.tsx` | Text input with browse button for directory selection |
@@ -515,19 +527,21 @@ React Contexts in `src/contexts/`:
 | Context | Purpose |
 |---------|---------|
 | `SessionContext` | Session state with optimistic updates |
-| `FolderContext` | Folder tree state and operations |
-| `PreferencesContext` | User settings + folder preferences with inheritance |
+| `ProjectTreeContext` | Combined group + project tree state, active-node tracking, descendant aggregation |
+| `PreferencesContext` | User settings + node preferences with inheritance |
 | `TemplateContext` | Session templates state |
 | `RecordingContext` | Recording state management |
 | `TrashContext` | Trash items state and operations |
 | `SecretsContext` | Secrets provider configurations and state |
 | `PortContext` | Port allocations, framework detection, monitoring |
-| `GitHubAccountContext` | Multi-GitHub account state with folder bindings |
-| `TaskContext` | Project tasks state with folder-scoped CRUD |
+| `GitHubAccountContext` | Multi-GitHub account state with project bindings |
+| `TaskContext` | Project tasks state with project-scoped CRUD |
 | `NotificationContext` | Notification state with toast integration and delete operations |
 | `ChannelContext` | Channel groups, messages, threads, unread tracking |
 
-**Preference Inheritance**: Default → User Settings → Folder Preferences
+**Preference Inheritance**: Default → User Settings → Group Preferences (walking up the group tree) → Project Preferences
+
+**Active node**: `user_settings.active_node_id` + `active_node_type` (`"group" | "project"`) replace the legacy `active_folder_id`. When a group is active, project-scoped views (tasks, channels, peer messages) aggregate across every descendant project.
 
 ## Key Files
 
@@ -536,8 +550,10 @@ React Contexts in `src/contexts/`:
 | `src/server/terminal.ts` | WebSocket + PTY + tmux terminal server |
 | `src/server/index.ts` | Terminal server entry point |
 | `src/components/terminal/Terminal.tsx` | xterm.js React wrapper |
-| `src/components/session/Sidebar.tsx` | Session/folder sidebar UI |
+| `src/components/session/Sidebar.tsx` | Sidebar shell that mounts the project tree |
+| `src/components/session/ProjectTreeSidebar.tsx` | Group + project tree UI |
 | `src/contexts/SessionContext.tsx` | Session state management |
+| `src/contexts/ProjectTreeContext.tsx` | Group/project tree state + active-node tracking |
 | `src/contexts/PreferencesContext.tsx` | Preferences with inheritance |
 | `src/auth.ts` | NextAuth configuration |
 | `src/middleware.ts` | Route protection |
@@ -563,7 +579,7 @@ React Contexts in `src/contexts/`:
 - `DELETE /api/sessions/:id` - Close session
 - `POST /api/sessions/:id/suspend` - Suspend session
 - `POST /api/sessions/:id/resume` - Resume session
-- `POST /api/sessions/:id/folder` - Move session to folder
+- `PUT /api/sessions/:id/folder` - Move session to a different project (accepts `projectId` or legacy `folderId`)
 - `GET /api/sessions/:id/token` - Get session WebSocket token
 - `POST /api/sessions/:id/exec` - Execute command (fire-and-forget)
 - `POST /api/sessions/reorder` - Reorder tabs
@@ -577,21 +593,31 @@ React Contexts in `src/contexts/`:
 - `POST /api/sessions/:id/browser/back` - Navigate back
 - `POST /api/sessions/:id/browser/forward` - Navigate forward
 
-### Folders
-- `GET /api/folders` - List user's folders
-- `POST /api/folders` - Create folder
-- `PATCH /api/folders/:id` - Update folder
-- `DELETE /api/folders/:id` - Delete folder
-- `POST /api/folders/:id/git-guard` - Evaluate git identity risk for commit/push in folder
+### Project Groups
+- `GET /api/groups` - List user's project groups
+- `POST /api/groups` - Create group (`{ name, parentGroupId, sortOrder? }`)
+- `GET /api/groups/:id` - Get group details
+- `PATCH /api/groups/:id` - Update group (name/collapsed/sortOrder)
+- `DELETE /api/groups/:id?force=true|false` - Delete group (force required when descendants exist)
+- `POST /api/groups/:id/move` - Reparent group (`{ newParentGroupId }`)
+
+### Projects
+- `GET /api/projects` - List projects (optional `?groupId=`)
+- `POST /api/projects` - Create project (`{ groupId, name, sortOrder? }`)
+- `GET /api/projects/:id` - Get project details
+- `PATCH /api/projects/:id` - Update project (name/collapsed/sortOrder)
+- `DELETE /api/projects/:id` - Delete project
+- `POST /api/projects/:id/move` - Move project to another group (`{ newGroupId }`)
+
+### Node Preferences
+- `GET /api/node-preferences/:ownerType/:ownerId` - Get preferences for a group or project (`ownerType` = `group` | `project`)
+- `PUT /api/node-preferences/:ownerType/:ownerId` - Upsert preferences (project schema includes repo path; group schema does not)
+- `DELETE /api/node-preferences/:ownerType/:ownerId` - Reset preferences for the node
 
 ### Preferences
-- `GET /api/preferences` - Get user settings + all folder preferences
+- `GET /api/preferences` - Get user settings + all node preferences
 - `PATCH /api/preferences` - Update user settings
-- `PUT /api/preferences/folders/:folderId` - Set folder preferences
-- `DELETE /api/preferences/folders/:folderId` - Reset folder preferences
-- `POST /api/preferences/active-folder` - Set active folder
-- `GET /api/preferences/folders/:folderId/environment` - Get resolved environment variables
-- `POST /api/preferences/folders/:folderId/validate-ports` - Validate port conflicts
+- `POST /api/preferences/active-node` - Set the active node (`{ nodeId, nodeType }`)
 
 ### Templates
 - `GET /api/templates` - List session templates
@@ -611,7 +637,7 @@ React Contexts in `src/contexts/`:
 - `GET /api/github/repositories/:id` - Get cached repo
 - `POST /api/github/repositories/:id` - Clone repo
 - `GET /api/github/repositories/:id/branches` - List branches
-- `GET /api/github/repositories/:id/folders` - Get folder structure
+- `GET /api/github/repositories/:id/folders` - Get directory tree for the cloned repo
 - `GET /api/github/repositories/:id/issues` - List repository issues
 - `GET /api/github/repositories/:id/issues/:number/comments` - Get issue comments
 - `POST /api/github/worktrees` - Create worktree
@@ -619,8 +645,8 @@ React Contexts in `src/contexts/`:
 - `POST /api/github/worktrees/check` - Check worktree status
 - `GET /api/auth/github/link` - Start OAuth flow
 - `GET /api/auth/github/callback` - OAuth callback
-- `GET /api/github/accounts` - List linked GitHub accounts with folder bindings
-- `PATCH /api/github/accounts/:accountId` - Set default, bind/unbind folder
+- `GET /api/github/accounts` - List linked GitHub accounts with project bindings
+- `PATCH /api/github/accounts/:accountId` - Set default, bind/unbind project
 - `DELETE /api/github/accounts/:accountId` - Unlink a GitHub account
 
 ### API Keys
@@ -653,12 +679,12 @@ React Contexts in `src/contexts/`:
 - `POST /api/cron/trash-cleanup` - Scheduled cleanup endpoint (30-day retention)
 
 ### Secrets
-- `GET /api/secrets/configs` - List all folder secrets configurations
-- `GET /api/secrets/folders/:folderId` - Get folder secrets config
-- `PUT /api/secrets/folders/:folderId` - Create/update secrets config
-- `PATCH /api/secrets/folders/:folderId` - Toggle secrets enabled
-- `DELETE /api/secrets/folders/:folderId` - Delete secrets config
-- `GET /api/secrets/folders/:folderId/secrets` - Fetch secret values from provider
+- `GET /api/secrets/configs` - List all project secrets configurations
+- `GET /api/secrets/folders/:projectId` - Get project secrets config (route name kept for back-compat; identifier is a `projectId`)
+- `PUT /api/secrets/folders/:projectId` - Create/update secrets config
+- `PATCH /api/secrets/folders/:projectId` - Toggle secrets enabled
+- `DELETE /api/secrets/folders/:projectId` - Delete secrets config
+- `GET /api/secrets/folders/:projectId/secrets` - Fetch secret values from provider
 - `POST /api/secrets/validate` - Validate provider credentials
 
 ### Agent CLI
@@ -678,15 +704,15 @@ React Contexts in `src/contexts/`:
 - `DELETE /api/notifications` - Delete notifications (by ids or all)
 
 ### Tasks
-- `GET /api/tasks` - List tasks (optional `?folderId=` filter)
+- `GET /api/tasks` - List tasks. Either `?folderId=` (legacy single-project filter) or `?nodeId=&nodeType=(group|project)` for node-scoped listing — group nodes roll up across descendant projects.
 - `POST /api/tasks` - Create task
-- `DELETE /api/tasks` - Bulk clear tasks (requires `?folderId=`, optional `?source=&sessionId=&completedOnly=`)
+- `DELETE /api/tasks` - Bulk clear tasks (optional `?source=&sessionId=&completedOnly=`)
 - `GET /api/tasks/:id` - Get task details
 - `PATCH /api/tasks/:id` - Update task
 - `DELETE /api/tasks/:id` - Delete task
 
 ### Channels
-- `GET /api/channels` - List channel groups with unread counts (requires `?folderId=`)
+- `GET /api/channels` - List channel groups with unread counts. Either `?projectId=` for single-project view or `?nodeId=&nodeType=(group|project)` for node-scoped view — group nodes aggregate across descendant projects.
 - `POST /api/channels` - Create channel
 - `GET /api/channels/:channelId` - Get channel details
 - `DELETE /api/channels/:channelId` - Archive channel

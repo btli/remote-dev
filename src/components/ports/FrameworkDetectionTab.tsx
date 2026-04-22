@@ -19,7 +19,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { usePortContext } from "@/contexts/PortContext";
-import { useFolderContext } from "@/contexts/FolderContext";
+import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import type { DetectedFramework, FrameworkPort } from "@/types/port";
 
@@ -32,10 +32,10 @@ export function FrameworkDetectionTab({
   selectedFolderId,
   onSelectFolder,
 }: FrameworkDetectionTabProps) {
-  const { folders } = useFolderContext();
+  const { projects } = useProjectTree();
   const { frameworks, runtimes, detectFrameworks, detectRuntime, isPortAvailable } =
     usePortContext();
-  const { folderPreferences, updateFolderPreferences } = usePreferencesContext();
+  const { getNodePreferences, updateFolderPreferences } = usePreferencesContext();
 
   const [detecting, setDetecting] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
@@ -53,18 +53,18 @@ export function FrameworkDetectionTab({
   // Get working directory for selected folder
   const selectedFolderWorkingDir = useMemo(() => {
     if (!selectedFolderId) return null;
-    const prefs = folderPreferences.get(selectedFolderId);
+    const prefs = getNodePreferences("project", selectedFolderId);
     return prefs?.defaultWorkingDirectory || null;
-  }, [selectedFolderId, folderPreferences]);
+  }, [selectedFolderId, getNodePreferences]);
 
-  // Build folder options
+  // Build folder options (projects only — groups don't own working directories)
   const folderOptions = useMemo(() => {
-    return folders.map((f) => ({
-      id: f.id,
-      name: f.name,
-      hasWorkingDir: !!folderPreferences.get(f.id)?.defaultWorkingDirectory,
+    return projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      hasWorkingDir: !!getNodePreferences("project", p.id)?.defaultWorkingDirectory,
     }));
-  }, [folders, folderPreferences]);
+  }, [projects, getNodePreferences]);
 
   // Handle detection
   const handleDetect = useCallback(async () => {
@@ -113,7 +113,7 @@ export function FrameworkDetectionTab({
         }
 
         // Get current env vars
-        const currentPrefs = folderPreferences.get(selectedFolderId);
+        const currentPrefs = getNodePreferences("project", selectedFolderId);
         const currentEnv = currentPrefs?.environmentVars || {};
 
         // Add the new port variable
@@ -132,18 +132,18 @@ export function FrameworkDetectionTab({
         setAdding(null);
       }
     },
-    [selectedFolderId, folderPreferences, updateFolderPreferences, isPortAvailable]
+    [selectedFolderId, getNodePreferences, updateFolderPreferences, isPortAvailable]
   );
 
   // Check if port is already configured
   const isPortConfigured = useCallback(
     (port: FrameworkPort): boolean => {
       if (!selectedFolderId) return false;
-      const prefs = folderPreferences.get(selectedFolderId);
+      const prefs = getNodePreferences("project", selectedFolderId);
       const env = prefs?.environmentVars || {};
       return port.variableName in env;
     },
-    [selectedFolderId, folderPreferences]
+    [selectedFolderId, getNodePreferences]
   );
 
   return (

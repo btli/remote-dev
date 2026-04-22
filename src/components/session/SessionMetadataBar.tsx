@@ -24,9 +24,9 @@ export function SessionMetadataBar({
   const { gitStatus } = useSessionGitStatus(session.id, !isCollapsed);
   const { allocations } = usePortContext();
 
-  // Get ports for this session's folder
-  const sessionPorts = session.folderId
-    ? allocations.filter((p) => p.folderId === session.folderId)
+  // Get ports for this session's project
+  const sessionPorts = session.projectId
+    ? allocations.filter((p) => p.folderId === session.projectId)
     : [];
 
   if (isCollapsed) return null;

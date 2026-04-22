@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, primaryKey, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 import type { SessionStatus } from "@/types/session";
 import type { CIStatusState, PRState } from "@/types/github-stats";
@@ -100,8 +101,10 @@ export const userSettings = sqliteTable("user_settings", {
   fontSize: integer("font_size").default(14),
   fontFamily: text("font_family").default("'JetBrainsMono Nerd Font Mono', monospace"),
   // Active project tracking
-  activeFolderId: text("active_folder_id"),
-  pinnedFolderId: text("pinned_folder_id"),
+  activeNodeId: text("active_node_id"),
+  activeNodeType: text("active_node_type", { enum: ["group", "project"] }),
+  pinnedNodeId: text("pinned_node_id"),
+  pinnedNodeType: text("pinned_node_type", { enum: ["group", "project"] }),
   autoFollowActiveSession: integer("auto_follow_active_session", { mode: "boolean" })
     .notNull()
     .default(true),
@@ -153,87 +156,6 @@ export const githubRepositories = sqliteTable(
   ]
 );
 
-// Session folders for organizing terminal sessions (supports nesting)
-export const sessionFolders = sqliteTable(
-  "session_folder",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    parentId: text("parent_id"),
-    name: text("name").notNull(),
-    collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
-    sortOrder: integer("sort_order").notNull().default(0),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("session_folder_user_idx").on(table.userId),
-    index("session_folder_parent_idx").on(table.parentId),
-    // Composite index for building folder hierarchies (used in tree views)
-    index("session_folder_user_parent_idx").on(table.userId, table.parentId),
-  ]
-);
-
-// Folder-level preference overrides
-export const folderPreferences = sqliteTable(
-  "folder_preferences",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    folderId: text("folder_id")
-      .notNull()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    // Terminal preferences (all nullable = inherit from user)
-    defaultWorkingDirectory: text("default_working_directory"),
-    defaultShell: text("default_shell"),
-    startupCommand: text("startup_command"),
-    // Appearance preferences
-    theme: text("theme"),
-    fontSize: integer("font_size"),
-    fontFamily: text("font_family"),
-    // Repository association for worktree support
-    githubRepoId: text("github_repo_id").references(() => githubRepositories.id, {
-      onDelete: "set null",
-    }),
-    localRepoPath: text("local_repo_path"), // Alternative: manual path to local git repo
-    // Default agent provider for issue worktrees (claude, codex, gemini, opencode)
-    defaultAgentProvider: text("default_agent_provider").$type<AgentProviderType>(),
-    // Environment variables as JSON: { "PORT": "3000", "API_URL": "..." }
-    // Use "__DISABLED__" value to explicitly disable an inherited variable
-    environmentVars: text("environment_vars"),
-    // Pinned files as JSON: PinnedFile[]
-    pinnedFiles: text("pinned_files"),
-    // Git identity override for pseudonymous/anonymous commits
-    // When set, these are injected as GIT_AUTHOR_NAME/EMAIL + GIT_COMMITTER_NAME/EMAIL
-    gitIdentityName: text("git_identity_name"),
-    gitIdentityEmail: text("git_identity_email"),
-    // Sensitive folder flag — requires pseudonymous identity, enables push protection
-    isSensitive: integer("is_sensitive", { mode: "boolean" }).default(false),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("folder_prefs_folder_user_idx").on(table.folderId, table.userId),
-    index("folder_prefs_user_idx").on(table.userId),
-  ]
-);
-
 // GitHub account metadata - augments the NextAuth accounts table with display info
 // Keyed by providerAccountId (GitHub numeric user ID as string)
 export const githubAccountMetadata = sqliteTable(
@@ -261,24 +183,6 @@ export const githubAccountMetadata = sqliteTable(
   ]
 );
 
-// Binds a folder to a specific GitHub account for environment injection
-export const folderGitHubAccountLinks = sqliteTable(
-  "folder_github_account_link",
-  {
-    folderId: text("folder_id")
-      .primaryKey()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
-    providerAccountId: text("provider_account_id")
-      .notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    index("folder_gh_account_link_account_idx").on(table.providerAccountId),
-  ]
-);
-
 // Port registry for environment variable port conflict detection
 export const portRegistry = sqliteTable(
   "port_registry",
@@ -286,9 +190,9 @@ export const portRegistry = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    folderId: text("folder_id")
-      .notNull()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -300,46 +204,11 @@ export const portRegistry = sqliteTable(
   },
   (table) => [
     index("port_registry_user_idx").on(table.userId),
-    index("port_registry_folder_idx").on(table.folderId),
+    index("port_registry_project_idx").on(table.projectId),
     // Composite index for fast conflict detection
     index("port_registry_user_port_idx").on(table.userId, table.port),
     // Prevent duplicate port+variable registrations per user
     uniqueIndex("port_registry_user_port_var_unique").on(table.userId, table.port, table.variableName),
-  ]
-);
-
-// Folder-level secrets provider configuration
-export const folderSecretsConfig = sqliteTable(
-  "folder_secrets_config",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    folderId: text("folder_id")
-      .notNull()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    provider: text("provider").notNull(), // "phase" | "vault" | "aws-secrets-manager" | "1password"
-    // Provider-specific config as JSON:
-    // Phase: { "app": "my-app", "env": "development", "serviceToken": "pss_..." }
-    // Vault: { "url": "https://vault.example.com", "path": "secret/data/myapp", "token": "..." }
-    providerConfig: text("provider_config").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-    lastFetchedAt: integer("last_fetched_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("folder_secrets_config_folder_user_idx").on(table.folderId, table.userId),
-    index("folder_secrets_config_user_idx").on(table.userId),
-    // Index for fetching all enabled configs for a user (used in secrets status checks)
-    index("folder_secrets_config_user_enabled_idx").on(table.userId, table.enabled),
   ]
 );
 
@@ -359,7 +228,7 @@ export const sessionTemplates = sqliteTable(
     sessionNamePattern: text("session_name_pattern"), // e.g., "Dev Server - ${n}"
     projectPath: text("project_path"),
     startupCommand: text("startup_command"),
-    folderId: text("folder_id").references(() => sessionFolders.id, {
+    projectId: text("project_id").references(() => projects.id, {
       onDelete: "set null",
     }),
     icon: text("icon"), // lucide icon name
@@ -380,6 +249,7 @@ export const sessionTemplates = sqliteTable(
   (table) => [
     index("session_template_user_idx").on(table.userId),
     index("session_template_usage_idx").on(table.userId, table.usageCount),
+    index("session_template_project_idx").on(table.projectId),
   ]
 );
 
@@ -455,9 +325,11 @@ export const terminalSessions = sqliteTable(
     }),
     worktreeBranch: text("worktree_branch"),
     worktreeType: text("worktree_type").$type<WorktreeType>(),
-    folderId: text("folder_id").references(() => sessionFolders.id, {
-      onDelete: "set null",
-    }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     // Agent profile for environment isolation
     profileId: text("profile_id").references(() => agentProfiles.id, {
       onDelete: "set null",
@@ -494,8 +366,7 @@ export const terminalSessions = sqliteTable(
   (table) => [
     index("terminal_session_user_status_idx").on(table.userId, table.status),
     index("terminal_session_user_order_idx").on(table.userId, table.tabOrder),
-    // Composite index for filtering sessions by folder (used in folder views)
-    index("terminal_session_user_folder_idx").on(table.userId, table.folderId),
+    index("terminal_session_project_idx").on(table.projectId),
     // Index for filtering by terminal type
     index("terminal_session_type_idx").on(table.userId, table.terminalType),
   ]
@@ -549,9 +420,9 @@ export const worktreeTrashMetadata = sqliteTable(
     worktreeBranch: text("worktree_branch").notNull(),
     worktreeOriginalPath: text("worktree_original_path").notNull(),
     worktreeTrashPath: text("worktree_trash_path").notNull(),
-    // Folder organization (snapshot at trash time)
-    originalFolderId: text("original_folder_id"),
-    originalFolderName: text("original_folder_name"),
+    // Project organization (snapshot at trash time)
+    originalProjectId: text("original_project_id"),
+    originalProjectName: text("original_project_name"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -660,32 +531,6 @@ export const githubBranchProtection = sqliteTable(
   ]
 );
 
-// Folder to repository mapping - links folders to their source repos
-export const folderRepositories = sqliteTable(
-  "folder_repository",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    folderId: text("folder_id")
-      .notNull()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
-    repositoryId: text("repository_id")
-      .notNull()
-      .references(() => githubRepositories.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [
-    uniqueIndex("folder_repo_folder_user_idx").on(table.folderId, table.userId),
-    index("folder_repo_user_idx").on(table.userId),
-  ]
-);
-
 // GitHub stats display preferences per user/folder
 export const githubStatsPreferences = sqliteTable(
   "github_stats_preferences",
@@ -696,7 +541,9 @@ export const githubStatsPreferences = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    folderId: text("folder_id").references(() => sessionFolders.id, { onDelete: "cascade" }), // null = global user preference
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
     showPRCount: integer("show_pr_count", { mode: "boolean" }).notNull().default(true),
     showIssueCount: integer("show_issue_count", { mode: "boolean" }).notNull().default(true),
     showCIStatus: integer("show_ci_status", { mode: "boolean" }).notNull().default(true),
@@ -711,9 +558,8 @@ export const githubStatsPreferences = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    // User can have one global preference (folderId null) and one per folder
-    uniqueIndex("github_stats_prefs_user_folder_idx").on(table.userId, table.folderId),
     index("github_stats_prefs_user_idx").on(table.userId),
+    index("github_stats_prefs_project_idx").on(table.projectId),
   ]
 );
 
@@ -990,8 +836,8 @@ export const agentProfiles = sqliteTable(
 );
 
 /**
- * Agent configuration files (CLAUDE.md, AGENTS.md, GEMINI.md) stored per folder.
- * Supports inheritance: global (null folderId) -> folder-specific.
+ * Agent configuration files (CLAUDE.md, AGENTS.md, GEMINI.md) stored per project.
+ * Supports inheritance: global (null projectId) -> project-specific.
  */
 export const agentConfigs = sqliteTable(
   "agent_config",
@@ -1002,7 +848,7 @@ export const agentConfigs = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    folderId: text("folder_id").references(() => sessionFolders.id, {
+    projectId: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
     provider: text("provider").$type<AgentProvider>().notNull(),
@@ -1017,11 +863,11 @@ export const agentConfigs = sqliteTable(
   },
   (table) => [
     index("agent_config_user_idx").on(table.userId),
-    index("agent_config_folder_idx").on(table.folderId),
-    // Unique constraint: one config per provider/type per folder per user
+    index("agent_config_project_idx").on(table.projectId),
+    // Unique constraint: one config per provider/type per project per user
     uniqueIndex("agent_config_unique_idx").on(
       table.userId,
-      table.folderId,
+      table.projectId,
       table.provider,
       table.configType
     ),
@@ -1030,7 +876,7 @@ export const agentConfigs = sqliteTable(
 
 /**
  * MCP server configurations for AI agent tool access.
- * Supports global (null folderId) and folder-specific servers.
+ * Supports global (null projectId) and project-specific servers.
  */
 export const mcpServers = sqliteTable(
   "mcp_server",
@@ -1041,7 +887,7 @@ export const mcpServers = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    folderId: text("folder_id").references(() => sessionFolders.id, {
+    projectId: text("project_id").references(() => projects.id, {
       onDelete: "cascade",
     }),
     name: text("name").notNull(),
@@ -1061,29 +907,9 @@ export const mcpServers = sqliteTable(
   },
   (table) => [
     index("mcp_server_user_idx").on(table.userId),
-    index("mcp_server_folder_idx").on(table.folderId),
+    index("mcp_server_project_idx").on(table.projectId),
     index("mcp_server_enabled_idx").on(table.userId, table.enabled),
   ]
-);
-
-/**
- * Links folders to specific agent profiles.
- * When a session is created in a folder, it uses the linked profile's environment.
- */
-export const folderProfileLinks = sqliteTable(
-  "folder_profile_link",
-  {
-    folderId: text("folder_id")
-      .primaryKey()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
-    profileId: text("profile_id")
-      .notNull()
-      .references(() => agentProfiles.id, { onDelete: "cascade" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .$defaultFn(() => new Date()),
-  },
-  (table) => [index("folder_profile_link_profile_idx").on(table.profileId)]
 );
 
 /**
@@ -1287,7 +1113,7 @@ export const sessionMemory = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    folderId: text("folder_id").references(() => sessionFolders.id, {
+    projectId: text("project_id").references(() => projects.id, {
       onDelete: "set null",
     }),
     type: text("type").$type<"note" | "artifact" | "summary">().notNull(),
@@ -1303,7 +1129,7 @@ export const sessionMemory = sqliteTable(
   },
   (table) => [
     index("session_memory_user_idx").on(table.userId),
-    index("session_memory_folder_idx").on(table.folderId),
+    index("session_memory_project_idx").on(table.projectId),
     index("session_memory_type_idx").on(table.userId, table.type),
   ]
 );
@@ -1497,9 +1323,11 @@ export const projectTasks = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    folderId: text("folder_id").references(() => sessionFolders.id, {
-      onDelete: "cascade",
-    }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     sessionId: text("session_id").references(() => terminalSessions.id, {
       onDelete: "set null",
     }),
@@ -1526,8 +1354,8 @@ export const projectTasks = sqliteTable(
   },
   (table) => [
     index("project_task_user_idx").on(table.userId),
-    index("project_task_folder_idx").on(table.folderId),
-    index("project_task_user_folder_idx").on(table.userId, table.folderId),
+    index("project_task_project_idx").on(table.projectId),
+    index("project_task_user_project_idx").on(table.userId, table.projectId),
     index("project_task_session_idx").on(table.sessionId),
     index("project_task_agent_key_idx").on(table.sessionId, table.agentTaskKey),
   ]
@@ -1621,7 +1449,7 @@ export const agentPeerMessages = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    folderId: text("folder_id").notNull(),
+    projectId: text("project_id").notNull(),
     fromSessionId: text("from_session_id").references(() => terminalSessions.id, {
       onDelete: "set null",
     }),
@@ -1641,7 +1469,7 @@ export const agentPeerMessages = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    index("peer_message_folder_created_idx").on(table.folderId, table.createdAt),
+    index("peer_message_project_created_idx").on(table.projectId, table.createdAt),
     index("peer_message_to_session_idx").on(table.toSessionId),
     index("peer_message_channel_created_idx").on(table.channelId, table.createdAt),
     index("peer_message_parent_idx").on(table.parentMessageId),
@@ -1658,9 +1486,11 @@ export const channelGroups = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    folderId: text("folder_id")
+    projectId: text("project_id")
       .notNull()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     name: text("name").notNull(),
     position: integer("position").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -1668,8 +1498,8 @@ export const channelGroups = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    index("channel_group_folder_idx").on(table.folderId),
-    uniqueIndex("channel_group_folder_name_idx").on(table.folderId, table.name),
+    index("channel_group_project_idx").on(table.projectId),
+    uniqueIndex("channel_group_project_name_idx").on(table.projectId, table.name),
   ]
 );
 
@@ -1683,9 +1513,11 @@ export const channels = sqliteTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    folderId: text("folder_id")
+    projectId: text("project_id")
       .notNull()
-      .references(() => sessionFolders.id, { onDelete: "cascade" }),
+      .references(() => projects.id, {
+        onDelete: "cascade",
+      }),
     groupId: text("group_id")
       .notNull()
       .references(() => channelGroups.id, { onDelete: "cascade" }),
@@ -1703,9 +1535,9 @@ export const channels = sqliteTable(
       .$defaultFn(() => new Date()),
   },
   (table) => [
-    index("channel_folder_idx").on(table.folderId),
+    index("channel_project_idx").on(table.projectId),
     index("channel_group_idx").on(table.groupId),
-    uniqueIndex("channel_folder_name_idx").on(table.folderId, table.name),
+    uniqueIndex("channel_project_name_idx").on(table.projectId, table.name),
   ]
 );
 
@@ -1810,5 +1642,202 @@ export const litellmModels = sqliteTable(
   },
   (table) => [
     index("litellm_model_user_idx").on(table.userId),
+  ]
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// Project / Group Coupling (Phase 1 of folder refactor)
+// ─────────────────────────────────────────────────────────────────────────
+
+export const projectGroups = sqliteTable(
+  "project_group",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    parentGroupId: text("parent_group_id").references(
+      (): AnySQLiteColumn => projectGroups.id,
+      { onDelete: "set null" }
+    ),
+    name: text("name").notNull(),
+    collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    // Transitional bridge column from the pre-refactor `folders` table. All
+    // new rows are written with `null`; the column + unique index are
+    // retained through v<NEXT> for back-compat and dropped in the
+    // follow-up tracked by bd remote-dev-lylj.
+    legacyFolderId: text("legacy_folder_id"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("project_group_user_idx").on(t.userId),
+    index("project_group_parent_idx").on(t.parentGroupId),
+    // Unique-per-user bridge index. NULL != NULL under SQLite unique
+    // semantics, so the constraint only enforces uniqueness for
+    // already-migrated rows. Drop in bd remote-dev-lylj.
+    uniqueIndex("project_group_legacy_user_idx").on(t.userId, t.legacyFolderId),
+  ]
+);
+
+export const projects = sqliteTable(
+  "project",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => projectGroups.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isAutoCreated: integer("is_auto_created", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    // Transitional bridge column from the pre-refactor `folders` table. All
+    // new rows are written with `null`; the column + unique index are
+    // retained through v<NEXT> for back-compat and dropped in the
+    // follow-up tracked by bd remote-dev-lylj.
+    legacyFolderId: text("legacy_folder_id"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("project_user_idx").on(t.userId),
+    index("project_group_idx").on(t.groupId),
+    // Unique-per-user bridge index. NULL != NULL under SQLite unique
+    // semantics, so the constraint only enforces uniqueness for
+    // already-migrated rows. Drop in bd remote-dev-lylj.
+    uniqueIndex("project_legacy_user_idx").on(t.userId, t.legacyFolderId),
+  ]
+);
+
+export const nodePreferences = sqliteTable(
+  "node_preferences",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    ownerType: text("owner_type", { enum: ["group", "project"] }).notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    defaultWorkingDirectory: text("default_working_directory"),
+    defaultShell: text("default_shell"),
+    startupCommand: text("startup_command"),
+    theme: text("theme"),
+    fontSize: integer("font_size"),
+    fontFamily: text("font_family"),
+    githubRepoId: text("github_repo_id"),
+    localRepoPath: text("local_repo_path"),
+    defaultAgentProvider: text("default_agent_provider"),
+    environmentVars: text("environment_vars", { mode: "json" }),
+    pinnedFiles: text("pinned_files", { mode: "json" }),
+    gitIdentityName: text("git_identity_name"),
+    gitIdentityEmail: text("git_identity_email"),
+    isSensitive: integer("is_sensitive", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("node_pref_owner_idx").on(t.ownerId, t.ownerType),
+    uniqueIndex("node_pref_owner_user_idx").on(t.ownerId, t.ownerType, t.userId),
+  ]
+);
+
+export const projectSecretsConfig = sqliteTable(
+  "project_secrets_config",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    providerConfig: text("provider_config", { mode: "json" }).notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastFetchedAt: integer("last_fetched_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("project_secrets_project_user_idx").on(t.projectId, t.userId),
+  ]
+);
+
+export const projectGitHubAccountLinks = sqliteTable(
+  "project_github_account_link",
+  {
+    projectId: text("project_id")
+      .primaryKey()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    providerAccountId: text("provider_account_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index("project_gh_link_account_idx").on(t.providerAccountId)]
+);
+
+export const projectProfileLinks = sqliteTable(
+  "project_profile_link",
+  {
+    projectId: text("project_id")
+      .primaryKey()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => agentProfiles.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index("project_profile_link_profile_idx").on(t.profileId)]
+);
+
+export const projectRepositories = sqliteTable(
+  "project_repository",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    repositoryId: text("repository_id")
+      .notNull()
+      .references(() => githubRepositories.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("project_repo_project_user_idx").on(table.projectId, table.userId),
+    index("project_repo_user_idx").on(table.userId),
   ]
 );

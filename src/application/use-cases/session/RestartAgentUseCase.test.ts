@@ -53,7 +53,7 @@ describe("RestartAgentUseCase", () => {
       findByUser: vi.fn(),
       count: vi.fn(),
       findByIds: vi.fn(),
-      findByFolder: vi.fn(),
+      findByProject: vi.fn(),
       save: vi.fn().mockImplementation((session: Session) => Promise.resolve(session)),
       saveMany: vi.fn(),
       delete: vi.fn(),

@@ -10,7 +10,7 @@ Remote Dev is a web-based terminal interface that provides:
 - Modern React-based UI with real-time terminal emulation
 - Session recording and playback
 - Reusable session templates
-- Hierarchical folder organization with preference inheritance
+- Two-level project group + project organization with preference inheritance
 - Self-hosted Nerd Fonts with mobile optimization
 - Glassmorphism UI with Tokyo Night theme
 
@@ -49,11 +49,12 @@ Remote Dev is a web-based terminal interface that provides:
 │                  │  │                  │
 │  - users         │  │  - rdv-{uuid}    │
 │  - sessions      │  │  - Persistent    │
-│  - folders       │  │  - Detachable    │
+│  - groups        │  │  - Detachable    │
+│  - projects      │  │                  │
+│  - node_prefs    │  │                  │
 │  - templates     │  │                  │
 │  - recordings    │  │                  │
 │  - repositories  │  │                  │
-│  - preferences   │  │                  │
 └──────────────────┘  └──────────────────┘
 ```
 
@@ -252,49 +253,84 @@ listWorktrees(repoPath)
 getBranches(repoPath)
 ```
 
-### FolderService (`src/services/folder-service.ts`)
+### GroupService (`src/services/group-service.ts`)
 
-Manages hierarchical folder organization:
+Manages project groups (the container layer of the tree). Groups are nestable
+and hold preferences only — they cannot own sessions, tasks, or channels.
 
 ```typescript
-// Create folder
-createFolder(userId, { name, parentId?, color? })
+// Create group
+GroupService.create({ userId, name, parentGroupId, sortOrder? })
 
-// List user's folders
-listFolders(userId)
+// List user's groups
+GroupService.list(userId)
 
-// Update folder
-updateFolder(folderId, userId, updates)
+// Get one group
+GroupService.get(groupId)
 
-// Delete folder
-deleteFolder(folderId, userId)
+// Update group (name / collapsed / sort)
+GroupService.update({ id, name?, collapsed?, sortOrder? })
 
-// Move folder
-moveFolder(folderId, userId, parentId)
+// Move group to a new parent (or to root with null)
+GroupService.move({ id, newParentGroupId })
+
+// Delete group; force=true cascades to descendants
+GroupService.delete({ id, force })
+```
+
+### ProjectService (`src/services/project-service.ts`)
+
+Manages projects (the leaf layer). Projects own sessions, tasks, channels,
+secrets configs, GitHub bindings, and repository associations.
+
+```typescript
+// Create project under a group
+ProjectService.create({ userId, groupId, name, sortOrder? })
+
+// List by group / by user
+ProjectService.listByGroup(groupId)
+ProjectService.listByUser(userId)
+
+// Get one project
+ProjectService.get(projectId)
+
+// Update project
+ProjectService.update({ id, name?, collapsed?, sortOrder? })
+
+// Reparent
+ProjectService.move({ id, newGroupId })
+
+// Delete
+ProjectService.delete(projectId)
 ```
 
 ### PreferencesService (`src/services/preferences-service.ts`)
 
-Manages user settings and folder preferences with inheritance:
+Manages user settings and **node preferences** (polymorphic, keyed by an
+`(ownerType, ownerId)` pair where `ownerType` is `"group" | "project"`).
 
 ```typescript
-// Get user settings
+// User settings
 getUserSettings(userId)
-
-// Update user settings
 updateUserSettings(userId, settings)
 
-// Get folder preferences
-getFolderPreferences(userId, folderId)
+// Node preferences (group OR project)
+getNodePreferences(ownerRef, userId)
+setNodePreferences(ownerRef, userId, preferences)
+deleteNodePreferences(ownerRef, userId)
 
-// Set folder preferences
-setFolderPreferences(userId, folderId, preferences)
-
-// Get effective preferences (with inheritance)
-getEffectivePreferences(userId, folderId?)
+// Effective preferences (walks group ancestry, then applies project)
+getEffectivePreferences(userId, projectId?)
 ```
 
-Preference inheritance order: Default → User Settings → Folder Preferences
+Preference inheritance order:
+
+```
+Default Settings → User Settings → Group Preferences (root → leaf) → Project Preferences
+```
+
+Group preferences are restricted to a subset of fields (no `localRepoPath`),
+while project preferences accept the full schema.
 
 ### TemplateService (`src/services/template-service.ts`)
 
@@ -379,7 +415,7 @@ authorized_user (id, email, createdAt)
 terminal_session (
   id, userId, name, tmuxSessionName,
   projectPath, githubRepoId, worktreeBranch,
-  status, tabOrder, folderId, lastActivityAt, createdAt, updatedAt
+  status, tabOrder, projectId, lastActivityAt, createdAt, updatedAt
 )
 
 -- Cached GitHub Repositories
@@ -389,22 +425,31 @@ github_repository (
   addedAt, updatedAt
 )
 
--- Session Folders
-session_folder (
-  id, userId, name, parentId, color, sortOrder, createdAt, updatedAt
+-- Project Groups (nestable containers, preferences only)
+project_group (
+  id, userId, name, parentGroupId, sortOrder,
+  collapsed, createdAt, updatedAt
 )
 
--- User Settings (with font and startup preferences)
+-- Projects (leaves; own sessions, tasks, channels, secrets, repo)
+project (
+  id, userId, groupId, name, sortOrder,
+  collapsed, createdAt, updatedAt
+)
+
+-- User Settings (with font, startup, and active node tracking)
 user_settings (
   id, userId, defaultWorkingDirectory, theme,
   fontSize, fontFamily, notificationsEnabled,
-  isRecording, startupCommand, createdAt, updatedAt
+  isRecording, startupCommand,
+  activeNodeId, activeNodeType,  -- "group" | "project"
+  createdAt, updatedAt
 )
 
--- Folder Preferences (inheritable per-folder overrides)
-folder_preferences (
-  id, folderId, userId, fontSize, fontFamily,
-  notificationsEnabled, isRecording, startupCommand,
+-- Node Preferences (polymorphic per-node overrides)
+node_preferences (
+  id, ownerType, ownerId, userId,
+  fields,  -- JSON; restricted schema for groups, full schema for projects
   createdAt, updatedAt
 )
 
@@ -487,11 +532,14 @@ api_key (
 | `Terminal.tsx` | xterm.js wrapper with WebSocket, resize protection, and recording support |
 | `TerminalWithKeyboard.tsx` | Terminal with mobile virtual keyboard support |
 | `RecordingPlayer.tsx` | Playback recorded terminal sessions with seek controls |
-| `Sidebar.tsx` | Session/folder tree with context menus and drag-drop |
+| `Sidebar.tsx` | Sidebar shell hosting the project tree and global controls |
+| `ProjectTreeSidebar.tsx` | Group + project tree with context menus, drag-drop, active-node selection |
+| `ProjectTreeRow.tsx` | Row renderer for an individual group or project node |
 | `SessionManager.tsx` | Main orchestrator with keyboard shortcuts |
 | `NewSessionWizard.tsx` | Multi-step session creation flow |
 | `SaveTemplateModal.tsx` | Save session as reusable template |
-| `FolderPreferencesModal.tsx` | Per-folder preference overrides |
+| `GroupPreferencesModal.tsx` | Per-group preference overrides (subset of fields) |
+| `ProjectPreferencesModal.tsx` | Per-project preference overrides (full schema) |
 | `UserSettingsModal.tsx` | User-level preferences |
 
 ### React Contexts
@@ -499,8 +547,8 @@ api_key (
 | Context | Purpose |
 |---------|---------|
 | `SessionContext` | Session state with optimistic updates |
-| `FolderContext` | Folder tree state and operations |
-| `PreferencesContext` | User settings + folder preferences with inheritance |
+| `ProjectTreeContext` | Combined group + project tree, active-node tracking, descendant aggregation |
+| `PreferencesContext` | User settings + node preferences with inheritance |
 | `TemplateContext` | Session templates state |
 | `RecordingContext` | Recording state management |
 
@@ -511,10 +559,20 @@ Default Settings (hardcoded)
        ↓
 User Settings (user_settings table)
        ↓
-Folder Preferences (folder_preferences table)
+Group Preferences (node_preferences, ownerType="group", walked root→leaf)
+       ↓
+Project Preferences (node_preferences, ownerType="project")
        ↓
 Effective Preferences (computed at runtime)
 ```
+
+### Active Node and Descendant Aggregation
+
+`user_settings` carries `activeNodeId` + `activeNodeType` (`"group" | "project"`).
+When a project is active, project-scoped views (tasks, channels, peer messages)
+filter to that single project. When a **group** is active, those same views
+roll up across every descendant project — recursively walking the group
+sub-tree — so a group node serves as a workspace pivot, not just a label.
 
 ## Font System
 

@@ -78,14 +78,14 @@ export const POST = withApiAuth(async (request, context) => {
     const fromName = user?.name || user?.email || "User";
 
     const { messageId, message } = await PeerService.sendUserMessage({
-      folderId: access.folderId,
+      projectId: access.projectId,
       fromName,
       body,
       channelId,
       parentMessageId,
     });
 
-    // Broadcast to folder owner's WebSocket clients via terminal server
+    // Broadcast to project owner's WebSocket clients via terminal server
     try {
       const baseUrl = resolveTerminalServerUrl();
       const eventType = parentMessageId ? "thread_reply_created" : "channel_message_created";
@@ -94,7 +94,7 @@ export const POST = withApiAuth(async (request, context) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: context.userId,
-          folderId: access.folderId,
+          projectId: access.projectId,
           channelId,
           parentMessageId: parentMessageId ?? null,
           message,

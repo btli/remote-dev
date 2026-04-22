@@ -1,4 +1,4 @@
-import { db } from "@/db";
+import { db, client } from "@/db";
 import { projectTasks, taskDependencies, terminalSessions } from "@/db/schema";
 import { eq, and, asc, isNull, inArray } from "drizzle-orm";
 import type {
@@ -21,7 +21,7 @@ function parseTaskRow(row: typeof projectTasks.$inferSelect): ProjectTask {
   return {
     id: row.id,
     userId: row.userId,
-    folderId: row.folderId,
+    projectId: row.projectId ?? null,
     sessionId: row.sessionId ?? null,
     title: row.title,
     description: row.description,
@@ -52,7 +52,7 @@ export async function getSessionContext(sessionId: string) {
     .select({
       id: terminalSessions.id,
       userId: terminalSessions.userId,
-      folderId: terminalSessions.folderId,
+      projectId: terminalSessions.projectId,
     })
     .from(terminalSessions)
     .where(eq(terminalSessions.id, sessionId))
@@ -99,9 +99,9 @@ export async function getTasks(
 
   if (folderId !== undefined) {
     if (folderId === null) {
-      conditions.push(isNull(projectTasks.folderId));
+      conditions.push(isNull(projectTasks.projectId));
     } else {
-      conditions.push(eq(projectTasks.folderId, folderId));
+      conditions.push(eq(projectTasks.projectId, folderId));
     }
   }
 
@@ -116,6 +116,79 @@ export async function getTasks(
     .orderBy(asc(projectTasks.sortOrder), asc(projectTasks.createdAt));
 
   const tasks = results.map(parseTaskRow);
+  const depMap = await loadDependencyMap(tasks.map((t) => t.id));
+  for (const task of tasks) {
+    task.blockedBy = depMap.get(task.id) ?? [];
+  }
+  return tasks;
+}
+
+/**
+ * List all tasks under a project/group node. When `node.type === "group"`,
+ * walks all descendant groups via a recursive CTE and rolls up projects that
+ * belong to any of them. All filtering happens in SQL to avoid blowing past
+ * SQLite's 32k bind-parameter limit on deep hierarchies.
+ */
+export async function listTasksByNode(
+  node: { id: string; type: "group" | "project" },
+  userId: string
+): Promise<ProjectTask[]> {
+  const rowsRaw =
+    node.type === "project"
+      ? await client.execute({
+          sql: `SELECT * FROM project_task
+                WHERE project_id = ? AND user_id = ?
+                ORDER BY sort_order ASC, created_at ASC`,
+          args: [node.id, userId],
+        })
+      : await client.execute({
+          sql: `
+            WITH RECURSIVE descendants(id, depth) AS (
+              SELECT id, 0 FROM project_group WHERE id = ?
+              UNION
+              SELECT pg.id, d.depth + 1 FROM project_group pg
+                JOIN descendants d ON pg.parent_group_id = d.id
+                WHERE d.depth < 128
+            )
+            SELECT t.*
+            FROM project_task t
+            WHERE t.user_id = ?
+              AND EXISTS (
+                SELECT 1 FROM project p
+                WHERE p.id = t.project_id
+                  AND p.group_id IN (SELECT id FROM descendants)
+              )
+            ORDER BY t.sort_order ASC, t.created_at ASC
+          `,
+          args: [node.id, userId],
+        });
+
+  // Convert raw rows to the Drizzle select shape expected by parseTaskRow.
+  const tasks = rowsRaw.rows.map((r) =>
+    parseTaskRow({
+      id: r.id as string,
+      userId: r.user_id as string,
+      folderId: (r.folder_id as string | null) ?? null,
+      projectId: (r.project_id as string | null) ?? null,
+      sessionId: (r.session_id as string | null) ?? null,
+      title: r.title as string,
+      description: (r.description as string | null) ?? null,
+      status: r.status as TaskStatus,
+      priority: (r.priority as ProjectTask["priority"]),
+      source: (r.source as TaskSource) ?? "manual",
+      labels: (r.labels as string) ?? "[]",
+      subtasks: (r.subtasks as string) ?? "[]",
+      metadata: (r.metadata as string) ?? "{}",
+      instructions: (r.instructions as string | null) ?? null,
+      agentTaskKey: (r.agent_task_key as string | null) ?? null,
+      owner: (r.owner as string | null) ?? null,
+      dueDate: r.due_date ? new Date(Number(r.due_date)) : null,
+      githubIssueUrl: (r.github_issue_url as string | null) ?? null,
+      sortOrder: Number(r.sort_order ?? 0),
+      createdAt: new Date(Number(r.created_at)),
+      updatedAt: new Date(Number(r.updated_at)),
+    } as typeof projectTasks.$inferSelect)
+  );
   const depMap = await loadDependencyMap(tasks.map((t) => t.id));
   for (const task of tasks) {
     task.blockedBy = depMap.get(task.id) ?? [];
@@ -169,11 +242,15 @@ export async function createTask(
   userId: string,
   input: CreateTaskInput
 ): Promise<ProjectTask> {
+  const resolvedProjectId = input.projectId ?? null;
+  if (!resolvedProjectId) {
+    throw new Error("createTask: projectId is required");
+  }
   const [row] = await db
     .insert(projectTasks)
     .values({
       userId,
-      folderId: input.folderId ?? null,
+      projectId: resolvedProjectId,
       sessionId: input.sessionId ?? null,
       title: input.title,
       description: input.description ?? null,
@@ -306,7 +383,7 @@ export async function clearTasks(
 ): Promise<number> {
   const conditions = [
     eq(projectTasks.userId, userId),
-    eq(projectTasks.folderId, folderId),
+    eq(projectTasks.projectId, folderId),
   ];
 
   if (source) {

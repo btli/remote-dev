@@ -65,7 +65,7 @@ export interface UpdateAgentProfileInput {
 export interface AgentConfig {
   id: string;
   userId: string;
-  folderId?: string;
+  projectId?: string;
   provider: AgentProvider;
   configType: AgentConfigType;
   content: string;
@@ -77,7 +77,7 @@ export interface AgentConfig {
  * Input for creating/updating agent config.
  */
 export interface UpsertAgentConfigInput {
-  folderId?: string;
+  projectId?: string;
   provider: AgentProvider;
   configType: AgentConfigType;
   content: string;
@@ -89,7 +89,7 @@ export interface UpsertAgentConfigInput {
 export interface MCPServer {
   id: string;
   userId: string;
-  folderId?: string;
+  projectId?: string;
   name: string;
   transport: MCPTransport;
   command: string;
@@ -106,7 +106,7 @@ export interface MCPServer {
  * Input for creating an MCP server.
  */
 export interface CreateMCPServerInput {
-  folderId?: string;
+  projectId?: string;
   name: string;
   transport: MCPTransport;
   command: string;
@@ -139,10 +139,10 @@ export interface MCPServerWithStatus extends MCPServer {
 }
 
 /**
- * Folder to profile link.
+ * Project to profile link.
  */
 export interface FolderProfileLink {
-  folderId: string;
+  projectId: string;
   profileId: string;
 }
 

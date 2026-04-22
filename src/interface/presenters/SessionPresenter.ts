@@ -22,7 +22,7 @@ export class SessionPresenter {
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
       worktreeType: (session.worktreeType as TerminalSession["worktreeType"]) ?? null,
-      folderId: session.folderId,
+      projectId: session.projectId,
       profileId: session.profileId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,

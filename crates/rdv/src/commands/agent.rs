@@ -13,10 +13,11 @@ pub struct AgentArgs {
 
 #[derive(Subcommand)]
 enum AgentCommand {
-    /// Start an agent session in a folder
+    /// Start an agent session in a project
     Start {
-        /// Folder ID to start the agent in
-        folder_id: String,
+        /// Project ID to start the agent in (alias: --folder-id for transition)
+        #[arg(long, alias = "folder-id")]
+        project_id: String,
         /// Optional worktree branch to use
         #[arg(long)]
         worktree: Option<String>,
@@ -74,9 +75,10 @@ impl From<&AgentSession> for AgentRow {
 
 pub async fn run(args: AgentArgs, client: &Client, human: bool) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
-        AgentCommand::Start { folder_id, worktree } => {
+        AgentCommand::Start { project_id, worktree } => {
             let mut body = json!({
-                "folderId": folder_id,
+                "projectId": project_id,
+                "folderId": project_id,
                 "terminalType": "agent",
             });
             if let Some(branch) = worktree {

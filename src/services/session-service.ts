@@ -125,6 +125,15 @@ export async function createSession(
   userId: string,
   input: CreateSessionInput
 ): Promise<TerminalSession> {
+  // Phase G0a: terminal_session.project_id is NOT NULL. Reject upfront with a
+  // clear error instead of letting the DB insert fail with an opaque FK message.
+  if (!input.projectId) {
+    throw new SessionServiceError(
+      "projectId is required to create a session",
+      "PROJECT_ID_REQUIRED"
+    );
+  }
+
   const sessionId = crypto.randomUUID();
   const tmuxSessionName = TmuxService.generateSessionName(sessionId);
 
@@ -143,16 +152,16 @@ export async function createSession(
     : 0;
 
   // Fetch resolved preferences
-  const preferences = await getResolvedPreferences(userId, input.folderId);
+  const preferences = await getResolvedPreferences(userId, input.projectId);
 
   // Determine working path and branch name
   let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
   let branchName = input.worktreeBranch;
 
   // Handle worktree creation from folder context (resolves repo from folder preferences)
-  if (input.createWorktree && input.folderId) {
+  if (input.createWorktree && input.projectId) {
     // Get folder preferences to find linked repository
-    const folderPrefs = await getFolderPreferences(input.folderId, userId);
+    const folderPrefs = await getFolderPreferences(input.projectId, userId);
 
     let repoPath: string | null = null;
     let repoId: string | null = null;
@@ -237,7 +246,7 @@ export async function createSession(
   }
 
   // Handle worktree creation with explicit projectPath (no folder context, e.g. direct API calls)
-  if (input.createWorktree && !input.folderId && input.projectPath && !branchName) {
+  if (input.createWorktree && !input.projectId && input.projectPath && !branchName) {
     const prefix = input.worktreeType ?? "feature";
     const description = input.featureDescription || crypto.randomUUID().substring(0, 8);
     const sanitizedBranch = `${prefix}/${WorktreeService.sanitizeBranchName(description)}`;
@@ -298,7 +307,7 @@ export async function createSession(
   }
 
   // Fetch folder environment variables for the session
-  const folderEnv = await getEnvironmentForSession(userId, input.folderId);
+  const folderEnv = await getEnvironmentForSession(userId, input.projectId);
 
   // Determine if this is an agent session early — needed for env var injection
   // Check both explicit agent flags AND terminalType (profiles set terminalType
@@ -372,9 +381,9 @@ export async function createSession(
   // This MUST happen before tmux session creation so agent processes inherit it at spawn
   let ghAccountEnv: Record<string, string> | null = null;
   try {
-    // Find the GitHub account bound to this folder (or fall back to default)
-    const account = input.folderId
-      ? await githubAccountRepository.findByFolder(input.folderId, userId)
+    // Find the GitHub account bound to this project (or fall back to default)
+    const account = input.projectId
+      ? await githubAccountRepository.findByProject(input.projectId)
       : null;
     const effectiveAccount = account ?? await githubAccountRepository.findDefault(userId);
 
@@ -403,7 +412,7 @@ export async function createSession(
   // File and browser sessions don't need tmux — they're pure UI
   if (input.terminalType !== "file" && input.terminalType !== "browser") {
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
-    const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.folderId);
+    const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.projectId);
 
     // Claude Code agent defaults (lowest precedence — overridable via profile/folder env)
     const claudeAgentDefaults: Record<string, string> = isAgentSession && effectiveAgentProvider === "claude" && input.terminalType !== "loop"
@@ -523,7 +532,7 @@ export async function createSession(
         githubRepoId: input.githubRepoId ?? null,
         worktreeBranch: branchName ?? null,
         worktreeType: input.worktreeType ?? null,
-        folderId: input.folderId ?? null,
+        projectId: input.projectId,
         profileId: input.profileId ?? null,
         parentSessionId: input.parentSessionId ?? null,
         terminalType,
@@ -970,8 +979,8 @@ export async function resumeSession(
 
       let ghAccountEnv: Record<string, string> = {};
       try {
-        const account = session.folderId
-          ? await githubAccountRepository.findByFolder(session.folderId, userId)
+        const account = session.projectId
+          ? await githubAccountRepository.findByProject(session.projectId)
           : null;
         const effectiveAccount = account ?? await githubAccountRepository.findDefault(userId);
         if (effectiveAccount) {
@@ -990,7 +999,7 @@ export async function resumeSession(
       }
 
       const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!session.profileId);
-      const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.folderId);
+      const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, session.projectId);
 
       const proxyEnv = await resolveProxyEnv(agentProvider, userId);
 
@@ -1119,7 +1128,7 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
     githubRepoId: dbSession.githubRepoId,
     worktreeBranch: dbSession.worktreeBranch,
     worktreeType: dbSession.worktreeType as WorktreeType | null,
-    folderId: dbSession.folderId,
+    projectId: dbSession.projectId ?? null,
     profileId: dbSession.profileId,
     terminalType: dbSession.terminalType ?? "shell",
     agentProvider: dbSession.agentProvider as AgentProviderType | null,

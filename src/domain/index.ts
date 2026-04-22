@@ -7,7 +7,6 @@
 
 // Entities
 export { Session, type SessionProps, type CreateSessionProps } from "./entities/Session";
-export { Folder, type FolderProps, type CreateFolderProps } from "./entities/Folder";
 
 // Value Objects
 export { SessionStatus } from "./value-objects/SessionStatus";

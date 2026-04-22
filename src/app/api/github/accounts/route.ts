@@ -27,7 +27,7 @@ export const GET = withAuth(async (_request, { userId }) => {
         );
         return { ...rest, needsReauth };
       }),
-      folderBindings: Object.fromEntries(result.folderBindings),
+      folderBindings: Object.fromEntries(result.projectBindings),
     });
   } catch (error) {
     log.error("Error listing accounts", { error: String(error) });

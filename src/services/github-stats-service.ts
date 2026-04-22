@@ -9,7 +9,7 @@ import {
   githubRepositoryStats,
   githubPullRequests,
   githubBranchProtection,
-  folderRepositories,
+  projectRepositories,
   githubChangeNotifications,
 } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
@@ -421,24 +421,22 @@ export async function linkFolderToRepository(
   folderId: string,
   repositoryId: string
 ): Promise<void> {
-  // Check if already linked
-  const existing = await db.query.folderRepositories.findFirst({
+  // folderId is now treated as projectId (Phase 6)
+  const existingProjectLink = await db.query.projectRepositories.findFirst({
     where: and(
-      eq(folderRepositories.folderId, folderId),
-      eq(folderRepositories.userId, userId)
+      eq(projectRepositories.projectId, folderId),
+      eq(projectRepositories.userId, userId)
     ),
   });
-
-  if (existing) {
-    // Update existing link
+  if (existingProjectLink) {
     await db
-      .update(folderRepositories)
+      .update(projectRepositories)
       .set({ repositoryId })
-      .where(eq(folderRepositories.id, existing.id));
+      .where(eq(projectRepositories.id, existingProjectLink.id));
   } else {
-    // Create new link
-    await db.insert(folderRepositories).values({
-      folderId,
+    await db.insert(projectRepositories).values({
+      id: crypto.randomUUID(),
+      projectId: folderId,
       repositoryId,
       userId,
     });
@@ -452,12 +450,13 @@ export async function unlinkFolderFromRepository(
   userId: string,
   folderId: string
 ): Promise<void> {
+  // folderId is now treated as projectId (Phase 6)
   await db
-    .delete(folderRepositories)
+    .delete(projectRepositories)
     .where(
       and(
-        eq(folderRepositories.folderId, folderId),
-        eq(folderRepositories.userId, userId)
+        eq(projectRepositories.projectId, folderId),
+        eq(projectRepositories.userId, userId)
       )
     );
 }
@@ -551,12 +550,21 @@ export async function createPRWorktree(
   // Import session service
   const { createSession } = await import("./session-service");
 
-  // Create session (folderId is handled via folder context on the client side)
+  // Phase G0a: terminal_session.project_id is NOT NULL. The caller must supply
+  // a folderId (which now means projectId) to scope the PR worktree session.
+  if (!folderId) {
+    throw new GitHubStatsServiceError(
+      "folderId (projectId) is required to create a PR worktree session",
+      "PROJECT_ID_REQUIRED"
+    );
+  }
+
   const session = await createSession(userId, {
     name: sessionName ?? `PR #${prNumber}: ${prDetails.title.slice(0, 30)}`,
     projectPath: worktreePath,
     githubRepoId: repositoryId,
     worktreeBranch: prDetails.branch,
+    projectId: folderId,
   });
 
   // Note: folderId assignment is handled by the client after session creation

@@ -11,8 +11,8 @@ import {
   worktreeTrashMetadata,
   terminalSessions,
   githubRepositories,
-  sessionFolders,
-  folderPreferences,
+  nodePreferences,
+  projects,
 } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
@@ -97,12 +97,13 @@ export async function trashWorktreeSession(
   let repoName = "unknown";
   let repoLocalPath = "";
 
-  // Strategy 1: Check folder preferences for localRepoPath or defaultWorkingDirectory
-  if (session.folderId) {
-    const prefs = await db.query.folderPreferences.findFirst({
+  // Strategy 1: Check project node preferences for localRepoPath or defaultWorkingDirectory
+  if (session.projectId) {
+    const prefs = await db.query.nodePreferences.findFirst({
       where: and(
-        eq(folderPreferences.folderId, session.folderId),
-        eq(folderPreferences.userId, userId)
+        eq(nodePreferences.ownerId, session.projectId),
+        eq(nodePreferences.ownerType, "project"),
+        eq(nodePreferences.userId, userId)
       ),
     });
     if (prefs?.localRepoPath) {
@@ -161,14 +162,18 @@ export async function trashWorktreeSession(
     repoName = basename(repoLocalPath);
   }
 
-  // Get folder info for snapshot
-  let folderName: string | null = null;
-  if (session.folderId) {
-    const folder = await db.query.sessionFolders.findFirst({
-      where: eq(sessionFolders.id, session.folderId),
+  // Snapshot the project id + name for the worktree's originating project so
+  // restore can re-link to it later even if the project is renamed/deleted.
+  let originalProjectId: string | null = null;
+  let originalProjectName: string | null = null;
+  if (session.projectId) {
+    originalProjectId = session.projectId;
+    const project = await db.query.projects.findFirst({
+      where: eq(projects.id, originalProjectId),
+      columns: { name: true },
     });
-    if (folder) {
-      folderName = folder.name;
+    if (project) {
+      originalProjectName = project.name;
     }
   }
 
@@ -224,16 +229,18 @@ export async function trashWorktreeSession(
     worktreeBranch: session.worktreeBranch,
     worktreeOriginalPath: session.projectPath,
     worktreeTrashPath: trashPath,
-    originalFolderId: session.folderId,
-    originalFolderName: folderName,
+    originalProjectId,
+    originalProjectName,
   });
 
-  // Update session status to trashed
+  // Update session status to trashed. Phase G0a: terminal_session.project_id is
+  // NOT NULL, so we keep the original project_id on the trashed row — the
+  // worktreeTrashMetadata table independently records originalProjectId for
+  // restore purposes, and trashed sessions are filtered out of UI listings.
   await db
     .update(terminalSessions)
     .set({
       status: "trashed",
-      folderId: null, // Remove from folder
       updatedAt: new Date(),
     })
     .where(eq(terminalSessions.id, sessionId));
@@ -358,22 +365,34 @@ export async function restoreWorktreeFromTrash(
     }
   }
 
-  // Determine target folder
-  // Priority: provided targetFolderId > original folder (if still exists) > null
-  let folderId: string | null = null;
-  if (targetFolderId !== undefined) {
-    folderId = targetFolderId;
-  } else if (metadata.originalFolderId) {
-    // Check if original folder still exists and belongs to this user
-    const originalFolder = await db.query.sessionFolders.findFirst({
+  // Determine target project.
+  // Priority: provided targetFolderId > original project (if still exists) >
+  // current session.projectId (preserved across trash under Phase G0a).
+  // terminal_session.project_id is NOT NULL so we must always resolve to a
+  // concrete project id.
+  let projectId: string | null = null;
+  if (targetFolderId !== undefined && targetFolderId !== null) {
+    projectId = targetFolderId;
+  } else if (metadata.originalProjectId) {
+    const originalProject = await db.query.projects.findFirst({
       where: and(
-        eq(sessionFolders.id, metadata.originalFolderId),
-        eq(sessionFolders.userId, userId)
+        eq(projects.id, metadata.originalProjectId),
+        eq(projects.userId, userId)
       ),
     });
-    if (originalFolder) {
-      folderId = metadata.originalFolderId;
+    if (originalProject) {
+      projectId = metadata.originalProjectId;
     }
+  }
+  if (!projectId) {
+    projectId = session.projectId;
+  }
+  if (!projectId) {
+    throw new WorktreeTrashServiceError(
+      "Unable to resolve target project for restore (project NOT NULL constraint)",
+      "PROJECT_ID_REQUIRED",
+      trashItem.resourceId
+    );
   }
 
   // Update session back to active and delete trash records
@@ -382,7 +401,7 @@ export async function restoreWorktreeFromTrash(
     .set({
       status: "active",
       projectPath: targetPath,
-      folderId,
+      projectId,
       updatedAt: new Date(),
     })
     .where(eq(terminalSessions.id, trashItem.resourceId));
@@ -392,7 +411,7 @@ export async function restoreWorktreeFromTrash(
   return {
     sessionId: trashItem.resourceId,
     worktreePath: targetPath,
-    folderId,
+    projectId,
   };
 }
 
@@ -497,16 +516,16 @@ export async function getOriginalFolderIfExists(
     where: eq(worktreeTrashMetadata.trashItemId, trashItemId),
   });
 
-  if (!metadata?.originalFolderId) {
+  if (!metadata?.originalProjectId) {
     return null;
   }
 
-  const folder = await db.query.sessionFolders.findFirst({
+  const project = await db.query.projects.findFirst({
     where: and(
-      eq(sessionFolders.id, metadata.originalFolderId),
-      eq(sessionFolders.userId, userId)
+      eq(projects.id, metadata.originalProjectId),
+      eq(projects.userId, userId)
     ),
   });
 
-  return folder ? folder.id : null;
+  return project ? project.id : null;
 }

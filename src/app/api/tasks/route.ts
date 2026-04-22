@@ -1,11 +1,25 @@
 import { NextResponse } from "next/server";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
-import { getTasks, createTask, clearTasks } from "@/services/task-service";
+import {
+  getTasks,
+  listTasksByNode,
+  createTask,
+  clearTasks,
+} from "@/services/task-service";
 import type { CreateTaskInput, TaskSource } from "@/types/task";
 
 export const GET = withApiAuth(async (request, { userId }) => {
   const url = new URL(request.url);
   const folderId = url.searchParams.get("folderId") ?? undefined;
+  const nodeId = url.searchParams.get("nodeId");
+  const nodeType = url.searchParams.get("nodeType");
+
+  // Phase 4: prefer nodeId/nodeType when present so group nodes can roll up
+  // across descendant projects via task-service.listTasksByNode.
+  if (nodeId && (nodeType === "group" || nodeType === "project")) {
+    const tasks = await listTasksByNode({ id: nodeId, type: nodeType }, userId);
+    return NextResponse.json(tasks);
+  }
 
   const tasks = await getTasks(userId, folderId);
   return NextResponse.json(tasks);

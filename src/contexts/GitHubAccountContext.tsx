@@ -5,8 +5,8 @@
  *
  * Provides:
  * - List of linked GitHub accounts with metadata
- * - Folder-to-account bindings
- * - CRUD operations: set default, bind/unbind folder, unlink
+ * - Project-to-account bindings
+ * - CRUD operations: set default, bind/unbind project, unlink
  * - "Add Account" flow via OAuth
  */
 
@@ -35,7 +35,10 @@ export interface LinkedGitHubAccount {
 
 interface GitHubAccountContextValue {
   accounts: LinkedGitHubAccount[];
-  folderBindings: Record<string, string>; // folderId -> providerAccountId
+  // projectId -> providerAccountId. The server returns this map in the
+  // `folderBindings` response field for historical back-compat; the keys
+  // are project ids post-refactor.
+  folderBindings: Record<string, string>;
   loading: boolean;
   error: string | null;
 
@@ -43,12 +46,12 @@ interface GitHubAccountContextValue {
   refresh: () => Promise<void>;
   setDefault: (providerAccountId: string) => Promise<void>;
   unlinkAccount: (providerAccountId: string) => Promise<void>;
-  bindFolder: (folderId: string, providerAccountId: string) => Promise<void>;
-  unbindFolder: (folderId: string) => Promise<void>;
+  bindProject: (projectId: string, providerAccountId: string) => Promise<void>;
+  unbindProject: (projectId: string) => Promise<void>;
   addAccount: () => void;
 
   // Helpers
-  getAccountForFolder: (folderId: string) => LinkedGitHubAccount | undefined;
+  getAccountForProject: (projectId: string) => LinkedGitHubAccount | undefined;
   defaultAccount: LinkedGitHubAccount | undefined;
 }
 
@@ -130,36 +133,36 @@ export function GitHubAccountProvider({
     }
   }, [refresh]);
 
-  const bindFolder = useCallback(async (folderId: string, providerAccountId: string) => {
+  const bindProject = useCallback(async (projectId: string, providerAccountId: string) => {
     setError(null);
     try {
       const res = await fetch(`/api/github/accounts/${providerAccountId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "bind-folder", folderId }),
+        body: JSON.stringify({ action: "bind-project", projectId }),
       });
-      if (!res.ok) throw new Error("Failed to bind folder");
-      setFolderBindings((prev) => ({ ...prev, [folderId]: providerAccountId }));
+      if (!res.ok) throw new Error("Failed to bind project");
+      setFolderBindings((prev) => ({ ...prev, [projectId]: providerAccountId }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     }
   }, []);
 
-  const unbindFolder = useCallback(async (folderId: string) => {
+  const unbindProject = useCallback(async (projectId: string) => {
     setError(null);
     // Find which account is currently bound to get the accountId for the API call
-    const providerAccountId = folderBindings[folderId];
+    const providerAccountId = folderBindings[projectId];
     if (!providerAccountId) return;
     try {
       const res = await fetch(`/api/github/accounts/${providerAccountId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "unbind-folder", folderId }),
+        body: JSON.stringify({ action: "unbind-project", projectId }),
       });
-      if (!res.ok) throw new Error("Failed to unbind folder");
+      if (!res.ok) throw new Error("Failed to unbind project");
       setFolderBindings((prev) => {
         const updated = { ...prev };
-        delete updated[folderId];
+        delete updated[projectId];
         return updated;
       });
     } catch (err) {
@@ -171,9 +174,9 @@ export function GitHubAccountProvider({
     window.location.href = "/api/auth/github/link";
   }, []);
 
-  const getAccountForFolder = useCallback(
-    (folderId: string) => {
-      const accountId = folderBindings[folderId];
+  const getAccountForProject = useCallback(
+    (projectId: string) => {
+      const accountId = folderBindings[projectId];
       if (!accountId) return undefined;
       return accounts.find((a) => a.providerAccountId === accountId);
     },
@@ -194,10 +197,10 @@ export function GitHubAccountProvider({
       refresh,
       setDefault,
       unlinkAccount,
-      bindFolder,
-      unbindFolder,
+      bindProject,
+      unbindProject,
       addAccount,
-      getAccountForFolder,
+      getAccountForProject,
       defaultAccount,
     }),
     [
@@ -208,10 +211,10 @@ export function GitHubAccountProvider({
       refresh,
       setDefault,
       unlinkAccount,
-      bindFolder,
-      unbindFolder,
+      bindProject,
+      unbindProject,
       addAccount,
-      getAccountForFolder,
+      getAccountForProject,
       defaultAccount,
     ]
   );

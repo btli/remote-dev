@@ -28,7 +28,7 @@ export interface TaskDependency {
 export interface ProjectTask {
   id: string;
   userId: string;
-  folderId: string | null;
+  projectId: string | null;
   sessionId: string | null;
   title: string;
   description: string | null;
@@ -50,7 +50,7 @@ export interface ProjectTask {
 }
 
 export interface CreateTaskInput {
-  folderId?: string | null;
+  projectId?: string | null;
   sessionId?: string | null;
   title: string;
   description?: string | null;

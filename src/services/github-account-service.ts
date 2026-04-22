@@ -5,7 +5,7 @@
  * and repository synchronization.
  */
 import { db } from "@/db";
-import { accounts, githubRepositories, githubAccountMetadata, folderGitHubAccountLinks } from "@/db/schema";
+import { accounts, githubRepositories, githubAccountMetadata, projectGitHubAccountLinks } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { existsSync, readdirSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -159,13 +159,13 @@ export async function disconnectGitHub(
     await ghCliConfigGateway.removeConfig(row.configDir).catch(() => {});
   }
 
-  // Remove folder bindings for all accounts being deleted
+  // Remove project bindings for all accounts being deleted
   if (metadataRows.length > 0) {
     await db
-      .delete(folderGitHubAccountLinks)
+      .delete(projectGitHubAccountLinks)
       .where(
         inArray(
-          folderGitHubAccountLinks.providerAccountId,
+          projectGitHubAccountLinks.providerAccountId,
           metadataRows.map((r) => r.providerAccountId)
         )
       );

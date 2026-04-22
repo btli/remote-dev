@@ -52,7 +52,7 @@ describe("PortMonitor", () => {
         {
           id: "session-1",
           name: "Dev Session",
-          folderId: "folder-1",
+          projectId: "folder-1",
           tmuxSessionName: "rdv-session-1",
           isActive: true,
         },
@@ -72,14 +72,14 @@ describe("PortMonitor", () => {
         sessionName: "Dev Session",
         port: 3000,
         variableName: "PORT",
-        folderId: "folder-1",
+        projectId: "folder-1",
       });
       expect(result).toContainEqual({
         sessionId: "session-1",
         sessionName: "Dev Session",
         port: 4000,
         variableName: "API_PORT",
-        folderId: "folder-1",
+        projectId: "folder-1",
       });
     });
 
@@ -88,14 +88,14 @@ describe("PortMonitor", () => {
         {
           id: "session-1",
           name: "Active",
-          folderId: null,
+          projectId: null,
           tmuxSessionName: "rdv-active",
           isActive: true,
         },
         {
           id: "session-2",
           name: "Inactive",
-          folderId: null,
+          projectId: null,
           tmuxSessionName: "rdv-inactive",
           isActive: false,
         },
@@ -117,7 +117,7 @@ describe("PortMonitor", () => {
         {
           id: "session-1",
           name: "Ghost Session",
-          folderId: null,
+          projectId: null,
           tmuxSessionName: "rdv-ghost",
           isActive: true,
         },
@@ -148,7 +148,7 @@ describe("PortMonitor", () => {
           {
             port: 3000,
             variableName: "PORT",
-            conflictingFolder: { id: "folder-2", name: "Other Project" },
+            conflictingProject: { id: "folder-2", name: "Other Project" },
             conflictingVariableName: "PORT",
             suggestedPort: 3001,
           },
@@ -164,8 +164,8 @@ describe("PortMonitor", () => {
       expect(result.databaseConflicts[0]).toMatchObject({
         port: 3000,
         variableName: "PORT",
-        conflictingFolderId: "folder-2",
-        conflictingFolderName: "Other Project",
+        conflictingProjectId: "folder-2",
+        conflictingProjectName: "Other Project",
       });
     });
 
@@ -175,7 +175,7 @@ describe("PortMonitor", () => {
           {
             port: 3000,
             variableName: "PORT",
-            conflictingFolder: { id: "folder-2", name: "Other" },
+            conflictingProject: { id: "folder-2", name: "Other" },
             conflictingVariableName: "PORT",
             suggestedPort: null,
           },

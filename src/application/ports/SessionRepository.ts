@@ -14,8 +14,8 @@ import type { SessionStatus } from "@/domain/value-objects/SessionStatus";
 export interface SessionFilters {
   /** Filter by status */
   status?: SessionStatus | SessionStatus[];
-  /** Filter by folder ID (null = root sessions) */
-  folderId?: string | null;
+  /** Filter by project ID (null = sessions not tied to a project) */
+  projectId?: string | null;
   /** Filter by project path */
   projectPath?: string;
   /** Filter sessions with worktrees */
@@ -58,9 +58,9 @@ export interface SessionRepository {
   findByIds(ids: string[], userId: string): Promise<Session[]>;
 
   /**
-   * Find sessions in a folder.
+   * Find sessions in a project.
    */
-  findByFolder(folderId: string, userId: string): Promise<Session[]>;
+  findByProject(projectId: string, userId: string): Promise<Session[]>;
 
   /**
    * Save a session (insert or update).

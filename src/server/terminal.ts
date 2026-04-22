@@ -239,7 +239,7 @@ async function pushMcpEventToFolderPeers(
 ): Promise<void> {
   const { pushToMcpServer } = await getMcpPush();
   const PeerService = await getPeerService();
-  const peers = await PeerService.getFolderPeers(folderId);
+  const peers = await PeerService.getProjectPeers(folderId);
   for (const peer of peers) {
     if (peer.sessionId === fromSessionId) continue;
     pushToMcpServer(peer.sessionId, buildEvent(peer.sessionId));
@@ -1270,7 +1270,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
       broadcastToUser(result.userId, {
         type: "peer_message_created",
-        folderId: result.folderId,
+        projectId: result.projectId,
         channelId: result.channelId ?? null,
         message: {
           id: result.messageId,
@@ -1303,7 +1303,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       if (toSessionId) {
         pushMcpEventToPeer(String(toSessionId), mcpEvent);
       } else {
-        pushMcpEventToFolderPeers(result.folderId, senderSid, () => mcpEvent).catch(() => {});
+        pushMcpEventToFolderPeers(result.projectId, senderSid, () => mcpEvent).catch(() => {});
       }
 
       sendJson(res, 200, { messageId: result.messageId, resolvedBody: result.resolvedBody });
@@ -1397,26 +1397,26 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
   // ═══ Channel endpoints ════════════════════════════════════════════════════
 
-  /** Look up a session's folderId and userId by session ID. */
+  /** Look up a session's projectId (surfaced as folderId for compat) and userId by session ID. */
   async function getSessionFolderContext(sessionId: string): Promise<{ folderId: string; userId: string } | null> {
     const { terminalSessions } = await import("@/db/schema");
     const { eq } = await import("drizzle-orm");
     const { db } = await import("@/db");
     const session = await db.query.terminalSessions.findFirst({
       where: eq(terminalSessions.id, sessionId),
-      columns: { folderId: true, userId: true },
+      columns: { projectId: true, userId: true },
     });
-    if (!session?.folderId || !session.userId) return null;
-    return { folderId: session.folderId, userId: session.userId };
+    if (!session?.projectId || !session.userId) return null;
+    return { folderId: session.projectId, userId: session.userId };
   }
 
-  /** Resolve a channel name to its ID within a folder. */
+  /** Resolve a channel name to its ID within a project. */
   async function resolveChannelName(folderId: string, channelName: string): Promise<string | undefined> {
     const { channels: channelsTable } = await import("@/db/schema");
     const { eq, and } = await import("drizzle-orm");
     const { db } = await import("@/db");
     const ch = await db.query.channels.findFirst({
-      where: and(eq(channelsTable.folderId, folderId), eq(channelsTable.name, channelName)),
+      where: and(eq(channelsTable.projectId, folderId), eq(channelsTable.name, channelName)),
       columns: { id: true },
     });
     return ch?.id;
@@ -1467,7 +1467,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
 
       const ChannelService = await import("@/services/channel-service");
       const channel = await ChannelService.createChannel({
-        folderId: ctx.folderId,
+        projectId: ctx.folderId,
         name: name as string,
         displayName: displayName as string | undefined,
         topic: topic as string | undefined,
@@ -1526,7 +1526,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
       const effectiveChannelId = result.channelId ?? resolvedChannelId ?? null;
       broadcastToUser(result.userId, {
         type: eventType,
-        folderId: result.folderId,
+        projectId: result.projectId,
         channelId: effectiveChannelId,
         parentMessageId: parentMessageId ?? null,
         message: {
@@ -1565,7 +1565,7 @@ async function handleInternalApi(req: IncomingMessage, res: ServerResponse): Pro
           if (ch) resolvedChannelName = ch.name;
         } catch { /* non-critical, name will be null in push */ }
       }
-      pushMcpEventToFolderPeers(result.folderId, chSenderSid, (peerId) => ({
+      pushMcpEventToFolderPeers(result.projectId, chSenderSid, (peerId) => ({
         type: mentions.has(peerId) ? "mention" : "channel_message",
         messageId: result.messageId,
         fromSessionId: chSenderSid,

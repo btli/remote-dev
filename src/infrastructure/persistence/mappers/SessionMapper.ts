@@ -13,6 +13,20 @@ import type { AgentProviderType, WorktreeType } from "@/types/session";
 import type { TerminalType, AgentExitState } from "@/types/terminal-type";
 
 /**
+ * Phase G0a: terminal_session.project_id is NOT NULL. Fail fast at persistence
+ * time if a Session somehow has a null projectId — the DB would reject the
+ * insert anyway, but an explicit error is easier to debug.
+ */
+function assertProjectId(projectId: string | null, sessionId: string): string {
+  if (!projectId) {
+    throw new Error(
+      `Session ${sessionId} is missing projectId; cannot persist without a project (terminal_session.project_id is NOT NULL)`
+    );
+  }
+  return projectId;
+}
+
+/**
  * Raw database record type from Drizzle query results.
  * Fields use loose types (string | null) because SQLite returns raw strings
  * that must be cast to domain types in the mapper.
@@ -26,7 +40,7 @@ export interface SessionDbRecord {
   githubRepoId: string | null;
   worktreeBranch: string | null;
   worktreeType: string | null;
-  folderId: string | null;
+  projectId: string | null;
   profileId: string | null;
   terminalType: string | null;
   agentProvider: string | null;
@@ -59,7 +73,10 @@ export interface SessionDbInsert {
   githubRepoId: string | null;
   worktreeBranch: string | null;
   worktreeType: WorktreeType | null;
-  folderId: string | null;
+  // Phase G0a: terminal_session.project_id is NOT NULL. The mapper asserts
+  // non-null at persistence time; domain code that creates sessions without a
+  // projectId will fail fast here rather than propagate to an opaque DB error.
+  projectId: string;
   profileId: string | null;
   terminalType: TerminalType;
   agentProvider: AgentProviderType | null;
@@ -93,7 +110,7 @@ export class SessionMapper {
       githubRepoId: record.githubRepoId,
       worktreeBranch: record.worktreeBranch,
       worktreeType: record.worktreeType ?? null,
-      folderId: record.folderId,
+      projectId: record.projectId,
       profileId: record.profileId,
       terminalType: (record.terminalType as TerminalType) ?? "shell",
       agentProvider: (record.agentProvider as AgentProviderType) ?? null,
@@ -135,7 +152,7 @@ export class SessionMapper {
       worktreeBranch: session.worktreeBranch,
       // Cast is safe because Session.worktreeType only holds values set via WorktreeType-typed inputs
       worktreeType: (session.worktreeType as WorktreeType) ?? null,
-      folderId: session.folderId,
+      projectId: assertProjectId(session.projectId, session.id),
       profileId: session.profileId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,
@@ -169,7 +186,7 @@ export class SessionMapper {
     githubRepoId: string | null;
     worktreeBranch: string | null;
     worktreeType: string | null;
-    folderId: string | null;
+    projectId: string | null;
     profileId: string | null;
     terminalType: TerminalType;
     agentProvider: AgentProviderType | null;
@@ -196,7 +213,7 @@ export class SessionMapper {
       githubRepoId: session.githubRepoId,
       worktreeBranch: session.worktreeBranch,
       worktreeType: session.worktreeType ?? null,
-      folderId: session.folderId,
+      projectId: session.projectId,
       profileId: session.profileId,
       terminalType: session.terminalType,
       agentProvider: session.agentProvider,

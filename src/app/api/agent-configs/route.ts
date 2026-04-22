@@ -73,7 +73,7 @@ export const POST = withAuth(async (request, { userId }) => {
   }
 
   const config = await AgentConfigService.upsertConfig(userId, {
-    folderId,
+    projectId: folderId,
     provider,
     configType,
     content,

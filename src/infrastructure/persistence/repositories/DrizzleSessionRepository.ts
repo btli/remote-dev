@@ -14,12 +14,9 @@ import type {
   SessionFilters,
   SessionOrderBy,
 } from "@/application/ports/SessionRepository";
-import type { SessionFolderQueryPort } from "@/application/ports/SessionFolderQueryPort";
 import { SessionMapper, type SessionDbRecord } from "../mappers/SessionMapper";
 
-export class DrizzleSessionRepository
-  implements SessionRepository, SessionFolderQueryPort
-{
+export class DrizzleSessionRepository implements SessionRepository {
   /**
    * Find a session by ID with user ownership check.
    */
@@ -50,7 +47,7 @@ export class DrizzleSessionRepository
 
     // Apply filters
     if (options?.filters) {
-      const { status, folderId, hasWorktree } = options.filters;
+      const { status, projectId, hasWorktree } = options.filters;
 
       if (status) {
         const statusValues = Array.isArray(status) ? status : [status];
@@ -62,11 +59,11 @@ export class DrizzleSessionRepository
         );
       }
 
-      if (folderId !== undefined) {
-        if (folderId === null) {
-          conditions.push(isNull(terminalSessions.folderId));
+      if (projectId !== undefined) {
+        if (projectId === null) {
+          conditions.push(isNull(terminalSessions.projectId));
         } else {
-          conditions.push(eq(terminalSessions.folderId, folderId));
+          conditions.push(eq(terminalSessions.projectId, projectId));
         }
       }
 
@@ -99,7 +96,7 @@ export class DrizzleSessionRepository
     const conditions = [eq(terminalSessions.userId, userId)];
 
     if (filters) {
-      const { status, folderId, hasWorktree } = filters;
+      const { status, projectId, hasWorktree } = filters;
 
       if (status) {
         const statusValues = Array.isArray(status) ? status : [status];
@@ -111,11 +108,11 @@ export class DrizzleSessionRepository
         );
       }
 
-      if (folderId !== undefined) {
-        if (folderId === null) {
-          conditions.push(isNull(terminalSessions.folderId));
+      if (projectId !== undefined) {
+        if (projectId === null) {
+          conditions.push(isNull(terminalSessions.projectId));
         } else {
-          conditions.push(eq(terminalSessions.folderId, folderId));
+          conditions.push(eq(terminalSessions.projectId, projectId));
         }
       }
 
@@ -153,40 +150,13 @@ export class DrizzleSessionRepository
   }
 
   /**
-   * Find sessions in a folder.
+   * Find sessions in a project.
    */
-  async findByFolder(folderId: string, userId: string): Promise<Session[]> {
+  async findByProject(projectId: string, userId: string): Promise<Session[]> {
     return this.findByUser(userId, {
-      filters: { folderId },
+      filters: { projectId },
       orderBy: { field: "tabOrder", direction: "asc" },
     });
-  }
-
-  /**
-   * Lightweight query for session-to-folder mappings (avoids domain entity mapping).
-   */
-  async findSessionFolderMappings(
-    userId: string
-  ): Promise<{ sessionId: string; folderId: string }[]> {
-    const rows = await db
-      .select({
-        id: terminalSessions.id,
-        folderId: terminalSessions.folderId,
-      })
-      .from(terminalSessions)
-      .where(
-        and(
-          eq(terminalSessions.userId, userId),
-          isNotNull(terminalSessions.folderId)
-        )
-      );
-
-    return rows
-      .filter((r) => r.folderId != null)
-      .map((r) => ({
-        sessionId: r.id,
-        folderId: r.folderId!,
-      }));
   }
 
   /**

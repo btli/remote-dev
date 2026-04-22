@@ -874,7 +874,7 @@ export function TaskSidebar({
     (title: string) => {
       createTask({
         title,
-        folderId: activeFolderId,
+        projectId: activeFolderId,
         sessionId: activeSessionId ?? undefined,
       });
     },
@@ -885,7 +885,7 @@ export function TaskSidebar({
     (issue: GitHubIssueDTO) => {
       createTask({
         title: issue.title,
-        folderId: activeFolderId,
+        projectId: activeFolderId,
         sessionId: activeSessionId ?? undefined,
         githubIssueUrl: issue.htmlUrl,
         description: `Linked from GitHub #${issue.number}`,

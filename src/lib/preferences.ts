@@ -272,3 +272,4 @@ export function getSourceLabel(source: PreferenceSource): string {
   if (isFromFolder(source)) return `Inherited from: ${source.folderName}`;
   return "Unknown";
 }
+

@@ -11,7 +11,7 @@ A modern web-based terminal interface for local development, featuring multi-ses
 
 - **Multiple Terminal Sessions** - Run multiple terminals in browser tabs, switch between them seamlessly
 - **Session Persistence** - Sessions survive browser close via tmux integration
-- **Session Folders** - Organize sessions into hierarchical folders with preference inheritance
+- **Project Tree** - Organize sessions into a two-level group + project hierarchy with preference inheritance
 - **Session Templates** - Save and reuse session configurations
 - **Session Recording** - Record and playback terminal sessions
 - **GitHub Integration** - Connect your GitHub account, browse repositories, and clone with one click
@@ -206,8 +206,9 @@ The application uses a clean service layer architecture:
 - **TmuxService** - tmux session lifecycle management
 - **GitHubService** - GitHub API integration, repository caching
 - **WorktreeService** - Git worktree creation and management
-- **FolderService** - Session folder hierarchy management
-- **PreferencesService** - User settings and folder preferences with inheritance
+- **GroupService** - Project group (container) hierarchy management
+- **ProjectService** - Project (leaf) management — owns sessions/tasks/channels
+- **PreferencesService** - User settings and node preferences with inheritance
 - **TemplateService** - Session template management
 - **RecordingService** - Session recording storage
 - **ApiKeyService** - API key management for programmatic access
@@ -221,10 +222,15 @@ The application uses a clean service layer architecture:
 | `/api/sessions/[id]/suspend` | POST | Suspend session |
 | `/api/sessions/[id]/resume` | POST | Resume session |
 | `/api/sessions/[id]/exec` | POST | Execute command (Agent API) |
-| `/api/folders` | GET, POST | List/create folders |
-| `/api/folders/[id]` | PATCH, DELETE | Update/delete folder |
+| `/api/groups` | GET, POST | List/create project groups |
+| `/api/groups/[id]` | GET, PATCH, DELETE | Group CRUD |
+| `/api/groups/[id]/move` | POST | Reparent group |
+| `/api/projects` | GET, POST | List/create projects |
+| `/api/projects/[id]` | GET, PATCH, DELETE | Project CRUD |
+| `/api/projects/[id]/move` | POST | Move project to another group |
 | `/api/preferences` | GET, PATCH | User settings |
-| `/api/preferences/folders/[id]` | PUT, DELETE | Folder preferences |
+| `/api/preferences/active-node` | POST | Set the active group/project |
+| `/api/node-preferences/[ownerType]/[ownerId]` | GET, PUT, DELETE | Per-node preferences |
 | `/api/templates` | GET, POST | List/create templates |
 | `/api/recordings` | GET, POST | List/save recordings |
 | `/api/github/repositories` | GET | List GitHub repos |

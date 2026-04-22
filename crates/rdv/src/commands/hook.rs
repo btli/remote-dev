@@ -333,9 +333,11 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
         return false;
     };
 
-    // Get the session's folder ID
+    // Get the session's project and folder IDs
     #[derive(serde::Deserialize)]
     struct SessionInfo {
+        #[serde(rename = "projectId")]
+        project_id: Option<String>,
         #[serde(rename = "folderId")]
         folder_id: Option<String>,
     }
@@ -345,7 +347,13 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
         Err(_) => return false,
     };
 
-    let Some(ref folder_id) = session.folder_id else {
+    // Prefer RDV_PROJECT_ID env var, then session.projectId, then fall back to folderId
+    let project_id = std::env::var("RDV_PROJECT_ID")
+        .ok()
+        .or_else(|| session.project_id.clone())
+        .or_else(|| session.folder_id.clone());
+
+    let Some(ref folder_id) = project_id else {
         return false;
     };
 
@@ -360,6 +368,8 @@ async fn check_git_identity_guard(client: &Client, payload: &serde_json::Value) 
     // Always call the guard API — the server determines if the folder is sensitive
     // even when no identity env vars are set (which is the most dangerous case)
     let guard_payload = json!({
+        "projectId": folder_id,
+        "folderId": folder_id,
         "proposedName": proposed_name,
         "proposedEmail": proposed_email,
         "operation": operation,

@@ -19,10 +19,14 @@ servers:
 tags:
   - name: Sessions
     description: Terminal session management
-  - name: Folders
-    description: Folder organization
+  - name: Groups
+    description: Project groups (containers; preferences only)
+  - name: Projects
+    description: Projects (leaves; own sessions, tasks, channels)
+  - name: NodePreferences
+    description: Polymorphic preferences for groups or projects
   - name: Preferences
-    description: User settings and folder preferences
+    description: User settings and active node selection
   - name: Templates
     description: Reusable session templates
   - name: Recordings
@@ -173,7 +177,12 @@ paths:
   /api/sessions/{id}/folder:
     put:
       tags: [Sessions]
-      summary: Move session to folder
+      summary: Move session to project
+      description: |
+        Moves the session to a different project (or detaches it). The path
+        retains `/folder` for backwards compatibility, but the underlying
+        column is `terminal_session.project_id`. The body accepts either
+        `projectId` (preferred) or `folderId` (legacy alias).
       parameters:
         - $ref: '#/components/parameters/SessionId'
       requestBody:
@@ -183,11 +192,16 @@ paths:
             schema:
               type: object
               properties:
+                projectId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Project UUID (null to detach)
                 folderId:
                   type: string
                   format: uuid
                   nullable: true
-                  description: Folder UUID (null to remove from folder)
+                  description: Legacy alias for `projectId`
       responses:
         '200':
           $ref: '#/components/responses/Success'
@@ -232,38 +246,27 @@ paths:
         '200':
           $ref: '#/components/responses/Success'
 
-  # Folders API
-  /api/folders:
+  # Project Groups API
+  /api/groups:
     get:
-      tags: [Folders]
-      summary: List folders
+      tags: [Groups]
+      summary: List groups
       responses:
         '200':
-          description: List of folders and session mappings
+          description: List of project groups
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  folders:
+                  groups:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Folder'
-                  sessionFolders:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        sessionId:
-                          type: string
-                          format: uuid
-                        folderId:
-                          type: string
-                          format: uuid
+                      $ref: '#/components/schemas/Group'
 
     post:
-      tags: [Folders]
-      summary: Create folder
+      tags: [Groups]
+      summary: Create group
       requestBody:
         required: true
         content:
@@ -272,27 +275,49 @@ paths:
               type: object
               required:
                 - name
+                - parentGroupId
               properties:
                 name:
                   type: string
-                parentId:
+                parentGroupId:
                   type: string
                   format: uuid
                   nullable: true
+                sortOrder:
+                  type: integer
       responses:
         '201':
-          description: Folder created
+          description: Group created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Folder'
+                type: object
+                properties:
+                  group:
+                    $ref: '#/components/schemas/Group'
 
-  /api/folders/{id}:
-    patch:
-      tags: [Folders]
-      summary: Update folder
+  /api/groups/{id}:
+    get:
+      tags: [Groups]
+      summary: Get group
       parameters:
-        - $ref: '#/components/parameters/FolderId'
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  group:
+                    $ref: '#/components/schemas/Group'
+
+    patch:
+      tags: [Groups]
+      summary: Update group
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
       requestBody:
         required: true
         content:
@@ -306,23 +331,236 @@ paths:
                   type: boolean
                 sortOrder:
                   type: integer
-                parentId:
+      responses:
+        '200':
+          description: Group updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  group:
+                    $ref: '#/components/schemas/Group'
+
+    delete:
+      tags: [Groups]
+      summary: Delete group
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - name: force
+          in: query
+          schema:
+            type: boolean
+          description: Required when the group has descendants
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /api/groups/{id}/move:
+    post:
+      tags: [Groups]
+      summary: Move group to a new parent
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - newParentGroupId
+              properties:
+                newParentGroupId:
                   type: string
                   format: uuid
                   nullable: true
       responses:
         '200':
-          description: Folder updated
+          $ref: '#/components/responses/Success'
+
+  # Projects API
+  /api/projects:
+    get:
+      tags: [Projects]
+      summary: List projects
+      parameters:
+        - name: groupId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter to one group; omit to list every project the user owns
+      responses:
+        '200':
+          description: List of projects
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Folder'
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project'
+
+    post:
+      tags: [Projects]
+      summary: Create project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - groupId
+                - name
+              properties:
+                groupId:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+                sortOrder:
+                  type: integer
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project:
+                    $ref: '#/components/schemas/Project'
+
+  /api/projects/{id}:
+    get:
+      tags: [Projects]
+      summary: Get project
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Project
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project:
+                    $ref: '#/components/schemas/Project'
+
+    patch:
+      tags: [Projects]
+      summary: Update project
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                collapsed:
+                  type: boolean
+                sortOrder:
+                  type: integer
+      responses:
+        '200':
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project:
+                    $ref: '#/components/schemas/Project'
 
     delete:
-      tags: [Folders]
-      summary: Delete folder
+      tags: [Projects]
+      summary: Delete project
       parameters:
-        - $ref: '#/components/parameters/FolderId'
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  /api/projects/{id}/move:
+    post:
+      tags: [Projects]
+      summary: Move project to a different group
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - newGroupId
+              properties:
+                newGroupId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+  # Node Preferences API
+  /api/node-preferences/{ownerType}/{ownerId}:
+    get:
+      tags: [NodePreferences]
+      summary: Get node preferences
+      parameters:
+        - $ref: '#/components/parameters/NodeOwnerType'
+        - $ref: '#/components/parameters/NodeOwnerId'
+      responses:
+        '200':
+          description: Preferences (null if none stored)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preferences:
+                    nullable: true
+                    type: object
+                    additionalProperties: true
+
+    put:
+      tags: [NodePreferences]
+      summary: Upsert node preferences
+      description: |
+        Group preferences accept a restricted subset of fields (no
+        `localRepoPath`); project preferences accept the full schema. See
+        `NodePreferences.forGroup` / `NodePreferences.forProject` in
+        `src/domain/value-objects/NodePreferences.ts`.
+      parameters:
+        - $ref: '#/components/parameters/NodeOwnerType'
+        - $ref: '#/components/parameters/NodeOwnerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/Success'
+
+    delete:
+      tags: [NodePreferences]
+      summary: Delete node preferences
+      parameters:
+        - $ref: '#/components/parameters/NodeOwnerType'
+        - $ref: '#/components/parameters/NodeOwnerId'
       responses:
         '200':
           $ref: '#/components/responses/Success'
@@ -332,7 +570,7 @@ paths:
     get:
       tags: [Preferences]
       summary: Get preferences
-      description: Get user settings, all folder preferences, and active folder
+      description: Get user settings and all node preferences
       responses:
         '200':
           description: User preferences
@@ -343,12 +581,10 @@ paths:
                 properties:
                   userSettings:
                     $ref: '#/components/schemas/UserSettings'
-                  folderPreferences:
+                  nodePreferences:
                     type: array
                     items:
-                      $ref: '#/components/schemas/FolderPreferences'
-                  activeFolder:
-                    $ref: '#/components/schemas/Folder'
+                      $ref: '#/components/schemas/NodePreferencesEntry'
 
     patch:
       tags: [Preferences]
@@ -367,70 +603,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserSettings'
 
-  /api/preferences/active-folder:
+  /api/preferences/active-node:
     post:
       tags: [Preferences]
-      summary: Set active folder
+      summary: Set the active node (group or project)
+      description: |
+        Selects the active node. When `nodeType` is `group`, project-scoped
+        views (tasks, channels, peer messages) aggregate across every
+        descendant project. When `nodeType` is `project`, those views filter
+        to that single project.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required:
+                - nodeId
+                - nodeType
               properties:
-                folderId:
+                nodeId:
                   type: string
                   format: uuid
-                  nullable: true
-                pinned:
-                  type: boolean
-      responses:
-        '200':
-          description: Active folder set
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserSettings'
-
-  /api/preferences/folders/{folderId}:
-    get:
-      tags: [Preferences]
-      summary: Get folder preferences
-      parameters:
-        - $ref: '#/components/parameters/FolderId'
-      responses:
-        '200':
-          description: Folder preferences
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FolderPreferences'
-
-    put:
-      tags: [Preferences]
-      summary: Set folder preferences
-      parameters:
-        - $ref: '#/components/parameters/FolderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/FolderPreferencesUpdate'
-      responses:
-        '200':
-          description: Preferences updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FolderPreferences'
-
-    delete:
-      tags: [Preferences]
-      summary: Delete folder preferences
-      description: Reset folder preferences to inherit from user defaults
-      parameters:
-        - $ref: '#/components/parameters/FolderId'
+                nodeType:
+                  type: string
+                  enum: [group, project]
       responses:
         '200':
           $ref: '#/components/responses/Success'
@@ -966,7 +1163,7 @@ components:
         worktreeBranch:
           type: string
           nullable: true
-        folderId:
+        projectId:
           type: string
           format: uuid
           nullable: true
@@ -990,7 +1187,7 @@ components:
       properties:
         name:
           type: string
-          description: Display name. Defaults to parent folder name with counter (e.g., "remote-dev 1") or "Terminal N" if no folder.
+          description: Display name. Defaults to parent project name with counter (e.g., "remote-dev 1") or "Terminal N" if unscoped.
         projectPath:
           type: string
         githubRepoId:
@@ -998,7 +1195,7 @@ components:
           format: uuid
         worktreeBranch:
           type: string
-        folderId:
+        projectId:
           type: string
           format: uuid
         startupCommand:
@@ -1021,15 +1218,19 @@ components:
           type: string
           enum: [active, suspended, closed]
 
-    Folder:
+    Group:
       type: object
+      description: Project group (container; preferences only)
       properties:
         id:
           type: string
           format: uuid
+        userId:
+          type: string
+          format: uuid
         name:
           type: string
-        parentId:
+        parentGroupId:
           type: string
           format: uuid
           nullable: true
@@ -1037,9 +1238,32 @@ components:
           type: boolean
         sortOrder:
           type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    Project:
+      type: object
+      description: Project (leaf; owns sessions, tasks, channels, secrets)
+      properties:
+        id:
+          type: string
+          format: uuid
         userId:
           type: string
           format: uuid
+        groupId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        collapsed:
+          type: boolean
+        sortOrder:
+          type: integer
         createdAt:
           type: string
           format: date-time
@@ -1071,13 +1295,13 @@ components:
           type: integer
         fontFamily:
           type: string
-        activeFolderId:
+        activeNodeId:
           type: string
           format: uuid
           nullable: true
-        pinnedFolderId:
+        activeNodeType:
           type: string
-          format: uuid
+          enum: [group, project]
           nullable: true
         autoFollowActiveSession:
           type: boolean
@@ -1103,79 +1327,28 @@ components:
           type: integer
         fontFamily:
           type: string
-        activeFolderId:
-          type: string
-          format: uuid
-        pinnedFolderId:
-          type: string
-          format: uuid
         autoFollowActiveSession:
           type: boolean
 
-    FolderPreferences:
+    NodePreferencesEntry:
       type: object
+      description: |
+        Per-node preferences. Group entries omit project-only fields such as
+        `localRepoPath`. Project entries accept the full schema.
       properties:
-        id:
+        ownerType:
           type: string
-          format: uuid
-        folderId:
+          enum: [group, project]
+        ownerId:
           type: string
           format: uuid
         userId:
           type: string
           format: uuid
-        defaultWorkingDirectory:
-          type: string
-          nullable: true
-        defaultShell:
-          type: string
-          nullable: true
-        startupCommand:
-          type: string
-          nullable: true
-        theme:
-          type: string
-          nullable: true
-        fontSize:
-          type: integer
-          nullable: true
-        fontFamily:
-          type: string
-          nullable: true
-        githubRepoId:
-          type: string
-          format: uuid
-          nullable: true
-        localRepoPath:
-          type: string
-          nullable: true
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    FolderPreferencesUpdate:
-      type: object
-      properties:
-        defaultWorkingDirectory:
-          type: string
-        defaultShell:
-          type: string
-        startupCommand:
-          type: string
-        theme:
-          type: string
-        fontSize:
-          type: integer
-        fontFamily:
-          type: string
-        githubRepoId:
-          type: string
-          format: uuid
-        localRepoPath:
-          type: string
+        fields:
+          type: object
+          additionalProperties: true
+          description: Discriminated payload — see `NodePreferences.forGroup` / `forProject`
 
     Template:
       type: object
@@ -1358,14 +1531,41 @@ components:
         format: uuid
       description: Session UUID
 
-    FolderId:
+    GroupId:
       name: id
       in: path
       required: true
       schema:
         type: string
         format: uuid
-      description: Folder UUID
+      description: Project group UUID
+
+    ProjectId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Project UUID
+
+    NodeOwnerType:
+      name: ownerType
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [group, project]
+      description: Node discriminator
+
+    NodeOwnerId:
+      name: ownerId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Group or project UUID
 
     TemplateId:
       name: id

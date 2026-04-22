@@ -207,13 +207,13 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
       const parts: string[] = [];
 
       // Add folder name if available
-      if (worktreeItem.metadata?.originalFolderName) {
-        parts.push(worktreeItem.metadata.originalFolderName);
+      if (worktreeItem.metadata?.originalProjectName) {
+        parts.push(worktreeItem.metadata.originalProjectName);
       }
 
       // Add repo name if available and different from folder
       if (worktreeItem.metadata?.repoName &&
-          worktreeItem.metadata.repoName !== worktreeItem.metadata?.originalFolderName) {
+          worktreeItem.metadata.repoName !== worktreeItem.metadata?.originalProjectName) {
         parts.push(worktreeItem.metadata.repoName);
       }
 

@@ -32,8 +32,8 @@ export interface WorktreeTrashMetadata {
   worktreeBranch: string;
   worktreeOriginalPath: string;
   worktreeTrashPath: string;
-  originalFolderId: string | null;
-  originalFolderName: string | null;
+  originalProjectId: string | null;
+  originalProjectName: string | null;
   createdAt: Date;
 }
 
@@ -73,7 +73,7 @@ export interface RestoreOptions {
 export interface RestoreResult {
   sessionId: string;
   worktreePath: string;
-  folderId: string | null;
+  projectId: string | null;
 }
 
 /**

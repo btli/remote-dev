@@ -61,7 +61,7 @@ export async function createTemplate(
       sessionNamePattern: input.sessionNamePattern ?? null,
       projectPath: input.projectPath ?? null,
       startupCommand: input.startupCommand ?? null,
-      folderId: input.folderId ?? null,
+      projectId: input.projectId ?? null,
       icon: input.icon ?? null,
       theme: input.theme ?? null,
       fontSize: input.fontSize ?? null,

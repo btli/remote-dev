@@ -34,7 +34,7 @@ export interface TerminalSession {
   githubRepoId: string | null;
   worktreeBranch: string | null;
   worktreeType: WorktreeType | null;
-  folderId: string | null;
+  projectId: string | null;
   // Agent profile for environment isolation
   profileId: string | null;
   // Terminal type: shell, agent, file, or custom
@@ -65,7 +65,13 @@ export interface CreateSessionInput {
   projectPath?: string;
   githubRepoId?: string;
   worktreeBranch?: string;
-  folderId?: string;
+  /**
+   * Required at the service/API layer: terminal_session.project_id is NOT NULL
+   * (Phase G0a). UI callers should use ClientCreateSessionInput, which allows
+   * omitting projectId; the SessionContext then resolves it from the active
+   * node before POSTing to the API.
+   */
+  projectId: string;
   // Agent profile for environment isolation
   profileId?: string;
   // Terminal type: shell, agent, file (default: determined by agentProvider)
@@ -87,6 +93,15 @@ export interface CreateSessionInput {
   // Loop agent session fields
   loopConfig?: import("./loop-agent").LoopConfig;
 }
+
+/**
+ * Client-facing session input: projectId is optional here because the
+ * SessionContext derives it from the active project node when not provided.
+ * The context validates a resolved projectId before calling the API.
+ */
+export type ClientCreateSessionInput = Omit<CreateSessionInput, "projectId"> & {
+  projectId?: string | null;
+};
 
 /**
  * Agent provider configuration

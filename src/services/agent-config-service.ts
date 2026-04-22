@@ -37,7 +37,7 @@ export async function getFolderConfigs(
   const configs = await db.query.agentConfigs.findMany({
     where: and(
       eq(agentConfigs.userId, userId),
-      eq(agentConfigs.folderId, folderId)
+      eq(agentConfigs.projectId, folderId)
     ),
   });
 
@@ -49,7 +49,7 @@ export async function getFolderConfigs(
  */
 export async function getGlobalConfigs(userId: string): Promise<AgentConfig[]> {
   const configs = await db.query.agentConfigs.findMany({
-    where: and(eq(agentConfigs.userId, userId), isNull(agentConfigs.folderId)),
+    where: and(eq(agentConfigs.userId, userId), isNull(agentConfigs.projectId)),
   });
 
   return configs.map(mapDbToConfig);
@@ -69,7 +69,7 @@ export async function getConfig(
       eq(agentConfigs.userId, userId),
       eq(agentConfigs.provider, provider),
       eq(agentConfigs.configType, configType),
-      folderId ? eq(agentConfigs.folderId, folderId) : isNull(agentConfigs.folderId)
+      folderId ? eq(agentConfigs.projectId, folderId) : isNull(agentConfigs.projectId)
     ),
   });
 
@@ -153,7 +153,7 @@ export async function upsertConfig(
     userId,
     input.provider,
     input.configType,
-    input.folderId
+    input.projectId
   );
 
   if (existing) {
@@ -170,12 +170,11 @@ export async function upsertConfig(
     return mapDbToConfig(updated);
   }
 
-  // Create new
   const [created] = await db
     .insert(agentConfigs)
     .values({
       userId,
-      folderId: input.folderId ?? null,
+      projectId: input.projectId ?? null,
       provider: input.provider,
       configType: input.configType,
       content: input.content,
@@ -211,7 +210,7 @@ export async function deleteFolderConfigs(
   const result = await db
     .delete(agentConfigs)
     .where(
-      and(eq(agentConfigs.folderId, folderId), eq(agentConfigs.userId, userId))
+      and(eq(agentConfigs.projectId, folderId), eq(agentConfigs.userId, userId))
     );
 
   return result.rowsAffected ?? 0;
@@ -234,7 +233,7 @@ export async function copyFolderConfigs(
       .insert(agentConfigs)
       .values({
         userId,
-        folderId: targetFolderId,
+        projectId: targetFolderId,
         provider: config.provider,
         configType: config.configType,
         content: config.content,
@@ -244,7 +243,7 @@ export async function copyFolderConfigs(
       .onConflictDoUpdate({
         target: [
           agentConfigs.userId,
-          agentConfigs.folderId,
+          agentConfigs.projectId,
           agentConfigs.provider,
           agentConfigs.configType,
         ],
@@ -288,7 +287,7 @@ function mapDbToConfig(
   return {
     id: record.id,
     userId: record.userId,
-    folderId: record.folderId ?? undefined,
+    projectId: record.projectId ?? undefined,
     provider: record.provider as AgentProvider,
     configType: record.configType as AgentConfigType,
     content: record.content,

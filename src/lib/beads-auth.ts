@@ -9,7 +9,7 @@ import { resolve, join } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { db } from "@/db";
-import { sessionFolders, folderPreferences, userSettings } from "@/db/schema";
+import { projects, nodePreferences, userSettings } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createLogger } from "@/lib/logger";
 
@@ -54,25 +54,26 @@ export async function validateProjectPath(
     return resolved;
   }
 
-  // Check if it matches any of the user's folder defaultWorkingDirectory values
-  const folders = await db.query.sessionFolders.findMany({
-    where: eq(sessionFolders.userId, userId),
+  // Check if it matches any of the user's project defaultWorkingDirectory values
+  const userProjects = await db.query.projects.findMany({
+    where: eq(projects.userId, userId),
     columns: { id: true },
   });
 
-  if (folders.length > 0) {
-    const folderIds = folders.map((f) => f.id);
-    const prefs = await db.query.folderPreferences.findMany({
+  if (userProjects.length > 0) {
+    const projectIds = new Set(userProjects.map((p) => p.id));
+    const prefs = await db.query.nodePreferences.findMany({
       where: and(
-        eq(folderPreferences.userId, userId),
+        eq(nodePreferences.userId, userId),
+        eq(nodePreferences.ownerType, "project")
       ),
-      columns: { folderId: true, defaultWorkingDirectory: true },
+      columns: { ownerId: true, defaultWorkingDirectory: true },
     });
 
     for (const pref of prefs) {
       if (
         pref.defaultWorkingDirectory &&
-        folderIds.includes(pref.folderId) &&
+        projectIds.has(pref.ownerId) &&
         resolve(pref.defaultWorkingDirectory) === resolved
       ) {
         return resolved;

@@ -1,33 +1,60 @@
 import { NextResponse } from "next/server";
 import { withAuth, errorResponse } from "@/lib/api";
-import { moveSessionToFolderUseCase } from "@/infrastructure/container";
-import { EntityNotFoundError } from "@/domain/errors/DomainError";
 import { broadcastSidebarChanged } from "@/lib/broadcast";
+import { db } from "@/db";
+import { terminalSessions } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 
 /**
- * PUT /api/sessions/:id/folder - Move a session to a folder (or remove from folder)
+ * PUT /api/sessions/:id/folder - Move a session to a project (legacy "folder").
+ *
+ * Accepts `folderId` (legacy) and/or `projectId`. Both map to terminal_session.projectId.
+ *
+ * Phase G0a: terminal_session.project_id is NOT NULL. We reject null/undefined
+ * values — sessions must always be scoped to a project.
  */
 export const PUT = withAuth(async (request, { userId, params }) => {
   const body = await request.json();
-  const { folderId } = body;
+  const { folderId, projectId } = body as {
+    folderId?: string | null;
+    projectId?: string | null;
+  };
 
-  // folderId can be null (to remove from folder) or a string (to move to folder)
-  if (folderId !== null && typeof folderId !== "string") {
+  if (folderId !== undefined && folderId !== null && typeof folderId !== "string") {
     return errorResponse("folderId must be a string or null", 400);
   }
-
-  try {
-    await moveSessionToFolderUseCase.execute({
-      sessionId: params!.id,
-      userId,
-      folderId,
-    });
-    broadcastSidebarChanged(userId);
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    if (error instanceof EntityNotFoundError) {
-      return errorResponse(error.message, 404, error.code);
-    }
-    throw error;
+  if (projectId !== undefined && projectId !== null && typeof projectId !== "string") {
+    return errorResponse("projectId must be a string or null", 400);
   }
+  if (folderId === undefined && projectId === undefined) {
+    return errorResponse("folderId or projectId is required", 400);
+  }
+
+  const resolvedProjectId =
+    projectId !== undefined ? projectId : folderId ?? null;
+
+  if (!resolvedProjectId) {
+    return errorResponse(
+      "projectId is required (cannot unassign a session from a project)",
+      400,
+      "PROJECT_ID_REQUIRED"
+    );
+  }
+
+  const result = await db
+    .update(terminalSessions)
+    .set({ projectId: resolvedProjectId })
+    .where(
+      and(
+        eq(terminalSessions.id, params!.id),
+        eq(terminalSessions.userId, userId)
+      )
+    );
+
+  if ((result.rowsAffected ?? 0) === 0) {
+    return errorResponse("Session not found", 404);
+  }
+
+  broadcastSidebarChanged(userId);
+  return NextResponse.json({ success: true });
 });

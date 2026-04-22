@@ -27,7 +27,7 @@ export interface SessionProps {
   githubRepoId: string | null;
   worktreeBranch: string | null;
   worktreeType: string | null;
-  folderId: string | null;
+  projectId: string | null;
   profileId: string | null;
   // Terminal type: shell, agent, file, or custom
   terminalType: TerminalType;
@@ -56,7 +56,7 @@ export interface CreateSessionProps {
   githubRepoId?: string | null;
   worktreeBranch?: string | null;
   worktreeType?: string | null;
-  folderId?: string | null;
+  projectId?: string | null;
   profileId?: string | null;
   // Terminal type: shell, agent, file, or custom (default: shell)
   terminalType?: TerminalType;
@@ -101,7 +101,7 @@ export class Session {
       githubRepoId: props.githubRepoId ?? null,
       worktreeBranch: props.worktreeBranch ?? null,
       worktreeType: props.worktreeType ?? null,
-      folderId: props.folderId ?? null,
+      projectId: props.projectId ?? null,
       profileId: props.profileId ?? null,
       terminalType,
       agentProvider: props.agentProvider ?? null,
@@ -169,8 +169,8 @@ export class Session {
     return this.props.worktreeType;
   }
 
-  get folderId(): string | null {
-    return this.props.folderId;
+  get projectId(): string | null {
+    return this.props.projectId;
   }
 
   get profileId(): string | null {
@@ -301,17 +301,17 @@ export class Session {
   }
 
   /**
-   * Move session to a folder.
+   * Move session to a project.
    */
-  moveToFolder(folderId: string | null): Session {
-    return this.withUpdates({ folderId });
+  moveToProject(projectId: string | null): Session {
+    return this.withUpdates({ projectId });
   }
 
   /**
-   * Remove session from its current folder.
+   * Remove session from its current project.
    */
-  removeFromFolder(): Session {
-    return this.withUpdates({ folderId: null });
+  removeFromProject(): Session {
+    return this.withUpdates({ projectId: null });
   }
 
   /**
@@ -336,7 +336,7 @@ export class Session {
   }
 
   /**
-   * Pin this session to the top of its folder.
+   * Pin this session to the top of its project.
    */
   pin(): Session {
     return this.withUpdates({ pinned: true });
@@ -430,7 +430,7 @@ export class Session {
     return this.props.worktreeBranch !== null;
   }
 
-  /** Check if session is pinned to top of its folder */
+  /** Check if session is pinned to top of its project */
   isPinned(): boolean {
     return this.props.pinned;
   }
@@ -456,7 +456,7 @@ export class Session {
       this.githubRepoId === other.githubRepoId &&
       this.worktreeBranch === other.worktreeBranch &&
       this.worktreeType === other.worktreeType &&
-      this.folderId === other.folderId &&
+      this.projectId === other.projectId &&
       this.profileId === other.profileId &&
       this.terminalType === other.terminalType &&
       this.agentProvider === other.agentProvider &&

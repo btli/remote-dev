@@ -20,6 +20,7 @@ import type {
 } from "@/types/task";
 import { usePreferencesContext } from "./PreferencesContext";
 import { useSessionContext } from "./SessionContext";
+import { useProjectTree } from "./ProjectTreeContext";
 
 /** Hydrate date strings from API response into Date objects */
 function hydrateTask(raw: Record<string, unknown>): ProjectTask {
@@ -80,13 +81,22 @@ export function TaskProvider({ children }: TaskProviderProps) {
   const { activeProject } = usePreferencesContext();
   const activeFolderId = activeProject.folderId;
   const { activeSessionId } = useSessionContext();
+  const { activeNode } = useProjectTree();
 
   const abortRef = useRef<AbortController | null>(null);
 
   const refreshTasks = useCallback(async () => {
     abortRef.current?.abort();
 
-    if (!activeFolderId) {
+    // Phase 4: prefer node-scoped fetching (group rollup or project). Fall
+    // back to the legacy folder scope so pre-migration setups keep working.
+    const query = activeNode
+      ? `nodeId=${encodeURIComponent(activeNode.id)}&nodeType=${activeNode.type}`
+      : activeFolderId
+        ? `folderId=${encodeURIComponent(activeFolderId)}`
+        : null;
+
+    if (!query) {
       setAllTasks([]);
       return;
     }
@@ -97,10 +107,9 @@ export function TaskProvider({ children }: TaskProviderProps) {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(
-        `/api/tasks?folderId=${encodeURIComponent(activeFolderId)}`,
-        { signal: controller.signal }
-      );
+      const response = await fetch(`/api/tasks?${query}`, {
+        signal: controller.signal,
+      });
       if (!response.ok) {
         throw new Error("Failed to fetch tasks");
       }
@@ -112,7 +121,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
     } finally {
       setLoading(false);
     }
-  }, [activeFolderId]);
+  }, [activeFolderId, activeNode]);
 
   // Debounced refresh for coalescing rapid WebSocket events (e.g. multiple
   // agent_todos_updated broadcasts in quick succession from concurrent hooks).
@@ -162,7 +171,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...input,
-            folderId: input.folderId ?? activeFolderId,
+            projectId: input.projectId ?? activeFolderId,
           }),
         });
         if (!response.ok) {
@@ -244,7 +253,7 @@ export function TaskProvider({ children }: TaskProviderProps) {
 
         setAllTasks((prev) =>
           prev.filter((t) => {
-            if (t.folderId !== activeFolderId) return true;
+            if (t.projectId !== activeFolderId) return true;
             if (source && t.source !== source) return true;
             if (options?.sessionId && t.sessionId !== options.sessionId) return true;
             if (options?.completedOnly && t.status !== "done" && t.status !== "cancelled") return true;

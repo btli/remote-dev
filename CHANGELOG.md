@@ -7,12 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
+### Changed
 
-- Split pane feature (split groups, split pane layouts, split API endpoints, keyboard shortcuts)
+- **Project tree sidebar (Phases A–G)**: Replaced the legacy folder-based
+  sidebar tree with a new group/project-aware `ProjectTreeSidebar`, dropping
+  ~1900 lines of duplicated rendering in `Sidebar.tsx` while preserving
+  drag/drop, context menus, repo stats rollup, inline editing, active-node
+  selection, and mobile touch gestures. Adds mobile-only long-press touch drag
+  for groups/projects and swipe-to-close on sessions that did not exist in the
+  legacy tree.
 
 ### Added
 
+- `terminal_session.project_id` is now `NOT NULL` with `onDelete: "cascade"`.
+  Historical orphan sessions are backfilled by a one-time migration script
+  (`bun run db:migrate-session-project-id`); new sessions must declare their
+  project or the API rejects them with `PROJECT_ID_REQUIRED`.
+
+### Removed
+
+- Legacy `SessionFolder` / `FolderNode` type surface in `Sidebar.tsx` and the
+  folder-tree rendering block. `FolderContext` and `PreferencesContext`
+  folder-keyed state remain as temporary shims (tracked by `remote-dev-w1ed`)
+  until all consumers migrate to node-keyed APIs.
+- **Project/folder refactor Phase 6 (cleanup)**: legacy `session_folder`,
+  `folder_preferences`, `folder_secrets_config`, `folder_github_account_link`,
+  `folder_profile_link`, and `folder_repository` tables; `folder_id` columns
+  on every dependent table (terminal sessions, templates, tasks, channels,
+  channel groups, agent peer messages, agent configs, MCP servers, session
+  memory, GitHub stats preferences, port registry); `user_settings.active_folder_id`
+  and `pinned_folder_id`. Container, services, repositories, mappers, and
+  use-cases for the legacy folder domain (`FolderService`, `folder-scope-util`,
+  `DrizzleFolderRepository`, `Folder` entity, etc.). `FolderContext` is now a
+  thin compat shim over `ProjectTreeContext`. `FolderPreferencesModal` is gone
+  (replaced by `GroupPreferencesModal` + `ProjectPreferencesModal`). API
+  routes `/api/folders/*`, `/api/preferences/folders/*`, and
+  `/api/preferences/active-folder` removed. `rdv folder` subcommand removed —
+  use `rdv group` and `rdv project` instead.
+- Split pane feature (split groups, split pane layouts, split API endpoints, keyboard shortcuts)
+
+### Changed
+
+- **Project/folder refactor Phase 6 (schema tightening)**: `Session.folderId`
+  is now `Session.projectId` throughout the domain and infrastructure layers.
+  `project_id` is `NOT NULL` on the main dependent tables (`project_task`,
+  `channel_groups`, `channels`, `agent_peer_message`); other bridged tables
+  keep nullable `project_id` because user-scoped rows legitimately have no
+  project. Coverage was verified pre-drop via the audit script archived in
+  `scripts/archive/`.
+
+### Added
+
+- `rdv project` subcommand for managing projects (list/create/update/move/delete).
+- `rdv group` subcommand for managing project groups (list/create/update/move/delete).
+- Domain entities `ProjectGroup` and `Project` with hierarchy invariants (Phase 2 of project/folder refactor).
+- Value objects `NodeRef` and `NodePreferences` (polymorphic container for group/project settings).
+- Use cases for project/group CRUD + `ResolveProjectScope` (backs groups-can-be-active aggregation).
+- **Project/folder refactor Phase 3 (services + API)**: Drizzle repositories for `ProjectGroup`, `Project`, and `NodePreferences` (with recursive-CTE descendant walks that stay within SQLite bind limits). New API routes `/api/groups`, `/api/projects`, `/api/node-preferences/:ownerType/:ownerId`, and `/api/preferences/active-node`. `/api/sessions` now accepts an optional `projectId` alongside `folderId`.
+- **Dual-write to the projects bridge**: `SessionService`, `TemplateService`, `TaskService`, `ChannelService`, `PeerService`, `AgentConfigService`, `MCPRegistryService`, `PortRegistryService`, `WorktreeTrashService`, and `GitHubStatsService` now populate `projectId` on every insert into a bridged table (translating via `projects.legacyFolderId` when only `folderId` is supplied). Phase 4 readers can rely on `projectId` without waiting for a backfill.
+- **Project-first reads**: `SecretsService.getConfigByProjectOrFolder` checks `project_secrets_config` before falling back to `folder_secrets_config`. `AgentProfileService.getFolderProfile` consults `project_profile_link` first, and `linkFolderToProfile`/`unlinkFolderFromProfile` mirror into the project link table. New `getProjectProfile` for direct project-node reads.
+- **Task rollup across groups**: `TaskService.listTasksByNode(node, userId)` walks the group descendant tree via a recursive CTE and rolls up `project_task` rows through the `projects` bridge, filtering entirely in SQL.
+- **`buildNodeAncestry(node, userId)` helper** in `src/lib/preferences.ts` — server-only, returns the node-preferences fields chain in ancestor-first order for a project or group node, laying the groundwork for the Phase 4 preferences resolver.
+- **Project/folder refactor Phase 4 (UI switchover)**: New `ProjectTreeContext` exposes groups, projects, and a single `activeNode` (`{id, type: "group" | "project"}`) with optimistic CRUD (`createGroup`/`updateGroup`/`deleteGroup` and their project counterparts) and `setActiveNode` persisted via `/api/preferences/active-node`. `ProjectTreeSidebar` + `ProjectTreeRow` render groups and projects with hover-revealed settings gears; the legacy folder tree remains rendered below until Phase 6.
+- **Group/Project preferences modals**: New `GroupPreferencesModal` (shared fields only) and `ProjectPreferencesModal` (shared + project-only fields like repo link, default agent provider, pinned files) write through `/api/node-preferences/:ownerType/:ownerId`. Gear icons on ProjectTree rows open the matching modal.
+- **Active-node-aware Task & Channel sidebars**: `TaskContext` and `ChannelContext` now listen for `ProjectTreeContext.activeNode` and prefer node-scoped API endpoints (`/api/tasks?nodeId=&nodeType=`, `/api/channels?nodeId=&nodeType=`), which roll up data across descendant projects when a group is active. Both fall back to the legacy folder-scoped queries when no node is active or when a project lacks a `legacyFolderId` bridge.
+- **`ChannelService.listChannelGroupsForNode`**: server-side recursive-CTE descendant resolver (`resolveFolderIdsForNode`) plus aggregator that concatenates `listChannelGroups` across each descendant project's bridged folder.
+- **`SaveTemplateModal` project picker**: save-as-template now writes `projectId` (falling back to the session's `projectId`, then its `folderId` mapped via `projects.legacyFolderId`, then the active project node). `folderId` continues to be populated for legacy consumers.
+- **`SessionContext` project-first create**: new sessions auto-inherit the active project's `projectId`, and `folderId` is derived from `projects.legacyFolderId` when missing, keeping dual-write consistent across the tree-driven flow.
+- **`ActiveNodeIndicator`**: small sidebar chip that shows the active node name, with a `(rolled up)` suffix when a group is active, so users can tell when data is being aggregated across descendants.
 - **Real-time sidebar sync**: Session and folder lists now update automatically across tabs and systems without page refresh — visibility-based refresh on tab focus + WebSocket broadcast on mutations
 - "Open Folder" context menu: right-click a folder to open its working directory in the OS file manager
 - Chat channels and groups: Slack/Discord-style channel organization for peer chat
@@ -44,6 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rdv agent start` now accepts `--project-id`; the old `--folder-id` alias stays until Phase 6.
+- `rdv context` reports `projectId`/`projectName`/`groupId`/`groupName` alongside legacy `folderId`/`folderName` for the transition window.
+- `rdv` hook, peer, and channel commands now include `projectId` in payloads (read from `RDV_PROJECT_ID` env or the session's project) while continuing to send `folderId` for server-side compatibility.
 - **MCP server renamed from `rdv-peers` to `rdv` (v2.0.0)**: Slimmed tool set from 8 to 3 response-only tools (`send_message`, `send_to_channel`, `set_summary`). Read operations moved to rdv CLI. Stale `rdv-peers` entries auto-cleaned from settings.json and .mcp.json.
 - **Real-time MCP push notifications**: Agents receive peer messages, channel messages, and @mentions instantly via Unix socket push from the terminal server, relayed through `sendLoggingMessage()`. PreToolUse hook remains as reliable fallback with dedup via sentinel file.
 - Peer messages now scoped to channels (existing messages migrated to #general)
@@ -52,6 +117,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-title stop-word stripping produces more meaningful titles (e.g., "fix-login-bug" instead of "fix-the-login")
 - PreToolUse hook now shows full peer status digest (agent names, activity status, work summaries) alongside new messages
 - Stop hook now clears peer summary and broadcasts "finished work" to peer chatroom
+
+### Deprecated
+
+- `rdv folder` prints a deprecation warning on every invocation. The alias will be removed in Phase 6 once all callers migrate to `rdv project` / `rdv group`.
 
 ### Fixed
 
