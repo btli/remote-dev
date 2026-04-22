@@ -151,6 +151,40 @@ export function Sidebar({
   const resizeStartXRef = useRef<number>(0);
   const resizeStartWidthRef = useRef<number>(0);
   const projectTreeRef = useRef<ProjectTreeSidebarHandle | null>(null);
+  // Queued "create at root" action fired from the collapsed-mode dropdown.
+  // We can't call projectTreeRef directly while collapsed because
+  // <ProjectTreeSidebar/> isn't mounted — stash the intent and fire it once
+  // the tree remounts after expanding.
+  const [pendingRootCreate, setPendingRootCreate] = useState<
+    "group" | "project" | null
+  >(null);
+  useEffect(() => {
+    if (!pendingRootCreate) return;
+    if (collapsed) return;
+    const handle = projectTreeRef.current;
+    if (!handle) return;
+    if (pendingRootCreate === "group") handle.startCreateGroupAtRoot();
+    else handle.startCreateProjectAtRoot();
+    setPendingRootCreate(null);
+  }, [pendingRootCreate, collapsed]);
+
+  const handleNewGroup = useCallback(() => {
+    if (collapsed) {
+      onCollapsedChange(false);
+      setPendingRootCreate("group");
+    } else {
+      projectTreeRef.current?.startCreateGroupAtRoot();
+    }
+  }, [collapsed, onCollapsedChange]);
+
+  const handleNewProject = useCallback(() => {
+    if (collapsed) {
+      onCollapsedChange(false);
+      setPendingRootCreate("project");
+    } else {
+      projectTreeRef.current?.startCreateProjectAtRoot();
+    }
+  }, [collapsed, onCollapsedChange]);
 
   // Secrets modal state. `secretsModalProjectId` holds the target project's
   // id (SecretsConfigModal's internal prop is still named `initialFolderId`
@@ -289,19 +323,11 @@ export function Sidebar({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44">
-                    <DropdownMenuItem
-                      onClick={() =>
-                        projectTreeRef.current?.startCreateGroupAtRoot()
-                      }
-                    >
+                    <DropdownMenuItem onClick={handleNewGroup}>
                       <FolderPlus className="w-3.5 h-3.5 mr-2" />
                       New Group
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() =>
-                        projectTreeRef.current?.startCreateProjectAtRoot()
-                      }
-                    >
+                    <DropdownMenuItem onClick={handleNewProject}>
                       <Briefcase className="w-3.5 h-3.5 mr-2" />
                       New Project
                     </DropdownMenuItem>
@@ -351,21 +377,44 @@ export function Sidebar({
         >
           {activeSessions.length === 0 ? (
             collapsed ? (
-              // Collapsed empty state - just show plus button
+              // Collapsed empty state - dropdown mirroring the expanded header
               <div className="flex flex-col items-center py-4">
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
                     <Button
-                      onClick={onQuickNewSession}
                       variant="ghost"
                       size="icon-sm"
                       className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                      aria-label="Create"
                     >
                       <Plus className="w-4 h-4" />
                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">New session</TooltipContent>
-                </Tooltip>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent side="right" align="start" className="w-44">
+                    <DropdownMenuItem onClick={handleNewGroup}>
+                      <FolderPlus className="w-3.5 h-3.5 mr-2" />
+                      New Group
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleNewProject}>
+                      <Briefcase className="w-3.5 h-3.5 mr-2" />
+                      New Project
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={onQuickNewSession}>
+                      <Terminal className="w-3.5 h-3.5 mr-2" />
+                      New Terminal
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={onNewAgent}>
+                      <Sparkles className="w-3.5 h-3.5 mr-2" />
+                      New Agent
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={onNewSession}>
+                      <Settings className="w-3.5 h-3.5 mr-2" />
+                      Advanced...
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ) : (
               <div className="text-center py-8 px-2">
