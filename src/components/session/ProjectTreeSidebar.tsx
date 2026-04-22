@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useState } from "react";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
@@ -12,6 +12,7 @@ import { TreeConnector } from "./project-tree/TreeConnector";
 import { CreateNodeInline } from "./project-tree/CreateNodeInline";
 import { GroupContextMenu } from "./project-tree/GroupContextMenu";
 import { ProjectContextMenu } from "./project-tree/ProjectContextMenu";
+import { RootContextMenu } from "./project-tree/RootContextMenu";
 import { SessionContextMenu } from "./project-tree/SessionContextMenu";
 import {
   useTreeDragDrop,
@@ -63,10 +64,33 @@ interface Props {
   onSessionSchedule?: (sessionId: string) => void;
 }
 
-export function ProjectTreeSidebar(props: Props) {
+/**
+ * Imperative handle exposed to parents so the Sidebar header "+" dropdown
+ * (and collapsed-mode dropdown) can trigger the same inline-create flow
+ * used by right-click on empty tree space. See remote-dev-mtv7.2 / .6.
+ */
+export interface ProjectTreeSidebarHandle {
+  startCreateGroupAtRoot: () => void;
+  startCreateProjectAtRoot: () => void;
+}
+
+export const ProjectTreeSidebar = forwardRef<
+  ProjectTreeSidebarHandle,
+  Props
+>(function ProjectTreeSidebar(props, ref) {
   const tree = useProjectTree();
   const [editingNode, setEditingNode] = useState<{ id: string; type: "group" | "project" | "session" } | null>(null);
   const [creating, setCreating] = useState<{ parentGroupId: string | null; kind: "group" | "project" } | null>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      startCreateGroupAtRoot: () =>
+        setCreating({ parentGroupId: null, kind: "group" }),
+      startCreateProjectAtRoot: () =>
+        setCreating({ parentGroupId: null, kind: "project" }),
+    }),
+    [],
+  );
   const { sessions, activeSessionId, getAgentActivityStatus } = useSessionContext();
   const { getNodePreferences, hasNodePreferences } = usePreferencesContext();
   const { nodeHasActiveSecrets } = useSecretsContext();
@@ -784,6 +808,10 @@ export function ProjectTreeSidebar(props: Props) {
   };
 
   return (
+    <RootContextMenu
+      onNewGroup={() => setCreating({ parentGroupId: null, kind: "group" })}
+      onNewProject={() => setCreating({ parentGroupId: null, kind: "project" })}
+    >
     <div
       className="flex flex-col gap-0.5 px-1 py-2"
       onDragOver={(e) => {
@@ -846,5 +874,6 @@ export function ProjectTreeSidebar(props: Props) {
         />
       )}
     </div>
+    </RootContextMenu>
   );
-}
+});

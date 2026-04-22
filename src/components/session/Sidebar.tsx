@@ -6,6 +6,7 @@ import {
   Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   Fingerprint, Network,
+  FolderPlus, Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -31,7 +32,10 @@ import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
-import { ProjectTreeSidebar } from "./ProjectTreeSidebar";
+import {
+  ProjectTreeSidebar,
+  type ProjectTreeSidebarHandle,
+} from "./ProjectTreeSidebar";
 
 // Sidebar width constraints
 const MIN_SIDEBAR_WIDTH = 180;
@@ -146,6 +150,7 @@ export function Sidebar({
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartXRef = useRef<number>(0);
   const resizeStartWidthRef = useRef<number>(0);
+  const projectTreeRef = useRef<ProjectTreeSidebarHandle | null>(null);
 
   // Secrets modal state. `secretsModalProjectId` holds the target project's
   // id (SecretsConfigModal's internal prop is still named `initialFolderId`
@@ -284,6 +289,23 @@ export function Sidebar({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem
+                      onClick={() =>
+                        projectTreeRef.current?.startCreateGroupAtRoot()
+                      }
+                    >
+                      <FolderPlus className="w-3.5 h-3.5 mr-2" />
+                      New Group
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        projectTreeRef.current?.startCreateProjectAtRoot()
+                      }
+                    >
+                      <Briefcase className="w-3.5 h-3.5 mr-2" />
+                      New Project
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={onQuickNewSession}>
                       <Terminal className="w-3.5 h-3.5 mr-2" />
                       New Terminal
@@ -374,6 +396,7 @@ export function Sidebar({
                   tree rendering path as of Phase G1. */}
               {!collapsed && (
                 <ProjectTreeSidebar
+                  ref={projectTreeRef}
                   getProjectRepoStats={getFolderRepoStats}
                   onOpenPreferences={onOpenNodePreferences}
                   onSessionClick={onSessionClick}
