@@ -478,6 +478,22 @@ function attachToTmuxSession(
   cols: number,
   rows: number
 ): IPty {
+  // Re-apply safety-critical tmux options idempotently on every attach.
+  // Older tmux sessions (pre-471f226) were created without these, and the
+  // status bar in particular clips the last row of app content (e.g. Claude
+  // Code's mode indicator). These options are nice-to-have: failures are
+  // logged at warn and do not block the attach.
+  try {
+    execFileSync("tmux", ["set-option", "-t", sessionName, "status", "off"], { stdio: "pipe" });
+  } catch (err) {
+    log.warn("Failed to disable tmux status bar on attach", { error: String(err), sessionName });
+  }
+  try {
+    execFileSync("tmux", ["set-option", "-t", sessionName, "aggressive-resize", "off"], { stdio: "pipe" });
+  } catch (err) {
+    log.warn("Failed to disable tmux aggressive-resize on attach", { error: String(err), sessionName });
+  }
+
   // SECURITY: Spawn tmux directly with array arguments - no shell interpolation
   // Use clean environment to prevent framework internal vars from leaking
   const ptyProcess = pty.spawn("tmux", ["attach-session", "-t", sessionName], {
