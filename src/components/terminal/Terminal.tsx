@@ -13,6 +13,72 @@ import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
 
+const SETTLE_MIN_WIDTH = 100;
+const SETTLE_MIN_HEIGHT = 80;
+const SETTLE_MIN_COLS = 10;
+const SETTLE_MIN_ROWS = 3;
+const SETTLE_STABLE_FRAMES = 2;
+const SETTLE_MAX_FRAMES = 10;
+
+interface SettleAndFitOptions {
+  container: HTMLDivElement | null;
+  terminal: XTermType | null;
+  fitAddon: FitAddonType | null;
+  ws: WebSocket | null;
+  isCurrent: () => boolean;
+  onDimensions?: (cols: number, rows: number) => void;
+}
+
+async function settleAndFit(opts: SettleAndFitOptions): Promise<void> {
+  const { container, terminal, fitAddon, ws, isCurrent, onDimensions } = opts;
+  if (!container || !terminal || !fitAddon) return;
+  if (typeof document !== "undefined" && document.hidden) return;
+  if (container.offsetParent === null) return;
+
+  const initialRect = container.getBoundingClientRect();
+  if (initialRect.width < SETTLE_MIN_WIDTH || initialRect.height < SETTLE_MIN_HEIGHT) return;
+
+  let lastWidth = 0;
+  let lastHeight = 0;
+  let stableFrames = 0;
+  for (let attempt = 0; attempt < SETTLE_MAX_FRAMES; attempt++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (!isCurrent()) return;
+    const rect = container.getBoundingClientRect();
+    if (rect.width < SETTLE_MIN_WIDTH || rect.height < SETTLE_MIN_HEIGHT) continue;
+    if (rect.width === lastWidth && rect.height === lastHeight) {
+      stableFrames++;
+      if (stableFrames >= SETTLE_STABLE_FRAMES) break;
+    } else {
+      stableFrames = 0;
+      lastWidth = rect.width;
+      lastHeight = rect.height;
+    }
+  }
+
+  if (!isCurrent()) return;
+  fitAddon.fit();
+
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  if (!isCurrent()) return;
+  fitAddon.fit();
+
+  if (!isCurrent()) return;
+  if (terminal.cols < SETTLE_MIN_COLS || terminal.rows < SETTLE_MIN_ROWS) return;
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(
+      JSON.stringify({
+        type: "resize",
+        cols: terminal.cols,
+        rows: terminal.rows,
+      })
+    );
+  }
+  if (!isCurrent()) return;
+  onDimensions?.(terminal.cols, terminal.rows);
+}
+
 export interface TerminalRef {
   focus: () => void;
   /** Request agent restart (only valid for terminalType='agent') */
@@ -836,48 +902,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
       });
 
-      // Minimum dimensions to prevent resizing to unusable sizes
       const MIN_WIDTH = 100;
       const MIN_HEIGHT = 80;
 
+      let settleSeq = 0;
       const handleResize = () => {
-        const container = terminalRef.current;
-        if (!container) return;
-
-        // Skip resize if page is hidden (browser tab backgrounded)
-        if (document.hidden) return;
-
-        // Skip if container is not visible (display: none from "hidden" class)
-        // offsetParent is null when element or ancestor has display: none
-        if (container.offsetParent === null) return;
-
-        // Skip if container is too small
-        const rect = container.getBoundingClientRect();
-        if (rect.width < MIN_WIDTH || rect.height < MIN_HEIGHT) return;
-
-        // Use requestAnimationFrame to ensure DOM is ready
-        requestAnimationFrame(() => {
-          fitAddon.fit();
-
-          // Don't send resize events for invalid dimensions
-          // This prevents resizing tmux when terminal is hidden or minimized
-          const MIN_COLS = 10;
-          const MIN_ROWS = 3;
-          if (terminal.cols < MIN_COLS || terminal.rows < MIN_ROWS) {
-            return;
-          }
-
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(
-              JSON.stringify({
-                type: "resize",
-                cols: terminal.cols,
-                rows: terminal.rows,
-              })
-            );
-          }
-          // Emit dimensions for recording
-          onDimensionsChangeRef.current?.(terminal.cols, terminal.rows);
+        const mySeq = ++settleSeq;
+        void settleAndFit({
+          container: terminalRef.current,
+          terminal,
+          fitAddon,
+          ws: wsRef.current,
+          isCurrent: () => mySeq === settleSeq,
+          onDimensions: (cols, rows) => onDimensionsChangeRef.current?.(cols, rows),
         });
       };
 
@@ -1062,30 +1099,23 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     const terminal = xtermRef.current;
     const fitAddon = fitAddonRef.current;
-    const ws = wsRef.current;
-
     if (!terminal || !fitAddon) return;
 
-    // Small delay to ensure container has finished layout
-    const timeoutId = setTimeout(() => {
-      fitAddon.fit();
+    let cancelled = false;
+    void settleAndFit({
+      container: terminalRef.current,
+      terminal,
+      fitAddon,
+      ws: wsRef.current,
+      isCurrent: () => !cancelled,
+      onDimensions: (cols, rows) => onDimensionsChangeRef.current?.(cols, rows),
+    }).then(() => {
+      if (!cancelled) terminal.focus();
+    });
 
-      // Send resize to sync tmux dimensions
-      if (ws?.readyState === WebSocket.OPEN && terminal.cols > 0 && terminal.rows > 0) {
-        ws.send(
-          JSON.stringify({
-            type: "resize",
-            cols: terminal.cols,
-            rows: terminal.rows,
-          })
-        );
-      }
-
-      // Focus the terminal
-      terminal.focus();
-    }, 50);
-
-    return () => clearTimeout(timeoutId);
+    return () => {
+      cancelled = true;
+    };
   }, [isActive]);
 
   // Update terminal theme when appearance changes
