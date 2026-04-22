@@ -176,7 +176,9 @@ export function ProjectRow({
             )}
           </div>
 
-          {/* Name */}
+          {/* Name + inline changes dot, tightly adjacent. Wrapped in a
+              flex-1 container so the dot hugs the name instead of floating
+              at the far right of an expanded name span. */}
           {isEditing ? (
             <input
               autoFocus
@@ -197,25 +199,24 @@ export function ProjectRow({
               className="flex-1 bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
             />
           ) : (
-            <span
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                onStartEdit?.();
-              }}
-              className="truncate text-sm flex-1"
-            >
-              {project.name}
-            </span>
-          )}
-
-          {/* Changes indicator: pulses beside the name when the project has
-              uncommitted changes. */}
-          {ownStats?.hasChanges && !isEditing && (
-            <span
-              data-testid="row-stat-changes"
-              aria-label="Has uncommitted changes"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400 animate-pulse"
-            />
+            <div className="flex-1 min-w-0 flex items-center gap-1">
+              <span
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  onStartEdit?.();
+                }}
+                className="truncate text-sm"
+              >
+                {project.name}
+              </span>
+              {ownStats?.hasChanges && (
+                <span
+                  data-testid="row-stat-changes"
+                  aria-label="Has uncommitted changes"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400 animate-pulse"
+                />
+              )}
+            </div>
           )}
 
           {/* Right-side stat cluster: four fixed-width slots aligned across rows.

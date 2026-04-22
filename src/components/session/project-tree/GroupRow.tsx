@@ -180,7 +180,9 @@ export function GroupRow({
             />
           )}
 
-          {/* Name */}
+          {/* Name + inline changes dot, tightly adjacent. Wrapped in a
+              flex-1 container so the dot hugs the name instead of floating
+              at the far right of an expanded name span. */}
           {isEditing ? (
             <input
               autoFocus
@@ -201,25 +203,24 @@ export function GroupRow({
               className="flex-1 bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
             />
           ) : (
-            <span
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                onStartEdit?.();
-              }}
-              className="flex-1 text-sm truncate"
-            >
-              {group.name}
-            </span>
-          )}
-
-          {/* Changes indicator: pulses beside the name when any descendant
-              project has uncommitted changes. */}
-          {rolledStats?.hasChanges && !isEditing && (
-            <span
-              data-testid="row-stat-changes"
-              aria-label="Has uncommitted changes"
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400 animate-pulse"
-            />
+            <div className="flex-1 min-w-0 flex items-center gap-1">
+              <span
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  onStartEdit?.();
+                }}
+                className="text-sm truncate"
+              >
+                {group.name}
+              </span>
+              {rolledStats?.hasChanges && (
+                <span
+                  data-testid="row-stat-changes"
+                  aria-label="Has uncommitted changes"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400 animate-pulse"
+                />
+              )}
+            </div>
           )}
 
           {/* Right-side stat cluster: four fixed-width slots aligned across rows.
