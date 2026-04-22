@@ -46,7 +46,7 @@ export function CreateNodeInline({ depth, kind, onSubmit, onCancel }: CreateNode
         onBlur={() => void submit()}
         onClick={(e) => e.stopPropagation()}
         placeholder={kind === "group" ? "New group…" : "New project…"}
-        className="flex-1 bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+        className="flex-1 bg-input border border-primary/50 rounded px-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
       />
     </div>
   );

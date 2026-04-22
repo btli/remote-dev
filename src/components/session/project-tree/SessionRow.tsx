@@ -200,7 +200,7 @@ export function SessionRow({
               }}
               onBlur={() => commit(local)}
               onClick={(e) => e.stopPropagation()}
-              className="block w-full bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              className="block w-full bg-input border border-primary/50 rounded px-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
             />
           ) : (
             <span
@@ -209,7 +209,7 @@ export function SessionRow({
                 onStartEdit();
               }}
               className={cn(
-                "block truncate text-sm",
+                "block truncate text-xs",
                 isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
               )}
             >

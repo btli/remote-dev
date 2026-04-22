@@ -196,7 +196,7 @@ export function ProjectRow({
               }}
               onBlur={() => commit(local)}
               onClick={(e) => e.stopPropagation()}
-              className="flex-1 bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              className="flex-1 bg-input border border-primary/50 rounded px-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
             />
           ) : (
             <div className="flex-1 min-w-0 flex items-center gap-1">
@@ -205,7 +205,7 @@ export function ProjectRow({
                   e.stopPropagation();
                   onStartEdit?.();
                 }}
-                className="truncate text-sm"
+                className="truncate text-xs"
               >
                 {project.name}
               </span>
