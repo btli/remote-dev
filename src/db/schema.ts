@@ -1692,9 +1692,12 @@ export const projects = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    groupId: text("group_id")
-      .notNull()
-      .references(() => projectGroups.id, { onDelete: "cascade" }),
+    // Nullable: a project may live at the tree root (groupId === null) rather
+    // than under a group. onDelete: "set null" means deleting a group moves
+    // its child projects to root instead of cascading their deletion.
+    groupId: text("group_id").references(() => projectGroups.id, {
+      onDelete: "set null",
+    }),
     name: text("name").notNull(),
     collapsed: integer("collapsed", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
