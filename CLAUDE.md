@@ -808,6 +808,15 @@ Update the changelog when making changes that are:
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+## Development Workflow
+
+**All development work MUST be performed by a subagent inside a git worktree.** The main conversation coordinates; it does not edit source files directly.
+
+- Spawn a subagent (e.g. `general-purpose`, `feature-dev:*`, `frontend-developer`, etc.) with `isolation: "worktree"` for any task that writes or edits code under `src/`, `crates/`, `electron/`, or other implementation directories.
+- The main agent may still read files, investigate, and answer questions directly — the rule applies to *changes*, not reads.
+- Trivial exceptions: CLAUDE.md / changelog / doc-only edits requested explicitly in-conversation may be done in the main tree.
+- After the subagent finishes, review the returned worktree path + branch, then merge/PR from there rather than editing in the main tree.
+
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
