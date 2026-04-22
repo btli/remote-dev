@@ -829,12 +829,9 @@ export const ProjectTreeSidebar = forwardRef<
   };
 
   return (
-    <RootContextMenu
-      onNewGroup={() => setCreating({ parentGroupId: null, kind: "group" })}
-      onNewProject={() => setCreating({ parentGroupId: null, kind: "project" })}
-    >
     <div
-      className="flex flex-col gap-0.5 px-1 py-2"
+      data-testid="project-tree-root"
+      className="flex flex-1 flex-col gap-0.5 px-1 py-2 min-h-0"
       onDragOver={(e) => {
         // Root whitespace accepts group AND project drags for "move to root".
         if (dnd.drag?.type !== "group" && dnd.drag?.type !== "project") return;
@@ -894,7 +891,28 @@ export const ProjectTreeSidebar = forwardRef<
           onCancel={() => setCreating(null)}
         />
       )}
+      {/*
+        Root context menu — scoped to a trailing whitespace filler instead of
+        the whole tree container so that right-clicks on group / project /
+        session rows are NOT captured here. The filler grows to fill the
+        remaining vertical space so empty-region right-clicks still work, and
+        when the tree is tall enough to fill the viewport the filler simply
+        shrinks to min-h. See remote-dev-nmw4 codex Finding 3.
+      */}
+      <RootContextMenu
+        onNewGroup={() =>
+          setCreating({ parentGroupId: null, kind: "group" })
+        }
+        onNewProject={() =>
+          setCreating({ parentGroupId: null, kind: "project" })
+        }
+      >
+        <div
+          data-testid="project-tree-root-filler"
+          className="flex-1 min-h-[40px]"
+          aria-hidden
+        />
+      </RootContextMenu>
     </div>
-    </RootContextMenu>
   );
 });
