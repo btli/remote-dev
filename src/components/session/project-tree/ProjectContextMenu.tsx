@@ -47,7 +47,11 @@ interface ContentProps {
   onResume: () => void;
   onAdvanced: () => void;
   onNewWorktree: () => void;
-  onOpenPreferences: () => void;
+  /**
+   * Optional. When omitted, the Preferences item is not rendered.
+   * See remote-dev-mtv7.5.
+   */
+  onOpenPreferences?: () => void;
   onOpenSecrets: () => void;
   onOpenRepository: () => void;
   onOpenFolderInOS: () => void;
@@ -115,13 +119,15 @@ export function ProjectContextMenuContent({
         <GitBranch className="mr-2 h-4 w-4" /> New Worktree
       </button>
       <hr />
-      <button role="menuitem" onClick={onOpenPreferences}>
-        <Settings className="mr-2 h-4 w-4" />
-        Preferences
-        {hasCustomPrefs && (
-          <span className="ml-auto text-[10px] text-primary">Custom</span>
-        )}
-      </button>
+      {onOpenPreferences && (
+        <button role="menuitem" onClick={onOpenPreferences}>
+          <Settings className="mr-2 h-4 w-4" />
+          Preferences
+          {hasCustomPrefs && (
+            <span className="ml-auto text-[10px] text-primary">Custom</span>
+          )}
+        </button>
+      )}
       <button role="menuitem" onClick={onOpenSecrets}>
         <KeyRound className="mr-2 h-4 w-4" />
         Secrets
@@ -259,13 +265,15 @@ export function ProjectContextMenu({
           <GitBranch className="mr-2 h-4 w-4" /> New Worktree
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={onOpenPreferences}>
-          <Settings className="mr-2 h-4 w-4" />
-          Preferences
-          {hasCustomPrefs && (
-            <span className="ml-auto text-[10px] text-primary">Custom</span>
-          )}
-        </ContextMenuItem>
+        {onOpenPreferences && (
+          <ContextMenuItem onSelect={onOpenPreferences}>
+            <Settings className="mr-2 h-4 w-4" />
+            Preferences
+            {hasCustomPrefs && (
+              <span className="ml-auto text-[10px] text-primary">Custom</span>
+            )}
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onSelect={onOpenSecrets}>
           <KeyRound className="mr-2 h-4 w-4" />
           Secrets

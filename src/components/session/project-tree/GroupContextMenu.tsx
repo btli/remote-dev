@@ -34,7 +34,11 @@ interface ContentProps {
   moveTargetGroups?: GroupOption[];
   onCreateProject: () => void;
   onCreateSubgroup: () => void;
-  onOpenPreferences: () => void;
+  /**
+   * Optional. When omitted, the Preferences item is not rendered.
+   * See remote-dev-mtv7.5.
+   */
+  onOpenPreferences?: () => void;
   onStartEdit: () => void;
   onToggleCollapse?: () => void;
   /** Move this group under a new parent. `null` targets the root. */
@@ -67,13 +71,15 @@ export function GroupContextMenuContent({
         <Folder className="mr-2 h-4 w-4" /> New Subgroup
       </button>
       <hr />
-      <button role="menuitem" onClick={onOpenPreferences}>
-        <Settings className="mr-2 h-4 w-4" />
-        Preferences
-        {hasCustomPrefs && (
-          <span className="ml-auto text-[10px] text-primary">Custom</span>
-        )}
-      </button>
+      {onOpenPreferences && (
+        <button role="menuitem" onClick={onOpenPreferences}>
+          <Settings className="mr-2 h-4 w-4" />
+          Preferences
+          {hasCustomPrefs && (
+            <span className="ml-auto text-[10px] text-primary">Custom</span>
+          )}
+        </button>
+      )}
       <button role="menuitem" onClick={onStartEdit}>
         <Pencil className="mr-2 h-4 w-4" /> Rename
       </button>
@@ -158,13 +164,15 @@ export function GroupContextMenu({
           <Folder className="mr-2 h-4 w-4" /> New Subgroup
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={onOpenPreferences}>
-          <Settings className="mr-2 h-4 w-4" />
-          Preferences
-          {hasCustomPrefs && (
-            <span className="ml-auto text-[10px] text-primary">Custom</span>
-          )}
-        </ContextMenuItem>
+        {onOpenPreferences && (
+          <ContextMenuItem onSelect={onOpenPreferences}>
+            <Settings className="mr-2 h-4 w-4" />
+            Preferences
+            {hasCustomPrefs && (
+              <span className="ml-auto text-[10px] text-primary">Custom</span>
+            )}
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onSelect={onStartEdit}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
         </ContextMenuItem>

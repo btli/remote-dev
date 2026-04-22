@@ -536,7 +536,7 @@ export const ProjectTreeSidebar = forwardRef<
         onOpenPreferences={
           props.onOpenPreferences
             ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
-            : () => {}
+            : undefined
         }
         onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
         onToggleCollapse={() =>
@@ -666,7 +666,7 @@ export const ProjectTreeSidebar = forwardRef<
         onOpenPreferences={
           props.onOpenPreferences
             ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
-            : () => {}
+            : undefined
         }
         onOpenSecrets={() => props.onProjectOpenSecrets(p.id)}
         onOpenRepository={() => props.onProjectOpenRepository(p.id, p.name)}

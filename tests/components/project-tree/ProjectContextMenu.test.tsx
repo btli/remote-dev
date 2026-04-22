@@ -239,6 +239,16 @@ describe("ProjectContextMenuContent", () => {
     expect(onMoveToGroup).toHaveBeenCalledWith(null);
   });
 
+  it("does not render Preferences when onOpenPreferences is omitted", () => {
+    setup({ onOpenPreferences: undefined });
+    expect(screen.queryByText("Preferences")).not.toBeInTheDocument();
+  });
+
+  it("renders Preferences when onOpenPreferences is provided", () => {
+    setup({ onOpenPreferences: vi.fn() });
+    expect(screen.getByText("Preferences")).toBeInTheDocument();
+  });
+
   it("does not render Collapse/Expand when onToggleCollapse is omitted", () => {
     setup();
     expect(

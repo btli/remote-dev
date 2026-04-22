@@ -161,6 +161,18 @@ describe("GroupContextMenu (content extraction tests)", () => {
   });
 });
 
+describe("GroupContextMenu preferences gating", () => {
+  it("does not render Preferences when onOpenPreferences is omitted", () => {
+    setupContent({ onOpenPreferences: undefined });
+    expect(screen.queryByText("Preferences")).not.toBeInTheDocument();
+  });
+
+  it("renders Preferences when onOpenPreferences is provided", () => {
+    setupContent({ onOpenPreferences: vi.fn() });
+    expect(screen.getByText("Preferences")).toBeInTheDocument();
+  });
+});
+
 describe("GroupContextMenu collapse/expand item", () => {
   it("does not render when onToggleCollapse is omitted", () => {
     setupContent();
