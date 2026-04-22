@@ -296,4 +296,31 @@ describe("ProjectTreeSidebar project drag", () => {
     expect(updateProject).not.toHaveBeenCalled();
     expect(moveProject).not.toHaveBeenCalled();
   });
+
+  it("moves a nested project to root when dropped on the outer whitespace", () => {
+    const updateProject = vi.fn(async () => {});
+    const moveProject = vi.fn(async () => {});
+    const { container } = renderWithProjectTree(
+      <ProjectTreeSidebar {...makeProps()} />,
+      { tree: makeTreeOverride(updateProject, moveProject) },
+    );
+
+    const pAWrapper = getProjectWrapper(container, "projA");
+    // Outermost container is the top-level <div className="flex flex-col ...">
+    // rendered as container.firstElementChild.
+    const outer = container.firstElementChild as HTMLElement;
+    if (!outer) throw new Error("outer container not found");
+
+    fireDragEvent(pAWrapper, "dragStart", { dataTransfer: makeDT() });
+    // target === currentTarget when dispatched directly on `outer`.
+    fireDragEvent(outer, "dragOver", { dataTransfer: makeDT() });
+    fireDragEvent(outer, "drop", { dataTransfer: makeDT() });
+
+    expect(moveProject).toHaveBeenCalledTimes(1);
+    expect(moveProject).toHaveBeenCalledWith({
+      id: "pA",
+      newGroupId: null,
+    });
+    expect(updateProject).not.toHaveBeenCalled();
+  });
 });

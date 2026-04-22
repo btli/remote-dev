@@ -379,6 +379,25 @@ export function ProjectTreeSidebar(props: Props) {
   }
 
   const rootEntries = tree.getChildrenOfGroup(null);
+  // Root level interleaves top-level groups and top-level projects in
+  // sortOrder to give a stable, predictable order now that projects can
+  // live at root (remote-dev-mtv7.1). Groups and projects share the same
+  // sortOrder space at a given depth — ties break by kind (groups first)
+  // for determinism.
+  type RootEntry =
+    | { kind: "group"; node: GroupNode }
+    | { kind: "project"; node: ProjectNode };
+  const rootOrdered: RootEntry[] = [
+    ...rootEntries.groups.map<RootEntry>((g) => ({ kind: "group", node: g })),
+    ...rootEntries.projects.map<RootEntry>((p) => ({ kind: "project", node: p })),
+  ].sort((a, b) => {
+    if (a.node.sortOrder !== b.node.sortOrder) {
+      return a.node.sortOrder - b.node.sortOrder;
+    }
+    // stable tie-break: groups before projects
+    if (a.kind !== b.kind) return a.kind === "group" ? -1 : 1;
+    return a.node.id.localeCompare(b.node.id);
+  });
 
   const renderSessions = (projectId: string, depth: number) => {
     const list = sessionsForProject(activeSessions, projectId) as TerminalSession[];
@@ -472,128 +491,264 @@ export function ProjectTreeSidebar(props: Props) {
     ));
   };
 
+  // Render a single group node. Reused by both the nested subtree render
+  // and the root-level render (where groups are interleaved with projects
+  // by sortOrder).
+  const renderGroupNode = (g: GroupNode, depth: number, isLastChild: boolean) => (
+    <TreeConnector key={g.id} depth={depth} isLastChild={isLastChild}>
+      <GroupContextMenu
+        group={g}
+        hasCustomPrefs={hasNodePreferences("group", g.id)}
+        onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
+        onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
+        onOpenPreferences={
+          props.onOpenPreferences
+            ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
+            : () => {}
+        }
+        onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
+        onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
+        onDelete={() => handleDeleteGroup(g)}
+      >
+        <div
+          draggable
+          onDragStart={(e) => {
+            if (e.target !== e.currentTarget) return;
+            e.dataTransfer.setData("text/plain", g.id);
+            e.dataTransfer.setData("type", "group");
+            e.dataTransfer.effectAllowed = "move";
+            dnd.startDrag("group", g.id, g.parentGroupId);
+          }}
+          onDragEnd={() => dnd.cancel()}
+          onDragOver={(e) => {
+            if (dnd.drag?.type === "project") {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "move";
+              const rect = e.currentTarget.getBoundingClientRect();
+              dnd.dragOver("group", g.id, e.clientY, {
+                top: rect.top,
+                height: rect.height,
+              });
+              return;
+            }
+            if (dnd.drag?.type !== "group") return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = "move";
+            const rect = e.currentTarget.getBoundingClientRect();
+            dnd.dragOver(
+              "group",
+              g.id,
+              e.clientY,
+              { top: rect.top, height: rect.height },
+              { targetParentId: g.parentGroupId },
+            );
+          }}
+          onDragLeave={() => dnd.dragLeave()}
+          onDrop={(e) => {
+            if (dnd.drag?.type === "project") {
+              e.preventDefault();
+              e.stopPropagation();
+              const snap = dnd.drop("group", g.id);
+              if (!snap) return;
+              handleProjectDropOnGroup(snap, g);
+              return;
+            }
+            if (dnd.drag?.type !== "group") return;
+            e.preventDefault();
+            e.stopPropagation();
+            const snap = dnd.drop("group", g.id);
+            if (!snap) return;
+            handleGroupDropOnGroup(snap, g);
+          }}
+        >
+          <GroupRow
+            group={g}
+            depth={depth}
+            parentGroupId={g.parentGroupId}
+            onTouchStart={(e) =>
+              touch.handleTouchStart(e, "group", g.id, g.parentGroupId)
+            }
+            onTouchMove={touch.handleTouchMove}
+            onTouchEnd={touch.handleTouchEnd}
+            dropIndicator={indicatorFor("group", g.id)}
+            isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
+            isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
+            sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
+            rolledStats={rolledUpRepoStats(
+              tree.groups,
+              tree.projects,
+              props.getProjectRepoStats,
+              { type: "group", id: g.id, collapsed: g.collapsed }
+            )}
+            hasCustomPrefs={false}
+            onSelect={() => void tree.setActiveNode({ id: g.id, type: "group" })}
+            onToggleCollapse={() => void tree.updateGroup({ id: g.id, collapsed: !g.collapsed })}
+            onOpenPreferences={
+              props.onOpenPreferences
+                ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
+                : undefined
+            }
+            onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
+            onSaveEdit={async (name) => {
+              await tree.updateGroup({ id: g.id, name });
+              setEditingNode(null);
+            }}
+            onCancelEdit={() => setEditingNode(null)}
+            onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
+            onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
+          >
+            {renderGroupSubtree(g.id, depth + 1)}
+          </GroupRow>
+        </div>
+      </GroupContextMenu>
+    </TreeConnector>
+  );
+
+  // Render a single project node. Reused by nested-subtree and root-level
+  // renders. Root-level projects have groupId === null.
+  const renderProjectNode = (p: ProjectNode, depth: number, isLastChild: boolean) => (
+    <TreeConnector key={p.id} depth={depth} isLastChild={isLastChild}>
+      <ProjectContextMenu
+        project={p}
+        hasCustomPrefs={hasCustomPrefs(p)}
+        hasActiveSecrets={hasActiveSecrets(p)}
+        hasLinkedRepo={hasLinkedRepo(p)}
+        hasWorkingDirectory={hasWorkingDirectory(p)}
+        onNewTerminal={() => props.onProjectNewSession(p.id)}
+        onNewAgent={() => props.onProjectNewAgent(p.id)}
+        onResume={() => props.onProjectResumeClaudeSession(p.id)}
+        onAdvanced={() => props.onProjectAdvancedSession(p.id)}
+        onNewWorktree={() => props.onProjectNewWorktree(p.id)}
+        onOpenPreferences={
+          props.onOpenPreferences
+            ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
+            : () => {}
+        }
+        onOpenSecrets={() => props.onProjectOpenSecrets(p.id)}
+        onOpenRepository={() => props.onProjectOpenRepository(p.id, p.name)}
+        onOpenFolderInOS={() => props.onProjectOpenFolderInOS(p.id)}
+        onViewIssues={
+          props.onProjectViewIssues
+            ? () => props.onProjectViewIssues!(p.id)
+            : undefined
+        }
+        onViewPRs={
+          props.onProjectViewPRs
+            ? () => props.onProjectViewPRs!(p.id)
+            : undefined
+        }
+        onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
+        onDelete={() => handleDeleteProject(p)}
+      >
+        <div
+          draggable
+          onDragStart={(e) => {
+            if (e.target !== e.currentTarget) return;
+            e.dataTransfer.setData("text/plain", p.id);
+            e.dataTransfer.setData("type", "project");
+            e.dataTransfer.effectAllowed = "move";
+            dnd.startDrag("project", p.id, p.groupId);
+          }}
+          onDragEnd={() => dnd.cancel()}
+          onDragOver={(e) => {
+            if (dnd.drag?.type === "session") {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "move";
+              const rect = e.currentTarget.getBoundingClientRect();
+              dnd.dragOver("project", p.id, e.clientY, {
+                top: rect.top,
+                height: rect.height,
+              });
+              return;
+            }
+            if (dnd.drag?.type !== "project") return;
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = "move";
+            const rect = e.currentTarget.getBoundingClientRect();
+            dnd.dragOver(
+              "project",
+              p.id,
+              e.clientY,
+              { top: rect.top, height: rect.height },
+              { targetParentId: p.groupId },
+            );
+          }}
+          onDragLeave={() => dnd.dragLeave()}
+          onDrop={(e) => {
+            if (dnd.drag?.type === "session") {
+              e.preventDefault();
+              e.stopPropagation();
+              const snap = dnd.drop("project", p.id);
+              if (!snap) return;
+              handleSessionDropOnProject(snap, p);
+              return;
+            }
+            if (dnd.drag?.type !== "project") return;
+            e.preventDefault();
+            e.stopPropagation();
+            const snap = dnd.drop("project", p.id);
+            if (!snap) return;
+            handleProjectDropOnProject(snap, p);
+          }}
+        >
+          <ProjectRow
+            project={p}
+            depth={depth}
+            parentGroupId={p.groupId}
+            onTouchStart={(e) =>
+              touch.handleTouchStart(e, "project", p.id, p.groupId)
+            }
+            onTouchMove={touch.handleTouchMove}
+            onTouchEnd={touch.handleTouchEnd}
+            dropIndicator={indicatorFor("project", p.id)}
+            isActive={tree.activeNode?.id === p.id && tree.activeNode?.type === "project"}
+            isEditing={editingNode?.id === p.id && editingNode?.type === "project"}
+            collapsed={p.collapsed}
+            sessionCount={sessionsForProject(activeSessions, p.id, { excludeFileSessions: true }).length}
+            ownStats={props.getProjectRepoStats(p.id)}
+            hasCustomPrefs={false}
+            hasActiveSecrets={hasActiveSecrets(p)}
+            hasLinkedRepo={hasLinkedRepo(p)}
+            onSelect={() => void tree.setActiveNode({ id: p.id, type: "project" })}
+            onToggleCollapse={() =>
+              void tree.updateProject({ id: p.id, collapsed: !p.collapsed })
+            }
+            onOpenPreferences={
+              props.onOpenPreferences
+                ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
+                : undefined
+            }
+            onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
+            onSaveEdit={async (name) => {
+              await tree.updateProject({ id: p.id, name });
+              setEditingNode(null);
+            }}
+            onCancelEdit={() => setEditingNode(null)}
+          >
+            {!p.collapsed && renderSessions(p.id, depth + 1)}
+          </ProjectRow>
+        </div>
+      </ProjectContextMenu>
+    </TreeConnector>
+  );
+
   const renderGroupSubtree = (groupId: string, depth: number) => {
     const { groups: childGroups, projects: childProjects } = tree.getChildrenOfGroup(groupId);
     return (
       <>
-        {childGroups.map((g, i) => (
-          <TreeConnector
-            key={g.id}
-            depth={depth}
-            isLastChild={i === childGroups.length - 1 && childProjects.length === 0 && creating?.parentGroupId !== groupId}
-          >
-            <GroupContextMenu
-              group={g}
-              hasCustomPrefs={hasNodePreferences("group", g.id)}
-              onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
-              onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
-              onOpenPreferences={
-                props.onOpenPreferences
-                  ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
-                  : () => {}
-              }
-              onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
-              onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
-              onDelete={() => handleDeleteGroup(g)}
-            >
-              <div
-                draggable
-                onDragStart={(e) => {
-                  // Only register this as a group drag if the dragstart originated
-                  // on the wrapper itself, not bubbled up from a nested ProjectRow
-                  // or SessionRow inside this group's subtree.
-                  if (e.target !== e.currentTarget) return;
-                  e.dataTransfer.setData("text/plain", g.id);
-                  e.dataTransfer.setData("type", "group");
-                  e.dataTransfer.effectAllowed = "move";
-                  dnd.startDrag("group", g.id, g.parentGroupId);
-                }}
-                onDragEnd={() => dnd.cancel()}
-                onDragOver={(e) => {
-                  if (dnd.drag?.type === "project") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.dataTransfer.dropEffect = "move";
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    dnd.dragOver("group", g.id, e.clientY, {
-                      top: rect.top,
-                      height: rect.height,
-                    });
-                    return;
-                  }
-                  if (dnd.drag?.type !== "group") return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = "move";
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  dnd.dragOver(
-                    "group",
-                    g.id,
-                    e.clientY,
-                    { top: rect.top, height: rect.height },
-                    { targetParentId: g.parentGroupId },
-                  );
-                }}
-                onDragLeave={() => dnd.dragLeave()}
-                onDrop={(e) => {
-                  if (dnd.drag?.type === "project") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const snap = dnd.drop("group", g.id);
-                    if (!snap) return;
-                    handleProjectDropOnGroup(snap, g);
-                    return;
-                  }
-                  if (dnd.drag?.type !== "group") return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const snap = dnd.drop("group", g.id);
-                  if (!snap) return;
-                  handleGroupDropOnGroup(snap, g);
-                }}
-              >
-                <GroupRow
-                  group={g}
-                  depth={depth}
-                  parentGroupId={g.parentGroupId}
-                  onTouchStart={(e) =>
-                    touch.handleTouchStart(e, "group", g.id, g.parentGroupId)
-                  }
-                  onTouchMove={touch.handleTouchMove}
-                  onTouchEnd={touch.handleTouchEnd}
-                  dropIndicator={indicatorFor("group", g.id)}
-                  isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
-                  isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
-                  sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
-                  rolledStats={rolledUpRepoStats(
-                    tree.groups,
-                    tree.projects,
-                    props.getProjectRepoStats,
-                    { type: "group", id: g.id, collapsed: g.collapsed }
-                  )}
-                  hasCustomPrefs={false}
-                  onSelect={() => void tree.setActiveNode({ id: g.id, type: "group" })}
-                  onToggleCollapse={() => void tree.updateGroup({ id: g.id, collapsed: !g.collapsed })}
-                  onOpenPreferences={
-                    props.onOpenPreferences
-                      ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
-                      : undefined
-                  }
-                  onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
-                  onSaveEdit={async (name) => {
-                    await tree.updateGroup({ id: g.id, name });
-                    setEditingNode(null);
-                  }}
-                  onCancelEdit={() => setEditingNode(null)}
-                  onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
-                  onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
-                >
-                  {renderGroupSubtree(g.id, depth + 1)}
-                </GroupRow>
-              </div>
-            </GroupContextMenu>
-          </TreeConnector>
-        ))}
+        {childGroups.map((g, i) =>
+          renderGroupNode(
+            g,
+            depth,
+            i === childGroups.length - 1 &&
+              childProjects.length === 0 &&
+              creating?.parentGroupId !== groupId,
+          ),
+        )}
         {creating?.parentGroupId === groupId && creating.kind === "group" && (
           <CreateNodeInline
             depth={depth}
@@ -605,136 +760,14 @@ export function ProjectTreeSidebar(props: Props) {
             onCancel={() => setCreating(null)}
           />
         )}
-        {childProjects.map((p, i) => (
-          <TreeConnector key={p.id} depth={depth} isLastChild={i === childProjects.length - 1 && creating?.parentGroupId !== groupId}>
-            <ProjectContextMenu
-              project={p}
-              hasCustomPrefs={hasCustomPrefs(p)}
-              hasActiveSecrets={hasActiveSecrets(p)}
-              hasLinkedRepo={hasLinkedRepo(p)}
-              hasWorkingDirectory={hasWorkingDirectory(p)}
-              onNewTerminal={() => props.onProjectNewSession(p.id)}
-              onNewAgent={() => props.onProjectNewAgent(p.id)}
-              onResume={() => props.onProjectResumeClaudeSession(p.id)}
-              onAdvanced={() => props.onProjectAdvancedSession(p.id)}
-              onNewWorktree={() => props.onProjectNewWorktree(p.id)}
-              onOpenPreferences={
-                props.onOpenPreferences
-                  ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
-                  : () => {}
-              }
-              onOpenSecrets={() => props.onProjectOpenSecrets(p.id)}
-              onOpenRepository={() => props.onProjectOpenRepository(p.id, p.name)}
-              onOpenFolderInOS={() => props.onProjectOpenFolderInOS(p.id)}
-              onViewIssues={
-                props.onProjectViewIssues
-                  ? () => props.onProjectViewIssues!(p.id)
-                  : undefined
-              }
-              onViewPRs={
-                props.onProjectViewPRs
-                  ? () => props.onProjectViewPRs!(p.id)
-                  : undefined
-              }
-              onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
-              onDelete={() => handleDeleteProject(p)}
-            >
-              <div
-                draggable
-                onDragStart={(e) => {
-                  // Drag might have originated from a descendant SessionRow —
-                  // let the bubble reach us, but don't overwrite session drag
-                  // state with a project drag.
-                  if (e.target !== e.currentTarget) return;
-                  e.dataTransfer.setData("text/plain", p.id);
-                  e.dataTransfer.setData("type", "project");
-                  e.dataTransfer.effectAllowed = "move";
-                  dnd.startDrag("project", p.id, p.groupId);
-                }}
-                onDragEnd={() => dnd.cancel()}
-                onDragOver={(e) => {
-                  if (dnd.drag?.type === "session") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.dataTransfer.dropEffect = "move";
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    dnd.dragOver("project", p.id, e.clientY, {
-                      top: rect.top,
-                      height: rect.height,
-                    });
-                    return;
-                  }
-                  if (dnd.drag?.type !== "project") return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = "move";
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  dnd.dragOver(
-                    "project",
-                    p.id,
-                    e.clientY,
-                    { top: rect.top, height: rect.height },
-                    { targetParentId: p.groupId },
-                  );
-                }}
-                onDragLeave={() => dnd.dragLeave()}
-                onDrop={(e) => {
-                  if (dnd.drag?.type === "session") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const snap = dnd.drop("project", p.id);
-                    if (!snap) return;
-                    handleSessionDropOnProject(snap, p);
-                    return;
-                  }
-                  if (dnd.drag?.type !== "project") return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const snap = dnd.drop("project", p.id);
-                  if (!snap) return;
-                  handleProjectDropOnProject(snap, p);
-                }}
-              >
-                <ProjectRow
-                  project={p}
-                  depth={depth}
-                  parentGroupId={p.groupId}
-                  onTouchStart={(e) =>
-                    touch.handleTouchStart(e, "project", p.id, p.groupId)
-                  }
-                  onTouchMove={touch.handleTouchMove}
-                  onTouchEnd={touch.handleTouchEnd}
-                  dropIndicator={indicatorFor("project", p.id)}
-                  isActive={tree.activeNode?.id === p.id && tree.activeNode?.type === "project"}
-                  isEditing={editingNode?.id === p.id && editingNode?.type === "project"}
-                  collapsed={p.collapsed}
-                  sessionCount={sessionsForProject(activeSessions, p.id, { excludeFileSessions: true }).length}
-                  ownStats={props.getProjectRepoStats(p.id)}
-                  hasCustomPrefs={false}
-                  hasActiveSecrets={hasActiveSecrets(p)}
-                  hasLinkedRepo={hasLinkedRepo(p)}
-                  onSelect={() => void tree.setActiveNode({ id: p.id, type: "project" })}
-                  onToggleCollapse={() =>
-                    void tree.updateProject({ id: p.id, collapsed: !p.collapsed })
-                  }
-                  onOpenPreferences={
-                    props.onOpenPreferences
-                      ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
-                      : undefined
-                  }
-                  onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
-                  onSaveEdit={async (name) => {
-                    await tree.updateProject({ id: p.id, name });
-                    setEditingNode(null);
-                  }}
-                  onCancelEdit={() => setEditingNode(null)}
-                >
-                  {!p.collapsed && renderSessions(p.id, depth + 1)}
-                </ProjectRow>
-              </div>
-            </ProjectContextMenu>
-          </TreeConnector>
-        ))}
+        {childProjects.map((p, i) =>
+          renderProjectNode(
+            p,
+            depth,
+            i === childProjects.length - 1 &&
+              creating?.parentGroupId !== groupId,
+          ),
+        )}
         {creating?.parentGroupId === groupId && creating.kind === "project" && (
           <CreateNodeInline
             depth={depth}
@@ -754,151 +787,59 @@ export function ProjectTreeSidebar(props: Props) {
     <div
       className="flex flex-col gap-0.5 px-1 py-2"
       onDragOver={(e) => {
-        if (dnd.drag?.type !== "group") return;
+        // Root whitespace accepts group AND project drags for "move to root".
+        if (dnd.drag?.type !== "group" && dnd.drag?.type !== "project") return;
         if (e.target !== e.currentTarget) return;
         e.preventDefault();
         e.stopPropagation();
         e.dataTransfer.dropEffect = "move";
       }}
       onDrop={(e) => {
-        if (dnd.drag?.type !== "group") return;
+        if (dnd.drag?.type !== "group" && dnd.drag?.type !== "project") return;
         if (e.target !== e.currentTarget) return;
         e.preventDefault();
         e.stopPropagation();
-        const draggedId = dnd.drag.id;
+        const drag = dnd.drag;
         // Clear drag state (drop() without a matching indicator returns null
         // but still clears — we use cancel() here for clarity since the
         // indicator may not be set on whitespace drops).
         dnd.cancel();
-        const current = tree.groups.find((g) => g.id === draggedId);
-        if (!current || current.parentGroupId === null) return;
-        void tree.moveGroup({ id: draggedId, newParentGroupId: null });
+        if (drag.type === "group") {
+          const current = tree.groups.find((g) => g.id === drag.id);
+          if (!current || current.parentGroupId === null) return;
+          void tree.moveGroup({ id: drag.id, newParentGroupId: null });
+        } else {
+          const current = tree.projects.find((p) => p.id === drag.id);
+          if (!current || current.groupId === null) return;
+          void tree.moveProject({ id: drag.id, newGroupId: null });
+        }
       }}
     >
-      {rootEntries.groups.map((g, i) => (
-        <TreeConnector
-          key={g.id}
-          depth={0}
-          isLastChild={i === rootEntries.groups.length - 1}
-        >
-          <GroupContextMenu
-            group={g}
-            hasCustomPrefs={hasNodePreferences("group", g.id)}
-            onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
-            onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
-            onOpenPreferences={
-              props.onOpenPreferences
-                ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
-                : () => {}
-            }
-            onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
-            onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
-            onDelete={() => handleDeleteGroup(g)}
-          >
-            <div
-              draggable
-              onDragStart={(e) => {
-                // Only register this as a group drag if the dragstart originated
-                // on the wrapper itself, not bubbled up from a nested ProjectRow
-                // or SessionRow inside this group's subtree.
-                if (e.target !== e.currentTarget) return;
-                e.dataTransfer.setData("text/plain", g.id);
-                e.dataTransfer.setData("type", "group");
-                e.dataTransfer.effectAllowed = "move";
-                dnd.startDrag("group", g.id, g.parentGroupId);
-              }}
-              onDragEnd={() => dnd.cancel()}
-              onDragOver={(e) => {
-                if (dnd.drag?.type === "project") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = "move";
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  dnd.dragOver("group", g.id, e.clientY, {
-                    top: rect.top,
-                    height: rect.height,
-                  });
-                  return;
-                }
-                if (dnd.drag?.type !== "group") return;
-                e.preventDefault();
-                e.stopPropagation();
-                e.dataTransfer.dropEffect = "move";
-                const rect = e.currentTarget.getBoundingClientRect();
-                dnd.dragOver(
-                  "group",
-                  g.id,
-                  e.clientY,
-                  { top: rect.top, height: rect.height },
-                  { targetParentId: g.parentGroupId },
-                );
-              }}
-              onDragLeave={() => dnd.dragLeave()}
-              onDrop={(e) => {
-                if (dnd.drag?.type === "project") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const snap = dnd.drop("group", g.id);
-                  if (!snap) return;
-                  handleProjectDropOnGroup(snap, g);
-                  return;
-                }
-                if (dnd.drag?.type !== "group") return;
-                e.preventDefault();
-                e.stopPropagation();
-                const snap = dnd.drop("group", g.id);
-                if (!snap) return;
-                handleGroupDropOnGroup(snap, g);
-              }}
-            >
-              <GroupRow
-                group={g}
-                depth={0}
-                parentGroupId={g.parentGroupId}
-                onTouchStart={(e) =>
-                  touch.handleTouchStart(e, "group", g.id, g.parentGroupId)
-                }
-                onTouchMove={touch.handleTouchMove}
-                onTouchEnd={touch.handleTouchEnd}
-                dropIndicator={indicatorFor("group", g.id)}
-                isActive={tree.activeNode?.id === g.id && tree.activeNode?.type === "group"}
-                isEditing={editingNode?.id === g.id && editingNode?.type === "group"}
-                sessionCount={recursiveSessionCount(activeSessions, tree.groups, tree.projects, g.id)}
-                rolledStats={rolledUpRepoStats(
-                  tree.groups,
-                  tree.projects,
-                  props.getProjectRepoStats,
-                  { type: "group", id: g.id, collapsed: g.collapsed }
-                )}
-                hasCustomPrefs={false}
-                onSelect={() => void tree.setActiveNode({ id: g.id, type: "group" })}
-                onToggleCollapse={() => void tree.updateGroup({ id: g.id, collapsed: !g.collapsed })}
-                onOpenPreferences={
-                  props.onOpenPreferences
-                    ? () => props.onOpenPreferences!({ id: g.id, type: "group", name: g.name })
-                    : undefined
-                }
-                onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
-                onSaveEdit={async (name) => {
-                  await tree.updateGroup({ id: g.id, name });
-                  setEditingNode(null);
-                }}
-                onCancelEdit={() => setEditingNode(null)}
-                onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
-                onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
-              >
-                {renderGroupSubtree(g.id, 1)}
-              </GroupRow>
-            </div>
-          </GroupContextMenu>
-        </TreeConnector>
-      ))}
+      {rootOrdered.map((entry, i) => {
+        const isLast =
+          i === rootOrdered.length - 1 &&
+          !(creating?.parentGroupId === null);
+        return entry.kind === "group"
+          ? renderGroupNode(entry.node, 0, isLast)
+          : renderProjectNode(entry.node, 0, isLast);
+      })}
       {creating?.parentGroupId === null && creating.kind === "group" && (
         <CreateNodeInline
           depth={0}
           kind="group"
           onSubmit={async (name) => {
             await tree.createGroup({ name, parentGroupId: null });
+            setCreating(null);
+          }}
+          onCancel={() => setCreating(null)}
+        />
+      )}
+      {creating?.parentGroupId === null && creating.kind === "project" && (
+        <CreateNodeInline
+          depth={0}
+          kind="project"
+          onSubmit={async (name) => {
+            await tree.createProject({ name, groupId: null });
             setCreating(null);
           }}
           onCancel={() => setCreating(null)}

@@ -33,7 +33,7 @@ export function ProjectPickerCombobox({
   const [open, setOpen] = useState(false);
   const tree = useProjectTree();
   const selected = value ? tree.getProject(value) : null;
-  const selectedGroup = selected ? tree.getGroup(selected.groupId) : null;
+  const selectedGroup = selected?.groupId ? tree.getGroup(selected.groupId) : null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -74,7 +74,7 @@ export function ProjectPickerCombobox({
             <CommandEmpty>No projects found.</CommandEmpty>
             <CommandGroup>
               {tree.projects.map((p) => {
-                const group = tree.getGroup(p.groupId);
+                const group = p.groupId ? tree.getGroup(p.groupId) : null;
                 return (
                   <CommandItem
                     key={p.id}
