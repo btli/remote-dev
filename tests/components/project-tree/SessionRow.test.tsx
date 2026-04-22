@@ -5,6 +5,7 @@ import { SessionRow } from "@/components/session/project-tree/SessionRow";
 // lives in tests/setup.ts — override via mockReturnValueOnce below.
 import { useSessionGitStatus } from "@/hooks/useSessionGitStatus";
 import { usePortContext } from "@/contexts/PortContext";
+import type { TerminalSession } from "@/types/session";
 
 const mockedUseSessionGitStatus = vi.mocked(useSessionGitStatus);
 const mockedUsePortContext = vi.mocked(usePortContext);
@@ -21,13 +22,19 @@ const baseProps = {
   onStartEdit: vi.fn(),
 };
 
-const shellSession: any = {
+type SessionFixture = Pick<
+  TerminalSession,
+  "id" | "name" | "projectId" | "pinned" | "terminalType" | "worktreeBranch"
+>;
+
+const shellSession = {
   id: "s1",
   name: "web-server",
   projectId: "p1",
   pinned: false,
   terminalType: "shell",
-};
+  worktreeBranch: null,
+} satisfies SessionFixture as unknown as TerminalSession;
 
 describe("SessionRow", () => {
   it("renders the session name", () => {
