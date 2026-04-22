@@ -182,4 +182,60 @@ describe("ProjectContextMenuContent", () => {
     fireEvent.click(screen.getByText("Delete"));
     expect(handlers.onDelete).toHaveBeenCalledOnce();
   });
+
+  it("does not render move-to-group submenu when onMoveToGroup is omitted", () => {
+    setup();
+    expect(
+      screen.queryByTestId("move-to-group-submenu"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders move-to-group submenu when onMoveToGroup is provided", () => {
+    setup({ onMoveToGroup: vi.fn() });
+    expect(
+      screen.getByTestId("move-to-group-submenu"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /Root \(top level\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("fires onMoveToGroup(gid) when a move target is clicked", () => {
+    const onMoveToGroup = vi.fn();
+    setup({
+      onMoveToGroup,
+      moveTargetGroups: [{ id: "gOther", name: "Other Group" }],
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: /Other Group/ }));
+    expect(onMoveToGroup).toHaveBeenCalledWith("gOther");
+  });
+
+  it("disables move target that matches the project's current groupId", () => {
+    setup({
+      onMoveToGroup: vi.fn(),
+      moveTargetGroups: [{ id: "g1", name: "Current Group" }],
+    });
+    expect(
+      screen.getByRole("menuitem", { name: /Current Group/ }),
+    ).toBeDisabled();
+  });
+
+  it("Root (top level) is disabled when project.groupId is already null", () => {
+    setup({
+      project: { ...baseProject, groupId: null },
+      onMoveToGroup: vi.fn(),
+    });
+    expect(
+      screen.getByRole("menuitem", { name: /Root \(top level\)/ }),
+    ).toBeDisabled();
+  });
+
+  it("fires onMoveToGroup(null) when Root (top level) is clicked", () => {
+    const onMoveToGroup = vi.fn();
+    setup({ onMoveToGroup });
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /Root \(top level\)/ }),
+    );
+    expect(onMoveToGroup).toHaveBeenCalledWith(null);
+  });
 });

@@ -200,7 +200,6 @@ describe("delete confirmation gate", () => {
           onCreateSubgroup={() => {}}
           onOpenPreferences={() => {}}
           onStartEdit={() => {}}
-          onMoveToRoot={() => {}}
           onDelete={onDelete}
         />
       );
@@ -220,7 +219,6 @@ describe("delete confirmation gate", () => {
           onCreateSubgroup={() => {}}
           onOpenPreferences={() => {}}
           onStartEdit={() => {}}
-          onMoveToRoot={() => {}}
           onDelete={onDelete}
         />
       );

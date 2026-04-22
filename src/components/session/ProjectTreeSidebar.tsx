@@ -105,21 +105,23 @@ export const ProjectTreeSidebar = forwardRef<
   // their project, or dropped onto a project row to move cross-project. The
   // hook itself is pure — we compute descendant-group closures for cycle
   // guards (group drag is Phase E3 but the hook still requires the callback).
-  const dnd = useTreeDragDrop({
-    collectDescendantGroupIds: (rootId) => {
-      const out = new Set<string>([rootId]);
-      const stack = [rootId];
-      while (stack.length) {
-        const cur = stack.pop()!;
-        for (const g of tree.groups) {
-          if (g.parentGroupId === cur && !out.has(g.id)) {
-            out.add(g.id);
-            stack.push(g.id);
-          }
+  const collectDescendantGroupIdsForMenu = (rootId: string): Set<string> => {
+    const out = new Set<string>([rootId]);
+    const stack = [rootId];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      for (const g of tree.groups) {
+        if (g.parentGroupId === cur && !out.has(g.id)) {
+          out.add(g.id);
+          stack.push(g.id);
         }
       }
-      return out;
-    },
+    }
+    return out;
+  };
+
+  const dnd = useTreeDragDrop({
+    collectDescendantGroupIds: collectDescendantGroupIdsForMenu,
   });
 
   const indicatorFor = (
@@ -518,11 +520,17 @@ export const ProjectTreeSidebar = forwardRef<
   // Render a single group node. Reused by both the nested subtree render
   // and the root-level render (where groups are interleaved with projects
   // by sortOrder).
-  const renderGroupNode = (g: GroupNode, depth: number, isLastChild: boolean) => (
+  const renderGroupNode = (g: GroupNode, depth: number, isLastChild: boolean) => {
+    const descendants = collectDescendantGroupIdsForMenu(g.id);
+    const moveTargetGroups = tree.groups
+      .filter((cand) => !descendants.has(cand.id))
+      .map((cand) => ({ id: cand.id, name: cand.name }));
+    return (
     <TreeConnector key={g.id} depth={depth} isLastChild={isLastChild}>
       <GroupContextMenu
         group={g}
         hasCustomPrefs={hasNodePreferences("group", g.id)}
+        moveTargetGroups={moveTargetGroups}
         onCreateProject={() => setCreating({ parentGroupId: g.id, kind: "project" })}
         onCreateSubgroup={() => setCreating({ parentGroupId: g.id, kind: "group" })}
         onOpenPreferences={
@@ -531,7 +539,9 @@ export const ProjectTreeSidebar = forwardRef<
             : () => {}
         }
         onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
-        onMoveToRoot={() => void tree.moveGroup({ id: g.id, newParentGroupId: null })}
+        onMoveToGroup={(newParentGroupId) =>
+          void tree.moveGroup({ id: g.id, newParentGroupId })
+        }
         onDelete={() => handleDeleteGroup(g)}
       >
         <div
@@ -628,7 +638,8 @@ export const ProjectTreeSidebar = forwardRef<
         </div>
       </GroupContextMenu>
     </TreeConnector>
-  );
+    );
+  };
 
   // Render a single project node. Reused by nested-subtree and root-level
   // renders. Root-level projects have groupId === null.
@@ -640,6 +651,10 @@ export const ProjectTreeSidebar = forwardRef<
         hasActiveSecrets={hasActiveSecrets(p)}
         hasLinkedRepo={hasLinkedRepo(p)}
         hasWorkingDirectory={hasWorkingDirectory(p)}
+        moveTargetGroups={tree.groups.map((g) => ({ id: g.id, name: g.name }))}
+        onMoveToGroup={(newGroupId) =>
+          void tree.moveProject({ id: p.id, newGroupId })
+        }
         onNewTerminal={() => props.onProjectNewSession(p.id)}
         onNewAgent={() => props.onProjectNewAgent(p.id)}
         onResume={() => props.onProjectResumeClaudeSession(p.id)}

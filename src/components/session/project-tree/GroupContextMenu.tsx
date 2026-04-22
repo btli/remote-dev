@@ -6,6 +6,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
 } from "@/components/ui/context-menu";
 import {
   Folder,
@@ -17,14 +20,22 @@ import {
 } from "lucide-react";
 import type { GroupNode } from "@/contexts/ProjectTreeContext";
 
+interface GroupOption {
+  id: string;
+  name: string;
+}
+
 interface ContentProps {
   group: GroupNode;
   hasCustomPrefs: boolean;
+  /** Groups eligible as move targets (caller must exclude self + descendants). */
+  moveTargetGroups?: GroupOption[];
   onCreateProject: () => void;
   onCreateSubgroup: () => void;
   onOpenPreferences: () => void;
   onStartEdit: () => void;
-  onMoveToRoot: () => void;
+  /** Move this group under a new parent. `null` targets the root. */
+  onMoveToGroup?: (newParentGroupId: string | null) => void;
   onDelete: () => void;
 }
 
@@ -35,11 +46,12 @@ interface ContentProps {
 export function GroupContextMenuContent({
   group,
   hasCustomPrefs,
+  moveTargetGroups,
   onCreateProject,
   onCreateSubgroup,
   onOpenPreferences,
   onStartEdit,
-  onMoveToRoot,
+  onMoveToGroup,
   onDelete,
 }: ContentProps) {
   return (
@@ -61,10 +73,33 @@ export function GroupContextMenuContent({
       <button role="menuitem" onClick={onStartEdit}>
         <Pencil className="mr-2 h-4 w-4" /> Rename
       </button>
-      {group.parentGroupId !== null && (
-        <button role="menuitem" onClick={onMoveToRoot}>
-          <FolderOpen className="mr-2 h-4 w-4" /> Move to Root
-        </button>
+      {onMoveToGroup && (
+        <div data-testid="move-to-group-submenu">
+          <div className="text-xs font-medium text-muted-foreground px-2 py-1">
+            Move to Group
+          </div>
+          <button
+            role="menuitem"
+            disabled={group.parentGroupId === null}
+            onClick={() => {
+              if (group.parentGroupId !== null) onMoveToGroup(null);
+            }}
+          >
+            <FolderOpen className="mr-2 h-4 w-4" /> Root (top level)
+          </button>
+          {(moveTargetGroups ?? []).map((g) => (
+            <button
+              key={g.id}
+              role="menuitem"
+              disabled={group.parentGroupId === g.id}
+              onClick={() => {
+                if (group.parentGroupId !== g.id) onMoveToGroup(g.id);
+              }}
+            >
+              <Folder className="mr-2 h-4 w-4" /> {g.name}
+            </button>
+          ))}
+        </div>
       )}
       <hr />
       <button
@@ -85,11 +120,12 @@ interface Props extends ContentProps {
 export function GroupContextMenu({
   group,
   hasCustomPrefs,
+  moveTargetGroups,
   onCreateProject,
   onCreateSubgroup,
   onOpenPreferences,
   onStartEdit,
-  onMoveToRoot,
+  onMoveToGroup,
   onDelete,
   children,
 }: Props) {
@@ -114,10 +150,29 @@ export function GroupContextMenu({
         <ContextMenuItem onSelect={onStartEdit}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
         </ContextMenuItem>
-        {group.parentGroupId !== null && (
-          <ContextMenuItem onSelect={onMoveToRoot}>
-            <FolderOpen className="mr-2 h-4 w-4" /> Move to Root
-          </ContextMenuItem>
+        {onMoveToGroup && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <FolderOpen className="mr-2 h-4 w-4" /> Move to Group
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                onSelect={() => onMoveToGroup(null)}
+                disabled={group.parentGroupId === null}
+              >
+                <FolderOpen className="mr-2 h-4 w-4" /> Root (top level)
+              </ContextMenuItem>
+              {(moveTargetGroups ?? []).map((g) => (
+                <ContextMenuItem
+                  key={g.id}
+                  onSelect={() => onMoveToGroup(g.id)}
+                  disabled={group.parentGroupId === g.id}
+                >
+                  <Folder className="mr-2 h-4 w-4" /> {g.name}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
         )}
         <ContextMenuSeparator />
         <ContextMenuItem
