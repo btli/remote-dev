@@ -22,7 +22,7 @@ function setupContent(
     onCreateSubgroup: vi.fn(),
     onOpenPreferences: vi.fn(),
     onStartEdit: vi.fn(),
-    onMoveToRoot: vi.fn(),
+    onMoveToGroup: vi.fn(),
     onDelete: vi.fn(),
   };
   const utils = render(
@@ -44,7 +44,7 @@ function setup(
     onCreateSubgroup: vi.fn(),
     onOpenPreferences: vi.fn(),
     onStartEdit: vi.fn(),
-    onMoveToRoot: vi.fn(),
+    onMoveToGroup: vi.fn(),
     onDelete: vi.fn(),
   };
   const utils = render(
@@ -69,18 +69,9 @@ describe("GroupContextMenu (content extraction tests)", () => {
     expect(screen.getByText("New Subgroup")).toBeInTheDocument();
     expect(screen.getByText("Preferences")).toBeInTheDocument();
     expect(screen.getByText("Rename")).toBeInTheDocument();
-    expect(screen.getByText("Move to Root")).toBeInTheDocument();
+    // "Move to Group" submenu header is rendered when onMoveToGroup is provided
+    expect(screen.getByTestId("move-to-group-submenu")).toBeInTheDocument();
     expect(screen.getByText("Delete")).toBeInTheDocument();
-  });
-
-  it("hides Move to Root when the group is at root", () => {
-    setupContent({ group: { ...baseGroup, parentGroupId: null } });
-    expect(screen.queryByText("Move to Root")).not.toBeInTheDocument();
-  });
-
-  it("shows Move to Root when the group has a parent", () => {
-    setupContent({ group: { ...baseGroup, parentGroupId: "parent-id" } });
-    expect(screen.getByText("Move to Root")).toBeInTheDocument();
   });
 
   it("shows the Custom badge when hasCustomPrefs is true", () => {
@@ -117,16 +108,101 @@ describe("GroupContextMenu (content extraction tests)", () => {
     expect(handlers.onStartEdit).toHaveBeenCalledOnce();
   });
 
-  it("fires onMoveToRoot when Move to Root is clicked", () => {
-    const { handlers } = setupContent();
-    fireEvent.click(screen.getByText("Move to Root"));
-    expect(handlers.onMoveToRoot).toHaveBeenCalledOnce();
-  });
-
   it("fires onDelete when Delete is clicked", () => {
     const { handlers } = setupContent();
     fireEvent.click(screen.getByText("Delete"));
     expect(handlers.onDelete).toHaveBeenCalledOnce();
+  });
+
+  it("does not render the move submenu when onMoveToGroup is omitted", () => {
+    setupContent({ onMoveToGroup: undefined });
+    expect(screen.queryByTestId("move-to-group-submenu")).not.toBeInTheDocument();
+  });
+
+  it("Root (top level) is disabled when the group is already at root", () => {
+    setupContent({ group: { ...baseGroup, parentGroupId: null } });
+    expect(
+      screen.getByRole("menuitem", { name: /Root \(top level\)/ }),
+    ).toBeDisabled();
+  });
+
+  it("Root (top level) is enabled when the group has a parent", () => {
+    setupContent();
+    expect(
+      screen.getByRole("menuitem", { name: /Root \(top level\)/ }),
+    ).not.toBeDisabled();
+  });
+
+  it("fires onMoveToGroup(null) when Root (top level) is clicked", () => {
+    const { handlers } = setupContent();
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /Root \(top level\)/ }),
+    );
+    expect(handlers.onMoveToGroup).toHaveBeenCalledWith(null);
+  });
+
+  it("lists moveTargetGroups and fires onMoveToGroup(gid) on click", () => {
+    const moveTargetGroups = [
+      { id: "other1", name: "Other One" },
+      { id: "other2", name: "Other Two" },
+    ];
+    const { handlers } = setupContent({ moveTargetGroups });
+    expect(screen.getByText("Other One")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Other One/ }));
+    expect(handlers.onMoveToGroup).toHaveBeenCalledWith("other1");
+  });
+
+  it("disables the move target that matches current parentGroupId", () => {
+    const moveTargetGroups = [{ id: "parent", name: "Parent Group" }];
+    setupContent({ moveTargetGroups });
+    expect(
+      screen.getByRole("menuitem", { name: /Parent Group/ }),
+    ).toBeDisabled();
+  });
+});
+
+describe("GroupContextMenu preferences gating", () => {
+  it("does not render Preferences when onOpenPreferences is omitted", () => {
+    setupContent({ onOpenPreferences: undefined });
+    expect(screen.queryByText("Preferences")).not.toBeInTheDocument();
+  });
+
+  it("renders Preferences when onOpenPreferences is provided", () => {
+    setupContent({ onOpenPreferences: vi.fn() });
+    expect(screen.getByText("Preferences")).toBeInTheDocument();
+  });
+});
+
+describe("GroupContextMenu collapse/expand item", () => {
+  it("does not render when onToggleCollapse is omitted", () => {
+    setupContent();
+    expect(
+      screen.queryByRole("menuitem", { name: /^Collapse$|^Expand$/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders 'Collapse' when group is expanded (collapsed === false)", () => {
+    setupContent({ onToggleCollapse: vi.fn() });
+    expect(
+      screen.getByRole("menuitem", { name: /^Collapse$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders 'Expand' when group is collapsed", () => {
+    setupContent({
+      group: { ...baseGroup, collapsed: true },
+      onToggleCollapse: vi.fn(),
+    });
+    expect(
+      screen.getByRole("menuitem", { name: /^Expand$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("fires onToggleCollapse when clicked", () => {
+    const onToggleCollapse = vi.fn();
+    setupContent({ onToggleCollapse });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Collapse$/ }));
+    expect(onToggleCollapse).toHaveBeenCalledOnce();
   });
 });
 

@@ -23,7 +23,8 @@ export interface GroupNode {
 export interface ProjectNode {
   id: string;
   name: string;
-  groupId: string;
+  /** Null means the project lives at the tree root alongside top-level groups. */
+  groupId: string | null;
   isAutoCreated: boolean;
   sortOrder: number;
   collapsed: boolean;
@@ -54,7 +55,7 @@ export interface ProjectTreeContextValue {
   }): Promise<void>;
   deleteGroup(id: string, force?: boolean): Promise<void>;
   moveGroup(input: { id: string; newParentGroupId: string | null }): Promise<void>;
-  createProject(input: { groupId: string; name: string }): Promise<ProjectNode>;
+  createProject(input: { groupId: string | null; name: string }): Promise<ProjectNode>;
   updateProject(input: {
     id: string;
     name?: string;
@@ -62,7 +63,7 @@ export interface ProjectTreeContextValue {
     sortOrder?: number;
   }): Promise<void>;
   deleteProject(id: string): Promise<void>;
-  moveProject(input: { id: string; newGroupId: string }): Promise<void>;
+  moveProject(input: { id: string; newGroupId: string | null }): Promise<void>;
   setActiveNode(node: ActiveNode): Promise<void>;
   refresh(): Promise<void>;
 }
@@ -97,9 +98,11 @@ export function ProjectTreeProvider({ children }: { children: ReactNode }) {
       groups: groups
         .filter((g) => g.parentGroupId === groupId)
         .sort((a, b) => a.sortOrder - b.sortOrder),
-      projects: groupId
-        ? projects.filter((p) => p.groupId === groupId).sort((a, b) => a.sortOrder - b.sortOrder)
-        : [],
+      // When `groupId` is null we return projects that live at the tree root
+      // (i.e. have `groupId === null`), alongside top-level groups.
+      projects: projects
+        .filter((p) => (p.groupId ?? null) === groupId)
+        .sort((a, b) => a.sortOrder - b.sortOrder),
     }),
     [groups, projects],
   );

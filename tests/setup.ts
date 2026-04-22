@@ -1,6 +1,24 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
 
+// Global mocks for hooks that SessionMetadataBar consumes. Many project-tree
+// tests render SessionRow (and therefore SessionMetadataBar) without wrapping
+// in a PortProvider or stubbing network calls. Tests that need specific
+// fixtures can override with `vi.mocked(...).mockReturnValueOnce(...)`.
+vi.mock("@/hooks/useSessionGitStatus", () => ({
+  useSessionGitStatus: vi.fn(() => ({
+    gitStatus: null,
+    loading: false,
+    refresh: vi.fn(),
+  })),
+}));
+
+vi.mock("@/contexts/PortContext", () => ({
+  usePortContext: vi.fn(() => ({ allocations: [] })),
+  usePortContextOptional: vi.fn(() => null),
+  PortProvider: ({ children }: { children: unknown }) => children,
+}));
+
 // Reset all mocks between tests
 beforeEach(() => {
   vi.clearAllMocks();

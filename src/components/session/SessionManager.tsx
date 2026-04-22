@@ -1434,7 +1434,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         <Sidebar
             sessions={activeSessions}
             activeSessionId={activeSessionId}
-            activeFolderId={activeProject.folderId}
+            activeProjectId={activeProject.folderId}
             collapsed={effectiveCollapsed}
             onCollapsedChange={(collapsed) => {
               if (isMobile) {
@@ -1446,7 +1446,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             }}
             width={sidebarWidth}
             onWidthChange={setSidebarWidth}
-            folderHasRepo={(id: string) => nodeHasRepo("project", id)}
+            projectHasRepo={(id: string) => nodeHasRepo("project", id)}
             getFolderRepoStats={getFolderRepoStats}
             onSessionClick={handleSessionClick}
             onSessionClose={handleCloseSession}

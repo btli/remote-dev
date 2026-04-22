@@ -32,3 +32,20 @@ export const POST = withAuth(async () => {
     deletedCount: result.deletedCount,
   });
 });
+
+/**
+ * DELETE /api/trash - Empty the user's trash entirely (regardless of expiresAt)
+ *
+ * This is the backend for the sidebar footer "Empty Permanently" affordance.
+ * Unlike POST (which only purges items whose TTL elapsed), this deletes EVERY
+ * trash item the user currently has, along with associated artifacts
+ * (worktree filesystem trees) via the per-resource delete path.
+ */
+export const DELETE = withAuth(async (_request, { userId }) => {
+  const result = await TrashService.emptyAllTrash(userId);
+
+  return NextResponse.json({
+    success: true,
+    deletedCount: result.deletedCount,
+  });
+});

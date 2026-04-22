@@ -139,6 +139,52 @@ describe("ProjectRow", () => {
     expect(container.querySelector(".animate-pulse.bg-orange-400")).toBeNull();
   });
 
+  it("always renders three right-anchored stat slots (pr/issue/sessions)", () => {
+    render(<ProjectRow {...baseProps} project={baseProject} ownStats={null} sessionCount={0} />);
+    expect(screen.getByTestId("row-stat-pr")).toBeInTheDocument();
+    expect(screen.getByTestId("row-stat-issue")).toBeInTheDocument();
+    expect(screen.getByTestId("row-stat-sessions")).toBeInTheDocument();
+    // changes dot is rendered inline beside the name, not in the stat cluster
+    expect(screen.queryByTestId("row-stat-changes")).not.toBeInTheDocument();
+  });
+
+  it("renders the changes dot inline beside the name when hasChanges is true", () => {
+    render(
+      <ProjectRow
+        {...baseProps}
+        project={baseProject}
+        ownStats={{ prCount: 0, issueCount: 0, hasChanges: true }}
+      />
+    );
+    expect(screen.getByTestId("row-stat-changes")).toBeInTheDocument();
+  });
+
+  it("populates the issue slot only when issueCount > 0", () => {
+    const { rerender } = render(
+      <ProjectRow
+        {...baseProps}
+        project={baseProject}
+        ownStats={{ prCount: 0, issueCount: 0, hasChanges: false }}
+      />
+    );
+    expect(screen.getByTestId("row-stat-issue").textContent).toBe("");
+    rerender(
+      <ProjectRow
+        {...baseProps}
+        project={baseProject}
+        ownStats={{ prCount: 0, issueCount: 9, hasChanges: false }}
+      />
+    );
+    expect(screen.getByTestId("row-stat-issue").textContent).toContain("9");
+  });
+
+  it("populates the session slot only when sessionCount > 0", () => {
+    const { rerender } = render(<ProjectRow {...baseProps} project={baseProject} sessionCount={0} />);
+    expect(screen.getByTestId("row-stat-sessions").textContent).toBe("");
+    rerender(<ProjectRow {...baseProps} project={baseProject} sessionCount={3} />);
+    expect(screen.getByTestId("row-stat-sessions").textContent).toContain("3");
+  });
+
   it("renders a GitBranch indicator when hasLinkedRepo", () => {
     const { container } = render(<ProjectRow {...baseProps} project={baseProject} hasLinkedRepo />);
     expect(container.querySelector('svg.lucide-git-branch')).toBeTruthy();

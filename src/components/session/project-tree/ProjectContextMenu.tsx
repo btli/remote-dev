@@ -6,6 +6,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
 } from "@/components/ui/context-menu";
 import {
   Terminal,
@@ -19,8 +22,17 @@ import {
   GitPullRequest,
   Pencil,
   Trash2,
+  Folder,
+  FolderOpen,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import type { ProjectNode } from "@/contexts/ProjectTreeContext";
+
+interface GroupOption {
+  id: string;
+  name: string;
+}
 
 interface ContentProps {
   project: ProjectNode;
@@ -28,18 +40,27 @@ interface ContentProps {
   hasActiveSecrets: boolean;
   hasLinkedRepo: boolean;
   hasWorkingDirectory: boolean;
+  /** All groups in the tree, offered as move targets. */
+  moveTargetGroups?: GroupOption[];
   onNewTerminal: () => void;
   onNewAgent: () => void;
   onResume: () => void;
   onAdvanced: () => void;
   onNewWorktree: () => void;
-  onOpenPreferences: () => void;
+  /**
+   * Optional. When omitted, the Preferences item is not rendered.
+   * See remote-dev-mtv7.5.
+   */
+  onOpenPreferences?: () => void;
   onOpenSecrets: () => void;
   onOpenRepository: () => void;
   onOpenFolderInOS: () => void;
   onViewIssues?: () => void;
   onViewPRs?: () => void;
   onStartEdit: () => void;
+  onToggleCollapse?: () => void;
+  /** Move this project under a new group. `null` targets the root. */
+  onMoveToGroup?: (newGroupId: string | null) => void;
   onDelete: () => void;
 }
 
@@ -48,10 +69,12 @@ interface ContentProps {
  * Renders plain buttons so the content can be unit-tested in isolation.
  */
 export function ProjectContextMenuContent({
+  project,
   hasCustomPrefs,
   hasActiveSecrets,
   hasLinkedRepo,
   hasWorkingDirectory,
+  moveTargetGroups,
   onNewTerminal,
   onNewAgent,
   onResume,
@@ -64,6 +87,8 @@ export function ProjectContextMenuContent({
   onViewIssues,
   onViewPRs,
   onStartEdit,
+  onToggleCollapse,
+  onMoveToGroup,
   onDelete,
 }: ContentProps) {
   return (
@@ -94,13 +119,15 @@ export function ProjectContextMenuContent({
         <GitBranch className="mr-2 h-4 w-4" /> New Worktree
       </button>
       <hr />
-      <button role="menuitem" onClick={onOpenPreferences}>
-        <Settings className="mr-2 h-4 w-4" />
-        Preferences
-        {hasCustomPrefs && (
-          <span className="ml-auto text-[10px] text-primary">Custom</span>
-        )}
-      </button>
+      {onOpenPreferences && (
+        <button role="menuitem" onClick={onOpenPreferences}>
+          <Settings className="mr-2 h-4 w-4" />
+          Preferences
+          {hasCustomPrefs && (
+            <span className="ml-auto text-[10px] text-primary">Custom</span>
+          )}
+        </button>
+      )}
       <button role="menuitem" onClick={onOpenSecrets}>
         <KeyRound className="mr-2 h-4 w-4" />
         Secrets
@@ -133,6 +160,47 @@ export function ProjectContextMenuContent({
       <button role="menuitem" onClick={onStartEdit}>
         <Pencil className="mr-2 h-4 w-4" /> Rename
       </button>
+      {onToggleCollapse && (
+        <button role="menuitem" onClick={onToggleCollapse}>
+          {project.collapsed ? (
+            <>
+              <ChevronDown className="mr-2 h-4 w-4" /> Expand
+            </>
+          ) : (
+            <>
+              <ChevronRight className="mr-2 h-4 w-4" /> Collapse
+            </>
+          )}
+        </button>
+      )}
+      {onMoveToGroup && (
+        <div data-testid="move-to-group-submenu">
+          <div className="text-xs font-medium text-muted-foreground px-2 py-1">
+            Move to Group
+          </div>
+          <button
+            role="menuitem"
+            disabled={project.groupId === null}
+            onClick={() => {
+              if (project.groupId !== null) onMoveToGroup(null);
+            }}
+          >
+            <FolderOpen className="mr-2 h-4 w-4" /> Root (top level)
+          </button>
+          {(moveTargetGroups ?? []).map((g) => (
+            <button
+              key={g.id}
+              role="menuitem"
+              disabled={project.groupId === g.id}
+              onClick={() => {
+                if (project.groupId !== g.id) onMoveToGroup(g.id);
+              }}
+            >
+              <Folder className="mr-2 h-4 w-4" /> {g.name}
+            </button>
+          ))}
+        </div>
+      )}
       <hr />
       <button
         role="menuitem"
@@ -155,6 +223,7 @@ export function ProjectContextMenu({
   hasActiveSecrets,
   hasLinkedRepo,
   hasWorkingDirectory,
+  moveTargetGroups,
   onNewTerminal,
   onNewAgent,
   onResume,
@@ -167,6 +236,8 @@ export function ProjectContextMenu({
   onViewIssues,
   onViewPRs,
   onStartEdit,
+  onToggleCollapse,
+  onMoveToGroup,
   onDelete,
   children,
 }: ProjectContextMenuProps) {
@@ -194,13 +265,15 @@ export function ProjectContextMenu({
           <GitBranch className="mr-2 h-4 w-4" /> New Worktree
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={onOpenPreferences}>
-          <Settings className="mr-2 h-4 w-4" />
-          Preferences
-          {hasCustomPrefs && (
-            <span className="ml-auto text-[10px] text-primary">Custom</span>
-          )}
-        </ContextMenuItem>
+        {onOpenPreferences && (
+          <ContextMenuItem onSelect={onOpenPreferences}>
+            <Settings className="mr-2 h-4 w-4" />
+            Preferences
+            {hasCustomPrefs && (
+              <span className="ml-auto text-[10px] text-primary">Custom</span>
+            )}
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onSelect={onOpenSecrets}>
           <KeyRound className="mr-2 h-4 w-4" />
           Secrets
@@ -233,6 +306,43 @@ export function ProjectContextMenu({
         <ContextMenuItem onSelect={onStartEdit}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
         </ContextMenuItem>
+        {onToggleCollapse && (
+          <ContextMenuItem onSelect={onToggleCollapse}>
+            {project.collapsed ? (
+              <>
+                <ChevronDown className="mr-2 h-4 w-4" /> Expand
+              </>
+            ) : (
+              <>
+                <ChevronRight className="mr-2 h-4 w-4" /> Collapse
+              </>
+            )}
+          </ContextMenuItem>
+        )}
+        {onMoveToGroup && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <FolderOpen className="mr-2 h-4 w-4" /> Move to Group
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                onSelect={() => onMoveToGroup(null)}
+                disabled={project.groupId === null}
+              >
+                <FolderOpen className="mr-2 h-4 w-4" /> Root (top level)
+              </ContextMenuItem>
+              {(moveTargetGroups ?? []).map((g) => (
+                <ContextMenuItem
+                  key={g.id}
+                  onSelect={() => onMoveToGroup(g.id)}
+                  disabled={project.groupId === g.id}
+                >
+                  <Folder className="mr-2 h-4 w-4" /> {g.name}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        )}
         <ContextMenuSeparator />
         <ContextMenuItem
           onSelect={onDelete}

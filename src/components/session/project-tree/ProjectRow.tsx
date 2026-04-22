@@ -9,6 +9,7 @@ import {
   GitPullRequest,
   CircleDot,
   Settings,
+  Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProjectNode } from "@/contexts/ProjectTreeContext";
@@ -175,7 +176,9 @@ export function ProjectRow({
             )}
           </div>
 
-          {/* Name */}
+          {/* Name + inline changes dot, tightly adjacent. Wrapped in a
+              flex-1 container so the dot hugs the name instead of floating
+              at the far right of an expanded name span. */}
           {isEditing ? (
             <input
               autoFocus
@@ -196,46 +199,67 @@ export function ProjectRow({
               className="flex-1 bg-input border border-primary/50 rounded px-1 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
             />
           ) : (
-            <span
-              onDoubleClick={(e) => {
-                e.stopPropagation();
-                onStartEdit?.();
-              }}
-              className="truncate text-sm flex-1"
-            >
-              {project.name}
-            </span>
-          )}
-
-          {/* Right-side badges */}
-          {ownStats && (
-            <div className="flex items-center gap-1 shrink-0">
-              {ownStats.prCount > 0 && (
-                <span className="flex items-center gap-0.5 text-[9px] text-primary">
-                  <GitPullRequest className="w-2.5 h-2.5" />
-                  {ownStats.prCount}
-                </span>
-              )}
-              {ownStats.issueCount > 0 && (
-                <span className="flex items-center gap-0.5 text-[9px] text-chart-2">
-                  <CircleDot className="w-2.5 h-2.5" />
-                  {ownStats.issueCount}
-                </span>
-              )}
-              {ownStats.hasChanges && (
-                <span className="h-1.5 w-1.5 rounded-full bg-orange-400 animate-pulse" />
+            <div className="flex-1 min-w-0 flex items-center gap-1">
+              <span
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  onStartEdit?.();
+                }}
+                className="truncate text-sm"
+              >
+                {project.name}
+              </span>
+              {ownStats?.hasChanges && (
+                <span
+                  data-testid="row-stat-changes"
+                  aria-label="Has uncommitted changes"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-orange-400 animate-pulse"
+                />
               )}
             </div>
           )}
 
-          {/* Session count */}
-          {sessionCount > 0 && (
-            <span className="text-[10px] text-muted-foreground ml-auto">
-              {sessionCount}
+          {/* Right-side stat cluster: four fixed-width slots aligned across rows.
+              Empty slots still reserve width so numbers line up vertically. */}
+          <div className="flex items-center gap-1 shrink-0 ml-auto">
+            <span
+              data-testid="row-stat-pr"
+              className="flex items-center gap-0.5 justify-end text-[9px] text-primary min-w-[24px]"
+            >
+              {ownStats && ownStats.prCount > 0 ? (
+                <>
+                  <GitPullRequest className="w-2.5 h-2.5" />
+                  {ownStats.prCount}
+                </>
+              ) : null}
             </span>
-          )}
+            <span
+              data-testid="row-stat-issue"
+              className="flex items-center gap-0.5 justify-end text-[9px] text-chart-2 min-w-[24px]"
+            >
+              {ownStats && ownStats.issueCount > 0 ? (
+                <>
+                  <CircleDot className="w-2.5 h-2.5" />
+                  {ownStats.issueCount}
+                </>
+              ) : null}
+            </span>
+            <span
+              data-testid="row-stat-sessions"
+              className="flex items-center gap-0.5 justify-end text-[9px] text-muted-foreground min-w-[24px]"
+            >
+              {sessionCount > 0 ? (
+                <>
+                  <Terminal className="w-2.5 h-2.5" />
+                  {sessionCount}
+                </>
+              ) : null}
+            </span>
+          </div>
 
-          {/* Gear button */}
+          {/* Hover-only gear button. `hidden group-hover:flex` keeps it out
+              of the layout when not hovered, so the stat cluster above stays
+              right-anchored at a consistent X position across all rows. */}
           {onOpenPreferences !== undefined && (
             <button
               type="button"
@@ -244,7 +268,7 @@ export function ProjectRow({
                 e.stopPropagation();
                 onOpenPreferences();
               }}
-              className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-foreground transition shrink-0"
+              className="hidden group-hover:flex items-center p-1 text-muted-foreground hover:text-foreground transition shrink-0"
             >
               <Settings className="h-3 w-3" />
             </button>

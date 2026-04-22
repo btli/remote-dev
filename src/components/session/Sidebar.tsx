@@ -6,6 +6,7 @@ import {
   Trash2, Sparkles, GitBranch,
   PanelLeftClose, PanelLeft,
   Fingerprint, Network,
+  FolderPlus, Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
@@ -31,7 +32,11 @@ import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
-import { ProjectTreeSidebar } from "./ProjectTreeSidebar";
+import {
+  ProjectTreeSidebar,
+  type ProjectTreeSidebarHandle,
+} from "./ProjectTreeSidebar";
+import { TrashButtonContextMenu } from "./TrashButtonContextMenu";
 
 // Sidebar width constraints
 const MIN_SIDEBAR_WIDTH = 180;
@@ -50,28 +55,26 @@ interface SidebarProps {
   sessions: TerminalSession[];
   activeSessionId: string | null;
   /**
-   * Legacy folder id of the currently-active project (used by the header
-   * "New Worktree" shortcut and the FilesSection). Renaming to
-   * `activeProjectFolderId` is deferred to the Phase G3 type cleanup.
+   * Project id of the currently-active node (used by the header "New
+   * Worktree" shortcut and the FilesSection).
    */
-  activeFolderId: string | null;
+  activeProjectId: string | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   width?: number;
   onWidthChange?: (width: number) => void;
   /**
-   * Predicates/stats on the currently-active project. Kept with the
-   * legacy "folder" prop name for now since the shared FilesSection /
-   * FolderRepoStats consumers still speak that vocabulary; internally
-   * the callbacks receive a project id.
+   * Predicates/stats on the currently-active project. The FilesSection /
+   * FolderRepoStats types still use the legacy "folder" vocabulary; the
+   * callbacks receive a project id.
    */
-  folderHasRepo: (projectId: string) => boolean;
+  projectHasRepo: (projectId: string) => boolean;
   getFolderRepoStats: (projectId: string) => FolderRepoStats | null;
   onSessionClick: (sessionId: string) => void;
   onSessionClose: (sessionId: string, options?: { deleteWorktree?: boolean }) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
   onSessionTogglePin: (sessionId: string) => void;
-  onSessionMove: (sessionId: string, folderId: string | null) => void;
+  onSessionMove: (sessionId: string, projectId: string | null) => void;
   onSessionReorder: (sessionIds: string[]) => void;
   onNewSession: () => void;
   onQuickNewSession: () => void;
@@ -110,12 +113,12 @@ interface SidebarProps {
 export function Sidebar({
   sessions,
   activeSessionId,
-  activeFolderId,
+  activeProjectId,
   collapsed,
   onCollapsedChange,
   width = DEFAULT_SIDEBAR_WIDTH,
   onWidthChange,
-  folderHasRepo,
+  projectHasRepo,
   getFolderRepoStats,
   onSessionClick,
   onSessionClose,
@@ -146,6 +149,41 @@ export function Sidebar({
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartXRef = useRef<number>(0);
   const resizeStartWidthRef = useRef<number>(0);
+  const projectTreeRef = useRef<ProjectTreeSidebarHandle | null>(null);
+  // Queued "create at root" action fired from the collapsed-mode dropdown.
+  // We can't call projectTreeRef directly while collapsed because
+  // <ProjectTreeSidebar/> isn't mounted — stash the intent and fire it once
+  // the tree remounts after expanding. Ref (not state) so the effect can
+  // read-and-clear without triggering a cascading render.
+  const pendingRootCreateRef = useRef<"group" | "project" | null>(null);
+  useEffect(() => {
+    if (collapsed) return;
+    const pending = pendingRootCreateRef.current;
+    if (!pending) return;
+    const handle = projectTreeRef.current;
+    if (!handle) return;
+    pendingRootCreateRef.current = null;
+    if (pending === "group") handle.startCreateGroupAtRoot();
+    else handle.startCreateProjectAtRoot();
+  }, [collapsed]);
+
+  const handleNewGroup = useCallback(() => {
+    if (collapsed) {
+      pendingRootCreateRef.current = "group";
+      onCollapsedChange(false);
+    } else {
+      projectTreeRef.current?.startCreateGroupAtRoot();
+    }
+  }, [collapsed, onCollapsedChange]);
+
+  const handleNewProject = useCallback(() => {
+    if (collapsed) {
+      pendingRootCreateRef.current = "project";
+      onCollapsedChange(false);
+    } else {
+      projectTreeRef.current?.startCreateProjectAtRoot();
+    }
+  }, [collapsed, onCollapsedChange]);
 
   // Secrets modal state. `secretsModalProjectId` holds the target project's
   // id (SecretsConfigModal's internal prop is still named `initialFolderId`
@@ -198,6 +236,33 @@ export function Sidebar({
   const { mcpSupported } = useSessionMCP();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
+
+  // Empty the trash permanently. Used by the right-click affordance on the
+  // footer Trash button; see remote-dev-mtv7.7.
+  //
+  // Calls DELETE /api/trash — NOT POST (which only purges items whose TTL
+  // already elapsed). See remote-dev-nmw4 for the regression this fixes.
+  const handleEmptyTrashPermanently = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Permanently delete all trash items? This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/trash", { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const detail = body?.error ? `: ${String(body.error)}` : "";
+        console.error("Failed to empty trash" + detail);
+        window.alert(`Failed to empty trash${detail}`);
+      }
+    } catch (err) {
+      console.error("Failed to empty trash:", err);
+      window.alert("Failed to empty trash");
+    }
+  }, []);
 
   // Opens the project's default working directory in the OS file manager.
   const handleOpenFolder = useCallback(
@@ -284,6 +349,15 @@ export function Sidebar({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem onClick={handleNewGroup}>
+                      <FolderPlus className="w-3.5 h-3.5 mr-2" />
+                      New Group
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleNewProject}>
+                      <Briefcase className="w-3.5 h-3.5 mr-2" />
+                      New Project
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={onQuickNewSession}>
                       <Terminal className="w-3.5 h-3.5 mr-2" />
                       New Terminal
@@ -294,11 +368,11 @@ export function Sidebar({
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
-                        if (activeFolderId && folderHasRepo(activeFolderId)) {
-                          onProjectNewWorktree(activeFolderId);
+                        if (activeProjectId && projectHasRepo(activeProjectId)) {
+                          onProjectNewWorktree(activeProjectId);
                         }
                       }}
-                      disabled={!activeFolderId || !folderHasRepo(activeFolderId)}
+                      disabled={!activeProjectId || !projectHasRepo(activeProjectId)}
                     >
                       <GitBranch className="w-3.5 h-3.5 mr-2" />
                       New Worktree
@@ -329,21 +403,44 @@ export function Sidebar({
         >
           {activeSessions.length === 0 ? (
             collapsed ? (
-              // Collapsed empty state - just show plus button
+              // Collapsed empty state - dropdown mirroring the expanded header
               <div className="flex flex-col items-center py-4">
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
                     <Button
-                      onClick={onQuickNewSession}
                       variant="ghost"
                       size="icon-sm"
                       className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                      aria-label="Create"
                     >
                       <Plus className="w-4 h-4" />
                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">New session</TooltipContent>
-                </Tooltip>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent side="right" align="start" className="w-44">
+                    <DropdownMenuItem onClick={handleNewGroup}>
+                      <FolderPlus className="w-3.5 h-3.5 mr-2" />
+                      New Group
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleNewProject}>
+                      <Briefcase className="w-3.5 h-3.5 mr-2" />
+                      New Project
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={onQuickNewSession}>
+                      <Terminal className="w-3.5 h-3.5 mr-2" />
+                      New Terminal
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={onNewAgent}>
+                      <Sparkles className="w-3.5 h-3.5 mr-2" />
+                      New Agent
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={onNewSession}>
+                      <Settings className="w-3.5 h-3.5 mr-2" />
+                      Advanced...
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ) : (
               <div className="text-center py-8 px-2">
@@ -374,6 +471,7 @@ export function Sidebar({
                   tree rendering path as of Phase G1. */}
               {!collapsed && (
                 <ProjectTreeSidebar
+                  ref={projectTreeRef}
                   getProjectRepoStats={getFolderRepoStats}
                   onOpenPreferences={onOpenNodePreferences}
                   onSessionClick={onSessionClick}
@@ -408,7 +506,7 @@ export function Sidebar({
       {/* Files Section - default + pinned files for active folder */}
       {getFolderPinnedFiles && onOpenPinnedFile && (
         <FilesSection
-          activeFolderId={activeFolderId}
+          activeFolderId={activeProjectId}
           collapsed={collapsed}
           getFolderPinnedFiles={getFolderPinnedFiles}
           onOpenFile={onOpenPinnedFile}
@@ -467,22 +565,27 @@ export function Sidebar({
               )}
             </button>
           )}
-          {/* Trash button - only show when there are items */}
+          {/* Trash button - only show when there are items. Right-click opens
+              an "Empty Permanently" affordance (see remote-dev-mtv7.7). */}
           {trashCount > 0 && (
-            <button
-              onClick={onTrashOpen}
-              className={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-muted-foreground hover:text-foreground",
-                "hover:bg-muted/50 transition-colors"
-              )}
+            <TrashButtonContextMenu
+              onEmptyPermanently={handleEmptyTrashPermanently}
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Trash</span>
-              <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                {trashCount}
-              </span>
-            </button>
+              <button
+                onClick={onTrashOpen}
+                className={cn(
+                  "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
+                  "text-xs text-muted-foreground hover:text-foreground",
+                  "hover:bg-muted/50 transition-colors"
+                )}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Trash</span>
+                <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  {trashCount}
+                </span>
+              </button>
+            </TrashButtonContextMenu>
           )}
           <div className="flex items-center justify-between text-[10px] text-muted-foreground">
             <span>New session</span>

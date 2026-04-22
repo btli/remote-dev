@@ -6,6 +6,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
 } from "@/components/ui/context-menu";
 import {
   Folder,
@@ -14,17 +17,32 @@ import {
   Settings,
   Briefcase,
   Trash2,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import type { GroupNode } from "@/contexts/ProjectTreeContext";
+
+interface GroupOption {
+  id: string;
+  name: string;
+}
 
 interface ContentProps {
   group: GroupNode;
   hasCustomPrefs: boolean;
+  /** Groups eligible as move targets (caller must exclude self + descendants). */
+  moveTargetGroups?: GroupOption[];
   onCreateProject: () => void;
   onCreateSubgroup: () => void;
-  onOpenPreferences: () => void;
+  /**
+   * Optional. When omitted, the Preferences item is not rendered.
+   * See remote-dev-mtv7.5.
+   */
+  onOpenPreferences?: () => void;
   onStartEdit: () => void;
-  onMoveToRoot: () => void;
+  onToggleCollapse?: () => void;
+  /** Move this group under a new parent. `null` targets the root. */
+  onMoveToGroup?: (newParentGroupId: string | null) => void;
   onDelete: () => void;
 }
 
@@ -35,11 +53,13 @@ interface ContentProps {
 export function GroupContextMenuContent({
   group,
   hasCustomPrefs,
+  moveTargetGroups,
   onCreateProject,
   onCreateSubgroup,
   onOpenPreferences,
   onStartEdit,
-  onMoveToRoot,
+  onToggleCollapse,
+  onMoveToGroup,
   onDelete,
 }: ContentProps) {
   return (
@@ -51,20 +71,58 @@ export function GroupContextMenuContent({
         <Folder className="mr-2 h-4 w-4" /> New Subgroup
       </button>
       <hr />
-      <button role="menuitem" onClick={onOpenPreferences}>
-        <Settings className="mr-2 h-4 w-4" />
-        Preferences
-        {hasCustomPrefs && (
-          <span className="ml-auto text-[10px] text-primary">Custom</span>
-        )}
-      </button>
+      {onOpenPreferences && (
+        <button role="menuitem" onClick={onOpenPreferences}>
+          <Settings className="mr-2 h-4 w-4" />
+          Preferences
+          {hasCustomPrefs && (
+            <span className="ml-auto text-[10px] text-primary">Custom</span>
+          )}
+        </button>
+      )}
       <button role="menuitem" onClick={onStartEdit}>
         <Pencil className="mr-2 h-4 w-4" /> Rename
       </button>
-      {group.parentGroupId !== null && (
-        <button role="menuitem" onClick={onMoveToRoot}>
-          <FolderOpen className="mr-2 h-4 w-4" /> Move to Root
+      {onToggleCollapse && (
+        <button role="menuitem" onClick={onToggleCollapse}>
+          {group.collapsed ? (
+            <>
+              <ChevronDown className="mr-2 h-4 w-4" /> Expand
+            </>
+          ) : (
+            <>
+              <ChevronRight className="mr-2 h-4 w-4" /> Collapse
+            </>
+          )}
         </button>
+      )}
+      {onMoveToGroup && (
+        <div data-testid="move-to-group-submenu">
+          <div className="text-xs font-medium text-muted-foreground px-2 py-1">
+            Move to Group
+          </div>
+          <button
+            role="menuitem"
+            disabled={group.parentGroupId === null}
+            onClick={() => {
+              if (group.parentGroupId !== null) onMoveToGroup(null);
+            }}
+          >
+            <FolderOpen className="mr-2 h-4 w-4" /> Root (top level)
+          </button>
+          {(moveTargetGroups ?? []).map((g) => (
+            <button
+              key={g.id}
+              role="menuitem"
+              disabled={group.parentGroupId === g.id}
+              onClick={() => {
+                if (group.parentGroupId !== g.id) onMoveToGroup(g.id);
+              }}
+            >
+              <Folder className="mr-2 h-4 w-4" /> {g.name}
+            </button>
+          ))}
+        </div>
       )}
       <hr />
       <button
@@ -85,11 +143,13 @@ interface Props extends ContentProps {
 export function GroupContextMenu({
   group,
   hasCustomPrefs,
+  moveTargetGroups,
   onCreateProject,
   onCreateSubgroup,
   onOpenPreferences,
   onStartEdit,
-  onMoveToRoot,
+  onToggleCollapse,
+  onMoveToGroup,
   onDelete,
   children,
 }: Props) {
@@ -104,20 +164,54 @@ export function GroupContextMenu({
           <Folder className="mr-2 h-4 w-4" /> New Subgroup
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={onOpenPreferences}>
-          <Settings className="mr-2 h-4 w-4" />
-          Preferences
-          {hasCustomPrefs && (
-            <span className="ml-auto text-[10px] text-primary">Custom</span>
-          )}
-        </ContextMenuItem>
+        {onOpenPreferences && (
+          <ContextMenuItem onSelect={onOpenPreferences}>
+            <Settings className="mr-2 h-4 w-4" />
+            Preferences
+            {hasCustomPrefs && (
+              <span className="ml-auto text-[10px] text-primary">Custom</span>
+            )}
+          </ContextMenuItem>
+        )}
         <ContextMenuItem onSelect={onStartEdit}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
         </ContextMenuItem>
-        {group.parentGroupId !== null && (
-          <ContextMenuItem onSelect={onMoveToRoot}>
-            <FolderOpen className="mr-2 h-4 w-4" /> Move to Root
+        {onToggleCollapse && (
+          <ContextMenuItem onSelect={onToggleCollapse}>
+            {group.collapsed ? (
+              <>
+                <ChevronDown className="mr-2 h-4 w-4" /> Expand
+              </>
+            ) : (
+              <>
+                <ChevronRight className="mr-2 h-4 w-4" /> Collapse
+              </>
+            )}
           </ContextMenuItem>
+        )}
+        {onMoveToGroup && (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <FolderOpen className="mr-2 h-4 w-4" /> Move to Group
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                onSelect={() => onMoveToGroup(null)}
+                disabled={group.parentGroupId === null}
+              >
+                <FolderOpen className="mr-2 h-4 w-4" /> Root (top level)
+              </ContextMenuItem>
+              {(moveTargetGroups ?? []).map((g) => (
+                <ContextMenuItem
+                  key={g.id}
+                  onSelect={() => onMoveToGroup(g.id)}
+                  disabled={group.parentGroupId === g.id}
+                >
+                  <Folder className="mr-2 h-4 w-4" /> {g.name}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
         )}
         <ContextMenuSeparator />
         <ContextMenuItem

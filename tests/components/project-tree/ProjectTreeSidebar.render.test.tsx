@@ -118,6 +118,48 @@ describe("ProjectTreeSidebar", () => {
     );
     expect(container).toBeTruthy();
   });
+
+  it("renders a root-level project (groupId === null) alongside root groups", () => {
+    const rootProject: ProjectNode = {
+      id: "proot",
+      name: "RootProj",
+      groupId: null,
+      isAutoCreated: false,
+      sortOrder: 0,
+      collapsed: true,
+    };
+    const rootGroup: GroupNode = {
+      id: "gRoot",
+      name: "GroupAtRoot",
+      parentGroupId: null,
+      collapsed: false,
+      sortOrder: 1,
+    };
+    const override = {
+      groups: [rootGroup],
+      projects: [rootProject],
+      getGroup: (id: string) => (id === "gRoot" ? rootGroup : undefined),
+      getProject: (id: string) =>
+        id === "proot" ? rootProject : undefined,
+      getChildrenOfGroup: (gid: string | null) =>
+        gid === null
+          ? { groups: [rootGroup], projects: [rootProject] }
+          : { groups: [], projects: [] },
+    };
+    const { getByText } = renderWithProjectTree(
+      <ProjectTreeSidebar
+        getProjectRepoStats={() => null}
+        onSessionClick={() => {}}
+        onSessionClose={() => {}}
+        onSessionStartEdit={() => {}}
+        onSessionRename={() => {}}
+        {...requiredHandlerProps}
+      />,
+      { tree: override },
+    );
+    expect(getByText("RootProj")).toBeInTheDocument();
+    expect(getByText("GroupAtRoot")).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -158,7 +200,6 @@ describe("delete confirmation gate", () => {
           onCreateSubgroup={() => {}}
           onOpenPreferences={() => {}}
           onStartEdit={() => {}}
-          onMoveToRoot={() => {}}
           onDelete={onDelete}
         />
       );
@@ -178,7 +219,6 @@ describe("delete confirmation gate", () => {
           onCreateSubgroup={() => {}}
           onOpenPreferences={() => {}}
           onStartEdit={() => {}}
-          onMoveToRoot={() => {}}
           onDelete={onDelete}
         />
       );

@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { SessionRow } from "@/components/session/project-tree/SessionRow";
+// Global vi.mock of @/hooks/useSessionGitStatus and @/contexts/PortContext
+// lives in tests/setup.ts — override via mockReturnValueOnce below.
+import { useSessionGitStatus } from "@/hooks/useSessionGitStatus";
+import { usePortContext } from "@/contexts/PortContext";
+
+const mockedUseSessionGitStatus = vi.mocked(useSessionGitStatus);
+const mockedUsePortContext = vi.mocked(usePortContext);
 
 const baseProps = {
   depth: 1,
@@ -165,5 +172,50 @@ describe("SessionRow", () => {
     fireEvent.change(input, { target: { value: "Blurred" } });
     fireEvent.blur(input);
     expect(onSaveEdit).toHaveBeenCalledWith("Blurred");
+  });
+
+  // Session metadata bar integration (remote-dev-yy0t)
+  describe("SessionMetadataBar integration", () => {
+    it("renders the metadata bar when gitStatus has a branch", () => {
+      mockedUseSessionGitStatus.mockReturnValueOnce({
+        gitStatus: { branch: "feat/xyz", ahead: 1, behind: 0, pr: null },
+        loading: false,
+        refresh: vi.fn(),
+      });
+      mockedUsePortContext.mockReturnValueOnce({ allocations: [] } as never);
+      const { container } = render(<SessionRow {...baseProps} session={shellSession} />);
+      expect(screen.getByText("feat/xyz")).toBeInTheDocument();
+      expect(container.querySelector("svg.lucide-git-branch")).toBeTruthy();
+    });
+
+    it("renders port chips from usePortContext allocations for this project", () => {
+      mockedUseSessionGitStatus.mockReturnValueOnce({
+        gitStatus: null,
+        loading: false,
+        refresh: vi.fn(),
+      });
+      mockedUsePortContext.mockReturnValueOnce({
+        allocations: [
+          { port: 3000, folderId: "p1" },
+          { port: 5173, folderId: "p2" },
+        ],
+      } as never);
+      render(<SessionRow {...baseProps} session={shellSession} />);
+      expect(screen.getByText(":3000")).toBeInTheDocument();
+      expect(screen.queryByText(":5173")).toBeNull();
+    });
+
+    it("does not render the metadata bar when there is no git status and no ports", () => {
+      mockedUseSessionGitStatus.mockReturnValueOnce({
+        gitStatus: null,
+        loading: false,
+        refresh: vi.fn(),
+      });
+      mockedUsePortContext.mockReturnValueOnce({ allocations: [] } as never);
+      const { container } = render(<SessionRow {...baseProps} session={shellSession} />);
+      // No GitBranch icon and no port pill
+      expect(container.querySelector("svg.lucide-git-branch")).toBeNull();
+      expect(container.querySelector("svg.lucide-radio")).toBeNull();
+    });
   });
 });

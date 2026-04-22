@@ -294,6 +294,52 @@ export async function deleteTrashItem(
 }
 
 /**
+ * Permanently delete ALL trash items for a user regardless of expiresAt.
+ *
+ * Unlike {@link cleanupExpiredItems}, which only purges items whose
+ * `expiresAt` has passed, this method is the engine behind the sidebar
+ * footer "Empty Permanently" affordance: every item the user currently
+ * sees in the trash drawer gets removed, including associated artifacts
+ * (worktree filesystem trees, etc.) via the per-resource delete path.
+ *
+ * Errors on individual items are logged and skipped so a single broken
+ * item cannot wedge the whole empty operation.
+ *
+ * @param userId - User ID whose trash to empty
+ * @returns Summary of the operation (ids successfully deleted)
+ */
+export async function emptyAllTrash(userId: string): Promise<CleanupResult> {
+  const items = await db.query.trashItems.findMany({
+    where: eq(trashItems.userId, userId),
+  });
+
+  const deletedIds: string[] = [];
+
+  for (const item of items) {
+    try {
+      switch (item.resourceType) {
+        case "worktree":
+          await WorktreeTrashService.permanentlyDeleteWorktree(item.id, userId);
+          break;
+        default:
+          await db.delete(trashItems).where(eq(trashItems.id, item.id));
+      }
+      deletedIds.push(item.id);
+    } catch (error) {
+      log.error("Failed to permanently delete trash item on empty", {
+        trashItemId: item.id,
+        error: String(error),
+      });
+    }
+  }
+
+  return {
+    deletedCount: deletedIds.length,
+    deletedIds,
+  };
+}
+
+/**
  * Clean up expired trash items
  * This should be called at startup, via cron, and when viewing trash
  * @returns Summary of cleanup operation

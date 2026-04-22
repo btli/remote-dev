@@ -6,7 +6,8 @@ import { ProjectHierarchyError } from "@/domain/errors/ProjectHierarchyError";
 
 export interface CreateProjectInput {
   userId: string;
-  groupId: string;
+  // Null means create the project at the tree root.
+  groupId: string | null;
   name: string;
   sortOrder?: number;
 }
@@ -18,18 +19,20 @@ export class CreateProject {
   ) {}
 
   async execute(input: CreateProjectInput): Promise<Project> {
-    const group = await this.groupRepo.findById(input.groupId);
-    if (!group) {
-      throw new ProjectHierarchyError(
-        `Group ${input.groupId} not found`,
-        "MISSING_GROUP"
-      );
-    }
-    if (group.userId !== input.userId) {
-      throw new ProjectHierarchyError(
-        "Group belongs to a different user",
-        "SCOPE_MISMATCH"
-      );
+    if (input.groupId !== null) {
+      const group = await this.groupRepo.findById(input.groupId);
+      if (!group) {
+        throw new ProjectHierarchyError(
+          `Group ${input.groupId} not found`,
+          "MISSING_GROUP"
+        );
+      }
+      if (group.userId !== input.userId) {
+        throw new ProjectHierarchyError(
+          "Group belongs to a different user",
+          "SCOPE_MISMATCH"
+        );
+      }
     }
     const now = new Date();
     const project = Project.create({

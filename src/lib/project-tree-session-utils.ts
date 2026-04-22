@@ -83,5 +83,5 @@ function collectDescendantProjectIds(
       }
     }
   }
-  return projects.filter((p) => seen.has(p.groupId)).map((p) => p.id);
+  return projects.filter((p) => p.groupId !== null && seen.has(p.groupId)).map((p) => p.id);
 }

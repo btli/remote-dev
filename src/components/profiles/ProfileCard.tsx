@@ -14,7 +14,7 @@ import { PROVIDER_DISPLAY_NAMES } from "@/types/agent";
 
 interface ProfileCardProps {
   profile: AgentProfile;
-  linkedFolderCount: number;
+  linkedProjectCount: number;
   isSelected: boolean;
   onSelect: () => void;
   onEdit: () => void;
@@ -32,7 +32,7 @@ const PROVIDER_COLORS: Record<AgentProvider, string> = {
 
 export function ProfileCard({
   profile,
-  linkedFolderCount,
+  linkedProjectCount,
   isSelected,
   onSelect,
   onEdit,
@@ -86,7 +86,7 @@ export function ProfileCard({
           <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground/70">
             <span className="flex items-center gap-1">
               <FolderSymlink className="w-3 h-3" />
-              {linkedFolderCount} folder{linkedFolderCount !== 1 ? "s" : ""}
+              {linkedProjectCount} project{linkedProjectCount !== 1 ? "s" : ""}
             </span>
           </div>
         </button>

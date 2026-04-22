@@ -7,8 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sidebar context menu updates**: Root-space context menu (right-click empty
+  tree) and header `+` dropdown now offer **New Group** and **New Project**.
+  Previously there was no UI entry point to create a top-level group. Root
+  projects are now supported (`projects.group_id` is nullable) alongside root
+  groups. **Move to Group…** submenu on group and project rows lets users
+  reparent via the menu without dragging. Collapse/Expand items added to
+  group and project menus. Footer Trash button gains a right-click
+  "Empty Permanently" action that actually empties all trash (not just
+  expired items, which was the prior behavior of `POST /api/trash`).
+
 ### Changed
 
+- **Sidebar row stat layout**: Right-side badges now render in fixed
+  vertical-column slots (PR / Issues / Sessions) with a terminal icon on
+  session counts, so numbers line up across rows regardless of which badges
+  are populated. The uncommitted-changes dot moves from the stat cluster to
+  sit directly beside the group/project name. Hover-only action buttons use
+  `display: none` when idle so they don't push the stat cluster sideways.
+  Session rows regain the `SessionMetadataBar` (branch name with ahead/behind
+  arrows, linked PR chip, allocated ports) beneath the session name.
+- `projects.group_id` is now nullable with `ON DELETE SET NULL`; deleting a
+  group demotes its child projects to root instead of destroying them.
+  Force-deleting a group (via the confirmation dialog) now explicitly removes
+  descendant projects + sessions, honoring the dialog's promise.
 - **Project tree sidebar (Phases A–G)**: Replaced the legacy folder-based
   sidebar tree with a new group/project-aware `ProjectTreeSidebar`, dropping
   ~1900 lines of duplicated rendering in `Sidebar.tsx` while preserving
