@@ -539,6 +539,9 @@ export const ProjectTreeSidebar = forwardRef<
             : () => {}
         }
         onStartEdit={() => setEditingNode({ id: g.id, type: "group" })}
+        onToggleCollapse={() =>
+          void tree.updateGroup({ id: g.id, collapsed: !g.collapsed })
+        }
         onMoveToGroup={(newParentGroupId) =>
           void tree.moveGroup({ id: g.id, newParentGroupId })
         }
@@ -679,6 +682,9 @@ export const ProjectTreeSidebar = forwardRef<
             : undefined
         }
         onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}
+        onToggleCollapse={() =>
+          void tree.updateProject({ id: p.id, collapsed: !p.collapsed })
+        }
         onDelete={() => handleDeleteProject(p)}
       >
         <div

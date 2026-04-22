@@ -238,4 +238,35 @@ describe("ProjectContextMenuContent", () => {
     );
     expect(onMoveToGroup).toHaveBeenCalledWith(null);
   });
+
+  it("does not render Collapse/Expand when onToggleCollapse is omitted", () => {
+    setup();
+    expect(
+      screen.queryByRole("menuitem", { name: /^Collapse$|^Expand$/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders 'Collapse' when project is expanded", () => {
+    setup({ onToggleCollapse: vi.fn() });
+    expect(
+      screen.getByRole("menuitem", { name: /^Collapse$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders 'Expand' when project is collapsed", () => {
+    setup({
+      project: { ...baseProject, collapsed: true },
+      onToggleCollapse: vi.fn(),
+    });
+    expect(
+      screen.getByRole("menuitem", { name: /^Expand$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("fires onToggleCollapse when clicked", () => {
+    const onToggleCollapse = vi.fn();
+    setup({ onToggleCollapse });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Collapse$/ }));
+    expect(onToggleCollapse).toHaveBeenCalledOnce();
+  });
 });

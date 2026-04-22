@@ -24,6 +24,8 @@ import {
   Trash2,
   Folder,
   FolderOpen,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import type { ProjectNode } from "@/contexts/ProjectTreeContext";
 
@@ -52,6 +54,7 @@ interface ContentProps {
   onViewIssues?: () => void;
   onViewPRs?: () => void;
   onStartEdit: () => void;
+  onToggleCollapse?: () => void;
   /** Move this project under a new group. `null` targets the root. */
   onMoveToGroup?: (newGroupId: string | null) => void;
   onDelete: () => void;
@@ -80,6 +83,7 @@ export function ProjectContextMenuContent({
   onViewIssues,
   onViewPRs,
   onStartEdit,
+  onToggleCollapse,
   onMoveToGroup,
   onDelete,
 }: ContentProps) {
@@ -150,6 +154,19 @@ export function ProjectContextMenuContent({
       <button role="menuitem" onClick={onStartEdit}>
         <Pencil className="mr-2 h-4 w-4" /> Rename
       </button>
+      {onToggleCollapse && (
+        <button role="menuitem" onClick={onToggleCollapse}>
+          {project.collapsed ? (
+            <>
+              <ChevronDown className="mr-2 h-4 w-4" /> Expand
+            </>
+          ) : (
+            <>
+              <ChevronRight className="mr-2 h-4 w-4" /> Collapse
+            </>
+          )}
+        </button>
+      )}
       {onMoveToGroup && (
         <div data-testid="move-to-group-submenu">
           <div className="text-xs font-medium text-muted-foreground px-2 py-1">
@@ -213,6 +230,7 @@ export function ProjectContextMenu({
   onViewIssues,
   onViewPRs,
   onStartEdit,
+  onToggleCollapse,
   onMoveToGroup,
   onDelete,
   children,
@@ -280,6 +298,19 @@ export function ProjectContextMenu({
         <ContextMenuItem onSelect={onStartEdit}>
           <Pencil className="mr-2 h-4 w-4" /> Rename
         </ContextMenuItem>
+        {onToggleCollapse && (
+          <ContextMenuItem onSelect={onToggleCollapse}>
+            {project.collapsed ? (
+              <>
+                <ChevronDown className="mr-2 h-4 w-4" /> Expand
+              </>
+            ) : (
+              <>
+                <ChevronRight className="mr-2 h-4 w-4" /> Collapse
+              </>
+            )}
+          </ContextMenuItem>
+        )}
         {onMoveToGroup && (
           <ContextMenuSub>
             <ContextMenuSubTrigger>

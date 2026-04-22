@@ -161,6 +161,39 @@ describe("GroupContextMenu (content extraction tests)", () => {
   });
 });
 
+describe("GroupContextMenu collapse/expand item", () => {
+  it("does not render when onToggleCollapse is omitted", () => {
+    setupContent();
+    expect(
+      screen.queryByRole("menuitem", { name: /^Collapse$|^Expand$/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders 'Collapse' when group is expanded (collapsed === false)", () => {
+    setupContent({ onToggleCollapse: vi.fn() });
+    expect(
+      screen.getByRole("menuitem", { name: /^Collapse$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders 'Expand' when group is collapsed", () => {
+    setupContent({
+      group: { ...baseGroup, collapsed: true },
+      onToggleCollapse: vi.fn(),
+    });
+    expect(
+      screen.getByRole("menuitem", { name: /^Expand$/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("fires onToggleCollapse when clicked", () => {
+    const onToggleCollapse = vi.fn();
+    setupContent({ onToggleCollapse });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Collapse$/ }));
+    expect(onToggleCollapse).toHaveBeenCalledOnce();
+  });
+});
+
 describe("GroupContextMenu (wrapper component)", () => {
   it("renders the trigger child", () => {
     setup();
