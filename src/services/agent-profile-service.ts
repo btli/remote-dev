@@ -836,6 +836,9 @@ export async function installAgentHooks(
   if ("rdv-peers" in mcpServers) {
     delete mcpServers["rdv-peers"];
   }
+  if ("beads" in mcpServers) {
+    delete mcpServers["beads"];
+  }
 
   // Register rdv MCP server for inter-agent communication and push notifications.
   // RDV env vars must be passed explicitly since MCP servers spawned by Claude Code
@@ -852,9 +855,6 @@ export async function installAgentHooks(
     args: ["tsx", peerServerPath],
     env: peerMcpEnv,
   };
-
-  // Register beads MCP server for issue tracking
-  mcpServers["beads"] = { command: "beads-mcp", args: [] };
 
   const updatedSettings = {
     ...existingSettings,
