@@ -36,6 +36,7 @@ import {
   ProjectTreeSidebar,
   type ProjectTreeSidebarHandle,
 } from "./ProjectTreeSidebar";
+import { TrashButtonContextMenu } from "./TrashButtonContextMenu";
 
 // Sidebar width constraints
 const MIN_SIDEBAR_WIDTH = 180;
@@ -237,6 +238,23 @@ export function Sidebar({
   const { mcpSupported } = useSessionMCP();
 
   const activeSessions = sessions.filter((s) => s.status !== "closed");
+
+  // Empty the trash permanently. Used by the right-click affordance on the
+  // footer Trash button; see remote-dev-mtv7.7.
+  const handleEmptyTrashPermanently = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Permanently delete all trash items? This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    try {
+      await fetch("/api/trash", { method: "POST" });
+    } catch (err) {
+      console.error("Failed to empty trash:", err);
+    }
+  }, []);
 
   // Opens the project's default working directory in the OS file manager.
   const handleOpenFolder = useCallback(
@@ -539,22 +557,27 @@ export function Sidebar({
               )}
             </button>
           )}
-          {/* Trash button - only show when there are items */}
+          {/* Trash button - only show when there are items. Right-click opens
+              an "Empty Permanently" affordance (see remote-dev-mtv7.7). */}
           {trashCount > 0 && (
-            <button
-              onClick={onTrashOpen}
-              className={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-muted-foreground hover:text-foreground",
-                "hover:bg-muted/50 transition-colors"
-              )}
+            <TrashButtonContextMenu
+              onEmptyPermanently={handleEmptyTrashPermanently}
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Trash</span>
-              <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                {trashCount}
-              </span>
-            </button>
+              <button
+                onClick={onTrashOpen}
+                className={cn(
+                  "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
+                  "text-xs text-muted-foreground hover:text-foreground",
+                  "hover:bg-muted/50 transition-colors"
+                )}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Trash</span>
+                <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  {trashCount}
+                </span>
+              </button>
+            </TrashButtonContextMenu>
           )}
           <div className="flex items-center justify-between text-[10px] text-muted-foreground">
             <span>New session</span>
