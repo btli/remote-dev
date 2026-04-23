@@ -4,6 +4,9 @@
 /node_modules
 /.pnp
 .pnp.*
+
+# beads artifact (belongs under .beads/, not at repo root)
+/issues.jsonl
 .yarn/*
 !.yarn/patches
 !.yarn/plugins

@@ -25,6 +25,12 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@remote-dev/domain": [
+        "./packages/domain/src"
+      ],
+      "@remote-dev/domain/*": [
+        "./packages/domain/src/*"
       ]
     }
   },

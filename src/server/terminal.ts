@@ -478,6 +478,17 @@ function attachToTmuxSession(
   cols: number,
   rows: number
 ): IPty {
+  // Re-apply idempotently so sessions created before these options existed
+  // (pre-471f226) get fixed on attach — the status bar otherwise clips the
+  // last row of app content. Failures are non-fatal.
+  for (const option of ["status", "aggressive-resize"] as const) {
+    try {
+      execFileSync("tmux", ["set-option", "-t", sessionName, option, "off"], { stdio: "pipe" });
+    } catch (err) {
+      log.warn("Failed to disable tmux option on attach", { error: String(err), sessionName, option });
+    }
+  }
+
   // SECURITY: Spawn tmux directly with array arguments - no shell interpolation
   // Use clean environment to prevent framework internal vars from leaking
   const ptyProcess = pty.spawn("tmux", ["attach-session", "-t", sessionName], {

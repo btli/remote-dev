@@ -186,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Terminal rows no longer shrink by a few lines after a browser window resize. The resize path now waits for layout to settle and re-fits across reflow (scrollbar/atlas), matching the robustness of the initial-spawn path.
 - **Mobile terminal scrollback**: Fixed touch scrollback by using `terminal.scrollLines()` API instead of direct `scrollTop` manipulation, which xterm.js v6's internal VS Code ScrollableElement silently overwrites. Added pixel-to-line delta accumulation, `touchcancel` handling, and improved momentum physics.
 - **Mobile terminal CSS touch handling**: Added `touch-action: none` and `overscroll-behavior: contain` to xterm viewport and container to prevent browser interference (pull-to-refresh, rubber-band bounce) with terminal scrolling
 - **Multi-client session support**: Web and mobile can now connect to the same terminal session simultaneously without triggering a reconnection loop. Each client gets its own PTY attached to the same tmux session. Newest connection controls terminal resize.
