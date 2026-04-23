@@ -1,5 +1,6 @@
 "use client";
 import { forwardRef, useImperativeHandle, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Globe } from "lucide-react";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
@@ -23,6 +24,7 @@ import { useTreeTouchDrag } from "./project-tree/useTreeTouchDrag";
 import { useSwipeToClose } from "./project-tree/useSwipeToClose";
 import { useMobile } from "@/hooks/useMobile";
 import {
+  globalSessions as selectGlobalSessions,
   recursiveSessionCount,
   rolledUpRepoStats,
   sessionsForProject,
@@ -81,6 +83,10 @@ export const ProjectTreeSidebar = forwardRef<
   const tree = useProjectTree();
   const [editingNode, setEditingNode] = useState<{ id: string; type: "group" | "project" | "session" } | null>(null);
   const [creating, setCreating] = useState<{ parentGroupId: string | null; kind: "group" | "project" } | null>(null);
+  // Global section collapse state. Defaults to expanded so users can see
+  // their singleton tabs (settings/recordings/profiles) at a glance. Local
+  // UI state — not persisted since the section is small and cheap to render.
+  const [globalSectionCollapsed, setGlobalSectionCollapsed] = useState(false);
   useImperativeHandle(
     ref,
     () => ({
@@ -99,6 +105,16 @@ export const ProjectTreeSidebar = forwardRef<
   const activeSessions = useMemo(
     () => sessions.filter((s) => s.status !== "closed"),
     [sessions]
+  );
+
+  // Sessions whose terminalType is in GLOBAL_TERMINAL_TYPES (settings /
+  // recordings / profiles) render in the dedicated Global section at the top
+  // of the sidebar, regardless of their carrier project_id. See
+  // remote-dev-cvtz.3 (Option C). Per-project rendering excludes these rows
+  // via `sessionsForProject`, so each global session appears exactly once.
+  const globalSessionList = useMemo(
+    () => selectGlobalSessions(activeSessions) as TerminalSession[],
+    [activeSessions],
   );
 
   // Phase E2: drag-and-drop state. Sessions can be dragged to reorder within
@@ -861,6 +877,90 @@ export const ProjectTreeSidebar = forwardRef<
         }
       }}
     >
+      {globalSessionList.length > 0 && (
+        <div data-testid="global-section" className="mb-1">
+          <button
+            type="button"
+            aria-expanded={!globalSectionCollapsed}
+            aria-label="Toggle global section"
+            onClick={() => setGlobalSectionCollapsed((v) => !v)}
+            className="flex w-full items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+          >
+            {globalSectionCollapsed ? (
+              <ChevronRight className="h-3 w-3" aria-hidden />
+            ) : (
+              <ChevronDown className="h-3 w-3" aria-hidden />
+            )}
+            <Globe className="h-3 w-3" aria-hidden />
+            <span>Global</span>
+            <span className="ml-auto text-[10px] font-normal text-muted-foreground">
+              {globalSessionList.length}
+            </span>
+          </button>
+          {!globalSectionCollapsed && (
+            <div data-testid="global-section-list">
+              {globalSessionList.map((s, i) => (
+                <TreeConnector
+                  key={s.id}
+                  depth={0}
+                  isLastChild={i === globalSessionList.length - 1}
+                >
+                  <SessionContextMenu
+                    session={s}
+                    projects={projectOptions}
+                    onStartEdit={() => setEditingNode({ id: s.id, type: "session" })}
+                    onTogglePin={() => props.onSessionTogglePin(s.id)}
+                    onMove={(targetProjectId) => {
+                      props.onSessionMove(s.id, targetProjectId);
+                    }}
+                    onSchedule={
+                      props.onSessionSchedule
+                        ? () => props.onSessionSchedule!(s.id)
+                        : undefined
+                    }
+                    onClose={() => props.onSessionClose(s.id)}
+                  >
+                    <div>
+                      <SessionRow
+                        session={s}
+                        depth={0}
+                        dropIndicator={null}
+                        isActive={s.id === activeSessionId}
+                        isEditing={
+                          editingNode?.id === s.id &&
+                          editingNode?.type === "session"
+                        }
+                        hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
+                        agentStatus={null}
+                        scheduleCount={0}
+                        dragTranslateStyle={swipe.getRowStyle(s.id)}
+                        swipeRevealed={swipe.swipedSessionId === s.id}
+                        onTouchStart={(e) => swipe.handleTouchStart(e, s.id)}
+                        onTouchMove={swipe.handleTouchMove}
+                        onTouchEnd={swipe.handleTouchEnd}
+                        onClick={() => props.onSessionClick(s.id)}
+                        onClose={() => {
+                          props.onSessionClose(s.id);
+                          swipe.clearSwipe();
+                        }}
+                        onStartEdit={() => {
+                          props.onSessionStartEdit(s.id);
+                          setEditingNode({ id: s.id, type: "session" });
+                        }}
+                        onSaveEdit={(name) => {
+                          props.onSessionRename(s.id, name);
+                          setEditingNode(null);
+                        }}
+                        onCancelEdit={() => setEditingNode(null)}
+                      />
+                    </div>
+                  </SessionContextMenu>
+                </TreeConnector>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {rootOrdered.map((entry, i) => {
         const isLast =
           i === rootOrdered.length - 1 &&

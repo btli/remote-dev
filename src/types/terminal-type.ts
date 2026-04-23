@@ -24,6 +24,29 @@ export type TerminalType = "shell" | "agent" | "file" | "browser" | "settings" |
 export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "loop", "settings", "recordings", "issues", "prs", "profiles"];
 
 /**
+ * Terminal types that render as user-global singletons in the sidebar,
+ * regardless of the session's project_id. Opening the same type twice
+ * reuses the one tab (via scope-key dedup in session-service), and the
+ * sidebar renders them in a dedicated "Global" section at the top rather
+ * than under the stored project.
+ *
+ * These sessions still carry a `project_id` because the schema requires
+ * NOT NULL — we pick the active (or first) project as a carrier — but
+ * the sidebar renderer ignores that id for types in this set. See
+ * remote-dev-cvtz.3.
+ */
+export const GLOBAL_TERMINAL_TYPES: readonly TerminalType[] = [
+  "settings",
+  "recordings",
+  "profiles",
+] as const;
+
+export function isGlobalTerminalType(type: TerminalType | null | undefined): boolean {
+  if (type == null) return false;
+  return (GLOBAL_TERMINAL_TYPES as readonly string[]).includes(type);
+}
+
+/**
  * Session exit behavior determines what happens when the main process exits
  */
 export interface ExitBehavior {
