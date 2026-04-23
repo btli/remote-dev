@@ -1,83 +1,42 @@
 /**
- * BrowserPlugin - In-app headless browser terminal type
+ * BrowserPlugin — Back-compat shim composing the server + client halves.
  *
- * This plugin provides a headless Chromium browser pane with screenshot streaming.
- * No tmux session is needed - it uses Playwright to render pages and streams
- * screenshots to the client.
- *
- * Features:
- * - URL navigation with address bar
- * - Screenshot-based viewport rendering
- * - Click interaction mapped to viewport coordinates
- * - Back/forward navigation
- * - Accessibility tree snapshots for agent use
+ * @deprecated Use `BrowserServerPlugin` from `./browser-plugin-server` and
+ * `BrowserClientPlugin` from `./browser-plugin-client` directly. This
+ * combined shape exists so the legacy `TerminalTypePlugin` interface +
+ * `registry.ts` keep working during the plugin split migration (A0 → A2).
  */
 
-import { Globe } from "lucide-react";
 import type { ReactNode } from "react";
-import type {
-  TerminalTypePlugin,
-  SessionConfig,
-  ExitBehavior,
-  BrowserSessionMetadata,
-} from "@/types/terminal-type";
+import type { TerminalTypePlugin } from "@/types/terminal-type";
 import type { TerminalSession } from "@/types/session";
+import { BrowserServerPlugin } from "./browser-plugin-server";
+import { BrowserClientPlugin } from "./browser-plugin-client";
 
+/** @deprecated see module docstring */
 export const BrowserPlugin: TerminalTypePlugin = {
-  type: "browser",
-  displayName: "Browser",
-  description: "In-app headless browser pane with screenshot streaming",
-  icon: Globe,
-  priority: 80,
-  builtIn: true,
-
-  createSession(): SessionConfig {
-    const metadata: BrowserSessionMetadata = {
-      currentUrl: null,
-      viewportWidth: 1280,
-      viewportHeight: 720,
-      lastScreenshotAt: null,
-    };
-
-    return {
-      shellCommand: null,
-      shellArgs: [],
-      environment: {},
-      useTmux: false,
-      metadata,
-    };
-  },
-
-  onSessionExit(): ExitBehavior {
-    return {
-      showExitScreen: false,
-      canRestart: false,
-      autoClose: true,
-    };
-  },
-
-  async onSessionClose(session: TerminalSession): Promise<void> {
-    // Dynamic import to avoid loading playwright on client
-    try {
-      const BrowserService = await import("@/services/browser-service");
-      await BrowserService.closeBrowserSession(session.id);
-    } catch {
-      // Browser service not available (client-side) - ignore
-    }
-  },
-
-  renderContent(
-    session: TerminalSession,
-  ): ReactNode {
-    // Return a marker that the UI layer will interpret
-    // The actual BrowserPane component is rendered by TerminalTypeRenderer
+  type: BrowserClientPlugin.type,
+  displayName: BrowserClientPlugin.displayName,
+  description: BrowserClientPlugin.description,
+  icon: BrowserClientPlugin.icon,
+  priority: BrowserClientPlugin.priority,
+  builtIn: BrowserClientPlugin.builtIn,
+  createSession: BrowserServerPlugin.createSession.bind(BrowserServerPlugin),
+  onSessionExit: BrowserServerPlugin.onSessionExit?.bind(BrowserServerPlugin),
+  onSessionRestart: BrowserServerPlugin.onSessionRestart?.bind(
+    BrowserServerPlugin
+  ),
+  onSessionClose: BrowserServerPlugin.onSessionClose?.bind(BrowserServerPlugin),
+  validateInput: BrowserServerPlugin.validateInput?.bind(BrowserServerPlugin),
+  canHandle: BrowserServerPlugin.canHandle?.bind(BrowserServerPlugin),
+  renderContent(session: TerminalSession): ReactNode {
     return {
       type: "browser",
       session,
     } as unknown as ReactNode;
   },
-
-  canHandle(session: TerminalSession): boolean {
-    return session.terminalType === "browser";
-  },
 };
+
+// Re-export the new halves for early migration.
+export { BrowserServerPlugin } from "./browser-plugin-server";
+export { BrowserClientPlugin } from "./browser-plugin-client";

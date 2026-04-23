@@ -32,6 +32,10 @@ export class SessionPresenter {
       agentRestartCount: session.agentRestartCount,
       agentActivityStatus: session.agentActivityStatus ?? null,
       typeMetadata: session.typeMetadata,
+      // Scope-key dedup field (may not be tracked on the domain entity yet —
+      // surface null so API consumers always see a stable shape).
+      scopeKey:
+        (session as unknown as { scopeKey?: string | null }).scopeKey ?? null,
       parentSessionId: session.parentSessionId,
       status: session.status.toString() as TerminalSession["status"],
       pinned: session.pinned,

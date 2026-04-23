@@ -16,7 +16,6 @@ const log = createLogger("api/litellm/analytics");
  *   granularity - "hourly" | "daily" (default) | "weekly" (for timeseries)
  *   limit    - max results (for sessions, default 50)
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const GET = withAuth(async (request, { userId: _userId }) => {
   try {
     const { searchParams } = new URL(request.url);

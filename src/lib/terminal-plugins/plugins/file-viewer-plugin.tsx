@@ -1,135 +1,66 @@
 /**
- * FileViewerPlugin - File editor/viewer terminal type
+ * FileViewerPlugin — Back-compat shim composing the server + client halves.
  *
- * This plugin provides a CodeMirror-based editor for viewing/editing files
- * like CLAUDE.md, AGENTS.md, .env, etc. No tmux session is created - it's pure React.
- *
- * Features:
- * - Rendered markdown view (default for .md/.mdx) with toggle to editor
- * - CodeMirror editor with syntax highlighting for all file types
- * - Auto-save on blur with manual save button
- * - Syntax highlighting for code blocks in rendered markdown (rehype-highlight)
+ * @deprecated Use `FileViewerServerPlugin` from `./file-viewer-plugin-server`
+ * and `FileViewerClientPlugin` from `./file-viewer-plugin-client`. This
+ * combined shape exists so the legacy `TerminalTypePlugin` interface +
+ * `registry.ts` keep working during the plugin split migration (A0 → A2).
  */
 
-import { FileText } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
   TerminalTypePlugin,
   TerminalRenderProps,
-  SessionConfig,
-  ExitBehavior,
-  CreateTypedSessionInput,
-  FileViewerMetadata,
 } from "@/types/terminal-type";
-import type { TerminalSession, CreateSessionInput } from "@/types/session";
+import type { TerminalSession } from "@/types/session";
+import {
+  createFileViewerServerPlugin,
+  type FileViewerPluginServerConfig,
+} from "./file-viewer-plugin-server";
+import { FileViewerClientPlugin } from "./file-viewer-plugin-client";
 
-// Re-export FileViewerMetadata for consumers that imported from here
+// Preserve exported symbols from the old module.
+export { AGENT_CONFIG_FILES } from "./file-viewer-plugin-server";
 export type { FileViewerMetadata } from "@/types/terminal-type";
 
-/**
- * Known agent config files
- */
-export const AGENT_CONFIG_FILES = [
-  "CLAUDE.md",
-  "AGENTS.md",
-  "GEMINI.md",
-  "OPENCODE.md",
-  ".claude/settings.json",
-  ".codex/settings.json",
-] as const;
-
-/**
- * File viewer plugin configuration
- */
-export interface FileViewerPluginConfig {
-  /** Auto-save delay in ms (0 = disabled) */
+/** File viewer plugin configuration — carried for API compatibility. */
+export interface FileViewerPluginConfig extends FileViewerPluginServerConfig {
+  /** Auto-save delay in ms (0 = disabled) — applied client-side. */
   autoSaveDelay?: number;
-  /** Default split ratio (0-1, portion for editor) */
+  /** Default split ratio (0–1) — applied client-side. */
   defaultSplitRatio?: number;
-  /** Enable syntax highlighting */
+  /** Enable syntax highlighting — applied client-side. */
   syntaxHighlighting?: boolean;
 }
 
 /**
- * Check if a file is a known agent config file
- */
-function isAgentConfigFile(filePath: string): boolean {
-  const fileName = filePath.split("/").pop() ?? "";
-  return AGENT_CONFIG_FILES.some(
-    (cf) => fileName === cf || filePath.endsWith(`/${cf}`)
-  );
-}
-
-/**
- * Create a file viewer plugin instance
+ * Create a file viewer plugin instance combining server + client halves.
+ *
+ * @deprecated Prefer `createFileViewerServerPlugin` + `FileViewerClientPlugin`.
  */
 export function createFileViewerPlugin(
   config: FileViewerPluginConfig = {}
 ): TerminalTypePlugin {
+  const server = createFileViewerServerPlugin(config);
+  const client = FileViewerClientPlugin;
+
   return {
-    type: "file",
-    displayName: "File Editor",
-    description: "Edit markdown files with live preview",
-    icon: FileText,
-    priority: 80, // Third priority
-    builtIn: true,
-
-    createSession(
-      input: CreateSessionInput,
-    ): SessionConfig {
-      // Extract file path from input
-      const typedInput = input as CreateTypedSessionInput;
-      const filePath = typedInput.filePath;
-
-      if (!filePath) {
-        throw new Error("File path is required for file viewer sessions");
-      }
-
-      const fileName = filePath.split("/").pop() ?? "Untitled";
-
-      // Create metadata to store with session
-      const metadata: FileViewerMetadata = {
-        filePath,
-        fileName,
-        isAgentConfig: isAgentConfigFile(filePath),
-        lastSavedAt: null,
-        isDirty: false,
-      };
-
-      return {
-        // No shell command - this is not a terminal session
-        shellCommand: null,
-        shellArgs: [],
-        environment: {},
-        cwd: input.projectPath,
-        // IMPORTANT: No tmux for file viewer
-        useTmux: false,
-        metadata,
-      };
-    },
-
-    onSessionExit(): ExitBehavior {
-      // File viewer sessions don't "exit" in the traditional sense
-      // Closing is a user action, not a process exit
-      return {
-        showExitScreen: false,
-        canRestart: false,
-        autoClose: true,
-      };
-    },
-
-    onSessionClose(session: TerminalSession): void {
-      // Could prompt for save here if dirty
-      // For now, just log
-      console.log(`[FileViewerPlugin] Closing file session: ${session.id}`);
-    },
-
+    type: client.type,
+    displayName: client.displayName,
+    description: client.description,
+    icon: client.icon,
+    priority: client.priority,
+    builtIn: client.builtIn,
+    createSession: server.createSession.bind(server),
+    onSessionExit: server.onSessionExit?.bind(server),
+    onSessionRestart: server.onSessionRestart?.bind(server),
+    onSessionClose: server.onSessionClose?.bind(server),
+    validateInput: server.validateInput?.bind(server),
+    canHandle: server.canHandle?.bind(server),
     renderContent(
       session: TerminalSession,
       props: TerminalRenderProps
     ): ReactNode {
-      // Return a marker that the UI layer will interpret
-      // The actual CodeMirrorEditor component is rendered by TerminalTypeRenderer
       return {
         type: "file-viewer",
         session,
@@ -141,29 +72,12 @@ export function createFileViewerPlugin(
         },
       } as unknown as ReactNode;
     },
-
-    validateInput(input: CreateSessionInput): string | null {
-      if (!input.name?.trim()) {
-        return "Session name is required";
-      }
-
-      const typedInput = input as CreateTypedSessionInput;
-      if (!typedInput.filePath?.trim()) {
-        return "File path is required for file viewer sessions";
-      }
-
-      return null;
-    },
-
-    canHandle(): boolean {
-      // File viewer plugin handles sessions with file type metadata
-      // This would be checked via a terminalType field once added to schema
-      return false; // Will be updated when terminalType is added
-    },
   };
 }
 
-/**
- * Default file viewer plugin instance
- */
-export const FileViewerPlugin = createFileViewerPlugin();
+/** @deprecated see module docstring */
+export const FileViewerPlugin: TerminalTypePlugin = createFileViewerPlugin();
+
+// Re-export the new halves for early migration.
+export { FileViewerServerPlugin } from "./file-viewer-plugin-server";
+export { FileViewerClientPlugin } from "./file-viewer-plugin-client";

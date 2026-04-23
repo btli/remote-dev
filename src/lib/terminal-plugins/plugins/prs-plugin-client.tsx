@@ -1,17 +1,18 @@
-"use client";
-
 /**
- * PRsModal - Modal for viewing and managing GitHub Pull Requests
+ * PRsPlugin (client half) — React rendering for GitHub Pull Requests
+ * browser sessions.
  *
- * Uses existing PR data from GitHubStatsContext (background polling).
- * Features:
- * - Search PRs by title/branch
- * - Filter by state (Open/Merged/Closed)
- * - Filter by review status
- * - Click-through detail view with markdown body and comments
+ * Hosts the list + detail views of the existing `PRsModal` without its
+ * Dialog wrapper, reading repository context and the currently-focused PR
+ * number from `session.typeMetadata`. The selected PR number is persisted
+ * back into `typeMetadata` through `updateSession({ typeMetadataPatch })`
+ * so the selection survives reconnects and page reloads.
+ *
+ * @see ./prs-plugin-server.ts for lifecycle.
+ * @see src/components/github/PRsModal.tsx for the original Dialog-wrapped UI.
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import {
@@ -33,19 +34,17 @@ import {
   Loader2,
   Copy,
 } from "lucide-react";
+import type {
+  TerminalTypeClientPlugin,
+  TerminalTypeClientComponentProps,
+} from "@/types/terminal-type-client";
+import type { TerminalSession } from "@/types/session";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { useGitHubStats } from "@/contexts/GitHubStatsContext";
+import { useSessionContext } from "@/contexts/SessionContext";
 import type { PullRequest } from "@/types/github-stats";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ContextMenu,
@@ -55,99 +54,85 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Badge } from "@/components/ui/badge";
-import { useRepositoryIssues } from "@/contexts/GitHubIssuesContext";
-import { REMARK_PLUGINS, MARKDOWN_COMPONENTS } from "./markdown-components";
+import {
+  REMARK_PLUGINS,
+  MARKDOWN_COMPONENTS,
+} from "@/components/github/markdown-components";
+import type { PRsSessionMetadata } from "./prs-plugin-server";
 
 type StateFilter = "all" | "open" | "merged" | "closed";
 
-interface PRsModalProps {
-  open: boolean;
-  onClose: () => void;
-  repositoryId: string;
-  repositoryName: string;
-  repositoryUrl?: string;
-  initialPRNumber?: number;
-  onCheckoutBranch?: (pr: PullRequest) => void;
+export function readPRsMetadata(
+  session: TerminalSession
+): PRsSessionMetadata | null {
+  const md = session.typeMetadata as Partial<PRsSessionMetadata> | null;
+  if (!md || typeof md.repositoryId !== "string" || !md.repositoryId) {
+    return null;
+  }
+  return {
+    repositoryId: md.repositoryId,
+    repositoryName: md.repositoryName ?? "",
+    repositoryUrl: md.repositoryUrl ?? "",
+    selectedPrNumber:
+      typeof md.selectedPrNumber === "number" ? md.selectedPrNumber : null,
+  };
 }
 
-export function PRsModal({
-  open,
-  onClose,
-  repositoryId,
-  repositoryName,
-  repositoryUrl,
-  initialPRNumber,
+/**
+ * Root PRs tab component. Mirrors `PRsModalContent` from the legacy modal,
+ * minus the Dialog chrome and with selection persisted via session
+ * metadata.
+ */
+function PRsTabContent({
+  session,
   onCheckoutBranch,
-}: PRsModalProps) {
-  return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
-        {/* Only render content when open - state resets naturally on unmount */}
-        {open && (
-          <PRsModalContent
-            repositoryId={repositoryId}
-            repositoryName={repositoryName}
-            repositoryUrl={repositoryUrl}
-            initialPRNumber={initialPRNumber}
-            onCheckoutBranch={onCheckoutBranch}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-interface PRsModalContentProps {
-  repositoryId: string;
-  repositoryName: string;
-  repositoryUrl?: string;
-  initialPRNumber?: number;
-  onCheckoutBranch?: (pr: PullRequest) => void;
-}
-
-function PRsModalContent({
-  repositoryId,
-  repositoryName,
-  repositoryUrl,
-  initialPRNumber,
-  onCheckoutBranch,
-}: PRsModalContentProps) {
+}: TerminalTypeClientComponentProps) {
   const { getRepositoryById, refreshStats, state } = useGitHubStats();
+  const { updateSession } = useSessionContext();
   const { isLoading, lastRefresh } = state;
 
-  const repository = getRepositoryById(repositoryId);
+  const metadata = readPRsMetadata(session);
+
+  const repository = metadata
+    ? getRepositoryById(metadata.repositoryId)
+    : null;
   const pullRequests = useMemo(
     () => repository?.pullRequests ?? [],
     [repository?.pullRequests]
   );
 
-  // Track selected PR by number — derive the full object from the pullRequests list.
-  // This naturally handles late-loading data: when PRs load, the memo recalculates.
-  const [selectedPRNumber, setSelectedPRNumber] = useState<number | null>(
-    initialPRNumber ?? null
-  );
+  const selectedPrNumber = metadata?.selectedPrNumber ?? null;
   const selectedPR = useMemo(
-    () => selectedPRNumber !== null
-      ? pullRequests.find((pr) => pr.number === selectedPRNumber) ?? null
-      : null,
-    [selectedPRNumber, pullRequests]
+    () =>
+      selectedPrNumber !== null
+        ? pullRequests.find((pr) => pr.number === selectedPrNumber) ?? null
+        : null,
+    [selectedPrNumber, pullRequests]
   );
 
-  // Filter state - resets naturally when component unmounts (modal closes)
+  const setSelectedPrNumber = useCallback(
+    (value: number | null) => {
+      // Persist selection to session metadata so refreshing the tab or
+      // reconnecting restores the user's place.
+      void updateSession(session.id, {
+        typeMetadataPatch: { selectedPrNumber: value },
+      });
+    },
+    [session.id, updateSession]
+  );
+
+  // Filter state is ephemeral — resets when the component unmounts.
   const [searchQuery, setSearchQuery] = useState("");
   const [stateFilter, setStateFilter] = useState<StateFilter>("open");
 
-  // Filter PRs based on search and state
   const filteredPRs = useMemo(() => {
     return pullRequests.filter((pr) => {
-      // State filter
       if (stateFilter !== "all") {
         if (stateFilter === "open" && pr.state !== "open") return false;
         if (stateFilter === "merged" && pr.state !== "merged") return false;
         if (stateFilter === "closed" && pr.state !== "closed") return false;
       }
 
-      // Search filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const matchesTitle = pr.title.toLowerCase().includes(query);
@@ -168,7 +153,6 @@ function PRsModalContent({
     });
   }, [pullRequests, stateFilter, searchQuery]);
 
-  // Count PRs by state
   const openCount = pullRequests.filter((pr) => pr.state === "open").length;
   const mergedCount = pullRequests.filter(
     (pr) => pr.state === "merged"
@@ -197,30 +181,53 @@ function PRsModalContent({
   const hasActiveFilters =
     searchQuery.trim() !== "" || stateFilter !== "open";
 
-  // Detail view
+  const handleCheckoutBranch = useCallback(
+    (pr: PullRequest) => {
+      if (!onCheckoutBranch || !metadata) return;
+      return onCheckoutBranch(pr, metadata.repositoryId);
+    },
+    [onCheckoutBranch, metadata]
+  );
+
+  if (!metadata) {
+    return (
+      <div className="flex flex-col h-full min-h-0 items-center justify-center text-center p-6">
+        <GitPullRequest className="w-8 h-8 text-muted-foreground/50 mb-2" />
+        <p className="text-sm text-muted-foreground">
+          This PRs tab is missing its repository metadata.
+        </p>
+      </div>
+    );
+  }
+
+  const { repositoryName, repositoryUrl } = metadata;
+
   if (selectedPR) {
     return (
       <PRDetailView
         pr={selectedPR}
-        repositoryId={repositoryId}
-        onBack={() => setSelectedPRNumber(null)}
+        repositoryId={metadata.repositoryId}
+        onBack={() => setSelectedPrNumber(null)}
         onOpenInGitHub={handleOpenInGitHub}
-        onCheckoutBranch={onCheckoutBranch}
+        onCheckoutBranch={onCheckoutBranch ? handleCheckoutBranch : undefined}
       />
     );
   }
 
   return (
-    <>
-      <DialogHeader className="shrink-0">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      {/* Header */}
+      <div className="shrink-0 px-4 pt-4 pb-3 border-b border-border">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <GitPullRequest className="w-5 h-5 text-chart-1" />
-            <DialogTitle className="text-lg">
-              {repositoryName} Pull Requests
-            </DialogTitle>
+          <div className="flex items-center gap-2 min-w-0">
+            <GitPullRequest className="w-5 h-5 text-chart-1 shrink-0" />
+            <h2 className="text-base font-semibold truncate">
+              {repositoryName
+                ? `${repositoryName} Pull Requests`
+                : "Pull Requests"}
+            </h2>
           </div>
-          <div className="flex items-center gap-2 pr-8">
+          <div className="flex items-center gap-2 shrink-0">
             {repositoryUrl && (
               <Button
                 variant="ghost"
@@ -245,16 +252,15 @@ function PRsModalContent({
             </Button>
           </div>
         </div>
-        <DialogDescription className="text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground mt-1">
           {lastRefresh
             ? `Last updated ${formatRelativeTime(lastRefresh.toISOString())}`
             : "Loading..."}
-        </DialogDescription>
-      </DialogHeader>
+        </p>
+      </div>
 
       {/* Filters */}
-      <div className="shrink-0 space-y-3">
-        {/* Search row */}
+      <div className="shrink-0 px-4 py-3 space-y-3 border-b border-border">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -274,7 +280,6 @@ function PRsModalContent({
             )}
           </div>
 
-          {/* Clear filters */}
           {hasActiveFilters && (
             <Button
               variant="ghost"
@@ -288,7 +293,6 @@ function PRsModalContent({
           )}
         </div>
 
-        {/* State tabs */}
         <Tabs
           value={stateFilter}
           onValueChange={(v) => setStateFilter(v as StateFilter)}
@@ -325,8 +329,8 @@ function PRsModalContent({
         </Tabs>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 min-h-0">
+      {/* List */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         {isLoading && pullRequests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
             <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground mb-2" />
@@ -352,23 +356,23 @@ function PRsModalContent({
             )}
           </div>
         ) : (
-          <ScrollArea className="flex-1 min-h-0 h-full">
-            <div className="space-y-2 pr-4">
-              {filteredPRs.map((pr) => (
-                <PRCard
-                  key={pr.id}
-                  pr={pr}
-                  onSelect={(pr) => setSelectedPRNumber(pr.number)}
-                  onOpenInGitHub={handleOpenInGitHub}
-                  onCopyUrl={handleCopyUrl}
-                  onCheckoutBranch={onCheckoutBranch}
-                />
-              ))}
-            </div>
-          </ScrollArea>
+          <div className="px-4 py-3 space-y-2">
+            {filteredPRs.map((pr) => (
+              <PRCard
+                key={pr.id}
+                pr={pr}
+                onSelect={(pr) => setSelectedPrNumber(pr.number)}
+                onOpenInGitHub={handleOpenInGitHub}
+                onCopyUrl={handleCopyUrl}
+                onCheckoutBranch={
+                  onCheckoutBranch ? handleCheckoutBranch : undefined
+                }
+              />
+            ))}
+          </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -395,7 +399,7 @@ interface PRDetailViewProps {
   repositoryId: string;
   onBack: () => void;
   onOpenInGitHub: (url: string) => void;
-  onCheckoutBranch?: (pr: PullRequest) => void;
+  onCheckoutBranch?: (pr: PullRequest) => void | Promise<void>;
 }
 
 function PRDetailView({
@@ -408,16 +412,58 @@ function PRDetailView({
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [loadingComments, setLoadingComments] = useState(true);
 
-  // Get PR body from the issues context (cached, includes all issues+PRs)
-  const { issues, isLoading: issuesLoading } = useRepositoryIssues(repositoryId);
-  const matchingIssue = useMemo(
-    () => issues.find((issue) => issue.number === pr.number),
-    [issues, pr.number]
-  );
-  const body = matchingIssue?.body ?? null;
-  const loadingBody = issuesLoading && !matchingIssue;
+  // F6: Previously this view relied on `useRepositoryIssues`, which
+  //   - coupled the PRs plugin to GitHubIssuesContext (not guaranteed
+  //     to be mounted wherever the plugin renders), and
+  //   - fetched the full issues list just to read a single body, and
+  //   - showed "No description provided" until the issues cache loaded,
+  //     even when the PR body existed.
+  // GitHub treats PRs as issues for body/comments purposes so we fetch
+  // the issues list for this repository (state=all) and pluck the
+  // matching number. Scoped to this component so nothing external is
+  // required to be mounted.
+  const [bodyState, setBodyState] = useState<{
+    prNumber: number | null;
+    body: string | null;
+    loading: boolean;
+  }>({ prNumber: null, body: null, loading: true });
+  const body = bodyState.prNumber === pr.number ? bodyState.body : null;
+  const loadingBody =
+    bodyState.prNumber !== pr.number || bodyState.loading;
 
-  // Fetch comments
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch(
+      `/api/github/repositories/${repositoryId}/issues?state=all&per_page=100`
+    )
+      .then((res) =>
+        res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))
+      )
+      .then(
+        (data: {
+          issues?: Array<{ number: number; body?: string | null }>;
+        }) => {
+          if (cancelled) return;
+          const match = data.issues?.find((i) => i.number === pr.number);
+          setBodyState({
+            prNumber: pr.number,
+            body: match?.body ?? null,
+            loading: false,
+          });
+        }
+      )
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Failed to fetch PR body:", err);
+        setBodyState({ prNumber: pr.number, body: null, loading: false });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [repositoryId, pr.number]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -462,16 +508,17 @@ function PRDetailView({
     PR_STATE_CONFIG[pr.state] ?? PR_STATE_CONFIG.open;
 
   return (
-    <>
-      <DialogHeader className="shrink-0">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      {/* Header */}
+      <div className="shrink-0 px-4 pt-4 pb-3 border-b border-border">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-start gap-2 min-w-0">
             {stateIcon}
             <div className="min-w-0">
-              <DialogTitle className="text-base leading-snug">
+              <h2 className="text-base font-semibold leading-snug">
                 {pr.title}
-              </DialogTitle>
-              <DialogDescription className="text-xs mt-1 flex items-center gap-2 flex-wrap">
+              </h2>
+              <div className="text-xs mt-1 flex items-center gap-2 flex-wrap text-muted-foreground">
                 <span className="font-medium text-primary">
                   #{pr.number}
                 </span>
@@ -507,12 +554,11 @@ function PRDetailView({
                     {pr.author}
                   </span>
                 )}
-              </DialogDescription>
+              </div>
             </div>
           </div>
 
-          {/* Actions - pr-8 to clear the dialog close button */}
-          <div className="flex items-center gap-1.5 shrink-0 pr-8">
+          <div className="flex items-center gap-1.5 shrink-0">
             {onCheckoutBranch && pr.state === "open" && (
               <Button
                 variant="outline"
@@ -535,10 +581,10 @@ function PRDetailView({
             </Button>
           </div>
         </div>
-      </DialogHeader>
+      </div>
 
       {/* Branch & metadata bar */}
-      <div className="shrink-0 flex flex-wrap items-center gap-3 text-xs text-muted-foreground border-b border-border pb-3">
+      <div className="shrink-0 px-4 py-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground border-b border-border">
         <div className="flex items-center gap-1">
           <GitBranch className="w-3.5 h-3.5" />
           <code className="px-1.5 py-0.5 bg-muted rounded text-[10px]">
@@ -559,9 +605,8 @@ function PRDetailView({
       </div>
 
       {/* Scrollable body + comments */}
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="pr-4 space-y-6">
-          {/* PR Body */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+        <div className="px-4 py-4 space-y-6">
           {loadingBody ? (
             <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -580,7 +625,6 @@ function PRDetailView({
             </p>
           )}
 
-          {/* Comments */}
           {loadingComments ? (
             <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -629,10 +673,10 @@ function PRDetailView({
             </div>
           ) : null}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Back button footer */}
-      <div className="shrink-0 pt-3 border-t border-border">
+      <div className="shrink-0 px-4 py-3 border-t border-border">
         <button
           onClick={onBack}
           className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -641,7 +685,7 @@ function PRDetailView({
           Back to Pull Requests
         </button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -654,7 +698,7 @@ interface PRCardProps {
   onSelect: (pr: PullRequest) => void;
   onOpenInGitHub: (url: string) => void;
   onCopyUrl: (url: string) => void;
-  onCheckoutBranch?: (pr: PullRequest) => void;
+  onCheckoutBranch?: (pr: PullRequest) => void | Promise<void>;
 }
 
 function PRCard({
@@ -723,12 +767,9 @@ function PRCard({
             pr.isNew && "ring-1 ring-primary/30"
           )}
         >
-          {/* Header Row */}
           <div className="flex items-start gap-2">
-            {/* Status Icon */}
             <div className="mt-0.5 shrink-0">{stateIcon}</div>
 
-            {/* Title & Number */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-primary">
@@ -750,14 +791,12 @@ function PRCard({
               </h4>
             </div>
 
-            {/* Status indicators */}
             <div className="flex items-center gap-1.5 shrink-0">
               {reviewIcon}
               {ciIcon}
             </div>
           </div>
 
-          {/* Branch info */}
           <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground ml-6">
             <GitBranch className="w-3 h-3" />
             <span className="truncate max-w-[120px]">{pr.branch}</span>
@@ -765,9 +804,7 @@ function PRCard({
             <span className="truncate max-w-[80px]">{pr.baseBranch}</span>
           </div>
 
-          {/* Meta Row */}
           <div className="mt-2 flex items-center gap-3 text-[10px] text-muted-foreground ml-6">
-            {/* Author */}
             <div className="flex items-center gap-1">
               {pr.authorAvatarUrl ? (
                 <Image
@@ -783,13 +820,11 @@ function PRCard({
               <span>{pr.author}</span>
             </div>
 
-            {/* Changes */}
             <div className="flex items-center gap-1">
               <span className="text-chart-2">+{pr.additions}</span>
               <span className="text-destructive">-{pr.deletions}</span>
             </div>
 
-            {/* Updated Time */}
             <span className="ml-auto">
               {formatRelativeTime(pr.updatedAt)}
             </span>
@@ -817,3 +852,19 @@ function PRCard({
     </ContextMenu>
   );
 }
+
+/** Default PRs client plugin instance */
+export const PRsClientPlugin: TerminalTypeClientPlugin = {
+  type: "prs",
+  displayName: "Pull Requests",
+  description: "GitHub pull requests browser",
+  icon: GitPullRequest,
+  priority: 70,
+  builtIn: true,
+  component: PRsTabContent,
+  deriveTitle(session: TerminalSession): string | null {
+    const md = session.typeMetadata as Partial<PRsSessionMetadata> | null;
+    const repoName = md?.repositoryName;
+    return repoName ? `PRs — ${repoName}` : null;
+  },
+};

@@ -73,6 +73,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
       agentFlags?: string[];
       parentSessionId?: string;
       loopConfig?: { loopType?: string; intervalSeconds?: number; promptTemplate?: string; maxIterations?: number; autoRestart?: boolean };
+      scopeKey?: string | null;
+      typeMetadata?: Record<string, unknown>;
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -128,6 +130,9 @@ export const POST = withApiAuth(async (request, { userId }) => {
       createWorktree: body.createWorktree,
       baseBranch: body.baseBranch,
       worktreeType: body.worktreeType as CreateSessionInput["worktreeType"],
+      // Plugin-level dedup + generic metadata passthrough
+      scopeKey: body.scopeKey ?? null,
+      typeMetadata: body.typeMetadata,
     };
 
     const newSession = await SessionService.createSession(userId, input);

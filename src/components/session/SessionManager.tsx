@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, Activity, useEffectEvent } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore, useEffectEvent } from "react";
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
@@ -8,15 +8,11 @@ import { GroupPreferencesModal } from "@/components/preferences/GroupPreferences
 import { ProjectPreferencesModal } from "@/components/preferences/ProjectPreferencesModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
-import { RecordingsModal } from "@/components/session/RecordingsModal";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
 import { ResumeSessionModal } from "./ResumeSessionModal";
-import { SettingsView, type SettingsSection } from "@/components/settings/SettingsView";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { BeadsSidebar } from "@/components/beads/BeadsSidebar";
-import { IssuesModal } from "@/components/github/IssuesModal";
-import { PRsModal } from "@/components/github/PRsModal";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useRecordingContext } from "@/contexts/RecordingContext";
@@ -56,7 +52,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import dynamic from "next/dynamic";
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { useAgentNotifications } from "@/hooks/useAgentNotifications";
@@ -70,42 +65,23 @@ import { ChannelSidebar } from "@/components/channels/ChannelSidebar";
 import { ChannelView } from "@/components/channels/ChannelView";
 import { CreateChannelModal } from "@/components/channels/CreateChannelModal";
 import { useChannelContext } from "@/contexts/ChannelContext";
+import { TerminalTypeClientRegistry } from "@/lib/terminal-plugins/client";
+import {
+  initializeClientPlugins,
+  isClientPluginsInitialized,
+} from "@/lib/terminal-plugins/init-client";
+import { UnsupportedSessionFallback } from "@/components/terminal/UnsupportedSessionFallback";
 
-// Dynamically import TerminalWithKeyboard to avoid SSR issues with xterm
-const TerminalWithKeyboard = dynamic(
-  () =>
-    import("@/components/terminal/TerminalWithKeyboard").then(
-      (mod) => mod.TerminalWithKeyboard
-    ),
-  { ssr: false }
-);
+// Ensure client plugins are registered before any session is rendered.
+// Safe to call repeatedly — the initializer guards against double-register.
+if (typeof window !== "undefined" && !isClientPluginsInitialized()) {
+  initializeClientPlugins();
+}
 
-// Dynamically import TerminalTypeRenderer for browser session types
-const TerminalTypeRenderer = dynamic(
-  () =>
-    import("@/components/terminal/TerminalTypeRenderer").then(
-      (mod) => mod.TerminalTypeRenderer
-    ),
-  { ssr: false }
-);
-
-// Dynamically import CodeMirrorEditor for file-type sessions
-const CodeMirrorEditor = dynamic(
-  () =>
-    import("@/components/terminal/CodeMirrorEditor").then(
-      (mod) => mod.CodeMirrorEditor
-    ),
-  { ssr: false }
-);
-
-// Dynamically import LoopChatPane for loop-type sessions
-const LoopChatPane = dynamic(
-  () =>
-    import("@/components/loop/LoopChatPane").then(
-      (mod) => mod.LoopChatPane
-    ),
-  { ssr: false }
-);
+// NOTE: The TerminalWithKeyboard / TerminalTypeRenderer / CodeMirrorEditor
+// dynamic imports that used to live here moved into each terminal-type
+// plugin's client half. SessionManager now dispatches through
+// `TerminalTypeClientRegistry` instead of a hard-coded switch.
 
 // Stable subscription functions for useSyncExternalStore (must be outside component)
 // These listen for both cross-tab storage events and same-tab custom events
@@ -231,7 +207,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
-  const [isRecordingsModalOpen, setIsRecordingsModalOpen] = useState(false);
   const [isSaveRecordingModalOpen, setIsSaveRecordingModalOpen] = useState(false);
   const [mobileEditingName, setMobileEditingName] = useState<string | null>(null);
 
@@ -319,10 +294,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Schedule target session — passed to TaskSidebar to open schedule creation
   const [scheduleTargetSessionId, setScheduleTargetSessionId] = useState<string | null>(null);
 
-  // Settings view state
-  const [settingsInitialSection, setSettingsInitialSection] = useState<string | undefined>(undefined);
-  const [settingsOpenCount, setSettingsOpenCount] = useState(0);
-
   // Port manager modal state
   const [isPortsModalOpen, setIsPortsModalOpen] = useState(false);
 
@@ -330,26 +301,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const [worktreePrompt, setWorktreePrompt] = useState<{ folderId: string } | null>(null);
   const [worktreeNameInput, setWorktreeNameInput] = useState("");
   const [worktreeTypeInput, setWorktreeTypeInput] = useState<WorktreeType>("feature");
-
-  // Issues modal state
-  const [issuesModal, setIssuesModal] = useState<{
-    open: boolean;
-    folderId: string;
-    repositoryId: string;
-    repositoryName: string;
-    repositoryUrl?: string;
-    initialIssueNumber?: number;
-  } | null>(null);
-
-  // PRs modal state
-  const [prsModal, setPrsModal] = useState<{
-    open: boolean;
-    folderId: string;
-    repositoryId: string;
-    repositoryName: string;
-    repositoryUrl?: string;
-    initialPRNumber?: number;
-  } | null>(null);
 
   // Preferences state from context
   const {
@@ -847,26 +798,62 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [resolvePreferencesForFolder, getRepositoryById]
   );
 
-  // Handle viewing issues for a folder's linked repository
+  // Handle viewing issues for a folder's linked repository.
+  // Opens (or reuses) an `issues` terminal-type session scoped to the repo.
   const handleViewIssues = useCallback(
-    (folderId: string) => {
+    async (folderId: string) => {
       const info = getRepoInfoForFolder(folderId);
       if (!info) return;
 
-      setIssuesModal({ open: true, ...info });
+      try {
+        const session = await createSession({
+          name: `Issues — ${info.repositoryName}`,
+          projectId: folderId,
+          terminalType: "issues",
+          scopeKey: info.repositoryId,
+          typeMetadata: {
+            repositoryId: info.repositoryId,
+            repositoryName: info.repositoryName,
+            repositoryUrl: info.repositoryUrl,
+          },
+        });
+        if (session) {
+          setActiveSession(session.id);
+        }
+      } catch (error) {
+        logSessionError("open issues session", error);
+      }
     },
-    [getRepoInfoForFolder]
+    [getRepoInfoForFolder, createSession, setActiveSession, logSessionError]
   );
 
-  // Handle viewing PRs for a folder's linked repository
+  // Handle viewing PRs for a folder's linked repository.
+  // Opens (or reuses) a `prs` terminal-type session scoped to the repo.
   const handleViewPRs = useCallback(
-    (folderId: string) => {
+    async (folderId: string) => {
       const info = getRepoInfoForFolder(folderId);
       if (!info) return;
 
-      setPrsModal({ open: true, ...info });
+      try {
+        const session = await createSession({
+          name: `PRs — ${info.repositoryName}`,
+          projectId: folderId,
+          terminalType: "prs",
+          scopeKey: info.repositoryId,
+          typeMetadata: {
+            repositoryId: info.repositoryId,
+            repositoryName: info.repositoryName,
+            repositoryUrl: info.repositoryUrl,
+          },
+        });
+        if (session) {
+          setActiveSession(session.id);
+        }
+      } catch (error) {
+        logSessionError("open prs session", error);
+      }
     },
-    [getRepoInfoForFolder]
+    [getRepoInfoForFolder, createSession, setActiveSession, logSessionError]
   );
 
   // Get pinned files for a folder (always a project id in the new model)
@@ -904,10 +891,22 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [activeSessions, setActiveSession, createSession, closeSession]
   );
 
-  // Handle creating a worktree from an issue with agent session
+  // Handle creating a worktree from an issue with agent session.
+  // Wired through the plugin client as `onCreateWorktreeFromIssue`; the
+  // plugin invokes this from inside an issues-type session, so we read the
+  // host folder from the currently active session's projectId.
   const handleCreateWorktreeFromIssue = useCallback(
-    async (issue: GitHubIssueDTO, repositoryId: string) => {
-      if (!issuesModal) return;
+    async (issueInput: unknown, repositoryId: string) => {
+      const issue = issueInput as GitHubIssueDTO;
+      // The plugin fires this callback from its own session — look up the
+      // active session's projectId to determine the folder to host the new
+      // agent session in.
+      const hostSession = sessionsRef.current.find((s) => s.id === activeSessionId);
+      const folderId = hostSession?.projectId ?? null;
+      if (!folderId) {
+        console.error("Cannot create worktree from issue: no active project");
+        return;
+      }
 
       try {
         // Build issue context prompt for the agent (truncate body to prevent shell overflow)
@@ -927,12 +926,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         const escapedPrompt = issuePrompt.replace(/'/g, "'\\''");
 
         // Resolve folder's default agent provider (fallback to claude)
-        const folderPrefs = resolvePreferencesForFolder(issuesModal.folderId);
+        const folderPrefs = resolvePreferencesForFolder(folderId);
         const agentProvider = folderPrefs.defaultAgentProvider || "claude";
 
         const newSession = await createSession({
           name: `#${issue.number} ${issue.title}`.slice(0, 50),
-          projectId: issuesModal.folderId,
+          projectId: folderId,
           githubRepoId: repositoryId,
           worktreeBranch: issue.suggestedBranchName,
           worktreeType: issue.suggestedWorktreeType,
@@ -945,12 +944,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         if (newSession) {
           setActiveSession(newSession.id);
         }
-        setIssuesModal(null);
       } catch (error) {
         console.error("Failed to create worktree from issue:", error);
       }
     },
-    [issuesModal, createSession, setActiveSession, resolvePreferencesForFolder]
+    [activeSessionId, createSession, setActiveSession, resolvePreferencesForFolder]
   );
 
   const handleFolderNewSession = useCallback(
@@ -1310,17 +1308,52 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     return () => window.removeEventListener("notification-panel-toggle", handleToggle);
   }, []);
 
+  // Open (or reuse) the global Settings session. Settings is a user-scoped
+  // terminal-type session with a fixed scopeKey so repeated opens dedupe to
+  // a single tab. When the caller passes a `section`, it's seeded into
+  // `typeMetadata.activeTab` so the plugin restores the right nav target.
+  //
+  // Settings has no natural project to belong to, so we pick the active
+  // project (or the first available one) as a carrier — terminal_session
+  // requires project_id NOT NULL. Dedup ignores projectId, so subsequent
+  // opens jump to the existing session even if the active project changes.
+  const openSettingsSession = useCallback(
+    async (section?: string) => {
+      const carrierProjectId =
+        activeProject.folderId ?? projectTree.projects[0]?.id ?? null;
+      if (!carrierProjectId) {
+        console.error("Cannot open settings: no project available");
+        return;
+      }
+      try {
+        const typeMetadata: Record<string, unknown> = {};
+        if (section) typeMetadata.activeTab = section;
+        const session = await createSession({
+          name: "Settings",
+          projectId: carrierProjectId,
+          terminalType: "settings",
+          scopeKey: "settings",
+          typeMetadata,
+        });
+        if (session) {
+          setActiveSession(session.id);
+        }
+      } catch (error) {
+        logSessionError("open settings session", error);
+      }
+    },
+    [activeProject.folderId, projectTree.projects, createSession, setActiveSession, logSessionError]
+  );
+
   // Listen for open-settings event from Header gear button and Sidebar
   useEffect(() => {
     const handleOpenSettings = (e: Event) => {
       const detail = (e as CustomEvent<{ section?: string }>).detail;
-      setSettingsInitialSection(detail?.section);
-      setSettingsOpenCount((c) => c + 1);
-      setActiveView("settings");
+      void openSettingsSession(detail?.section);
     };
     window.addEventListener("open-settings", handleOpenSettings);
     return () => window.removeEventListener("open-settings", handleOpenSettings);
-  }, []);
+  }, [openSettingsSession]);
 
   // Register session jump handler for toast "View session" actions
   useEffect(() => {
@@ -1374,6 +1407,56 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setIsSaveRecordingModalOpen(false);
   }, [stopRecording]);
 
+  // Open (or reuse) the global Recordings session. Like settings/profiles,
+  // recordings is user-scoped with a fixed scopeKey so opens dedupe to a
+  // single tab. A project id is required by schema — use the active project
+  // as a carrier.
+  const openRecordingsSession = useCallback(async () => {
+    const carrierProjectId =
+      activeProject.folderId ?? projectTree.projects[0]?.id ?? null;
+    if (!carrierProjectId) {
+      console.error("Cannot open recordings: no project available");
+      return;
+    }
+    try {
+      const session = await createSession({
+        name: "Recordings",
+        projectId: carrierProjectId,
+        terminalType: "recordings",
+        scopeKey: "recordings",
+      });
+      if (session) {
+        setActiveSession(session.id);
+      }
+    } catch (error) {
+      logSessionError("open recordings session", error);
+    }
+  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, logSessionError]);
+
+  // Open (or reuse) the global Profiles session. Scope key is fixed so
+  // repeated opens jump to the existing tab instead of spawning duplicates.
+  const openProfilesSession = useCallback(async () => {
+    const carrierProjectId =
+      activeProject.folderId ?? projectTree.projects[0]?.id ?? null;
+    if (!carrierProjectId) {
+      console.error("Cannot open profiles: no project available");
+      return;
+    }
+    try {
+      const session = await createSession({
+        name: "Profiles",
+        projectId: carrierProjectId,
+        terminalType: "profiles",
+        scopeKey: "profiles",
+      });
+      if (session) {
+        setActiveSession(session.id);
+      }
+    } catch (error) {
+      logSessionError("open profiles session", error);
+    }
+  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, logSessionError]);
+
   // Handle view change from FolderTabBar (terminal/chat toggle)
   const handleViewChange = useCallback(
     (view: ActiveView) => {
@@ -1418,11 +1501,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      {/* Sidebar - inline layout: pushes content over when expanded on mobile; hidden in settings */}
+      {/* Sidebar - inline layout: pushes content over when expanded on mobile */}
       <div
         className={cn(
-          isPWA && isMobile ? "pt-safe-top" : undefined,
-          effectiveActiveView === "settings" && "hidden"
+          isPWA && isMobile ? "pt-safe-top" : undefined
         )}
         onClick={() => {
           // On mobile, clicking the collapsed sidebar expands it
@@ -1466,11 +1548,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             trashCount={trashCount}
             onTrashOpen={() => setIsTrashOpen(true)}
             onSessionSchedule={handleScheduleSession}
-            onProfilesOpen={() =>
-              window.dispatchEvent(
-                new CustomEvent("open-settings", { detail: { section: "profiles" } })
-              )
-            }
+            onProfilesOpen={() => { void openProfilesSession(); }}
             onPortsOpen={() => setIsPortsModalOpen(true)}
             onViewIssues={handleViewIssues}
             onViewPRs={handleViewPRs}
@@ -1486,7 +1564,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isPWA && isMobile && "pt-safe-top"
       )}>
         {/* Mobile header bar */}
-        {isMobile && activeSessions.length > 0 && effectiveActiveView !== "settings" && (
+        {isMobile && activeSessions.length > 0 && (
           <div className="flex items-center gap-2 px-12 py-2 border-b border-border bg-card/50">
             {mobileEditingName !== null ? (
               <input
@@ -1531,8 +1609,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           </div>
         )}
 
-        {/* Folder tab bar — Terminal / Chat Room / Agent tabs (hidden in settings) */}
-        {activeSessions.length > 0 && folderAgentSessions.length > 0 && effectiveActiveView !== "settings" && (
+        {/* Folder tab bar — Terminal / Chat Room / Agent tabs */}
+        {activeSessions.length > 0 && folderAgentSessions.length > 0 && (
           <FolderTabBar
             activeView={activeView}
             onViewChange={handleViewChange}
@@ -1543,8 +1621,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           />
         )}
 
-        {/* Empty state when no sessions (unless settings view is active) */}
-        {!loading && activeSessions.length === 0 && effectiveActiveView !== "settings" ? (
+        {/* Empty state when no sessions */}
+        {!loading && activeSessions.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md mx-auto px-4">
               <div className="relative p-8 rounded-2xl bg-card/50 backdrop-blur-xl border border-border shadow-2xl">
@@ -1596,107 +1674,33 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                     const folderId = session.projectId || null;
                     const prefs = resolvePreferencesForFolder(folderId);
 
-                    if (session.terminalType === "file") {
-                      const metadata = session.typeMetadata;
+                    // Dispatch to the registered client plugin for this
+                    // session's terminal type. Unknown types get the
+                    // graceful UnsupportedSessionFallback so the user can
+                    // close the tab or copy diagnostics.
+                    const plugin = TerminalTypeClientRegistry.get(session.terminalType);
+                    if (!plugin) {
                       return (
                         <div className="absolute inset-0 z-10">
-                          <CodeMirrorEditor
-                            key={session.id}
-                            filePath={String(metadata?.filePath ?? "")}
-                            fileName={String(metadata?.fileName ?? session.name)}
-                            fontSize={prefs.fontSize}
-                            fontFamily={prefs.fontFamily}
-                          />
-                        </div>
-                      );
-                    }
-
-                    // Loop type uses LoopChatPane for chat-first UI
-                    if (session.terminalType === "loop") {
-                      return (
-                        <div className="absolute inset-0 z-10">
-                          <LoopChatPane
+                          <UnsupportedSessionFallback
                             key={session.id}
                             session={session}
-                            wsUrl={wsUrl}
-                            fontSize={prefs.fontSize}
-                            fontFamily={prefs.fontFamily}
-                            scrollback={userSettings?.xtermScrollback ?? 10000}
-                            tmuxHistoryLimit={userSettings?.tmuxHistoryLimit ?? 50000}
-                            isActive={session.id === activeSessionId}
-                            environmentVars={getEnvironmentWithSecrets(folderId)}
-                            onAgentActivityStatus={handleAgentActivityStatus}
-                            onBeadsIssuesUpdated={() => debouncedRefresh()}
-                            onSessionRenamed={handleSessionRenamed}
-                            onNotification={(notification) => {
-                              addNotification(hydrateNotification(notification));
-                            }}
-                            onSessionStatus={setSessionStatusIndicator}
-                            onSessionProgress={setSessionProgress}
-                            onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
-                            onPeerMessageCreated={handlePeerMessageCreated}
-                            onChannelMessageCreated={handleChannelMessageCreated}
-                            onThreadReplyCreated={handleThreadReplyCreated}
-                            onChannelCreated={handleChannelCreated}
+                            onCloseSession={() => handleSessionDelete(session)}
                           />
                         </div>
                       );
                     }
 
-                    // Browser type uses TerminalTypeRenderer for BrowserPane
-                    if (session.terminalType === "browser") {
-                      return (
-                        <div className="absolute inset-0 z-10">
-                          <TerminalTypeRenderer
-                            key={session.id}
-                            session={session}
-                            wsUrl={wsUrl}
-                            fontSize={prefs.fontSize}
-                            fontFamily={prefs.fontFamily}
-                            scrollback={userSettings?.xtermScrollback ?? 10000}
-                            tmuxHistoryLimit={userSettings?.tmuxHistoryLimit ?? 50000}
-                            notificationsEnabled={notificationsEnabled}
-                            isRecording={isRecording}
-                            isActive={session.id === activeSessionId}
-                            environmentVars={getEnvironmentWithSecrets(folderId)}
-                            onOutput={isRecording ? recordOutput : undefined}
-                            onDimensionsChange={isRecording ? updateDimensions : undefined}
-                            onSessionClose={(id) => handleSessionDelete(activeSessions.find(s => s.id === id) ?? session)}
-                            onNavigateToSession={(id) => setActiveSession(id)}
-                            onAgentActivityStatus={handleAgentActivityStatus}
-                            onBeadsIssuesUpdated={() => debouncedRefresh()}
-                            onSessionRenamed={handleSessionRenamed}
-                            onNotification={(notification) => {
-                              addNotification(hydrateNotification(notification));
-                            }}
-                            onSessionStatus={setSessionStatusIndicator}
-                            onSessionProgress={setSessionProgress}
-                            onPeerMessageCreated={handlePeerMessageCreated}
-                            onChannelMessageCreated={handleChannelMessageCreated}
-                            onThreadReplyCreated={handleThreadReplyCreated}
-                            onChannelCreated={handleChannelCreated}
-                          />
-                        </div>
-                      );
-                    }
-
+                    const PluginComponent = plugin.component;
                     return (
                       <div className="absolute inset-0 z-10">
-                        <TerminalWithKeyboard
+                        <PluginComponent
                           key={session.id}
-                          ref={(ref) => {
-                            if (ref) {
-                              terminalRefsMap.current.set(session.id, ref);
-                            } else {
-                              terminalRefsMap.current.delete(session.id);
-                            }
-                          }}
-                          sessionId={session.id}
-                          tmuxSessionName={session.tmuxSessionName}
-                          sessionName={session.name}
-                          projectPath={session.projectPath}
                           session={session}
                           wsUrl={wsUrl}
+                          sessionToken={null}
+                          cols={0}
+                          rows={0}
                           fontSize={prefs.fontSize}
                           fontFamily={prefs.fontFamily}
                           scrollback={userSettings?.xtermScrollback ?? 10000}
@@ -1707,8 +1711,16 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           environmentVars={getEnvironmentWithSecrets(folderId)}
                           onOutput={isRecording ? recordOutput : undefined}
                           onDimensionsChange={isRecording ? updateDimensions : undefined}
+                          onSessionClose={(id) =>
+                            handleSessionDelete(
+                              activeSessions.find((s) => s.id === id) ?? session
+                            )
+                          }
                           onSessionRestart={() => handleSessionRestart(session)}
-                          onSessionDelete={(deleteWorktree) => handleSessionDelete(session, deleteWorktree)}
+                          onSessionDelete={(deleteWorktree) =>
+                            handleSessionDelete(session, deleteWorktree)
+                          }
+                          onNavigateToSession={(id) => setActiveSession(id)}
                           onAgentActivityStatus={handleAgentActivityStatus}
                           onBeadsIssuesUpdated={() => debouncedRefresh()}
                           onSessionRenamed={handleSessionRenamed}
@@ -1721,6 +1733,17 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
                           onChannelMessageCreated={handleChannelMessageCreated}
                           onThreadReplyCreated={handleThreadReplyCreated}
                           onChannelCreated={handleChannelCreated}
+                          onCreateWorktreeFromIssue={handleCreateWorktreeFromIssue}
+                          registerRef={(sessionId, ref) => {
+                            if (ref) {
+                              terminalRefsMap.current.set(
+                                sessionId,
+                                ref as TerminalWithKeyboardRef
+                              );
+                            } else {
+                              terminalRefsMap.current.delete(sessionId);
+                            }
+                          }}
                         />
                       </div>
                     );
@@ -1736,23 +1759,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
               folderName={getFolderName(activeProject.folderId)}
             />
           </div>
-
-          {/* Settings View — conditionally rendered (no state to preserve, key handles remount) */}
-          {effectiveActiveView === "settings" && (
-            <div className="flex-1 overflow-hidden">
-              <SettingsView
-                key={`settings-${settingsOpenCount}`}
-                onClose={() => setActiveView("terminal")}
-                initialSection={settingsInitialSection as SettingsSection | undefined}
-              />
-            </div>
-          )}
           </>
         )}
       </div>
 
-      {/* Right sidebar — Channel list (chat) or Beads+Schedules (terminal), hidden in settings */}
-      <div className={cn((effectiveActiveView === "chat" || effectiveActiveView === "settings") && "hidden")}>
+      {/* Right sidebar — Channel list (chat) or Beads+Schedules (terminal) */}
+      <div className={cn(effectiveActiveView === "chat" && "hidden")}>
         <BeadsSidebar
           scheduleTargetSessionId={scheduleTargetSessionId}
           onScheduleTargetConsumed={() => setScheduleTargetSessionId(null)}
@@ -1812,7 +1824,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onNewSession={handleOpenWizard}
         onQuickNewSession={handleQuickNewSession}
         onNewFolder={() => handleCreateFolder("New Folder")}
-        onOpenSettings={() => setActiveView("settings")}
+        onOpenSettings={() => { void openSettingsSession(); }}
         onCloseActiveSession={
           activeSessionId
             ? () => handleCloseSession(activeSessionId)
@@ -1822,7 +1834,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onShowKeyboardShortcuts={() => setIsKeyboardShortcutsOpen(true)}
         onStartRecording={handleStartRecording}
         onStopRecording={handleStopRecording}
-        onViewRecordings={() => setIsRecordingsModalOpen(true)}
+        onViewRecordings={() => { void openRecordingsSession(); }}
         activeSessionId={activeSessionId}
         isRecording={isRecording}
       />
@@ -1838,12 +1850,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       <KeyboardShortcutsPanel
         open={isKeyboardShortcutsOpen}
         onOpenChange={setIsKeyboardShortcutsOpen}
-      />
-
-      {/* Recordings Modal */}
-      <RecordingsModal
-        open={isRecordingsModalOpen}
-        onOpenChange={setIsRecordingsModalOpen}
       />
 
       {/* Save Recording Modal */}
@@ -1867,38 +1873,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         onResume={handleResumeClaudeSession}
       />
 
-      {/* Profiles: now in SettingsView */}
-
       {/* Port Manager Modal */}
       <PortManagerModal
         open={isPortsModalOpen}
         onClose={() => setIsPortsModalOpen(false)}
       />
-
-      {/* Issues Modal */}
-      {issuesModal && (
-        <IssuesModal
-          open={issuesModal.open}
-          onClose={() => setIssuesModal(null)}
-          repositoryId={issuesModal.repositoryId}
-          repositoryName={issuesModal.repositoryName}
-          repositoryUrl={issuesModal.repositoryUrl}
-          initialIssueNumber={issuesModal.initialIssueNumber}
-          onCreateWorktree={handleCreateWorktreeFromIssue}
-        />
-      )}
-
-      {/* PRs Modal */}
-      {prsModal && (
-        <PRsModal
-          open={prsModal.open}
-          onClose={() => setPrsModal(null)}
-          repositoryId={prsModal.repositoryId}
-          repositoryName={prsModal.repositoryName}
-          repositoryUrl={prsModal.repositoryUrl}
-          initialPRNumber={prsModal.initialPRNumber}
-        />
-      )}
 
       {/* Worktree Name Prompt */}
       <Dialog open={!!worktreePrompt} onOpenChange={(open) => { if (!open) { setWorktreePrompt(null); setWorktreeNameInput(""); setWorktreeTypeInput("feature"); } }}>

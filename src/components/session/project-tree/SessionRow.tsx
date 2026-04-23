@@ -1,12 +1,27 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Terminal, Sparkles, GitBranch, MessageCircle, Pin, X, Clock } from "lucide-react";
+import { Terminal, GitBranch, Pin, X, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { getSessionIconColor } from "./sessionIconColor";
 import { SessionMetadataBar } from "../SessionMetadataBar";
+import { TerminalTypeClientRegistry } from "@/lib/terminal-plugins/client";
+import {
+  initializeClientPlugins,
+  isClientPluginsInitialized,
+} from "@/lib/terminal-plugins/init-client";
+
+// Lazily initialize the client plugin registry so the registry lookup below
+// always sees the built-in plugins. This is idempotent and safe to call
+// during SSR — the init only mutates an in-memory Map and does not touch
+// browser APIs. See `src/lib/terminal-plugins/README.md` for the migration
+// plan; once A2 lands, a root client provider can own initialization and
+// this module-level call can go away.
+if (!isClientPluginsInitialized()) {
+  initializeClientPlugins();
+}
 
 export interface SessionRowProps {
   session: TerminalSession;
@@ -106,17 +121,22 @@ export function SessionRow({
     agentStatus != null &&
     ["waiting", "error"].includes(agentStatus);
 
+  const plugin = TerminalTypeClientRegistry.get(session.terminalType);
+  // Worktree branch state wins over plugin icon since it reflects session
+  // state (a shell on a worktree branch should still show GitBranch), not
+  // terminal type.
+  const Icon = session.worktreeBranch
+    ? GitBranch
+    : (plugin?.icon ?? Terminal);
+  // Plugin-derived title override. Plugins may return null to fall back to
+  // the stored session name. Existing built-in plugins don't implement this
+  // yet; it's here so future plugins can derive titles from typeMetadata
+  // (e.g. "Issues — my-repo") without relying on session.name being set.
+  const derivedTitle = plugin?.deriveTitle?.(session) ?? null;
+  const displayTitle = derivedTitle ?? session.name;
+
   function renderIcon() {
-    if (session.worktreeBranch) {
-      return <GitBranch className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
-    }
-    if (session.terminalType === "agent") {
-      return <Sparkles className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
-    }
-    if (session.terminalType === "loop") {
-      return <MessageCircle className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
-    }
-    return <Terminal className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
+    return <Icon className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
   }
 
   const mergedInnerStyle: React.CSSProperties = {
@@ -142,7 +162,7 @@ export function SessionRow({
       <div
         role="button"
         tabIndex={isEditing ? -1 : 0}
-        aria-label={session.name}
+        aria-label={displayTitle}
         draggable={draggable ?? false}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
@@ -213,7 +233,7 @@ export function SessionRow({
                 isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
               )}
             >
-              {session.name}
+              {displayTitle}
             </span>
           )}
           {/* Unread notification dot */}

@@ -21,8 +21,8 @@ import * as GitHubService from "./github-service";
 import * as AgentProfileService from "./agent-profile-service";
 import { getResolvedPreferences, getFolderPreferences, getEnvironmentForSession, getFolderGitIdentity } from "./preferences-service";
 import { SessionServiceError } from "@/lib/errors";
-import { TerminalTypeRegistry } from "@/lib/terminal-plugins/registry";
-import { initializeBuiltInPlugins } from "@/lib/terminal-plugins/init";
+import { TerminalTypeServerRegistry } from "@/lib/terminal-plugins/server";
+import { initializeServerPlugins } from "@/lib/terminal-plugins/init-server";
 import { githubAccountRepository, gitCredentialManager } from "@/infrastructure/container";
 import { GitHubAccountEnvironment } from "@/domain/value-objects/GitHubAccountEnvironment";
 import { createApiKey } from "@/services/api-key-service";
@@ -31,11 +31,50 @@ import { ensureSoxShim } from "@/services/voice-shim-service";
 
 const log = createLogger("SessionService");
 
-// Initialize plugins on module load
-initializeBuiltInPlugins();
+// Initialize server-side plugins on module load. Uses the server-only
+// registry so this module graph never transitively imports React / Lucide.
+initializeServerPlugins();
 
 // Re-export for backwards compatibility with API routes
 export { SessionServiceError };
+
+/**
+ * Decide if a session's terminal type uses tmux. Consults the server
+ * plugin registry and falls back to `true` for unknown types so legacy
+ * shell sessions continue to work.
+ *
+ * The plugin's `createSession` is a pure function for the built-ins, so
+ * calling it with a synthetic input here is cheap. Plugins that do I/O
+ * in `createSession` can still be introspected safely because this path
+ * only runs for already-created sessions (which means the plugin's I/O
+ * already happened at creation time).
+ */
+function sessionUsesTmux(session: TerminalSession): boolean {
+  const plugin = TerminalTypeServerRegistry.get(session.terminalType);
+  if (!plugin) return true;
+  try {
+    const probeInput: CreateSessionInput = {
+      name: session.name,
+      projectId: session.projectId ?? "",
+      projectPath: session.projectPath ?? undefined,
+      terminalType: session.terminalType,
+      agentProvider: session.agentProvider ?? undefined,
+      profileId: session.profileId ?? undefined,
+    };
+    // createSession may be async for some plugins, but all built-ins are
+    // sync and only read `input`. If we ever get an async return we fall
+    // back to "uses tmux" conservatively.
+    const result = plugin.createSession(probeInput, session);
+    if (result && typeof (result as Promise<unknown>).then === "function") {
+      return true;
+    }
+    return (result as { useTmux: boolean }).useTmux;
+  } catch {
+    // If the plugin throws for any reason, assume tmux — safer default
+    // than skipping killSession for a real PTY-backed session.
+    return true;
+  }
+}
 
 /**
  * Resolve git credential suppression env vars for a session.
@@ -119,7 +158,16 @@ async function resolveFolderGitIdentityEnv(
 
 /**
  * Create a new terminal session.
+ *
  * SECURITY: Wraps tmux creation with proper cleanup on DB failure.
+ *
+ * Dedup rule: when `input.scopeKey` is a non-empty string, this function
+ * first looks up an existing non-closed session belonging to the same user
+ * with the same `(terminalType, scopeKey)` and returns it instead of
+ * creating a new one. When multiple matches exist, the most recently
+ * active row wins. The returned row is left in whatever state it was in
+ * (including `suspended`) — callers are responsible for calling
+ * `resumeSession` if they need it to be active.
  */
 export async function createSession(
   userId: string,
@@ -134,8 +182,85 @@ export async function createSession(
     );
   }
 
+  // Resolve terminal type early — plugins drive most downstream decisions.
+  // Priority: explicit terminalType > agent auto-launch > shell default.
+  let terminalType: TerminalType = input.terminalType ?? "shell";
+  if (
+    !input.terminalType &&
+    input.agentProvider &&
+    input.agentProvider !== "none" &&
+    input.autoLaunchAgent
+  ) {
+    terminalType = "agent";
+  }
+
+  // Scope-key dedup: return the existing open session if one matches.
+  // Must happen before we allocate a new sessionId / tmux name.
+  if (input.scopeKey) {
+    const existing = await db.query.terminalSessions.findMany({
+      where: and(
+        eq(terminalSessions.userId, userId),
+        eq(terminalSessions.terminalType, terminalType),
+        eq(terminalSessions.scopeKey, input.scopeKey),
+        inArray(terminalSessions.status, ["active", "suspended"])
+      ),
+      orderBy: [desc(terminalSessions.lastActivityAt)],
+      limit: 1,
+    });
+    if (existing.length > 0) {
+      log.debug("Reusing existing scope-keyed session", {
+        sessionId: existing[0].id,
+        terminalType,
+        scopeKey: input.scopeKey,
+      });
+      return mapDbSessionToSession(existing[0]);
+    }
+  }
+
   const sessionId = crypto.randomUUID();
   const tmuxSessionName = TmuxService.generateSessionName(sessionId);
+
+  // Delegate plugin-specific decisions (tmux usage, shell command, initial
+  // typeMetadata, env overlays) to the server-side terminal type plugin.
+  // Callers with no registered plugin fall back to the shell plugin so
+  // legacy clients keep working.
+  const plugin = TerminalTypeServerRegistry.getOrDefault(terminalType);
+
+  // Let the plugin validate input up-front — fail fast before we allocate
+  // any external resources.
+  if (plugin.validateInput) {
+    const validationError = plugin.validateInput(input);
+    if (validationError) {
+      throw new SessionServiceError(validationError, "VALIDATION_ERROR", sessionId);
+    }
+  }
+
+  // Build a partial session stub for the plugin to introspect if needed.
+  const pluginSessionStub: Partial<TerminalSession> = {
+    id: sessionId,
+    userId,
+    name: input.name,
+    projectId: input.projectId,
+    profileId: input.profileId ?? null,
+    terminalType,
+    agentProvider: input.agentProvider ?? "claude",
+  };
+
+  // SessionConfig drives tmux creation + shell command selection below.
+  const sessionConfig = await plugin.createSession(input, pluginSessionStub);
+
+  // Merge plugin metadata with any caller-supplied metadata. Caller wins on
+  // key conflicts so API clients can override plugin defaults if needed.
+  const pluginMetadata = (sessionConfig.metadata ?? null) as
+    | Record<string, unknown>
+    | null;
+  const mergedMetadata: Record<string, unknown> | null =
+    pluginMetadata || input.typeMetadata
+      ? { ...(pluginMetadata ?? {}), ...(input.typeMetadata ?? {}) }
+      : null;
+  const typeMetadata: string | null = mergedMetadata
+    ? JSON.stringify(mergedMetadata)
+    : null;
 
   // Get the next tab order
   const existingSessions = await db.query.terminalSessions.findMany({
@@ -409,20 +534,23 @@ export async function createSession(
     ? await resolveProxyEnv(effectiveAgentProvider, userId)
     : {};
 
-  // File and browser sessions don't need tmux — they're pure UI
-  if (input.terminalType !== "file" && input.terminalType !== "browser") {
+  // The plugin decides whether tmux is needed. File/browser sessions
+  // opt out by returning `useTmux: false` — no shell command, no PTY.
+  if (sessionConfig.useTmux) {
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
     const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.projectId);
 
     // Claude Code agent defaults (lowest precedence — overridable via profile/folder env)
-    const claudeAgentDefaults: Record<string, string> = isAgentSession && effectiveAgentProvider === "claude" && input.terminalType !== "loop"
+    const claudeAgentDefaults: Record<string, string> = isAgentSession && effectiveAgentProvider === "claude" && terminalType !== "loop"
       ? { CLAUDE_CODE_NO_FLICKER: "1" }
       : {};
 
-    // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately
-    // Precedence: claudeAgentDefaults < profileEnv < proxyEnv < folderEnv < folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv
+    // Initial environment — all must be present at PTY spawn so agent processes inherit them immediately.
+    // Precedence (low → high): claudeAgentDefaults < pluginEnv < profileEnv < proxyEnv < folderEnv <
+    //   folderGitIdentityEnv < gitCredentialEnv < ghAccountEnv < rdvEnv.
     const initialEnv: Record<string, string> = {
       ...claudeAgentDefaults,
+      ...(sessionConfig.environment ?? {}),
       ...(profileEnv ?? {}),
       ...proxyEnv,
       ...(folderEnv ?? {}),
@@ -433,12 +561,19 @@ export async function createSession(
     };
     log.debug("Session initial env keys", { sessionId, keys: Object.keys(initialEnv) });
 
+    // Prefer the plugin-provided shell command when set — e.g. the agent
+    // plugin returns the CLI command so the agent runs as tmux's shell and
+    // the session exits when it exits. Fall back to the resolved user
+    // startup command otherwise.
+    const effectiveStartupCommand = sessionConfig.shellCommand ?? startupCommand;
+    const effectiveCwd = sessionConfig.cwd ?? workingPath ?? undefined;
+
     // Create the tmux session with initial environment for PTY spawn
     try {
       await TmuxService.createSession(
         tmuxSessionName,
-        workingPath ?? undefined,
-        startupCommand,
+        effectiveCwd,
+        effectiveStartupCommand,
         Object.keys(initialEnv).length > 0 ? initialEnv : undefined
       );
     } catch (error) {
@@ -486,37 +621,8 @@ export async function createSession(
   const createdWorktree = input.createWorktree && branchName && workingPath !== input.projectPath;
   const repoPath = input.projectPath;
 
-  // Determine terminal type from input
-  // Priority: explicit terminalType > agent type (if autoLaunch) > shell
-  let terminalType: TerminalType = input.terminalType ?? "shell";
-  if (!input.terminalType && input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
-    terminalType = "agent";
-  }
-
-  // Get plugin for validation (optional - plugins can validate input)
-  const plugin = TerminalTypeRegistry.get(terminalType);
-  if (plugin?.validateInput) {
-    const validationError = plugin.validateInput(input);
-    if (validationError) {
-      throw new SessionServiceError(validationError, "VALIDATION_ERROR", sessionId);
-    }
-  }
-
-  // Build typeMetadata for file-type sessions
-  let typeMetadata: string | null = null;
-  if (terminalType === "file" && input.filePath) {
-    const fileName = input.filePath.split("/").pop() ?? input.filePath;
-    typeMetadata = JSON.stringify({ filePath: input.filePath, fileName });
-  } else if (terminalType === "loop") {
-    // Loop sessions store their config in typeMetadata
-    const loopConfig = input.loopConfig ?? { loopType: "conversational" };
-    typeMetadata = JSON.stringify({
-      agentProvider: input.agentProvider ?? "claude",
-      loopConfig,
-      currentIteration: 0,
-      terminalVisible: false,
-    });
-  }
+  // `terminalType`, `plugin`, `typeMetadata` were resolved up-front; see the
+  // dedup + plugin-delegation block near the top of createSession.
 
   // Insert the database record - clean up tmux session and worktree if this fails
   try {
@@ -537,6 +643,7 @@ export async function createSession(
         parentSessionId: input.parentSessionId ?? null,
         terminalType,
         typeMetadata,
+        scopeKey: input.scopeKey ?? null,
         agentProvider: input.agentProvider ?? "claude",
         // Set agent state for agent/loop terminal types
         agentExitState: (terminalType === "agent" || terminalType === "loop") ? "running" : null,
@@ -743,18 +850,34 @@ export async function touchSession(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Agent State Management (for agent terminal type)
+// Agent State Management (applies to any terminal type whose plugin opts in
+// by defining `onSessionExit`/`onSessionRestart` — e.g. `agent`, `loop`).
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether a session's plugin participates in the agent exit/restart
+ * lifecycle. Plugins signal opt-in by defining `onSessionExit`.
+ */
+function supportsAgentLifecycle(session: TerminalSession): boolean {
+  const plugin = TerminalTypeServerRegistry.get(session.terminalType);
+  return Boolean(plugin?.onSessionExit);
+}
 
 /**
  * Mark agent as exited with exit code.
  * Called by terminal server when it detects the agent process has exited.
+ * No-op (returns null) if the session's plugin does not define `onSessionExit`.
  */
 export async function markAgentExited(
   sessionId: string,
   userId: string,
   exitCode: number | null
 ): Promise<TerminalSession | null> {
+  const session = await getSession(sessionId, userId);
+  if (!session || !supportsAgentLifecycle(session)) {
+    return null;
+  }
+
   const now = new Date();
   const [updated] = await db
     .update(terminalSessions)
@@ -768,8 +891,7 @@ export async function markAgentExited(
     .where(
       and(
         eq(terminalSessions.id, sessionId),
-        eq(terminalSessions.userId, userId),
-        eq(terminalSessions.terminalType, "agent")
+        eq(terminalSessions.userId, userId)
       )
     )
     .returning();
@@ -779,16 +901,17 @@ export async function markAgentExited(
 
 /**
  * Mark agent as restarting (user clicked restart).
- * Increments restart count.
+ * Increments restart count. No-op for plugins that don't define
+ * `onSessionRestart`.
  */
 export async function markAgentRestarting(
   sessionId: string,
   userId: string
 ): Promise<TerminalSession | null> {
   const session = await getSession(sessionId, userId);
-  if (!session || session.terminalType !== "agent") {
-    return null;
-  }
+  if (!session) return null;
+  const plugin = TerminalTypeServerRegistry.get(session.terminalType);
+  if (!plugin?.onSessionRestart) return null;
 
   const now = new Date();
   const [updated] = await db
@@ -812,12 +935,18 @@ export async function markAgentRestarting(
 
 /**
  * Mark agent as running (after restart completes).
- * Clears exit code and exit time.
+ * Clears exit code and exit time. No-op for plugins that don't opt into
+ * the agent lifecycle.
  */
 export async function markAgentRunning(
   sessionId: string,
   userId: string
 ): Promise<TerminalSession | null> {
+  const session = await getSession(sessionId, userId);
+  if (!session || !supportsAgentLifecycle(session)) {
+    return null;
+  }
+
   const now = new Date();
   const [updated] = await db
     .update(terminalSessions)
@@ -832,8 +961,7 @@ export async function markAgentRunning(
     .where(
       and(
         eq(terminalSessions.id, sessionId),
-        eq(terminalSessions.userId, userId),
-        eq(terminalSessions.terminalType, "agent")
+        eq(terminalSessions.userId, userId)
       )
     )
     .returning();
@@ -843,12 +971,18 @@ export async function markAgentRunning(
 
 /**
  * Mark agent session as closed (won't be restarted).
- * Called when user chooses to close instead of restart.
+ * Called when user chooses to close instead of restart. No-op for plugins
+ * that don't opt into the agent lifecycle.
  */
 export async function markAgentClosed(
   sessionId: string,
   userId: string
 ): Promise<TerminalSession | null> {
+  const session = await getSession(sessionId, userId);
+  if (!session || !supportsAgentLifecycle(session)) {
+    return null;
+  }
+
   const now = new Date();
   const [updated] = await db
     .update(terminalSessions)
@@ -860,8 +994,7 @@ export async function markAgentClosed(
     .where(
       and(
         eq(terminalSessions.id, sessionId),
-        eq(terminalSessions.userId, userId),
-        eq(terminalSessions.terminalType, "agent")
+        eq(terminalSessions.userId, userId)
       )
     )
     .returning();
@@ -917,8 +1050,10 @@ export async function resumeSession(
     );
   }
 
-  // File and browser sessions have no tmux session — nothing to resume
-  if (session.terminalType === "file" || session.terminalType === "browser") {
+  // Plugin decides whether tmux is involved. If the plugin reports
+  // `useTmux: false` (file viewer, browser), there's no tmux session to
+  // resume — just flip the status and return.
+  if (!sessionUsesTmux(session)) {
     await db
       .update(terminalSessions)
       .set({ status: "active", updatedAt: new Date() })
@@ -936,10 +1071,11 @@ export async function resumeSession(
     );
   }
 
-  // For agent sessions, ensure hooks, MCP config, and env vars are up to date on resume.
-  // This handles upgrades (e.g., hook format changes) and sessions created
-  // before hooks/MCP were installed.
-  if (session.terminalType === "agent") {
+  // For agent-lifecycle sessions (agent, loop), ensure hooks, MCP config,
+  // and env vars are up to date on resume. This handles upgrades
+  // (e.g., hook format changes) and sessions created before hooks/MCP
+  // were installed.
+  if (supportsAgentLifecycle(session)) {
     const agentProvider = (session.agentProvider ?? "claude") as AgentProviderType;
     const configDir = session.profileId
       ? (await AgentProfileService.getProfile(session.profileId, userId))?.configDir
@@ -1046,9 +1182,26 @@ export async function closeSession(
     );
   }
 
-  // Kill the tmux session (file/browser sessions have no tmux session)
-  if (session.terminalType !== "file" && session.terminalType !== "browser") {
+  // Kill the tmux session — plugin decides whether one exists. Plugins
+  // that opt out of tmux (file viewer, browser) skip this entirely.
+  if (sessionUsesTmux(session)) {
     await TmuxService.killSession(session.tmuxSessionName);
+  }
+
+  // Let the plugin clean up any type-specific resources (e.g. the browser
+  // plugin closes its Playwright context here). Failures are logged but
+  // must not block the close from completing.
+  try {
+    const plugin = TerminalTypeServerRegistry.get(session.terminalType);
+    if (plugin?.onSessionClose) {
+      await plugin.onSessionClose(session);
+    }
+  } catch (error) {
+    log.error("Plugin onSessionClose hook failed", {
+      sessionId,
+      terminalType: session.terminalType,
+      error: String(error),
+    });
   }
 
   // Mark as closed in database
@@ -1138,6 +1291,7 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
     agentRestartCount: dbSession.agentRestartCount ?? 0,
     agentActivityStatus: dbSession.agentActivityStatus ?? null,
     typeMetadata: dbSession.typeMetadata ? JSON.parse(dbSession.typeMetadata) : null,
+    scopeKey: dbSession.scopeKey ?? null,
     parentSessionId: dbSession.parentSessionId ?? null,
     status: dbSession.status as SessionStatus,
     pinned: dbSession.pinned ?? false,

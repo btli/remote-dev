@@ -61,7 +61,18 @@ interface CloseSessionOptions {
 
 interface SessionContextValue extends SessionState {
   createSession: (input: ClientCreateSessionInput) => Promise<TerminalSession>;
-  updateSession: (sessionId: string, updates: Partial<TerminalSession>) => Promise<void>;
+  updateSession: (
+    sessionId: string,
+    updates: Partial<TerminalSession> & {
+      /**
+       * Shallow-merged into the stored typeMetadata JSON server-side. Use
+       * this instead of sending a full `typeMetadata` replacement when a
+       * plugin only wants to patch a single field (e.g. the issues plugin
+       * persisting `selectedIssueNumber`).
+       */
+      typeMetadataPatch?: Record<string, unknown>;
+    }
+  ) => Promise<void>;
   closeSession: (sessionId: string, options?: CloseSessionOptions) => Promise<void>;
   suspendSession: (sessionId: string) => Promise<void>;
   resumeSession: (sessionId: string) => Promise<void>;
@@ -365,9 +376,23 @@ export function SessionProvider({
   );
 
   const updateSession = useCallback(
-    async (sessionId: string, updates: Partial<TerminalSession>) => {
-      // Optimistic update
-      dispatch({ type: "UPDATE", sessionId, updates });
+    async (
+      sessionId: string,
+      updates: Partial<TerminalSession> & {
+        typeMetadataPatch?: Record<string, unknown>;
+      }
+    ) => {
+      // Optimistic update — for a typeMetadataPatch we synthesize the
+      // merged typeMetadata locally so the UI reflects the change before
+      // the server round-trip completes.
+      const { typeMetadataPatch, ...rest } = updates;
+      const optimistic: Partial<TerminalSession> = { ...rest };
+      if (typeMetadataPatch) {
+        const existing =
+          state.sessions.find((s) => s.id === sessionId)?.typeMetadata ?? {};
+        optimistic.typeMetadata = { ...existing, ...typeMetadataPatch };
+      }
+      dispatch({ type: "UPDATE", sessionId, updates: optimistic });
 
       try {
         const response = await fetch(`/api/sessions/${sessionId}`, {
@@ -388,7 +413,7 @@ export function SessionProvider({
         throw error;
       }
     },
-    [refreshSessions]
+    [refreshSessions, state.sessions]
   );
 
   const closeSession = useCallback(

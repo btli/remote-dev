@@ -16,12 +16,12 @@ import type { AgentProviderType, TerminalSession, CreateSessionInput } from "./s
  * - file: Read/edit file without terminal (CLAUDE.md editor)
  * - Custom types can be added via plugin registration
  */
-export type TerminalType = "shell" | "agent" | "file" | "browser" | string;
+export type TerminalType = "shell" | "agent" | "file" | "browser" | "settings" | "recordings" | "issues" | "prs" | "profiles" | string;
 
 /**
  * Built-in terminal types (cannot be unregistered)
  */
-export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "loop"];
+export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "loop", "settings", "recordings", "issues", "prs", "profiles"];
 
 /**
  * Session exit behavior determines what happens when the main process exits
@@ -95,6 +95,15 @@ export type SessionEventHandler = (event: SessionEvent) => void | Promise<void>;
  * - Defining how sessions of this type are created
  * - Handling exit behavior
  * - Providing UI components for the terminal view
+ *
+ * @deprecated This combined interface mixes server-side lifecycle with
+ * client-side React rendering and forces server code to transitively
+ * import Lucide + client component modules. Use the split interfaces
+ * instead:
+ *   - {@link "./terminal-type-server".TerminalTypeServerPlugin} — server lifecycle
+ *   - {@link "./terminal-type-client".TerminalTypeClientPlugin} — React rendering
+ *
+ * See `src/lib/terminal-plugins/README.md` for the migration plan.
  */
 export interface TerminalTypePlugin {
   /**

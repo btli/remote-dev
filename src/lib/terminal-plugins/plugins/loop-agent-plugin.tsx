@@ -1,168 +1,62 @@
 /**
- * LoopAgentPlugin — Chat-first agent terminal type with loop scheduling
+ * LoopAgentPlugin — Back-compat shim composing the server + client halves.
  *
- * Renders a conversational chat UI instead of raw xterm.js terminal.
- * The agent still runs in tmux via PTY (reusing all existing agent infrastructure),
- * but output is parsed into structured messages displayed as chat bubbles.
- *
- * Supports two modes:
- * - "conversational": Long-running agent chat with anytime user interrupts
- * - "monitoring": Recurring prompt fired on an interval
+ * @deprecated Use `LoopAgentServerPlugin` from `./loop-agent-plugin-server`
+ * and `LoopAgentClientPlugin` from `./loop-agent-plugin-client`. This
+ * combined shape exists so the legacy `TerminalTypePlugin` interface +
+ * `registry.ts` keep working during the plugin split migration (A0 → A2).
  */
 
-import { MessageCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
   TerminalTypePlugin,
   TerminalRenderProps,
-  SessionConfig,
-  ExitBehavior,
 } from "@/types/terminal-type";
-import type {
-  TerminalSession,
-  CreateSessionInput,
-} from "@/types/session";
-import type { LoopAgentMetadata, LoopConfig } from "@/types/loop-agent";
-import { getProviderConfig, buildAgentCommand } from "../agent-utils";
+import type { TerminalSession } from "@/types/session";
+import { createLoopAgentServerPlugin } from "./loop-agent-plugin-server";
+import { LoopAgentClientPlugin } from "./loop-agent-plugin-client";
 
 /**
- * Create a loop agent plugin instance
+ * Create a loop agent plugin instance combining server + client halves.
+ *
+ * @deprecated Prefer `createLoopAgentServerPlugin` + `LoopAgentClientPlugin`.
  */
 export function createLoopAgentPlugin(): TerminalTypePlugin {
+  const server = createLoopAgentServerPlugin();
+  const client = LoopAgentClientPlugin;
+
   return {
-    type: "loop",
-    displayName: "Loop Agent",
-    description: "Chat-first AI agent with loop scheduling",
-    icon: MessageCircle,
-    priority: 85, // Between agent (90) and browser
-    builtIn: true,
-
-    createSession(input: CreateSessionInput): SessionConfig {
-      const providerId = input.agentProvider ?? "claude";
-      const provider = getProviderConfig(providerId);
-
-      if (!provider || provider.id === "none") {
-        throw new Error(`Invalid agent provider: ${providerId}`);
-      }
-
-      // Build agent command — add stream-json output for Claude
-      const flags = [...(input.agentFlags ?? [])];
-      if (providerId === "claude" && !flags.includes("--output-format")) {
-        flags.push("--output-format", "stream-json");
-      }
-
-      const agentCommand = buildAgentCommand(provider, flags, false);
-
-      // Parse loop config from input metadata or defaults
-      const loopConfig: LoopConfig = {
-        loopType: "conversational",
-        autoRestart: false,
-        ...input.loopConfig,
-      };
-
-      const metadata: LoopAgentMetadata = {
-        agentProvider: providerId,
-        loopConfig,
-        currentIteration: 0,
-        terminalVisible: false,
-      };
-
-      return {
-        shellCommand: agentCommand,
-        shellArgs: [],
-        environment: {
-          TERM: "xterm-256color",
-        },
-        cwd: input.projectPath,
-        useTmux: true,
-        metadata,
-      };
-    },
-
-    onSessionExit(
-      session: TerminalSession,
-      exitCode: number | null
-    ): ExitBehavior {
-      const metadata = session.typeMetadata as LoopAgentMetadata | null;
-      const isMonitoring = metadata?.loopConfig.loopType === "monitoring";
-
-      let exitMessage: string;
-      if (exitCode !== 0) {
-        exitMessage = `Agent exited with code ${exitCode ?? "unknown"}`;
-      } else if (isMonitoring) {
-        exitMessage = "Loop completed";
-      } else {
-        exitMessage = "Agent completed";
-      }
-
-      return {
-        showExitScreen: true,
-        canRestart: true,
-        autoClose: false,
-        exitMessage,
-      };
-    },
-
-    onSessionRestart(session: TerminalSession): SessionConfig | null {
-      const providerId = session.agentProvider ?? "claude";
-      const provider = getProviderConfig(providerId);
-
-      if (!provider || provider.id === "none") {
-        return null;
-      }
-
-      const flags: string[] = [];
-      if (providerId === "claude") {
-        flags.push("--output-format", "stream-json");
-      }
-
-      const agentCommand = buildAgentCommand(provider, flags, false);
-
-      return {
-        shellCommand: agentCommand,
-        shellArgs: [],
-        environment: {
-          TERM: "xterm-256color",
-        },
-        cwd: session.projectPath ?? undefined,
-        useTmux: true,
-      };
-    },
-
+    type: client.type,
+    displayName: client.displayName,
+    description: client.description,
+    icon: client.icon,
+    priority: client.priority,
+    builtIn: client.builtIn,
+    createSession: server.createSession.bind(server),
+    onSessionExit: server.onSessionExit?.bind(server),
+    onSessionRestart: server.onSessionRestart?.bind(server),
+    onSessionClose: server.onSessionClose?.bind(server),
+    validateInput: server.validateInput?.bind(server),
+    canHandle: server.canHandle?.bind(server),
     renderContent(
       session: TerminalSession,
       props: TerminalRenderProps
     ): ReactNode {
-      // Return a marker for TerminalTypeRenderer/SessionManager to interpret
       return {
         type: "loop-chat",
         session,
         props,
       } as unknown as ReactNode;
     },
-
-    validateInput(input: CreateSessionInput): string | null {
-      if (!input.name?.trim()) {
-        return "Session name is required";
-      }
-
-      const providerId = input.agentProvider ?? "claude";
-      const provider = getProviderConfig(providerId);
-
-      if (!provider || provider.id === "none") {
-        return `Invalid agent provider: ${providerId}`;
-      }
-
-      return null;
-    },
-
-    canHandle(session: TerminalSession): boolean {
-      return session.terminalType === "loop";
-    },
   };
 }
 
-/**
- * Default loop agent plugin instance
- */
-export const LoopAgentPlugin = createLoopAgentPlugin();
+/** @deprecated see module docstring */
+export const LoopAgentPlugin: TerminalTypePlugin = createLoopAgentPlugin();
+
+// Re-export the new halves for early migration.
+export {
+  LoopAgentServerPlugin,
+  createLoopAgentServerPlugin,
+} from "./loop-agent-plugin-server";
+export { LoopAgentClientPlugin } from "./loop-agent-plugin-client";

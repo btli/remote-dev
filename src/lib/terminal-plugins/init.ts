@@ -1,8 +1,15 @@
 /**
- * Initialize built-in terminal type plugins
+ * Initialize built-in terminal type plugins — back-compat entry point.
  *
- * This module registers all built-in plugins with the registry.
- * Call initializeBuiltInPlugins() at application startup.
+ * This file preserves the original public API (`initializeBuiltInPlugins`,
+ * `isPluginsInitialized`, `resetPluginInitialization`) while also wiring
+ * the new split `TerminalTypeServerRegistry` + `TerminalTypeClientRegistry`.
+ *
+ * Prefer calling `initializeServerPlugins()` / `initializeClientPlugins()`
+ * directly from the appropriate execution context — see:
+ *
+ * @see ./init-server.ts
+ * @see ./init-client.ts
  */
 
 import { TerminalTypeRegistry } from "./registry";
@@ -11,6 +18,14 @@ import { AgentPlugin } from "./plugins/agent-plugin";
 import { FileViewerPlugin } from "./plugins/file-viewer-plugin";
 import { BrowserPlugin } from "./plugins/browser-plugin";
 import { LoopAgentPlugin } from "./plugins/loop-agent-plugin";
+import {
+  initializeServerPlugins,
+  resetServerPluginInitialization,
+} from "./init-server";
+import {
+  initializeClientPlugins,
+  resetClientPluginInitialization,
+} from "./init-client";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PluginInit");
@@ -18,10 +33,19 @@ const log = createLogger("PluginInit");
 let initialized = false;
 
 /**
- * Initialize and register all built-in terminal type plugins
+ * Initialize and register all built-in terminal type plugins.
  *
- * This should be called once at application startup.
- * Safe to call multiple times - subsequent calls are no-ops.
+ * This registers into all three registries:
+ * - Legacy {@link TerminalTypeRegistry} (combined, deprecated)
+ * - {@link TerminalTypeServerRegistry} (new, server-safe)
+ * - {@link TerminalTypeClientRegistry} (new, React-aware)
+ *
+ * Safe to call multiple times — subsequent calls are no-ops.
+ *
+ * @deprecated Prefer `initializeServerPlugins()` on the server and
+ * `initializeClientPlugins()` on the client. This combined entry point
+ * will be removed once SessionManager/TerminalTypeRenderer migrate to the
+ * split registries (task A2).
  */
 export function initializeBuiltInPlugins(): void {
   if (initialized) {
@@ -29,40 +53,40 @@ export function initializeBuiltInPlugins(): void {
     return;
   }
 
-  log.info("Initializing built-in plugins...");
+  log.info("Initializing built-in plugins (legacy + split registries)");
 
-  // Register built-in plugins
-  // Order matters for UI display - higher priority first
+  // Legacy combined registry — kept intact for existing consumers
+  // (session-service.ts, SessionManager.tsx) that still use it.
   TerminalTypeRegistry.register(ShellPlugin, { builtIn: true });
   TerminalTypeRegistry.register(AgentPlugin, { builtIn: true });
   TerminalTypeRegistry.register(FileViewerPlugin, { builtIn: true });
   TerminalTypeRegistry.register(BrowserPlugin, { builtIn: true });
   TerminalTypeRegistry.register(LoopAgentPlugin, { builtIn: true });
-
-  // Set default type to shell
   TerminalTypeRegistry.setDefaultType("shell");
+
+  // New split registries.
+  initializeServerPlugins();
+  initializeClientPlugins();
 
   initialized = true;
 
   const stats = TerminalTypeRegistry.getStats();
-  log.info("Plugins initialized", {
+  log.info("Legacy plugin registry populated", {
     totalPlugins: stats.totalPlugins,
     builtInPlugins: stats.builtInPlugins,
     defaultType: stats.defaultType,
   });
 }
 
-/**
- * Check if plugins have been initialized
- */
+/** Check if legacy plugin initialization has run. */
 export function isPluginsInitialized(): boolean {
   return initialized;
 }
 
-/**
- * Reset initialization state (for testing)
- */
+/** Reset all initialization state (legacy + new registries). For tests. */
 export function resetPluginInitialization(): void {
   initialized = false;
   TerminalTypeRegistry.clear();
+  resetServerPluginInitialization();
+  resetClientPluginInitialization();
 }

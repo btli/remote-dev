@@ -1,18 +1,18 @@
 "use client";
 
 /**
- * IssuesModal - Modal for viewing and managing GitHub issues
+ * IssuesPlugin (client half) — React rendering for GitHub issues browser
+ * sessions. Hosts the existing issue list + detail UI (`IssueCard`,
+ * `IssueDetailPanel`, `CreateIssueForm`) inside a full-pane layout instead
+ * of a modal.
  *
- * Features:
- * - Search issues by title/body
- * - Filter by state (All/Open/Closed)
- * - Filter by labels
- * - Create new issues
- * - View issue details with markdown rendering and comments
- * - Start working on an issue (creates worktree + agent session)
+ * Selection is persisted on the session via `typeMetadataPatch` so the
+ * detail view survives reload and tab-switch.
+ *
+ * @see ./issues-plugin-server.ts for lifecycle.
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CircleDot,
   CircleCheck,
@@ -29,19 +29,12 @@ import {
   useRepositoryIssues,
   type GitHubIssueDTO,
 } from "@/contexts/GitHubIssuesContext";
-import { IssueCard } from "./IssueCard";
-import { IssueDetailPanel } from "./IssueDetailPanel";
-import { CreateIssueForm } from "./CreateIssueForm";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { useSessionContext } from "@/contexts/SessionContext";
+import { IssueCard } from "@/components/github/IssueCard";
+import { IssueDetailPanel } from "@/components/github/IssueDetailPanel";
+import { CreateIssueForm } from "@/components/github/CreateIssueForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -50,61 +43,53 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
+import type {
+  TerminalTypeClientPlugin,
+  TerminalTypeClientComponentProps,
+} from "@/types/terminal-type-client";
+import type { TerminalSession } from "@/types/session";
+import type { IssuesSessionMetadata } from "./issues-plugin-server";
 
 type StateFilter = "all" | "open" | "closed";
 
-interface IssuesModalProps {
-  open: boolean;
-  onClose: () => void;
-  repositoryId: string;
-  repositoryName: string;
-  repositoryUrl?: string;
-  initialIssueNumber?: number;
-  onCreateWorktree?: (issue: GitHubIssueDTO, repositoryId: string) => void;
+/**
+ * Typed reader for issues session metadata.
+ *
+ * Returns null when the stored metadata is missing or malformed so the
+ * component can render a graceful fallback instead of crashing on a bad
+ * row. Mirrors the `readPRsMetadata` pattern used by the PRs plugin.
+ */
+export function readIssuesMetadata(
+  session: TerminalSession
+): IssuesSessionMetadata | null {
+  const md = session.typeMetadata as Partial<IssuesSessionMetadata> | null;
+  if (!md || typeof md.repositoryId !== "string" || !md.repositoryId) {
+    return null;
+  }
+  return {
+    repositoryId: md.repositoryId,
+    repositoryName:
+      typeof md.repositoryName === "string" ? md.repositoryName : "",
+    repositoryUrl:
+      typeof md.repositoryUrl === "string" ? md.repositoryUrl : "",
+    selectedIssueNumber:
+      typeof md.selectedIssueNumber === "number"
+        ? md.selectedIssueNumber
+        : null,
+  };
 }
 
-export function IssuesModal({
-  open,
-  onClose,
-  repositoryId,
-  repositoryName,
-  repositoryUrl,
-  initialIssueNumber,
-  onCreateWorktree,
-}: IssuesModalProps) {
-  return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
-        {/* Only render content when open - state resets naturally on unmount */}
-        {open && (
-          <IssuesModalContent
-            repositoryId={repositoryId}
-            repositoryName={repositoryName}
-            repositoryUrl={repositoryUrl}
-            initialIssueNumber={initialIssueNumber}
-            onCreateWorktree={onCreateWorktree}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
+function IssuesTabContent({
+  session,
+  onCreateWorktreeFromIssue,
+}: TerminalTypeClientComponentProps) {
+  const { updateSession } = useSessionContext();
+  const metadata = readIssuesMetadata(session);
+  const repositoryId = metadata?.repositoryId ?? "";
+  const repositoryName = metadata?.repositoryName ?? "";
+  const repositoryUrl = metadata?.repositoryUrl ?? "";
+  const selectedIssueNumber = metadata?.selectedIssueNumber ?? null;
 
-interface IssuesModalContentProps {
-  repositoryId: string;
-  repositoryName: string;
-  repositoryUrl?: string;
-  initialIssueNumber?: number;
-  onCreateWorktree?: (issue: GitHubIssueDTO, repositoryId: string) => void;
-}
-
-function IssuesModalContent({
-  repositoryId,
-  repositoryName,
-  repositoryUrl,
-  initialIssueNumber,
-  onCreateWorktree,
-}: IssuesModalContentProps) {
   const {
     issues,
     isLoading,
@@ -114,31 +99,27 @@ function IssuesModalContent({
     newIssueCount,
     refresh,
     markSeen,
-  } = useRepositoryIssues(repositoryId);
+  } = useRepositoryIssues(repositoryId || null);
 
-  // Filter state - resets naturally when component unmounts (modal closes)
   const [searchQuery, setSearchQuery] = useState("");
   const [stateFilter, setStateFilter] = useState<StateFilter>("open");
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  // Track selected issue by number — derive the full object from the issues list.
-  // This naturally handles late-loading data: when issues load, the memo recalculates.
-  const [selectedIssueNumber, setSelectedIssueNumber] = useState<number | null>(
-    initialIssueNumber ?? null
-  );
+
   const selectedIssue = useMemo(
-    () => selectedIssueNumber !== null
-      ? issues.find((i) => i.number === selectedIssueNumber) ?? null
-      : null,
+    () =>
+      selectedIssueNumber !== null
+        ? issues.find((i) => i.number === selectedIssueNumber) ?? null
+        : null,
     [selectedIssueNumber, issues]
   );
 
-  // Fetch issues on mount
+  // Fetch on mount / repo change
   useEffect(() => {
     refresh(false);
   }, [refresh]);
 
-  // Mark issues as seen on unmount
+  // Mark seen on unmount
   useEffect(() => {
     return () => {
       if (hasNewIssues) {
@@ -147,7 +128,6 @@ function IssuesModalContent({
     };
   }, [hasNewIssues, markSeen]);
 
-  // Extract unique labels from all issues
   const allLabels = useMemo(() => {
     const labelMap = new Map<string, { name: string; color: string }>();
     for (const issue of issues) {
@@ -162,23 +142,17 @@ function IssuesModalContent({
     );
   }, [issues]);
 
-  // Filter issues based on search, state, and labels
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
-      // State filter
       if (stateFilter !== "all" && issue.state !== stateFilter) {
         return false;
       }
-
-      // Label filter
       if (selectedLabels.length > 0) {
         const issueLabels = issue.labels.map((l) => l.name);
         if (!selectedLabels.some((label) => issueLabels.includes(label))) {
           return false;
         }
       }
-
-      // Search filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase();
         const matchesTitle = issue.title.toLowerCase().includes(query);
@@ -188,14 +162,25 @@ function IssuesModalContent({
           return false;
         }
       }
-
       return true;
     });
   }, [issues, stateFilter, selectedLabels, searchQuery]);
 
-  // Group filtered issues by state for display
   const openIssues = filteredIssues.filter((i) => i.state === "open");
   const closedIssues = filteredIssues.filter((i) => i.state === "closed");
+
+  const setSelectedIssueNumber = useCallback(
+    (num: number | null) => {
+      // Persist selection on the session so it survives reload/tab-switch.
+      // Using a shallow patch leaves other typeMetadata fields intact.
+      void updateSession(session.id, {
+        typeMetadataPatch: { selectedIssueNumber: num },
+      }).catch((err) => {
+        console.error("Failed to persist issue selection:", err);
+      });
+    },
+    [session.id, updateSession]
+  );
 
   const handleOpenInGitHub = useCallback((url: string) => {
     window.open(url, "_blank", "noopener,noreferrer");
@@ -211,16 +196,23 @@ function IssuesModalContent({
 
   const handleCreateWorktree = useCallback(
     (issue: GitHubIssueDTO) => {
-      if (onCreateWorktree) {
-        return onCreateWorktree(issue, repositoryId);
+      if (onCreateWorktreeFromIssue && repositoryId) {
+        return onCreateWorktreeFromIssue(issue, repositoryId);
       }
     },
-    [onCreateWorktree, repositoryId]
+    [onCreateWorktreeFromIssue, repositoryId]
   );
 
-  const handleSelectIssue = useCallback((issue: GitHubIssueDTO) => {
-    setSelectedIssueNumber(issue.number);
-  }, []);
+  const handleSelectIssue = useCallback(
+    (issue: GitHubIssueDTO) => {
+      setSelectedIssueNumber(issue.number);
+    },
+    [setSelectedIssueNumber]
+  );
+
+  const handleBack = useCallback(() => {
+    setSelectedIssueNumber(null);
+  }, [setSelectedIssueNumber]);
 
   const handleRefresh = useCallback(() => {
     refresh(true);
@@ -245,45 +237,52 @@ function IssuesModalContent({
     selectedLabels.length > 0 ||
     stateFilter !== "open";
 
-  // Count issues by state for tab badges
   const openCount = issues.filter((i) => i.state === "open").length;
   const closedCount = issues.filter((i) => i.state === "closed").length;
 
-  // Show issue detail panel when an issue is selected
+  if (!repositoryId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+        <AlertCircle className="w-8 h-8 text-destructive mb-2" />
+        <p className="text-sm text-destructive">
+          Issues session is missing a repository binding.
+        </p>
+      </div>
+    );
+  }
+
+  // Detail view — full pane with back affordance
   if (selectedIssue) {
     return (
-      <>
-        <DialogHeader className="sr-only">
-          <DialogTitle>Issue #{selectedIssue.number}</DialogTitle>
-          <DialogDescription>{selectedIssue.title}</DialogDescription>
-        </DialogHeader>
+      <div className="flex flex-col h-full min-h-0 overflow-hidden p-4">
         <IssueDetailPanel
           issue={selectedIssue}
           repositoryId={repositoryId}
-          onBack={() => setSelectedIssueNumber(null)}
+          onBack={handleBack}
           onStartWorking={handleCreateWorktree}
           onOpenInGitHub={handleOpenInGitHub}
         />
-      </>
+      </div>
     );
   }
 
   return (
-    <>
-      <DialogHeader className="shrink-0">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden p-4 gap-3">
+      {/* Header */}
+      <div className="shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CircleDot className="w-5 h-5 text-chart-2" />
-            <DialogTitle className="text-lg">
+            <h2 className="text-lg font-semibold">
               {repositoryName} Issues &amp; PRs
-            </DialogTitle>
+            </h2>
             {hasNewIssues && (
               <span className="text-xs px-1.5 py-0.5 bg-primary/20 text-primary rounded">
                 {newIssueCount} new
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2 pr-8">
+          <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -317,12 +316,12 @@ function IssuesModalContent({
             </Button>
           </div>
         </div>
-        <DialogDescription className="text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground mt-1">
           {cachedAt
             ? `Last updated ${formatRelativeTime(cachedAt.toISOString())}`
             : "Loading issues..."}
-        </DialogDescription>
-      </DialogHeader>
+        </p>
+      </div>
 
       {/* Create Issue Form */}
       {showCreateForm && repositoryUrl && (
@@ -339,7 +338,6 @@ function IssuesModalContent({
       {/* Filters */}
       {!showCreateForm && (
         <div className="shrink-0 space-y-3">
-          {/* Search and label filter row */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -359,7 +357,6 @@ function IssuesModalContent({
               )}
             </div>
 
-            {/* Label filter dropdown */}
             {allLabels.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -401,7 +398,6 @@ function IssuesModalContent({
               </DropdownMenu>
             )}
 
-            {/* Clear filters */}
             {hasActiveFilters && (
               <Button
                 variant="ghost"
@@ -415,7 +411,6 @@ function IssuesModalContent({
             )}
           </div>
 
-          {/* State tabs */}
           <Tabs
             value={stateFilter}
             onValueChange={(v) => setStateFilter(v as StateFilter)}
@@ -446,9 +441,10 @@ function IssuesModalContent({
         </div>
       )}
 
-      {/* Content */}
+      {/* Content — native scroll (the IssuesModal bug-fix pattern; ScrollArea
+          hits height issues in full-pane layouts). */}
       {!showCreateForm && (
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
           {error ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <AlertCircle className="w-8 h-8 text-destructive mb-2" />
@@ -489,79 +485,90 @@ function IssuesModalContent({
               )}
             </div>
           ) : (
-            <ScrollArea className="flex-1 min-h-0 h-full">
-              <div className="space-y-4 pr-4">
-                {/* Show grouped by state when viewing "all" */}
-                {stateFilter === "all" ? (
-                  <>
-                    {openIssues.length > 0 && (
-                      <div>
-                        <h3 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-                          <CircleDot className="w-3 h-3 text-chart-2" />
-                          Open ({openIssues.length})
-                        </h3>
-                        <div className="space-y-2">
-                          {openIssues.map((issue) => (
-                            <IssueCard
-                              key={issue.id}
-                              issue={issue}
-                              onSelect={handleSelectIssue}
-                              onOpenInGitHub={handleOpenInGitHub}
-                              onCreateWorktree={
-                                onCreateWorktree
-                                  ? handleCreateWorktree
-                                  : undefined
-                              }
-                              onCopyUrl={handleCopyUrl}
-                            />
-                          ))}
-                        </div>
+            <div className="space-y-4 pr-2">
+              {stateFilter === "all" ? (
+                <>
+                  {openIssues.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                        <CircleDot className="w-3 h-3 text-chart-2" />
+                        Open ({openIssues.length})
+                      </h3>
+                      <div className="space-y-2">
+                        {openIssues.map((issue) => (
+                          <IssueCard
+                            key={issue.id}
+                            issue={issue}
+                            onSelect={handleSelectIssue}
+                            onOpenInGitHub={handleOpenInGitHub}
+                            onCreateWorktree={
+                              onCreateWorktreeFromIssue
+                                ? handleCreateWorktree
+                                : undefined
+                            }
+                            onCopyUrl={handleCopyUrl}
+                          />
+                        ))}
                       </div>
-                    )}
-                    {closedIssues.length > 0 && (
-                      <div className="mt-6">
-                        <h3 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1 opacity-60">
-                          <CircleCheck className="w-3 h-3" />
-                          Closed ({closedIssues.length})
-                        </h3>
-                        <div className="space-y-2 opacity-60">
-                          {closedIssues.map((issue) => (
-                            <IssueCard
-                              key={issue.id}
-                              issue={issue}
-                              onSelect={handleSelectIssue}
-                              onOpenInGitHub={handleOpenInGitHub}
-                              onCopyUrl={handleCopyUrl}
-                            />
-                          ))}
-                        </div>
+                    </div>
+                  )}
+                  {closedIssues.length > 0 && (
+                    <div className="mt-6">
+                      <h3 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1 opacity-60">
+                        <CircleCheck className="w-3 h-3" />
+                        Closed ({closedIssues.length})
+                      </h3>
+                      <div className="space-y-2 opacity-60">
+                        {closedIssues.map((issue) => (
+                          <IssueCard
+                            key={issue.id}
+                            issue={issue}
+                            onSelect={handleSelectIssue}
+                            onOpenInGitHub={handleOpenInGitHub}
+                            onCopyUrl={handleCopyUrl}
+                          />
+                        ))}
                       </div>
-                    )}
-                  </>
-                ) : (
-                  /* Show flat list for specific state filter */
-                  <div className="space-y-2">
-                    {filteredIssues.map((issue) => (
-                      <IssueCard
-                        key={issue.id}
-                        issue={issue}
-                        onSelect={handleSelectIssue}
-                        onOpenInGitHub={handleOpenInGitHub}
-                        onCreateWorktree={
-                          onCreateWorktree && issue.state === "open"
-                            ? handleCreateWorktree
-                            : undefined
-                        }
-                        onCopyUrl={handleCopyUrl}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-2">
+                  {filteredIssues.map((issue) => (
+                    <IssueCard
+                      key={issue.id}
+                      issue={issue}
+                      onSelect={handleSelectIssue}
+                      onOpenInGitHub={handleOpenInGitHub}
+                      onCreateWorktree={
+                        onCreateWorktreeFromIssue && issue.state === "open"
+                          ? handleCreateWorktree
+                          : undefined
+                      }
+                      onCopyUrl={handleCopyUrl}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
-    </>
+    </div>
   );
 }
+
+/** Default issues client plugin instance */
+export const IssuesClientPlugin: TerminalTypeClientPlugin = {
+  type: "issues",
+  displayName: "Issues",
+  description: "GitHub issues browser",
+  icon: CircleDot,
+  priority: 70,
+  builtIn: true,
+  component: IssuesTabContent,
+  deriveTitle(session) {
+    const md = readIssuesMetadata(session);
+    return md?.repositoryName ? `Issues — ${md.repositoryName}` : null;
+  },
+};

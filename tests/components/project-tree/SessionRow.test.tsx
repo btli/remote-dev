@@ -21,13 +21,13 @@ const baseProps = {
   onStartEdit: vi.fn(),
 };
 
-const shellSession: any = {
+const shellSession = {
   id: "s1",
   name: "web-server",
   projectId: "p1",
   pinned: false,
   terminalType: "shell",
-};
+} as unknown as Parameters<typeof SessionRow>[0]["session"];
 
 describe("SessionRow", () => {
   it("renders the session name", () => {

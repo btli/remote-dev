@@ -40,6 +40,7 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
     pinned?: boolean;
     tabOrder?: number;
     projectPath?: string;
+    typeMetadataPatch?: Record<string, unknown>;
   }>(request);
   if ("error" in result) return result.error;
   const body = result.data;
@@ -54,6 +55,16 @@ export const PATCH = withAuth(async (request, { userId, params }) => {
   if (body.status !== undefined) updates.status = body.status as SessionStatus;
   if (body.pinned !== undefined) updates.pinned = body.pinned;
   if (body.tabOrder !== undefined) updates.tabOrder = body.tabOrder;
+
+  // Merge caller-supplied typeMetadataPatch on top of any built-ins (e.g.
+  // titleLocked from a name change). Callers own plugin-specific metadata
+  // (e.g. selectedIssueNumber for the issues plugin).
+  if (body.typeMetadataPatch !== undefined) {
+    updates.typeMetadataPatch = {
+      ...(updates.typeMetadataPatch ?? {}),
+      ...body.typeMetadataPatch,
+    };
+  }
   
   // SECURITY: Validate projectPath to prevent path traversal
   if (body.projectPath !== undefined) {
