@@ -291,6 +291,22 @@ export function SessionProvider({
   const hasFetchedSessionsRef = useRef(false);
   const initialSessionsLengthRef = useRef(initialSessions.length);
 
+  // Single-flight write queue for PATCH /api/sessions/:id. Rapid consecutive
+  // calls to updateSession() from the same browser (e.g. the Issues plugin
+  // writing selectedIssueNumber as the user clicks quickly between issues)
+  // were racing on the server — writes could land out of order, leaving
+  // stale metadata persisted. We serialize the network round-trips per
+  // session id via a promise chain. Optimistic local merges still happen
+  // synchronously so the UI stays responsive.
+  //
+  // `pendingWritesRef` holds the tail of the chain for each session.
+  // `pendingCountRef` counts how many writes are queued per session so we
+  // can skip server-response reconciliation for stale replies — otherwise
+  // reconciling an older response would transiently stomp on the newer
+  // optimistic state that a later queued patch has already applied.
+  const pendingWritesRef = useRef<Map<string, Promise<void>>>(new Map());
+  const pendingCountRef = useRef<Map<string, number>>(new Map());
+
   // Restore active session from localStorage after hydration (once on mount)
   useEffect(() => {
     if (hasRestoredSessionRef.current) return;
@@ -390,17 +406,22 @@ export function SessionProvider({
   );
 
   const updateSession = useCallback(
-    async (
+    (
       sessionId: string,
       updates: Partial<TerminalSession> & {
         typeMetadataPatch?: Record<string, unknown>;
       }
-    ) => {
+    ): Promise<void> => {
       // Optimistic update — for a typeMetadataPatch we synthesize the
       // merged typeMetadata locally so the UI reflects the change before
       // the server round-trip completes. F3: mirror server-side null
       // semantics — `{ key: null }` deletes the key instead of storing a
       // null value, matching what the service does on commit.
+      //
+      // This merge runs synchronously (before the queued fetch) so rapid
+      // calls still see responsive UI. Each successive call merges over
+      // the previous optimistic state so the view always reflects the
+      // latest intent.
       const { typeMetadataPatch, ...rest } = updates;
       const optimistic: Partial<TerminalSession> = { ...rest };
       if (typeMetadataPatch) {
@@ -418,38 +439,87 @@ export function SessionProvider({
       }
       dispatch({ type: "UPDATE", sessionId, updates: optimistic });
 
-      try {
-        const response = await fetch(`/api/sessions/${sessionId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updates),
-        });
+      // Bump the pending-write counter before enqueueing so that any
+      // earlier-scheduled fetch response can detect newer writes are
+      // coming and skip its reconciliation step.
+      const nextCount = (pendingCountRef.current.get(sessionId) ?? 0) + 1;
+      pendingCountRef.current.set(sessionId, nextCount);
 
-        if (checkAuthResponse(response)) return;
-
-        if (!response.ok) {
-          // Rollback on error - refetch
-          await refreshSessions();
-          throw new Error("Failed to update session");
-        }
-
-        // F3: reconcile optimistic state with server truth. The PATCH
-        // response carries the canonical session; if any concurrent writes
-        // reshaped typeMetadata, this replaces our optimistic guess with
-        // the authoritative value instead of trusting the local merge
-        // forever.
+      const runFetch = async (): Promise<void> => {
         try {
-          const updated = (await response.json()) as TerminalSession;
-          if (updated && updated.id === sessionId) {
-            dispatch({ type: "UPDATE", sessionId, updates: updated });
+          const response = await fetch(`/api/sessions/${sessionId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(updates),
+          });
+
+          if (checkAuthResponse(response)) return;
+
+          if (!response.ok) {
+            // Rollback on error - refetch
+            await refreshSessions();
+            throw new Error("Failed to update session");
           }
-        } catch {
-          // Non-JSON body is fine — the optimistic value stands.
+
+          // F3: reconcile optimistic state with server truth. The PATCH
+          // response carries the canonical session; if any concurrent
+          // writes reshaped typeMetadata, this replaces our optimistic
+          // guess with the authoritative value instead of trusting the
+          // local merge forever.
+          //
+          // Race hardening: only apply the reconciliation if no newer
+          // patch is still queued behind us for this session. Otherwise
+          // an older server snapshot would transiently stomp on the
+          // newer optimistic state. The final queued write will reconcile
+          // with fresh server truth when it lands.
+          try {
+            const updated = (await response.json()) as TerminalSession;
+            const remaining = pendingCountRef.current.get(sessionId) ?? 0;
+            if (updated && updated.id === sessionId && remaining <= 1) {
+              dispatch({ type: "UPDATE", sessionId, updates: updated });
+            }
+          } catch {
+            // Non-JSON body is fine — the optimistic value stands.
+          }
+        } catch (error) {
+          console.error("Error updating session:", error);
+          throw error;
+        } finally {
+          const remaining = pendingCountRef.current.get(sessionId) ?? 0;
+          if (remaining <= 1) {
+            pendingCountRef.current.delete(sessionId);
+          } else {
+            pendingCountRef.current.set(sessionId, remaining - 1);
+          }
         }
-      } catch (error) {
-        console.error("Error updating session:", error);
-        throw error;
-      }
+      };
+
+      // Chain onto any in-flight write for this session so the server
+      // sees patches in call order. We swallow the previous link's
+      // rejection inside the chain (it was already surfaced to its own
+      // caller) so a single failure doesn't poison the queue.
+      const prev = pendingWritesRef.current.get(sessionId);
+      const next: Promise<void> = prev
+        ? prev.then(
+            () => runFetch(),
+            () => runFetch(),
+          )
+        : runFetch();
+
+      // Track the tail; clean up only if no one chained onto us while we
+      // were running.
+      pendingWritesRef.current.set(sessionId, next);
+      next.finally(() => {
+        if (pendingWritesRef.current.get(sessionId) === next) {
+          pendingWritesRef.current.delete(sessionId);
+        }
+      }).catch(() => {
+        // finally()'s chained promise carries the original rejection; we
+        // suppress it here so React doesn't see an unhandled rejection
+        // for the tail-cleanup hop. Callers still observe `next` below.
+      });
+
+      return next;
     },
     [refreshSessions, state.sessions]
   );
