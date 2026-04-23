@@ -17,7 +17,6 @@ import {
   Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 // Lazy-load sections so the main bundle stays small
@@ -93,6 +92,13 @@ const NAV_ITEMS: (NavItem | "divider")[] = [
 interface SettingsViewProps {
   onClose: () => void;
   initialSection?: SettingsSection;
+  /**
+   * Called whenever the user selects a different section. Used by the
+   * settings terminal-type plugin to persist the active tab on the
+   * session so it survives reload / tab-switch. Optional — the modal
+   * consumer never passes this.
+   */
+  onSectionChange?: (section: SettingsSection) => void;
 }
 
 function SectionLoader() {
@@ -103,10 +109,19 @@ function SectionLoader() {
   );
 }
 
-export function SettingsView({ onClose, initialSection }: SettingsViewProps) {
+export function SettingsView({
+  onClose,
+  initialSection,
+  onSectionChange,
+}: SettingsViewProps) {
   const [activeSection, setActiveSection] = useState<SettingsSection>(
     initialSection ?? "terminal"
   );
+
+  const handleSectionSelect = (section: SettingsSection) => {
+    setActiveSection(section);
+    onSectionChange?.(section);
+  };
 
   // Escape key closes settings — cleanup is automatic on unmount
   useEffect(() => {
@@ -186,7 +201,7 @@ export function SettingsView({ onClose, initialSection }: SettingsViewProps) {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveSection(item.id)}
+                onClick={() => handleSectionSelect(item.id)}
                 className={cn(
                   "w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors",
                   isActive
@@ -219,13 +234,18 @@ export function SettingsView({ onClose, initialSection }: SettingsViewProps) {
               </Suspense>
             </div>
           ) : (
-            <ScrollArea className="flex-1">
+            // F3: Use a native scrolling container instead of Radix
+            // ScrollArea. The Radix primitive wraps content in a
+            // `display: table` element that broke horizontal sizing in
+            // `IssuesModal` and would reintroduce the same bug here now
+            // that Settings is rendered in a full-pane layout.
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
               <div className="px-8 pb-8 max-w-2xl">
                 <Suspense fallback={<SectionLoader />}>
                   {renderSection()}
                 </Suspense>
               </div>
-            </ScrollArea>
+            </div>
           )}
         </div>
       </div>

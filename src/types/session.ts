@@ -50,6 +50,8 @@ export interface TerminalSession {
   agentActivityStatus: string | null;
   // Plugin-specific metadata (parsed from JSON)
   typeMetadata: Record<string, unknown> | null;
+  // Scope key for server-side deduplication. See CreateSessionInput.scopeKey.
+  scopeKey: string | null;
   // Parent session for team orchestration
   parentSessionId: string | null;
   status: SessionStatus;
@@ -81,11 +83,33 @@ export interface CreateSessionInput {
   autoLaunchAgent?: boolean;          // Whether to auto-launch the agent CLI
   agentFlags?: string[];              // Additional flags for the agent CLI
   // For file terminal type
+  // NOTE: legacy convenience field retained for back-compat. New callers
+  // should pass `typeMetadata: { filePath, fileName }` directly instead.
   filePath?: string;                  // Path to file being edited
+  /**
+   * Optional plugin-specific metadata to merge into the new session's
+   * typeMetadata JSON. Takes precedence over plugin-provided defaults on
+   * key conflicts.
+   */
+  typeMetadata?: Record<string, unknown>;
+  /**
+   * Optional scope key for server-side deduplication. When set, the
+   * service will return an existing open session matching
+   * (userId, terminalType, scopeKey) instead of creating a new row.
+   */
+  scopeKey?: string | null;
   // Parent session for team orchestration
   parentSessionId?: string;
   // Feature session fields
   startupCommand?: string;      // Override resolved preferences
+  /**
+   * Fully resolved startup command (folder/profile preference + agent wrapper
+   * applied). Populated by SessionService before invoking plugin.createSession
+   * so plugins (e.g. agent, loop) can honor folder-level wrappers like
+   * `jclaude` instead of falling back to the provider's default command. Do
+   * not pass this from the outside — it's overwritten by the service.
+   */
+  startupCommandOverride?: string;
   featureDescription?: string;  // Original feature description
   createWorktree?: boolean;     // Whether to create worktree
   baseBranch?: string;          // Base branch for new worktree

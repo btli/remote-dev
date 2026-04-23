@@ -1,156 +1,68 @@
 /**
- * AgentPlugin - AI agent terminal type where agent runs as the shell
+ * AgentPlugin — Back-compat shim composing the server + client halves.
  *
- * Key features:
- * - Agent command runs as the tmux shell (not launched after shell starts)
- * - When agent exits, shows exit screen with restart/delete options
- * - Supports multiple agent providers (Claude, Codex, Gemini, OpenCode)
+ * @deprecated Use `AgentServerPlugin` from `./agent-plugin-server` and
+ * `AgentClientPlugin` from `./agent-plugin-client` directly. This combined
+ * shape exists so the legacy `TerminalTypePlugin` interface + `registry.ts`
+ * keep working during the plugin split migration (task A0 → A2).
  */
 
-import { Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
   TerminalTypePlugin,
   TerminalRenderProps,
-  SessionConfig,
-  ExitBehavior,
   ExitScreenInfo,
   ExitScreenCallbacks,
-  AgentSessionMetadata,
 } from "@/types/terminal-type";
-import type {
-  TerminalSession,
-  CreateSessionInput,
-  AgentProviderType,
-} from "@/types/session";
-import { getProviderConfig, buildAgentCommand } from "../agent-utils";
+import type { TerminalSession } from "@/types/session";
+import {
+  createAgentServerPlugin,
+  type AgentPluginServerConfig,
+} from "./agent-plugin-server";
+import { AgentClientPlugin } from "./agent-plugin-client";
+
+// Preserve the public API of the old file.
+export type AgentPluginConfig = AgentPluginServerConfig;
 
 /**
- * Agent plugin configuration
- */
-export interface AgentPluginConfig {
-  /** Default agent provider */
-  defaultProvider?: AgentProviderType;
-  /** Additional environment variables for all agents */
-  defaultEnv?: Record<string, string>;
-  /** Allow dangerous flags (--dangerously-skip-permissions, etc.) */
-  allowDangerousFlags?: boolean;
-}
-
-/**
- * Create an agent plugin instance
+ * Create an agent plugin instance combining server + client halves.
+ *
+ * @deprecated Prefer `createAgentServerPlugin` + `AgentClientPlugin`.
  */
 export function createAgentPlugin(
   config: AgentPluginConfig = {}
 ): TerminalTypePlugin {
+  const server = createAgentServerPlugin(config);
+  const client = AgentClientPlugin;
+
   return {
-    type: "agent",
-    displayName: "AI Agent",
-    description: "AI coding assistant (Claude, Codex, Gemini, etc.)",
-    icon: Sparkles,
-    priority: 90, // Second highest priority
-    builtIn: true,
-
-    createSession(input: CreateSessionInput): SessionConfig {
-      const providerId = input.agentProvider ?? config.defaultProvider ?? "claude";
-      const provider = getProviderConfig(providerId);
-
-      if (!provider || provider.id === "none") {
-        throw new Error(`Invalid agent provider: ${providerId}`);
-      }
-
-      // Build the agent command that will run as the shell
-      const agentCommand = buildAgentCommand(
-        provider,
-        input.agentFlags,
-        config.allowDangerousFlags
-      );
-
-      // Create metadata to store with session
-      const metadata: AgentSessionMetadata = {
-        agentProvider: providerId,
-        exitState: "running",
-        exitCode: null,
-        exitedAt: null,
-        restartCount: 0,
-        lastStartedAt: new Date(),
-      };
-
-      return {
-        // IMPORTANT: Agent command IS the shell command
-        // When this exits, the tmux session process exits
-        shellCommand: agentCommand,
-        shellArgs: [],
-        environment: {
-          ...config.defaultEnv,
-          // Set TERM to ensure good terminal support
-          TERM: "xterm-256color",
-        },
-        cwd: input.projectPath,
-        useTmux: true,
-        metadata,
-      };
-    },
-
-    onSessionExit(
-      session: TerminalSession,
-      exitCode: number | null
-    ): ExitBehavior {
-      // Agent sessions show exit screen so user can restart
-      return {
-        showExitScreen: true,
-        canRestart: true,
-        autoClose: false,
-        exitMessage: this.getExitMessage(session, exitCode),
-      };
-    },
-
-    onSessionRestart(session: TerminalSession): SessionConfig | null {
-      const providerId = session.agentProvider ?? "claude";
-      const provider = getProviderConfig(providerId);
-
-      if (!provider || provider.id === "none") {
-        return null; // Cannot restart without valid provider
-      }
-
-      const agentCommand = buildAgentCommand(
-        provider,
-        [], // Reset to default flags on restart
-        config.allowDangerousFlags
-      );
-
-      return {
-        shellCommand: agentCommand,
-        shellArgs: [],
-        environment: {
-          ...config.defaultEnv,
-          TERM: "xterm-256color",
-        },
-        cwd: session.projectPath ?? undefined,
-        useTmux: true,
-      };
-    },
-
+    type: client.type,
+    displayName: client.displayName,
+    description: client.description,
+    icon: client.icon,
+    priority: client.priority,
+    builtIn: client.builtIn,
+    createSession: server.createSession.bind(server),
+    onSessionExit: server.onSessionExit?.bind(server),
+    onSessionRestart: server.onSessionRestart?.bind(server),
+    onSessionClose: server.onSessionClose?.bind(server),
+    validateInput: server.validateInput?.bind(server),
+    canHandle: server.canHandle?.bind(server),
     renderContent(
       session: TerminalSession,
       props: TerminalRenderProps
     ): ReactNode {
-      // Return a marker that the UI layer will interpret
-      // The actual Terminal component is rendered by TerminalTypeRenderer
       return {
         type: "terminal",
         session,
         props,
       } as unknown as ReactNode;
     },
-
     renderExitScreen(
       session: TerminalSession,
       exitInfo: ExitScreenInfo,
       callbacks: ExitScreenCallbacks
     ): ReactNode {
-      // Return a marker that the UI layer will interpret
-      // The actual AgentExitScreen component is rendered by TerminalTypeRenderer
       return {
         type: "agent-exit-screen",
         session,
@@ -158,48 +70,15 @@ export function createAgentPlugin(
         callbacks,
       } as unknown as ReactNode;
     },
-
-    validateInput(input: CreateSessionInput): string | null {
-      if (!input.name?.trim()) {
-        return "Session name is required";
-      }
-
-      const providerId = input.agentProvider ?? config.defaultProvider ?? "claude";
-      const provider = getProviderConfig(providerId);
-
-      if (!provider || provider.id === "none") {
-        return `Invalid agent provider: ${providerId}`;
-      }
-
-      return null;
-    },
-
-    canHandle(session: TerminalSession): boolean {
-      // Agent plugin handles sessions with an agent provider (not "none")
-      return Boolean(session.agentProvider && session.agentProvider !== "none");
-    },
-
-    // Helper method for exit message
-    getExitMessage(session: TerminalSession, exitCode: number | null): string {
-      const provider = getProviderConfig(session.agentProvider ?? "claude");
-      const agentName = provider?.name ?? "Agent";
-
-      if (exitCode === 0) {
-        return `${agentName} completed successfully`;
-      } else if (exitCode === null) {
-        return `${agentName} was terminated`;
-      } else if (exitCode === 130) {
-        return `${agentName} was interrupted (Ctrl+C)`;
-      } else if (exitCode === 137) {
-        return `${agentName} was killed (out of memory?)`;
-      } else {
-        return `${agentName} exited with code ${exitCode}`;
-      }
-    },
-  } as TerminalTypePlugin & { getExitMessage: (session: TerminalSession, exitCode: number | null) => string };
+  };
 }
 
-/**
- * Default agent plugin instance
- */
-export const AgentPlugin = createAgentPlugin();
+/** @deprecated see module docstring */
+export const AgentPlugin: TerminalTypePlugin = createAgentPlugin();
+
+// Re-export the new halves for consumers that want to migrate now.
+export {
+  AgentServerPlugin,
+  createAgentServerPlugin,
+} from "./agent-plugin-server";
+export { AgentClientPlugin } from "./agent-plugin-client";

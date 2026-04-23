@@ -6,6 +6,15 @@
  * - Plugin lookup by terminal type
  * - Plugin validation
  * - Default plugin fallback
+ *
+ * @deprecated Use the split registries instead:
+ *   - {@link "./server".TerminalTypeServerRegistry} — server-safe lifecycle registry
+ *   - {@link "./client".TerminalTypeClientRegistry} — React rendering registry
+ *
+ * This combined registry is kept intact during the plugin-split migration
+ * (task A0 → A2) so `session-service.ts` and `SessionManager.tsx` continue
+ * to function. See `src/lib/terminal-plugins/README.md` for the migration
+ * plan.
  */
 
 import type {

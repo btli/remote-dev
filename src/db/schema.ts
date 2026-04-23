@@ -347,6 +347,11 @@ export const terminalSessions = sqliteTable(
     agentActivityStatus: text("agent_activity_status"),
     // Plugin-specific metadata (JSON string)
     typeMetadata: text("type_metadata"),
+    // Scope key for server-side deduplication. When set, creating a session
+    // with the same (userId, terminalType, scopeKey) returns the existing
+    // open session instead of a new one. Used by plugins that address a
+    // singleton resource (e.g. a file editor keyed by file path).
+    scopeKey: text("scope_key"),
     // Parent session for team orchestration (child sessions spawned by a parent)
     parentSessionId: text("parent_session_id"),
     orchestratorRole: text("orchestrator_role").$type<"parent" | "child">(),
@@ -369,6 +374,17 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_project_idx").on(table.projectId),
     // Index for filtering by terminal type
     index("terminal_session_type_idx").on(table.userId, table.terminalType),
+    // Composite UNIQUE index for scope-key dedup lookups — enforces no
+    // duplicate scope-keyed sessions per user/type at the DB level (F7).
+    // The index is partial in the migration (scope_key IS NOT NULL) so rows
+    // without a scope key remain unconstrained; drizzle-kit's SQLite DSL
+    // doesn't express partial indexes, so the raw SQL in
+    // `drizzle/0015_unique_scope_key.sql` is the source of truth.
+    uniqueIndex("terminal_session_scope_unique_idx").on(
+      table.userId,
+      table.terminalType,
+      table.scopeKey
+    ),
   ]
 );
 

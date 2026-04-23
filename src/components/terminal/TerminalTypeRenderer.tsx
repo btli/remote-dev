@@ -1,14 +1,19 @@
 "use client";
 
 /**
- * TerminalTypeRenderer - Renders terminal content based on terminal type
+ * TerminalTypeRenderer — Shell/agent terminal renderer with exit-screen overlay.
  *
- * This component delegates to the appropriate UI based on the session's terminalType:
- * - shell: Standard Terminal component
- * - agent: Terminal with agent exit screen overlay
- * - file: CodeMirrorEditor for file viewing/editing
- * - browser: BrowserPane with screenshot streaming
- * - loop: LoopChatPane with chat-first UI
+ * Historically this component owned a switch on `session.terminalType` and
+ * dispatched between shell, agent, file, browser, and loop views. After A2,
+ * `SessionManager.tsx` dispatches directly via
+ * {@link TerminalTypeClientRegistry}, so this file narrows its job to what
+ * it does best: render a `Terminal` with an overlayed voice mic + agent
+ * exit screen. It is no longer the canonical entry point for file/browser/
+ * loop sessions — those are each dispatched to their own plugin component.
+ *
+ * Kept as the fallback content for the (unused-from-registry) legacy
+ * combined plugin shim so the deprecated `TerminalTypePlugin` shape still
+ * works until it is deleted.
  */
 
 import { useState, useRef, useCallback } from "react";
@@ -16,11 +21,8 @@ import type { TerminalSession } from "@/types/session";
 import { Terminal, type TerminalRef } from "./Terminal";
 import { AgentExitScreen } from "./AgentExitScreen";
 import { VoiceMicButton } from "./VoiceMicButton";
-import { CodeMirrorEditor } from "./CodeMirrorEditor";
-import { BrowserPane } from "./BrowserPane";
-import { LoopChatPane } from "@/components/loop/LoopChatPane";
 import type { ConnectionStatus } from "@/types/terminal";
-import type { FileViewerMetadata, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
+import type { SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
 import { useSessionContext } from "@/contexts/SessionContext";
 
 interface TerminalTypeRendererProps {
@@ -101,6 +103,8 @@ export function TerminalTypeRenderer({
   } | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
 
+  const isAgent = session.terminalType === "agent";
+
   // Handle agent exit
   const handleAgentExited = useCallback((exitCode: number | null, exitedAt: string) => {
     setAgentExitInfo({ exitCode, exitedAt });
@@ -113,7 +117,6 @@ export function TerminalTypeRenderer({
     onAgentStateChange?.(session.id, "restarting");
 
     try {
-      // Send restart command via WebSocket
       terminalRef.current?.restartAgent();
     } catch (error) {
       console.error("Failed to restart agent:", error);
@@ -134,7 +137,7 @@ export function TerminalTypeRenderer({
     onSessionClose?.(session.id);
   }, [session.id, onAgentStateChange, onSessionClose]);
 
-  const renderAgentTerminal = (terminalType: "agent") => (
+  return (
     <div className={`relative w-full h-full${needsAttention ? " notification-ring" : ""}`}>
       <Terminal
         ref={terminalRef}
@@ -151,12 +154,12 @@ export function TerminalTypeRenderer({
         isRecording={isRecording}
         isActive={isActive}
         environmentVars={environmentVars}
-        terminalType={terminalType}
+        terminalType={session.terminalType as "shell" | "agent"}
         onStatusChange={onStatusChange}
         onWebSocketReady={onWebSocketReady}
         onSessionExit={onSessionExit}
-        onAgentExited={handleAgentExited}
-        onAgentRestarted={handleAgentRestarted}
+        onAgentExited={isAgent ? handleAgentExited : undefined}
+        onAgentRestarted={isAgent ? handleAgentRestarted : undefined}
         onAgentActivityStatus={onAgentActivityStatus}
         onBeadsIssuesUpdated={onBeadsIssuesUpdated}
         onSessionRenamed={onSessionRenamed}
@@ -171,99 +174,31 @@ export function TerminalTypeRenderer({
         onDimensionsChange={onDimensionsChange}
       />
 
-      {/* Voice mic button - rendered outside Terminal to avoid xterm canvas stacking */}
-      <div className="absolute top-2 left-2 z-50" style={isRecording ? { left: "5.5rem" } : undefined}>
-        <VoiceMicButton getWebSocket={() => terminalRef.current?.getWebSocket() ?? null} />
-      </div>
+      {isAgent && (
+        <>
+          {/* Voice mic button — rendered outside Terminal to avoid xterm canvas stacking */}
+          <div
+            className="absolute top-2 left-2 z-50"
+            style={isRecording ? { left: "5.5rem" } : undefined}
+          >
+            <VoiceMicButton getWebSocket={() => terminalRef.current?.getWebSocket() ?? null} />
+          </div>
 
-      {/* Agent Exit Screen Overlay */}
-      {agentExitInfo && (
-        <AgentExitScreen
-          sessionId={session.id}
-          sessionName={session.name}
-          exitCode={agentExitInfo.exitCode}
-          exitedAt={agentExitInfo.exitedAt}
-          restartCount={session.agentRestartCount ?? 0}
-          onRestart={handleAgentRestart}
-          onClose={handleSessionClose}
-          isRestarting={isRestarting}
-        />
+          {/* Agent Exit Screen Overlay */}
+          {agentExitInfo && (
+            <AgentExitScreen
+              sessionId={session.id}
+              sessionName={session.name}
+              exitCode={agentExitInfo.exitCode}
+              exitedAt={agentExitInfo.exitedAt}
+              restartCount={session.agentRestartCount ?? 0}
+              onRestart={handleAgentRestart}
+              onClose={handleSessionClose}
+              isRestarting={isRestarting}
+            />
+          )}
+        </>
       )}
     </div>
   );
-
-  // Render based on terminal type
-  switch (session.terminalType) {
-    case "file": {
-      // Extract file metadata
-      const metadata = session.typeMetadata as FileViewerMetadata | null;
-      const filePath = metadata?.filePath ?? "";
-      const fileName = metadata?.fileName ?? "Untitled";
-
-      return (
-        <CodeMirrorEditor
-          filePath={filePath}
-          fileName={fileName}
-          fontSize={fontSize}
-          fontFamily={fontFamily}
-        />
-      );
-    }
-
-    case "agent":
-      return renderAgentTerminal("agent");
-
-    case "loop":
-      return (
-        <LoopChatPane
-          session={session}
-          wsUrl={wsUrl}
-          fontSize={fontSize}
-          fontFamily={fontFamily}
-          scrollback={scrollback}
-          tmuxHistoryLimit={tmuxHistoryLimit}
-          isActive={isActive}
-          environmentVars={environmentVars}
-          onAgentActivityStatus={onAgentActivityStatus}
-          onBeadsIssuesUpdated={onBeadsIssuesUpdated}
-          onNotification={onNotification}
-          onSessionStatus={onSessionStatus}
-          onSessionProgress={onSessionProgress}
-          onSessionClose={onSessionClose}
-          onAgentStateChange={onAgentStateChange}
-        />
-      );
-
-    case "browser":
-      return <BrowserPane session={session} />;
-
-    case "shell":
-    default:
-      return (
-        <Terminal
-          ref={terminalRef}
-          sessionId={session.id}
-          tmuxSessionName={session.tmuxSessionName}
-          sessionName={session.name}
-          projectPath={session.projectPath}
-          wsUrl={wsUrl}
-          fontSize={fontSize}
-          fontFamily={fontFamily}
-          scrollback={scrollback}
-          tmuxHistoryLimit={tmuxHistoryLimit}
-          notificationsEnabled={notificationsEnabled}
-          isRecording={isRecording}
-          isActive={isActive}
-          environmentVars={environmentVars}
-          terminalType="shell"
-          onStatusChange={onStatusChange}
-          onWebSocketReady={onWebSocketReady}
-          onSessionExit={onSessionExit}
-          onSessionStatus={onSessionStatus}
-          onSessionProgress={onSessionProgress}
-          onOutput={onOutput}
-          onDimensionsChange={onDimensionsChange}
-        />
-      );
-  }
 }

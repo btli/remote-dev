@@ -3,7 +3,6 @@ import { z } from "zod";
 import { withApiAuth, errorResponse, parseJsonBody } from "@/lib/api";
 import { db } from "@/db";
 import { userSettings } from "@/db/schema";
-import { eq } from "drizzle-orm";
 
 // `nodeId`/`nodeType` may be null to clear the active/pinned selection.
 // `pinned` toggles whether the selection is "pinned" — in which case the

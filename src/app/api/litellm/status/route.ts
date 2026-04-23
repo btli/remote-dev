@@ -10,7 +10,6 @@ const log = createLogger("api/litellm/status");
  *
  * Proxies to the terminal server where the process manager tracks the running state.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const GET = withAuth(async (_request, { userId: _userId }) => {
   try {
     const baseUrl = resolveTerminalServerUrl();

@@ -1,106 +1,74 @@
 /**
- * ShellPlugin - Default terminal type for standard bash/zsh shells
+ * ShellPlugin — Back-compat shim composing the server + client halves.
  *
- * This is the simplest plugin - it creates a tmux session with the user's
- * default shell and renders a standard terminal component.
+ * @deprecated Use `ShellServerPlugin` from `./shell-plugin-server` and
+ * `ShellClientPlugin` from `./shell-plugin-client` directly. This combined
+ * shape exists so the legacy `TerminalTypePlugin` interface + `registry.ts`
+ * keep working during the plugin split migration (task A0 → A2).
  */
 
-import { Terminal as TerminalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
   TerminalTypePlugin,
   TerminalRenderProps,
-  SessionConfig,
-  ExitBehavior,
 } from "@/types/terminal-type";
-import type { TerminalSession, CreateSessionInput } from "@/types/session";
+import type { TerminalSession } from "@/types/session";
+import {
+  createShellServerPlugin,
+  type ShellPluginServerConfig,
+} from "./shell-plugin-server";
+import { ShellClientPlugin } from "./shell-plugin-client";
+
+// Preserve the public API of the old file.
+export type ShellPluginConfig = ShellPluginServerConfig;
 
 /**
- * Shell plugin configuration
+ * Create a shell plugin instance combining server + client halves.
+ *
+ * @deprecated Prefer `createShellServerPlugin` + `ShellClientPlugin`.
  */
-export interface ShellPluginConfig {
-  /** Default shell to use (null = user's login shell) */
-  defaultShell?: string | null;
-  /** Additional shell arguments */
-  shellArgs?: string[];
-  /** Default environment variables */
-  defaultEnv?: Record<string, string>;
-}
+export function createShellPlugin(
+  config: ShellPluginConfig = {}
+): TerminalTypePlugin {
+  const server = createShellServerPlugin(config);
+  const client = ShellClientPlugin;
 
-/**
- * Create a shell plugin instance
- */
-export function createShellPlugin(config: ShellPluginConfig = {}): TerminalTypePlugin {
   return {
-    type: "shell",
-    displayName: "Terminal",
-    description: "Standard terminal with your default shell",
-    icon: TerminalIcon,
-    priority: 100, // High priority - default option
-    builtIn: true,
-
-    createSession(
-      input: CreateSessionInput,
-    ): SessionConfig {
-      return {
-        // null = use user's default shell via tmux
-        shellCommand: config.defaultShell ?? null,
-        shellArgs: config.shellArgs ?? [],
-        environment: {
-          ...config.defaultEnv,
-        },
-        cwd: input.projectPath,
-        useTmux: true,
-      };
-    },
-
-    onSessionExit(
-      _session: TerminalSession,
-      exitCode: number | null
-    ): ExitBehavior {
-      // For shell sessions, don't show exit screen - just mark as closed
-      // User can see the exit in the terminal output
-      return {
-        showExitScreen: false,
-        canRestart: false,
-        autoClose: false, // Keep session for viewing output
-        exitMessage:
-          exitCode === 0
-            ? "Shell exited normally"
-            : `Shell exited with code ${exitCode}`,
-      };
-    },
-
+    type: client.type,
+    displayName: client.displayName,
+    description: client.description,
+    icon: client.icon,
+    priority: client.priority,
+    builtIn: client.builtIn,
+    createSession: server.createSession.bind(server),
+    onSessionExit: server.onSessionExit?.bind(server),
+    onSessionRestart: server.onSessionRestart?.bind(server),
+    onSessionClose: server.onSessionClose?.bind(server),
+    validateInput: server.validateInput?.bind(server),
+    canHandle: server.canHandle?.bind(server),
     renderContent(
       session: TerminalSession,
       props: TerminalRenderProps
     ): ReactNode {
-      // Import the Terminal component dynamically to avoid SSR issues
-      // This will be replaced with actual component in the UI layer
+      // Legacy marker payload — preserved for any consumer still reading
+      // the switch-based SessionManager/TerminalTypeRenderer output. A2
+      // will remove this and consumers will call
+      // TerminalTypeClientRegistry.get(type).component instead.
       return {
         type: "terminal",
         session,
         props,
       } as unknown as ReactNode;
     },
-
-    validateInput(input: CreateSessionInput): string | null {
-      // Shell sessions just need a name
-      if (!input.name?.trim()) {
-        return "Session name is required";
-      }
-      return null;
-    },
-
-    canHandle(session: TerminalSession): boolean {
-      // Shell plugin handles sessions without agent provider
-      // or with agent provider "none"
-      return !session.agentProvider || session.agentProvider === "none";
-    },
   };
 }
 
-/**
- * Default shell plugin instance
- */
-export const ShellPlugin = createShellPlugin();
+/** @deprecated see module docstring */
+export const ShellPlugin: TerminalTypePlugin = createShellPlugin();
+
+// Re-export the new halves for consumers that want to migrate now.
+export {
+  ShellServerPlugin,
+  createShellServerPlugin,
+} from "./shell-plugin-server";
+export { ShellClientPlugin } from "./shell-plugin-client";

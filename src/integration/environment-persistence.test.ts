@@ -248,12 +248,18 @@ describe("Environment Persistence Integration", () => {
       // The shell should still have access to BASH_VERSION or ZSH_VERSION
       // because HOME wasn't overridden
       await TmuxService.sendKeys(sessionName, "echo SHELL_CHECK:$SHELL");
-      await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const output = await TmuxService.captureOutput(sessionName, 50);
+      // Poll for up to 3s — shell startup + echo timing varies by host.
+      const shellPattern = /SHELL_CHECK:.*\/(bash|zsh|sh)/;
+      let output = "";
+      for (let i = 0; i < 15; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        output = await TmuxService.captureOutput(sessionName, 50);
+        if (shellPattern.test(output)) break;
+      }
 
       // Should contain the shell path (proof shell loaded correctly)
-      expect(output).toMatch(/SHELL_CHECK:.*\/(bash|zsh|sh)/);
+      expect(output).toMatch(shellPattern);
     });
   });
 

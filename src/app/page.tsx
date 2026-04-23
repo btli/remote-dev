@@ -74,6 +74,7 @@ export default async function Home() {
     projectId: s.projectId ?? null,
     profileId: s.profileId,
     terminalType: s.terminalType ?? "shell",
+    scopeKey: s.scopeKey ?? null,
     agentProvider: s.agentProvider as "claude" | "codex" | "gemini" | "opencode" | "none" | null,
     agentExitState: s.agentExitState as "running" | "exited" | "restarting" | "closed" | null,
     agentExitCode: s.agentExitCode ?? null,

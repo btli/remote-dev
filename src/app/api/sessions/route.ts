@@ -73,6 +73,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
       agentFlags?: string[];
       parentSessionId?: string;
       loopConfig?: { loopType?: string; intervalSeconds?: number; promptTemplate?: string; maxIterations?: number; autoRestart?: boolean };
+      scopeKey?: string | null;
+      typeMetadata?: Record<string, unknown>;
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -128,13 +130,24 @@ export const POST = withApiAuth(async (request, { userId }) => {
       createWorktree: body.createWorktree,
       baseBranch: body.baseBranch,
       worktreeType: body.worktreeType as CreateSessionInput["worktreeType"],
+      // Plugin-level dedup + generic metadata passthrough
+      scopeKey: body.scopeKey ?? null,
+      typeMetadata: body.typeMetadata,
     };
 
-    const newSession = await SessionService.createSession(userId, input);
+    const { session: newSession, reused } =
+      await SessionService.createSessionWithDedupFlag(userId, input);
 
-    broadcastSidebarChanged(userId);
+    if (!reused) broadcastSidebarChanged(userId);
 
-    return NextResponse.json(newSession, { status: 201 });
+    // F2: surface the reused flag so the client can avoid dispatching a
+    // duplicate CREATE for scope-key dedup hits. Keep the TerminalSession
+    // shape at the top level for back-compat; attach `_reused` alongside
+    // the standard fields.
+    return NextResponse.json(
+      { ...newSession, _reused: reused },
+      { status: reused ? 200 : 201 }
+    );
   } catch (error) {
     log.error("Error creating session", { error: String(error) });
 
