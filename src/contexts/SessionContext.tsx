@@ -368,11 +368,25 @@ export function SessionProvider({
         throw new Error(error.error || "Failed to create session");
       }
 
-      const session = await response.json();
-      dispatch({ type: "CREATE", session });
+      const body = (await response.json()) as TerminalSession & {
+        _reused?: boolean;
+      };
+      const { _reused, ...session } = body;
+      // F2: when the server reused an existing scope-keyed session, the
+      // session may already be in local state (e.g. previously loaded from
+      // /api/sessions). Dispatching CREATE would append a duplicate row —
+      // instead, upsert: UPDATE if it exists, CREATE if it doesn't. Also
+      // auto-resume if the reused row was left suspended (the sidebar
+      // hides/suppresses suspended rows for some terminal types).
+      if (_reused && state.sessions.some((s) => s.id === session.id)) {
+        dispatch({ type: "UPDATE", sessionId: session.id, updates: session });
+        dispatch({ type: "SET_ACTIVE", sessionId: session.id });
+      } else {
+        dispatch({ type: "CREATE", session });
+      }
       return session;
     },
-    [activeNode]
+    [activeNode, state.sessions]
   );
 
   const updateSession = useCallback(
@@ -384,13 +398,23 @@ export function SessionProvider({
     ) => {
       // Optimistic update — for a typeMetadataPatch we synthesize the
       // merged typeMetadata locally so the UI reflects the change before
-      // the server round-trip completes.
+      // the server round-trip completes. F3: mirror server-side null
+      // semantics — `{ key: null }` deletes the key instead of storing a
+      // null value, matching what the service does on commit.
       const { typeMetadataPatch, ...rest } = updates;
       const optimistic: Partial<TerminalSession> = { ...rest };
       if (typeMetadataPatch) {
         const existing =
           state.sessions.find((s) => s.id === sessionId)?.typeMetadata ?? {};
-        optimistic.typeMetadata = { ...existing, ...typeMetadataPatch };
+        const merged: Record<string, unknown> = { ...existing };
+        for (const [key, value] of Object.entries(typeMetadataPatch)) {
+          if (value === null) {
+            delete merged[key];
+          } else {
+            merged[key] = value;
+          }
+        }
+        optimistic.typeMetadata = merged;
       }
       dispatch({ type: "UPDATE", sessionId, updates: optimistic });
 
@@ -407,6 +431,20 @@ export function SessionProvider({
           // Rollback on error - refetch
           await refreshSessions();
           throw new Error("Failed to update session");
+        }
+
+        // F3: reconcile optimistic state with server truth. The PATCH
+        // response carries the canonical session; if any concurrent writes
+        // reshaped typeMetadata, this replaces our optimistic guess with
+        // the authoritative value instead of trusting the local merge
+        // forever.
+        try {
+          const updated = (await response.json()) as TerminalSession;
+          if (updated && updated.id === sessionId) {
+            dispatch({ type: "UPDATE", sessionId, updates: updated });
+          }
+        } catch {
+          // Non-JSON body is fine — the optimistic value stands.
         }
       } catch (error) {
         console.error("Error updating session:", error);

@@ -102,6 +102,14 @@ export interface CreateSessionInput {
   parentSessionId?: string;
   // Feature session fields
   startupCommand?: string;      // Override resolved preferences
+  /**
+   * Fully resolved startup command (folder/profile preference + agent wrapper
+   * applied). Populated by SessionService before invoking plugin.createSession
+   * so plugins (e.g. agent, loop) can honor folder-level wrappers like
+   * `jclaude` instead of falling back to the provider's default command. Do
+   * not pass this from the outside — it's overwritten by the service.
+   */
+  startupCommandOverride?: string;
   featureDescription?: string;  // Original feature description
   createWorktree?: boolean;     // Whether to create worktree
   baseBranch?: string;          // Base branch for new worktree

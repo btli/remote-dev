@@ -33,6 +33,10 @@ const hoisted = vi.hoisted(() => {
     insertReturning: vi.fn<(values: Row) => Promise<Row[]>>(),
     findManyDedup: vi.fn<(args: unknown) => Promise<Row[]>>(),
     findManyTabOrder: vi.fn<(args: unknown) => Promise<Row[]>>(),
+    getResolvedPreferences: vi.fn(async () => ({
+      defaultWorkingDirectory: "/tmp",
+      startupCommand: undefined as string | undefined,
+    })),
   };
 });
 
@@ -143,10 +147,7 @@ vi.mock("@/services/agent-profile-service", () => ({
 }));
 
 vi.mock("@/services/preferences-service", () => ({
-  getResolvedPreferences: vi.fn(async () => ({
-    defaultWorkingDirectory: "/tmp",
-    startupCommand: undefined,
-  })),
+  getResolvedPreferences: hoisted.getResolvedPreferences,
   getFolderPreferences: vi.fn(async () => null),
   getEnvironmentForSession: vi.fn(async () => ({})),
   getFolderGitIdentity: vi.fn(async () => ({ env: {} })),
@@ -192,6 +193,7 @@ import type { TerminalTypeServerPlugin } from "@/types/terminal-type-server";
 import type { CreateSessionInput } from "@/types/session";
 import {
   createSession,
+  createSessionWithDedupFlag,
   SessionServiceError,
 } from "./session-service";
 
@@ -268,6 +270,10 @@ describe("SessionService.createSession — plugin dispatch", () => {
     dbMocks.insertReturning.mockImplementation(async (values) => [
       makeDbRow(values as Row),
     ]);
+    hoisted.getResolvedPreferences.mockResolvedValue({
+      defaultWorkingDirectory: "/tmp",
+      startupCommand: undefined,
+    });
   });
 
   afterEach(() => {
@@ -326,6 +332,48 @@ describe("SessionService.createSession — plugin dispatch", () => {
     expect(cwd).toBeDefined();
     // Plugin-provided shell command is passed to tmux
     expect(shellCmd).toBe("fake-cli");
+  });
+
+  it("threads folder-resolved startupCommand into plugin.createSession via startupCommandOverride (F1)", async () => {
+    // Folder preference supplies a wrapper command like `jclaude`.
+    hoisted.getResolvedPreferences.mockResolvedValueOnce({
+      defaultWorkingDirectory: "/tmp",
+      startupCommand: "jclaude",
+    });
+
+    // Record what the plugin sees in its createSession input.
+    let seenOverride: string | undefined;
+    const plugin: TerminalTypeServerPlugin = {
+      type: "fake",
+      priority: 0,
+      createSession: (pluginInput) => {
+        seenOverride = pluginInput.startupCommandOverride;
+        return {
+          // Emulate an agent-style plugin: use the override as the shell
+          // command so SessionService passes it to tmux.
+          shellCommand: pluginInput.startupCommandOverride ?? "provider-default",
+          shellArgs: [],
+          environment: {},
+          useTmux: true,
+          metadata: {},
+        };
+      },
+    };
+    TerminalTypeServerRegistry.register(plugin);
+    TerminalTypeServerRegistry.setDefaultType("fake");
+
+    await createSession("user-1", baseInput());
+
+    expect(seenOverride).toBe("jclaude");
+    expect(tmuxCreate).toHaveBeenCalledTimes(1);
+    const [, , shellCmd] = tmuxCreate.mock.calls[0] as unknown as [
+      string,
+      string | undefined,
+      string | undefined,
+      Record<string, string> | undefined,
+    ];
+    // Wrapper wins over the plugin's provider default.
+    expect(shellCmd).toBe("jclaude");
   });
 
   it("throws SessionServiceError when the plugin's validateInput returns an error", async () => {
@@ -408,6 +456,35 @@ describe("SessionService.createSession — scope-key dedup", () => {
     });
 
     expect(dbMocks.findManyDedup).toHaveBeenCalledTimes(1);
+    expect(dbState.inserted).toHaveLength(1);
+  });
+
+  it("createSessionWithDedupFlag reports reused=true when dedup hits (F2)", async () => {
+    const existing = makeDbRow({
+      id: "existing-1",
+      scopeKey: "settings",
+      terminalType: "fake",
+      status: "active",
+    });
+    (dbMocks.findManyDedup as Mock).mockResolvedValueOnce([existing]);
+
+    const result = await createSessionWithDedupFlag("user-1", {
+      ...baseInput(),
+      scopeKey: "settings",
+    });
+
+    expect(result.reused).toBe(true);
+    expect(result.session.id).toBe("existing-1");
+    expect(dbState.inserted).toHaveLength(0);
+  });
+
+  it("createSessionWithDedupFlag reports reused=false on new insert (F2)", async () => {
+    const result = await createSessionWithDedupFlag("user-1", {
+      ...baseInput(),
+      scopeKey: "settings",
+    });
+
+    expect(result.reused).toBe(false);
     expect(dbState.inserted).toHaveLength(1);
   });
 

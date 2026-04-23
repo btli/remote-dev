@@ -7,12 +7,13 @@
  * Settings becomes a regular session with `terminalType === "settings"`
  * and this component renders directly in the main pane.
  *
- * Dismiss semantics (F2): the legacy modal mapped Escape / X to "close
- * the dialog". As a terminal tab that would instead delete the session
- * out from under the user — surprising UX. We pass a no-op `onClose` so
- * the only way to dismiss Settings is via the sidebar's tab-close
- * affordance. SettingsView still wires its own Escape handler, but it
- * calls the no-op and thus becomes inert.
+ * Dismiss semantics (F8): the legacy modal mapped Escape / X to "close
+ * the dialog". Settings as a terminal tab keeps that expectation — the
+ * tab is a singleton (scope-key dedup), so closing it is cheap: the next
+ * open reopens it via the carrier project. We route the handler through
+ * `onSessionClose` so Escape / X delete the tab, matching modal UX. If
+ * the user wants the tab to stick around they can simply keep it open
+ * and switch away.
  *
  * Active-tab persistence (F4): SettingsView now accepts an
  * `onSectionChange` callback. Each section change is persisted via
@@ -71,16 +72,18 @@ function parseInitialSection(
  */
 function SettingsTabContent({
   session,
+  onSessionClose,
 }: TerminalTypeClientComponentProps) {
   const { updateSession } = useSessionContext();
   const initialSection = parseInitialSection(session.typeMetadata);
 
-  // F2: Intentional no-op. The legacy modal wired `onClose` to a Dialog
-  // dismiss; as a terminal tab that would delete the session. Dismissal
-  // now only happens via the tab-close affordance in the sidebar.
+  // F8: restore modal-like dismissal. Settings is a scope-key-deduped
+  // singleton, so closing it is cheap — the next open recreates it. Routing
+  // Escape/X through `onSessionClose` preserves the keyboard muscle memory
+  // users had with the Dialog-based UserSettingsModal.
   const handleClose = useCallback(() => {
-    // no-op
-  }, []);
+    onSessionClose?.(session.id);
+  }, [onSessionClose, session.id]);
 
   // F4: Persist the active section back onto the session so reopening
   // Settings restores the user's previous tab. Fire-and-forget is fine

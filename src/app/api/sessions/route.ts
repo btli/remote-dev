@@ -135,11 +135,19 @@ export const POST = withApiAuth(async (request, { userId }) => {
       typeMetadata: body.typeMetadata,
     };
 
-    const newSession = await SessionService.createSession(userId, input);
+    const { session: newSession, reused } =
+      await SessionService.createSessionWithDedupFlag(userId, input);
 
-    broadcastSidebarChanged(userId);
+    if (!reused) broadcastSidebarChanged(userId);
 
-    return NextResponse.json(newSession, { status: 201 });
+    // F2: surface the reused flag so the client can avoid dispatching a
+    // duplicate CREATE for scope-key dedup hits. Keep the TerminalSession
+    // shape at the top level for back-compat; attach `_reused` alongside
+    // the standard fields.
+    return NextResponse.json(
+      { ...newSession, _reused: reused },
+      { status: reused ? 200 : 201 }
+    );
   } catch (error) {
     log.error("Error creating session", { error: String(error) });
 

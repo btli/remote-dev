@@ -157,6 +157,16 @@ async function resolveFolderGitIdentityEnv(
 }
 
 /**
+ * Result of createSession. `reused` is true when scope-key dedup returned
+ * an existing row instead of creating a new one; the client uses this to
+ * avoid inserting a duplicate into local state.
+ */
+export interface CreateSessionResult {
+  session: TerminalSession;
+  reused: boolean;
+}
+
+/**
  * Create a new terminal session.
  *
  * SECURITY: Wraps tmux creation with proper cleanup on DB failure.
@@ -168,11 +178,29 @@ async function resolveFolderGitIdentityEnv(
  * active row wins. The returned row is left in whatever state it was in
  * (including `suspended`) — callers are responsible for calling
  * `resumeSession` if they need it to be active.
+ *
+ * Back-compat: this function still returns `TerminalSession` directly. New
+ * callers that need to distinguish "newly created" from "reused" should
+ * call {@link createSessionWithDedupFlag}.
  */
 export async function createSession(
   userId: string,
   input: CreateSessionInput
 ): Promise<TerminalSession> {
+  const { session } = await createSessionWithDedupFlag(userId, input);
+  return session;
+}
+
+/**
+ * Variant of {@link createSession} that also reports whether the returned
+ * row was reused via scope-key dedup. API routes use this to surface the
+ * reused signal to the client so it can dispatch UPDATE instead of CREATE
+ * (avoiding duplicate entries in local state).
+ */
+export async function createSessionWithDedupFlag(
+  userId: string,
+  input: CreateSessionInput
+): Promise<CreateSessionResult> {
   // Phase G0a: terminal_session.project_id is NOT NULL. Reject upfront with a
   // clear error instead of letting the DB insert fail with an opaque FK message.
   if (!input.projectId) {
@@ -208,12 +236,44 @@ export async function createSession(
       limit: 1,
     });
     if (existing.length > 0) {
+      const existingRow = existing[0];
       log.debug("Reusing existing scope-keyed session", {
-        sessionId: existing[0].id,
+        sessionId: existingRow.id,
         terminalType,
         scopeKey: input.scopeKey,
       });
-      return mapDbSessionToSession(existing[0]);
+
+      // F4: singleton tabs (Settings, Recordings, Profiles) are pinned to the
+      // project they were opened from but conceptually belong to the user. If
+      // the caller is on a different project now, re-anchor the row to the
+      // current project so the sidebar renders the tab under the active
+      // project instead of hiding it under the original carrier. We only
+      // rewrite when the caller passed a projectId that differs from the
+      // stored one — otherwise dedup is a pure read.
+      let finalRow = existingRow;
+      if (
+        input.projectId &&
+        existingRow.projectId &&
+        existingRow.projectId !== input.projectId
+      ) {
+        const [updated] = await db
+          .update(terminalSessions)
+          .set({
+            projectId: input.projectId,
+            lastActivityAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(terminalSessions.id, existingRow.id),
+              eq(terminalSessions.userId, userId)
+            )
+          )
+          .returning();
+        if (updated) finalRow = updated;
+      }
+
+      return { session: mapDbSessionToSession(finalRow), reused: true };
     }
   }
 
@@ -246,8 +306,32 @@ export async function createSession(
     agentProvider: input.agentProvider ?? "claude",
   };
 
+  // Pre-resolve folder/profile-level startup command so agent-style plugins
+  // can honor wrappers like `jclaude`. Preferences come from the folder tree
+  // first, then user settings. An explicit `input.startupCommand` (e.g. from
+  // the New Session wizard) takes precedence over preferences. The resolved
+  // value is threaded into `plugin.createSession` via `startupCommandOverride`.
+  const earlyPreferences = input.projectId
+    ? await getResolvedPreferences(userId, input.projectId)
+    : null;
+  const resolvedStartupCommand =
+    input.startupCommand !== undefined
+      ? input.startupCommand || undefined
+      : earlyPreferences?.startupCommand || undefined;
+
+  // Pass to the plugin via a mutated input copy so agent-style plugins see
+  // the override. Non-agent plugins ignore it. We deliberately mutate a
+  // shallow copy to avoid leaking the override back onto caller state.
+  const pluginInput: CreateSessionInput = {
+    ...input,
+    startupCommandOverride: resolvedStartupCommand,
+  };
+
   // SessionConfig drives tmux creation + shell command selection below.
-  const sessionConfig = await plugin.createSession(input, pluginSessionStub);
+  const sessionConfig = await plugin.createSession(
+    pluginInput,
+    pluginSessionStub
+  );
 
   // Merge plugin metadata with any caller-supplied metadata. Caller wins on
   // key conflicts so API clients can override plugin defaults if needed.
@@ -276,8 +360,10 @@ export async function createSession(
     ? existingSessions[0].tabOrder + 1
     : 0;
 
-  // Fetch resolved preferences
-  const preferences = await getResolvedPreferences(userId, input.projectId);
+  // Reuse early-resolved preferences when available, else fetch now (e.g.
+  // when the caller didn't go through the scope-key guarded path).
+  const preferences = earlyPreferences
+    ?? await getResolvedPreferences(userId, input.projectId);
 
   // Determine working path and branch name
   let workingPath = input.projectPath ?? preferences.defaultWorkingDirectory ?? process.env.HOME;
@@ -395,11 +481,8 @@ export async function createSession(
   }
 
   // Determine startup command (explicit override takes precedence)
-  // If startupCommand is explicitly provided (even as empty string), use it; otherwise use preferences
-  let startupCommand =
-    input.startupCommand !== undefined
-      ? input.startupCommand || undefined
-      : preferences.startupCommand || undefined;
+  // Mirrors the early resolution above so downstream code still has access.
+  let startupCommand = resolvedStartupCommand;
 
   // Handle agent-aware session: auto-launch the agent CLI
   // Use the folder's startupCommand as the base command if set (e.g., `jclaude`
@@ -658,8 +741,51 @@ export async function createSession(
       })
       .returning();
 
-    return mapDbSessionToSession(session);
+    return { session: mapDbSessionToSession(session), reused: false };
   } catch (error) {
+    // F7: race handling. When two concurrent createSession calls both pass
+    // the initial SELECT (no existing match) and reach INSERT, the unique
+    // index on (user_id, terminal_type, scope_key) makes one INSERT fail.
+    // Re-run the SELECT to retrieve the winner and return it as a reused
+    // row so the client sees the same result as a plain dedup hit.
+    const errorText = String(error);
+    const isUniqueViolation =
+      input.scopeKey &&
+      (errorText.includes("UNIQUE") ||
+        errorText.includes("SQLITE_CONSTRAINT") ||
+        errorText.includes("constraint failed"));
+
+    if (isUniqueViolation) {
+      const existingAfterRace = await db.query.terminalSessions.findMany({
+        where: and(
+          eq(terminalSessions.userId, userId),
+          eq(terminalSessions.terminalType, terminalType),
+          eq(terminalSessions.scopeKey, input.scopeKey!),
+          inArray(terminalSessions.status, ["active", "suspended"])
+        ),
+        orderBy: [desc(terminalSessions.lastActivityAt)],
+        limit: 1,
+      });
+      if (existingAfterRace.length > 0) {
+        log.info("Recovered from scope-key INSERT race", {
+          sessionId: existingAfterRace[0].id,
+          terminalType,
+          scopeKey: input.scopeKey,
+        });
+        // Clean up the tmux/worktree resources we allocated for the
+        // losing-side INSERT — the winner already owns its own.
+        await TmuxService.killSession(tmuxSessionName).catch(() => {
+          log.error("Failed to clean up orphaned tmux after race", {
+            tmuxSessionName,
+          });
+        });
+        return {
+          session: mapDbSessionToSession(existingAfterRace[0]),
+          reused: true,
+        };
+      }
+    }
+
     // SECURITY: Clean up orphaned resources if DB insert fails
     const cleanupPromises: Promise<void>[] = [
       // Clean up orphaned tmux session

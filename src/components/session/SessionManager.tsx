@@ -1337,12 +1337,27 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         });
         if (session) {
           setActiveSession(session.id);
+          // F5: seeding `typeMetadata.activeTab` only applies on CREATE. If
+          // the server reused an existing Settings tab (scope-key dedup),
+          // the requested section would be ignored. Patch the tab explicitly
+          // when the caller asked for a specific section and the stored
+          // value differs.
+          if (section) {
+            const currentTab = (
+              session.typeMetadata as { activeTab?: string } | null | undefined
+            )?.activeTab;
+            if (currentTab !== section) {
+              void updateSession(session.id, {
+                typeMetadataPatch: { activeTab: section },
+              });
+            }
+          }
         }
       } catch (error) {
         logSessionError("open settings session", error);
       }
     },
-    [activeProject.folderId, projectTree.projects, createSession, setActiveSession, logSessionError]
+    [activeProject.folderId, projectTree.projects, createSession, setActiveSession, updateSession, logSessionError]
   );
 
   // Listen for open-settings event from Header gear button and Sidebar

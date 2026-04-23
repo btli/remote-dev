@@ -412,16 +412,10 @@ function PRDetailView({
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [loadingComments, setLoadingComments] = useState(true);
 
-  // F6: Previously this view relied on `useRepositoryIssues`, which
-  //   - coupled the PRs plugin to GitHubIssuesContext (not guaranteed
-  //     to be mounted wherever the plugin renders), and
-  //   - fetched the full issues list just to read a single body, and
-  //   - showed "No description provided" until the issues cache loaded,
-  //     even when the PR body existed.
-  // GitHub treats PRs as issues for body/comments purposes so we fetch
-  // the issues list for this repository (state=all) and pluck the
-  // matching number. Scoped to this component so nothing external is
-  // required to be mounted.
+  // F6: GitHub treats PRs as issues for body/comments purposes. We hit the
+  // targeted single-issue endpoint directly (added for F6) instead of
+  // paging the issues list, which was capped at per_page=100 and silently
+  // dropped PR bodies past position 100 on busy repos.
   const [bodyState, setBodyState] = useState<{
     prNumber: number | null;
     body: string | null;
@@ -435,20 +429,19 @@ function PRDetailView({
     let cancelled = false;
 
     fetch(
-      `/api/github/repositories/${repositoryId}/issues?state=all&per_page=100`
+      `/api/github/repositories/${repositoryId}/issues/${pr.number}`
     )
       .then((res) =>
         res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))
       )
       .then(
         (data: {
-          issues?: Array<{ number: number; body?: string | null }>;
+          issue?: { number: number; body?: string | null };
         }) => {
           if (cancelled) return;
-          const match = data.issues?.find((i) => i.number === pr.number);
           setBodyState({
             prNumber: pr.number,
-            body: match?.body ?? null,
+            body: data.issue?.body ?? null,
             loading: false,
           });
         }

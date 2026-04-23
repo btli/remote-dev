@@ -374,9 +374,13 @@ export const terminalSessions = sqliteTable(
     index("terminal_session_project_idx").on(table.projectId),
     // Index for filtering by terminal type
     index("terminal_session_type_idx").on(table.userId, table.terminalType),
-    // Composite index for scope-key dedup lookups
-    // (userId, terminalType, scopeKey)
-    index("terminal_session_scope_idx").on(
+    // Composite UNIQUE index for scope-key dedup lookups — enforces no
+    // duplicate scope-keyed sessions per user/type at the DB level (F7).
+    // The index is partial in the migration (scope_key IS NOT NULL) so rows
+    // without a scope key remain unconstrained; drizzle-kit's SQLite DSL
+    // doesn't express partial indexes, so the raw SQL in
+    // `drizzle/0015_unique_scope_key.sql` is the source of truth.
+    uniqueIndex("terminal_session_scope_unique_idx").on(
       table.userId,
       table.terminalType,
       table.scopeKey

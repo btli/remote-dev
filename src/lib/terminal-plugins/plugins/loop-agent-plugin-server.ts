@@ -40,7 +40,21 @@ export function createLoopAgentServerPlugin(): TerminalTypeServerPlugin {
         flags.push("--output-format", "stream-json");
       }
 
-      const agentCommand = buildAgentCommand(provider, flags, false);
+      // Honor folder/profile-resolved wrapper (e.g. `jclaude`) when present.
+      // Precedence documented on TerminalTypeServerPlugin.createSession.
+      const override = input.startupCommandOverride;
+      let agentCommand: string;
+      if (override) {
+        if (override.includes(" ")) {
+          agentCommand = override;
+        } else {
+          const allFlags = [...provider.defaultFlags, ...flags];
+          const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
+          agentCommand = `${override}${flagsStr}`;
+        }
+      } else {
+        agentCommand = buildAgentCommand(provider, flags, false);
+      }
 
       const loopConfig: LoopConfig = {
         loopType: "conversational",
