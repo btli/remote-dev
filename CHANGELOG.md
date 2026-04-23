@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Modals as terminal types**: Five content-rich Dialog modals (Issues, PRs,
+  Recordings, Profiles, UserSettings) are now first-class **terminal type**
+  session tabs that render in the full workspace. Resolves the Radix
+  `ScrollArea` horizontal-overflow bug and gives each view proper room to
+  breathe (recordings xterm finally renders at workspace dimensions; profile
+  3-level nav has space for its sub-tabs).
+- **Terminal-type plugin system overhaul**: Split `TerminalTypePlugin` into
+  `TerminalTypeServerPlugin` (lifecycle config, no React) and
+  `TerminalTypeClientPlugin` (component + icon + deriveTitle). Two separate
+  registries; `session-service.ts` imports only the server registry so client
+  modules stay out of the server bundle. `SessionService.createSession` now
+  delegates `useTmux` / `shellCommand` / initial `typeMetadata` to the plugin.
+  `SessionManager` dispatches via `clientRegistry.get(type).component`;
+  unknown types render `UnsupportedSessionFallback` instead of silently
+  coercing to `shell`. `SessionRow` icons and tab titles come from
+  `plugin.icon` + `plugin.deriveTitle`.
+- **`scope_key` column + server-side dedup** on `terminal_session`. When a
+  caller passes a `scopeKey`, `createSession` reuses the existing non-closed
+  session matching `(userId, terminalType, scope_key)` and returns
+  `_reused: true` so the client upserts instead of duplicating. A partial
+  UNIQUE index prevents races. Singleton tabs (settings/recordings/profiles)
+  re-anchor their `projectId` on reuse so the tab follows the active project.
+- **`typeMetadataPatch`** field on `UpdateSessionInput` for persistent plugin
+  navigation state (selected issue, active tab, active profile). Shallow-merge
+  semantics with `null`-deletes-key on both client and server; client
+  reconciles optimistic state with the server response body.
+- Targeted `GET /api/github/repositories/:id/issues/:number` endpoint so the
+  PR detail view fetches a single issue's body instead of paging the full
+  repo issue list.
+
+### Removed
+
+- `IssuesModal`, `PRsModal`, `RecordingsModal`, `ProfilesModal`, and
+  `UserSettingsModal` are deleted (~2500 lines). Their content now lives in
+  the corresponding terminal-type plugins.
+- `activeView === "settings"` branch in `SessionManager` retired; Settings is
+  reached through a regular `terminalType: "settings"` session.
+
 - **Sidebar context menu updates**: Root-space context menu (right-click empty
   tree) and header `+` dropdown now offer **New Group** and **New Project**.
   Previously there was no UI entry point to create a top-level group. Root
