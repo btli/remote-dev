@@ -14,9 +14,18 @@ import type {
   TerminalTypeClientPlugin,
   TerminalTypeOption,
 } from "@/types/terminal-type-client";
-import { createLogger } from "@/lib/logger";
-
-const log = createLogger("PluginRegistry.Client");
+// Client-only: use console directly to avoid pulling the server-side logger
+// (which depends on better-sqlite3) into the browser bundle.
+const log = {
+  error: (msg: string, data?: Record<string, unknown>) =>
+    data ? console.error("[PluginRegistry.Client]", msg, data) : console.error("[PluginRegistry.Client]", msg),
+  warn: (msg: string, data?: Record<string, unknown>) =>
+    data ? console.warn("[PluginRegistry.Client]", msg, data) : console.warn("[PluginRegistry.Client]", msg),
+  info: (msg: string, data?: Record<string, unknown>) =>
+    data ? console.info("[PluginRegistry.Client]", msg, data) : console.info("[PluginRegistry.Client]", msg),
+  debug: (msg: string, data?: Record<string, unknown>) =>
+    data ? console.debug("[PluginRegistry.Client]", msg, data) : console.debug("[PluginRegistry.Client]", msg),
+};
 
 /** Registration options for client plugins */
 export interface ClientPluginRegistrationOptions {

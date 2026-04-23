@@ -18,9 +18,15 @@ import { RecordingsClientPlugin } from "./plugins/recordings-plugin-client";
 import { PRsClientPlugin } from "./plugins/prs-plugin-client";
 import { IssuesClientPlugin } from "./plugins/issues-plugin-client";
 import { ProfilesClientPlugin } from "./plugins/profiles-plugin-client";
-import { createLogger } from "@/lib/logger";
 
-const log = createLogger("PluginInit.Client");
+// Client-only: use console directly to avoid pulling the server-side logger
+// (which depends on better-sqlite3) into the browser bundle.
+const log = {
+  info: (msg: string, data?: Record<string, unknown>) =>
+    data ? console.info("[PluginInit.Client]", msg, data) : console.info("[PluginInit.Client]", msg),
+  debug: (msg: string, data?: Record<string, unknown>) =>
+    data ? console.debug("[PluginInit.Client]", msg, data) : console.debug("[PluginInit.Client]", msg),
+};
 
 let initialized = false;
 
