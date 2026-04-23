@@ -11,6 +11,7 @@ import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
 import { ResumeSessionModal } from "./ResumeSessionModal";
+import { shouldPatchSettingsTab } from "./settings-deep-link";
 import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { BeadsSidebar } from "@/components/beads/BeadsSidebar";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
@@ -1341,16 +1342,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           // the server reused an existing Settings tab (scope-key dedup),
           // the requested section would be ignored. Patch the tab explicitly
           // when the caller asked for a specific section and the stored
-          // value differs.
-          if (section) {
-            const currentTab = (
-              session.typeMetadata as { activeTab?: string } | null | undefined
-            )?.activeTab;
-            if (currentTab !== section) {
-              void updateSession(session.id, {
-                typeMetadataPatch: { activeTab: section },
-              });
-            }
+          // value differs. Decision logic lives in `shouldPatchSettingsTab`
+          // so it can be unit-tested independently.
+          if (shouldPatchSettingsTab(session, section)) {
+            void updateSession(session.id, {
+              typeMetadataPatch: { activeTab: section },
+            });
           }
         }
       } catch (error) {
