@@ -51,6 +51,21 @@ export interface TerminalTypeServerPlugin {
   readonly builtIn?: boolean;
 
   /**
+   * Whether sessions of this type use tmux. Checked BEFORE createSession()
+   * is called, so it cannot depend on runtime input. Must be static.
+   *
+   * Examples:
+   *   - shell/agent/loop → true
+   *   - file/browser/issues/prs/settings/recordings/profiles → false
+   *
+   * Plugins that return a `SessionConfig` from `createSession()` should set
+   * `SessionConfig.useTmux` to the same value as this flag — the per-config
+   * field is retained for back-compat with callers that read from the
+   * returned config, but the plugin-level flag is authoritative.
+   */
+  readonly useTmux: boolean;
+
+  /**
    * Called when creating a session of this type.
    * Returns configuration for how the session should be set up.
    *

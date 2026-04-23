@@ -201,14 +201,20 @@ function makeFakePlugin(
   type: string,
   overrides: Partial<ReturnType<TerminalTypeServerPlugin["createSession"]>> = {}
 ): TerminalTypeServerPlugin {
+  // Plugin-level `useTmux` is authoritative and must match the config's
+  // value (which is retained for back-compat). When callers override the
+  // config flag, mirror it onto the plugin so both paths stay in sync.
+  const configUseTmux =
+    (overrides as { useTmux?: boolean }).useTmux ?? false;
   return {
     type,
     priority: 0,
+    useTmux: configUseTmux,
     createSession: () => ({
       shellCommand: null,
       shellArgs: [],
       environment: {},
-      useTmux: false,
+      useTmux: configUseTmux,
       metadata: { foo: "bar" },
       ...overrides,
     }),
@@ -311,6 +317,32 @@ describe("SessionService.createSession — plugin dispatch", () => {
     });
   });
 
+  it("skips tmux when plugin.useTmux=false even though createSession is invoked", async () => {
+    // Regression coverage for the hoisted declarative flag: the plugin-level
+    // `useTmux` is the authoritative signal, checked before createSession's
+    // result is inspected.
+    const createSessionFn = vi.fn(() => ({
+      shellCommand: null,
+      shellArgs: [],
+      environment: {},
+      useTmux: false,
+      metadata: {},
+    }));
+    const plugin: TerminalTypeServerPlugin = {
+      type: "fake",
+      priority: 0,
+      useTmux: false,
+      createSession: createSessionFn,
+    };
+    TerminalTypeServerRegistry.register(plugin);
+    TerminalTypeServerRegistry.setDefaultType("fake");
+
+    await createSession("user-1", baseInput());
+
+    expect(createSessionFn).toHaveBeenCalledTimes(1);
+    expect(tmuxCreate).not.toHaveBeenCalled();
+  });
+
   it("creates a tmux session when the plugin's config useTmux=true", async () => {
     const plugin = makeFakePlugin("fake", {
       useTmux: true,
@@ -346,6 +378,7 @@ describe("SessionService.createSession — plugin dispatch", () => {
     const plugin: TerminalTypeServerPlugin = {
       type: "fake",
       priority: 0,
+      useTmux: true,
       createSession: (pluginInput) => {
         seenOverride = pluginInput.startupCommandOverride;
         return {

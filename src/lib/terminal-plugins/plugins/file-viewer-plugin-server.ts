@@ -48,6 +48,7 @@ export function createFileViewerServerPlugin(
     type: "file",
     priority: 80,
     builtIn: true,
+    useTmux: false,
 
     createSession(input: CreateSessionInput): SessionConfig {
       const typedInput = input as CreateTypedSessionInput;

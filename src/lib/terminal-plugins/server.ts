@@ -212,6 +212,12 @@ class TerminalTypeServerRegistryImpl {
         "INVALID_PLUGIN"
       );
     }
+    if (typeof plugin.useTmux !== "boolean") {
+      throw new ServerPluginRegistryError(
+        `Server plugin "${plugin.type}" must declare a boolean useTmux flag`,
+        "INVALID_PLUGIN"
+      );
+    }
     if (plugin.priority !== undefined && typeof plugin.priority !== "number") {
       throw new ServerPluginRegistryError(
         "Server plugin priority must be a number if provided",

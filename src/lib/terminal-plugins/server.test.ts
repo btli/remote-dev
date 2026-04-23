@@ -20,6 +20,7 @@ function makePlugin(
   return {
     type: "test-type",
     priority: 0,
+    useTmux: false,
     createSession: () => ({
       shellCommand: null,
       shellArgs: [],
@@ -33,6 +34,40 @@ function makePlugin(
 describe("TerminalTypeServerRegistry", () => {
   beforeEach(() => {
     TerminalTypeServerRegistry.clear();
+  });
+
+  describe("useTmux flag", () => {
+    it("exposes a plugin's declarative useTmux=true flag via get()", () => {
+      const plugin = makePlugin({ type: "shell-like", useTmux: true });
+      TerminalTypeServerRegistry.register(plugin);
+      expect(TerminalTypeServerRegistry.get("shell-like")?.useTmux).toBe(true);
+    });
+
+    it("exposes a plugin's declarative useTmux=false flag via get()", () => {
+      const plugin = makePlugin({ type: "no-tmux", useTmux: false });
+      TerminalTypeServerRegistry.register(plugin);
+      expect(TerminalTypeServerRegistry.get("no-tmux")?.useTmux).toBe(false);
+    });
+
+    it("rejects plugins missing the useTmux flag at register time", () => {
+      const bad = {
+        type: "missing-flag",
+        priority: 0,
+        // useTmux intentionally missing
+        createSession: () => ({
+          shellCommand: null,
+          shellArgs: [],
+          environment: {},
+          useTmux: false,
+        }),
+      } as unknown as TerminalTypeServerPlugin;
+      expect(() => TerminalTypeServerRegistry.register(bad)).toThrow(
+        ServerPluginRegistryError
+      );
+      expect(() => TerminalTypeServerRegistry.register(bad)).toThrow(
+        /must declare a boolean useTmux flag/
+      );
+    });
   });
 
   describe("register + get", () => {

@@ -31,6 +31,7 @@ export function createShellServerPlugin(
     type: "shell",
     priority: 100,
     builtIn: true,
+    useTmux: true,
 
     createSession(input: CreateSessionInput): SessionConfig {
       return {
