@@ -9,7 +9,17 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "tests/**/*.test.ts", "tests/**/*.test.tsx"],
-    exclude: ["node_modules", "dist", ".next"],
+    exclude: [
+      "node_modules",
+      "dist",
+      ".next",
+      // Stale tests inside claude-agent worktrees are duplicates of real tests
+      // already covered by src/** and tests/** — exclude so vitest doesn't
+      // double-count them (and doesn't break when a worktree is unlocked
+      // mid-run).
+      ".claude/worktrees/**",
+      ".worktrees/**",
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
