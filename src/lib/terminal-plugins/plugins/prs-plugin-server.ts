@@ -45,6 +45,7 @@ export const PRsServerPlugin: TerminalTypeServerPlugin = {
   type: "prs",
   priority: 70,
   builtIn: true,
+  useTmux: false,
 
   createSession(input: CreateSessionInput): SessionConfig {
     const md = readMetadata(input);

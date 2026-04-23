@@ -49,6 +49,7 @@ export const ProfilesServerPlugin: TerminalTypeServerPlugin = {
   type: "profiles",
   priority: 80,
   builtIn: true,
+  useTmux: false,
 
   createSession(input: CreateSessionInput): SessionConfig {
     const incoming = (input.typeMetadata ?? {}) as ProfilesSessionMetadata;

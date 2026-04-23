@@ -49,7 +49,15 @@ export interface SessionConfig {
   environment: Record<string, string>;
   /** Working directory override */
   cwd?: string;
-  /** Whether to create a tmux session (false for file viewer) */
+  /**
+   * Whether to create a tmux session (false for file viewer).
+   *
+   * REDUNDANT with `TerminalTypeServerPlugin.useTmux` — the authoritative
+   * decision is made from the plugin-level flag before `createSession()` is
+   * called. Plugins should still set this field to the same value as
+   * `plugin.useTmux` for back-compat with callers that read from the
+   * returned config. Consider deprecating in a follow-up.
+   */
   useTmux: boolean;
   /** Additional metadata stored with session */
   metadata?: AgentSessionMetadata | FileViewerMetadata | BrowserSessionMetadata | import("./loop-agent").LoopAgentMetadata | Record<string, unknown>;

@@ -44,6 +44,7 @@ export const IssuesServerPlugin: TerminalTypeServerPlugin = {
   type: "issues",
   priority: 70,
   builtIn: true,
+  useTmux: false,
 
   createSession(input: CreateSessionInput): SessionConfig {
     const md = (input.typeMetadata ?? {}) as Partial<IssuesSessionMetadata>;

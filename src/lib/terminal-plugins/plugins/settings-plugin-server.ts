@@ -41,6 +41,7 @@ export const SettingsServerPlugin: TerminalTypeServerPlugin = {
   type: "settings",
   priority: 60,
   builtIn: true,
+  useTmux: false,
 
   createSession(input: CreateSessionInput): SessionConfig {
     const md = (input.typeMetadata ?? {}) as Partial<SettingsSessionMetadata>;

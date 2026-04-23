@@ -39,41 +39,14 @@ initializeServerPlugins();
 export { SessionServiceError };
 
 /**
- * Decide if a session's terminal type uses tmux. Consults the server
- * plugin registry and falls back to `true` for unknown types so legacy
- * shell sessions continue to work.
- *
- * The plugin's `createSession` is a pure function for the built-ins, so
- * calling it with a synthetic input here is cheap. Plugins that do I/O
- * in `createSession` can still be introspected safely because this path
- * only runs for already-created sessions (which means the plugin's I/O
- * already happened at creation time).
+ * Decide if a session's terminal type uses tmux. Reads the declarative
+ * `useTmux` flag from the server plugin registry. Falls back to `true`
+ * for unknown types so legacy/unregistered shell sessions continue to
+ * work (safer default than skipping killSession for a real PTY-backed
+ * session).
  */
 function sessionUsesTmux(session: TerminalSession): boolean {
-  const plugin = TerminalTypeServerRegistry.get(session.terminalType);
-  if (!plugin) return true;
-  try {
-    const probeInput: CreateSessionInput = {
-      name: session.name,
-      projectId: session.projectId ?? "",
-      projectPath: session.projectPath ?? undefined,
-      terminalType: session.terminalType,
-      agentProvider: session.agentProvider ?? undefined,
-      profileId: session.profileId ?? undefined,
-    };
-    // createSession may be async for some plugins, but all built-ins are
-    // sync and only read `input`. If we ever get an async return we fall
-    // back to "uses tmux" conservatively.
-    const result = plugin.createSession(probeInput, session);
-    if (result && typeof (result as Promise<unknown>).then === "function") {
-      return true;
-    }
-    return (result as { useTmux: boolean }).useTmux;
-  } catch {
-    // If the plugin throws for any reason, assume tmux — safer default
-    // than skipping killSession for a real PTY-backed session.
-    return true;
-  }
+  return TerminalTypeServerRegistry.get(session.terminalType)?.useTmux ?? true;
 }
 
 /**
@@ -617,9 +590,11 @@ export async function createSessionWithDedupFlag(
     ? await resolveProxyEnv(effectiveAgentProvider, userId)
     : {};
 
-  // The plugin decides whether tmux is needed. File/browser sessions
-  // opt out by returning `useTmux: false` — no shell command, no PTY.
-  if (sessionConfig.useTmux) {
+  // The plugin decides whether tmux is needed via its declarative
+  // `useTmux` flag. File/browser sessions opt out — no shell command,
+  // no PTY. `SessionConfig.useTmux` is kept in lock-step for callers
+  // that still read from the returned config.
+  if (plugin.useTmux) {
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
     const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.projectId);
 

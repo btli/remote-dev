@@ -24,6 +24,7 @@ export function createLoopAgentServerPlugin(): TerminalTypeServerPlugin {
     type: "loop",
     priority: 85,
     builtIn: true,
+    useTmux: true,
 
     createSession(input: CreateSessionInput): SessionConfig {
       const providerId = input.agentProvider ?? "claude";

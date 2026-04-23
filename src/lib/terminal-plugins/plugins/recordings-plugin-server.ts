@@ -43,6 +43,7 @@ export function createRecordingsServerPlugin(
     type: "recordings",
     priority: 70,
     builtIn: true,
+    useTmux: false,
 
     createSession(input: CreateSessionInput): SessionConfig {
       // Read an optional initial selection from the input metadata. Callers

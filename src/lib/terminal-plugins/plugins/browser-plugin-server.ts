@@ -22,6 +22,7 @@ export const BrowserServerPlugin: TerminalTypeServerPlugin = {
   type: "browser",
   priority: 80,
   builtIn: true,
+  useTmux: false,
 
   createSession(): SessionConfig {
     const metadata: BrowserSessionMetadata = {
