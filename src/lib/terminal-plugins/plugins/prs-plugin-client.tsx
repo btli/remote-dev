@@ -59,6 +59,7 @@ import {
   MARKDOWN_COMPONENTS,
 } from "@/components/github/markdown-components";
 import type { PRsSessionMetadata } from "./prs-plugin-server";
+import { usePRBody } from "./use-pr-body";
 
 type StateFilter = "all" | "open" | "merged" | "closed";
 
@@ -415,47 +416,8 @@ function PRDetailView({
   // F6: GitHub treats PRs as issues for body/comments purposes. We hit the
   // targeted single-issue endpoint directly (added for F6) instead of
   // paging the issues list, which was capped at per_page=100 and silently
-  // dropped PR bodies past position 100 on busy repos.
-  const [bodyState, setBodyState] = useState<{
-    prNumber: number | null;
-    body: string | null;
-    loading: boolean;
-  }>({ prNumber: null, body: null, loading: true });
-  const body = bodyState.prNumber === pr.number ? bodyState.body : null;
-  const loadingBody =
-    bodyState.prNumber !== pr.number || bodyState.loading;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch(
-      `/api/github/repositories/${repositoryId}/issues/${pr.number}`
-    )
-      .then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))
-      )
-      .then(
-        (data: {
-          issue?: { number: number; body?: string | null };
-        }) => {
-          if (cancelled) return;
-          setBodyState({
-            prNumber: pr.number,
-            body: data.issue?.body ?? null,
-            loading: false,
-          });
-        }
-      )
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("Failed to fetch PR body:", err);
-        setBodyState({ prNumber: pr.number, body: null, loading: false });
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [repositoryId, pr.number]);
+  // dropped PR bodies past position 100 on busy repos. See `use-pr-body.ts`.
+  const { body, loading: loadingBody } = usePRBody(repositoryId, pr.number);
 
   useEffect(() => {
     let cancelled = false;

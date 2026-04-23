@@ -185,4 +185,80 @@ describe("SessionService.updateSession — typeMetadataPatch semantics (F3)", ()
     expect(stored).toEqual({ keeper: "x" });
     expect("ghost" in stored).toBe(false);
   });
+
+  it("drops a single key from existing metadata: {a:1,b:2} + {b:null} → {a:1}", async () => {
+    hoisted.existingRow = makeRow({
+      typeMetadata: JSON.stringify({ a: 1, b: 2 }),
+    });
+    hoisted.updateReturning.mockResolvedValueOnce([makeRow()]);
+
+    await updateSession("s1", "user-1", {
+      typeMetadataPatch: { b: null },
+    });
+
+    const updateValues = hoisted.updateSetCapture.mock.calls[0][0] as {
+      typeMetadata?: string;
+    };
+    const stored = JSON.parse(updateValues.typeMetadata!);
+    expect(stored).toEqual({ a: 1 });
+    expect("b" in stored).toBe(false);
+  });
+
+  it("mixed values+nulls: {a:1,b:2} + {a:3,b:null,c:4} → {a:3,c:4}", async () => {
+    hoisted.existingRow = makeRow({
+      typeMetadata: JSON.stringify({ a: 1, b: 2 }),
+    });
+    hoisted.updateReturning.mockResolvedValueOnce([makeRow()]);
+
+    await updateSession("s1", "user-1", {
+      typeMetadataPatch: { a: 3, b: null, c: 4 },
+    });
+
+    const updateValues = hoisted.updateSetCapture.mock.calls[0][0] as {
+      typeMetadata?: string;
+    };
+    const stored = JSON.parse(updateValues.typeMetadata!);
+    expect(stored).toEqual({ a: 3, c: 4 });
+    expect("b" in stored).toBe(false);
+  });
+
+  it("two consecutive patches merge correctly (stateful round-trip)", async () => {
+    // Start: {a:1,b:2}
+    // After patch 1 ({b:null, c:3}): {a:1, c:3}
+    // After patch 2 ({a:null, d:4}): {c:3, d:4}
+    hoisted.existingRow = makeRow({
+      typeMetadata: JSON.stringify({ a: 1, b: 2 }),
+    });
+    hoisted.updateReturning.mockResolvedValueOnce([
+      makeRow({ typeMetadata: JSON.stringify({ a: 1, c: 3 }) }),
+    ]);
+
+    await updateSession("s1", "user-1", {
+      typeMetadataPatch: { b: null, c: 3 },
+    });
+
+    const firstStored = JSON.parse(
+      (hoisted.updateSetCapture.mock.calls[0][0] as { typeMetadata?: string })
+        .typeMetadata!
+    );
+    expect(firstStored).toEqual({ a: 1, c: 3 });
+
+    // Simulate the DB now reflecting the first patch; apply the second.
+    hoisted.existingRow = makeRow({
+      typeMetadata: JSON.stringify({ a: 1, c: 3 }),
+    });
+    hoisted.updateReturning.mockResolvedValueOnce([makeRow()]);
+
+    await updateSession("s1", "user-1", {
+      typeMetadataPatch: { a: null, d: 4 },
+    });
+
+    const secondStored = JSON.parse(
+      (hoisted.updateSetCapture.mock.calls[1][0] as { typeMetadata?: string })
+        .typeMetadata!
+    );
+    expect(secondStored).toEqual({ c: 3, d: 4 });
+    expect("a" in secondStored).toBe(false);
+    expect("b" in secondStored).toBe(false);
+  });
 });

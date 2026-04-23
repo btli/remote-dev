@@ -511,4 +511,88 @@ describe("SessionService.createSession — scope-key dedup", () => {
     // Closed should NOT be in the allowed status list
     expect(flat).not.toContain("closed");
   });
+
+  it("reuses a suspended row unchanged — does NOT auto-resume via tmux (F4)", async () => {
+    // When two agent tabs share a scope-key and one of them has been
+    // suspended, dedup must return that row as-is. The service should not
+    // attempt to re-create the tmux session or mutate status on reuse;
+    // callers explicitly call resumeSession when they want to wake it up.
+    const suspended = makeDbRow({
+      id: "existing-suspended",
+      scopeKey: "agent-scope",
+      terminalType: "fake",
+      status: "suspended",
+    });
+    (dbMocks.findManyDedup as Mock).mockResolvedValueOnce([suspended]);
+
+    const result = await createSession("user-1", {
+      ...baseInput(),
+      scopeKey: "agent-scope",
+    });
+
+    expect(result.id).toBe("existing-suspended");
+    expect(result.status).toBe("suspended");
+    expect(dbState.inserted).toHaveLength(0);
+    expect(tmuxCreate).not.toHaveBeenCalled();
+  });
+
+  it("recovers from a UNIQUE INSERT race — returns the winning row as reused (F7)", async () => {
+    // Simulate two concurrent createSession calls with the same scope key:
+    //   1. Both pass the initial dedup SELECT (no existing match).
+    //   2. Both attempt to INSERT.
+    //   3. The UNIQUE partial index on (user_id, terminal_type, scope_key)
+    //      causes the loser's INSERT to fail with SQLITE_CONSTRAINT.
+    //   4. The losing path re-runs the SELECT and returns the winner.
+    //
+    // This test drives the loser's code path: initial SELECT empty, INSERT
+    // throws SQLITE_CONSTRAINT, follow-up SELECT returns the winning row.
+    const winningRow = makeDbRow({
+      id: "race-winner",
+      scopeKey: "race-key",
+      terminalType: "fake",
+      status: "active",
+    });
+
+    // First findManyDedup call (initial lookup): empty → triggers INSERT.
+    // Second findManyDedup call (post-conflict lookup): returns the winner.
+    (dbMocks.findManyDedup as Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([winningRow]);
+
+    // Make the INSERT throw a SQLite unique-constraint error on the first call.
+    dbMocks.insertReturning.mockImplementationOnce(async () => {
+      throw new Error(
+        "SQLITE_CONSTRAINT: UNIQUE constraint failed: terminal_session.user_id, terminal_session.terminal_type, terminal_session.scope_key"
+      );
+    });
+
+    const result = await createSessionWithDedupFlag("user-1", {
+      ...baseInput(),
+      scopeKey: "race-key",
+    });
+
+    // The loser sees the same row as the winner — only ONE row exists in the DB.
+    expect(result.reused).toBe(true);
+    expect(result.session.id).toBe("race-winner");
+    // The INSERT was attempted exactly once (and failed).
+    expect(dbMocks.insertReturning).toHaveBeenCalledTimes(1);
+    // Two dedup queries total: before INSERT (empty) and after conflict (winner).
+    expect(dbMocks.findManyDedup).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT attempt race-recovery SELECT when error is not a constraint violation", async () => {
+    // A non-constraint error (e.g. connection lost) should propagate — we
+    // only recover when the error text indicates a unique-index collision.
+    (dbMocks.findManyDedup as Mock).mockResolvedValueOnce([]);
+    dbMocks.insertReturning.mockImplementationOnce(async () => {
+      throw new Error("ECONNRESET: database connection closed");
+    });
+
+    await expect(
+      createSession("user-1", { ...baseInput(), scopeKey: "race-key" })
+    ).rejects.toThrow();
+
+    // Only the initial dedup SELECT — no post-conflict retry.
+    expect(dbMocks.findManyDedup).toHaveBeenCalledTimes(1);
+  });
 });
