@@ -19,37 +19,6 @@ import type {
 } from "@/types/session";
 import { getProviderConfig, buildAgentCommand } from "../agent-utils";
 
-/**
- * Resolve the agent command, honoring a caller-supplied startup command
- * wrapper when present. Matches the service-level `buildAgentCommand`
- * semantics in SessionService: a single-word override (e.g. `jclaude`) is
- * swapped in for the provider's default command name and combined with the
- * provider's default flags + caller-supplied flags. Overrides containing
- * spaces are treated as complete commands and used as-is to avoid
- * double-appending flags.
- */
-function resolveAgentCommand(
-  provider: ReturnType<typeof getProviderConfig>,
-  flags: string[] | undefined,
-  allowDangerous: boolean | undefined,
-  override: string | undefined
-): string {
-  if (!provider) throw new Error("Agent provider is undefined");
-  if (override) {
-    if (override.includes(" ")) return override;
-    const baseCommand = override;
-    const safeFlags = allowDangerous
-      ? flags ?? []
-      : (flags ?? []).filter(
-          (f) => !provider.dangerousFlags?.includes(f)
-        );
-    const allFlags = [...provider.defaultFlags, ...safeFlags];
-    const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
-    return `${baseCommand}${flagsStr}`;
-  }
-  return buildAgentCommand(provider, flags, allowDangerous);
-}
-
 /** Agent plugin configuration */
 export interface AgentPluginServerConfig {
   /** Default agent provider */
@@ -94,7 +63,7 @@ export function createAgentServerPlugin(
 
       // Honor folder/profile-resolved wrapper (e.g. `jclaude`) when present.
       // Precedence documented on TerminalTypeServerPlugin.createSession.
-      const agentCommand = resolveAgentCommand(
+      const agentCommand = buildAgentCommand(
         provider,
         input.agentFlags,
         config.allowDangerousFlags,
