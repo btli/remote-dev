@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Sidebar Global section for singleton terminal tabs**: Sessions with
+  `terminalType` in `GLOBAL_TERMINAL_TYPES` (`settings`, `recordings`,
+  `profiles`) now render in a dedicated, collapsible "Global" section at the
+  top of the project-tree sidebar regardless of the session's `project_id`.
+  Previously these singleton tabs were anchored to whichever project was
+  active when they were created, and a follow-up fix rewrote the stored
+  `project_id` on scope-key dedup to keep the tab under the caller's current
+  project. That re-anchor is now removed — the carrier `project_id` is an
+  implementation detail of the NOT NULL schema constraint and is ignored by
+  the tree renderer for these types. Closes remote-dev-cvtz.3.
+
 ### Added
 
 - **Modals as terminal types**: Five content-rich Dialog modals (Issues, PRs,

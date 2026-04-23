@@ -243,37 +243,13 @@ export async function createSessionWithDedupFlag(
         scopeKey: input.scopeKey,
       });
 
-      // F4: singleton tabs (Settings, Recordings, Profiles) are pinned to the
-      // project they were opened from but conceptually belong to the user. If
-      // the caller is on a different project now, re-anchor the row to the
-      // current project so the sidebar renders the tab under the active
-      // project instead of hiding it under the original carrier. We only
-      // rewrite when the caller passed a projectId that differs from the
-      // stored one — otherwise dedup is a pure read.
-      let finalRow = existingRow;
-      if (
-        input.projectId &&
-        existingRow.projectId &&
-        existingRow.projectId !== input.projectId
-      ) {
-        const [updated] = await db
-          .update(terminalSessions)
-          .set({
-            projectId: input.projectId,
-            lastActivityAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(terminalSessions.id, existingRow.id),
-              eq(terminalSessions.userId, userId)
-            )
-          )
-          .returning();
-        if (updated) finalRow = updated;
-      }
-
-      return { session: mapDbSessionToSession(finalRow), reused: true };
+      // Singleton-scope sessions (GLOBAL_TERMINAL_TYPES — settings /
+      // recordings / profiles) render in the sidebar's dedicated "Global"
+      // section regardless of project_id, so we no longer rewrite the stored
+      // project_id on dedup. The carrier project is an implementation detail
+      // of the NOT NULL schema constraint and is ignored by the tree renderer
+      // for these types. See remote-dev-cvtz.3 (Option C).
+      return { session: mapDbSessionToSession(existingRow), reused: true };
     }
   }
 
