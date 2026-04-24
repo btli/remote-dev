@@ -5,7 +5,6 @@ import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
 import { GroupPreferencesModal } from "@/components/preferences/GroupPreferencesModal";
-import { ProjectPreferencesModal } from "@/components/preferences/ProjectPreferencesModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
@@ -193,15 +192,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, []);
 
 
-  const [folderSettingsModal, setFolderSettingsModal] = useState<{
-    folderId: string;
-    folderName: string;
-    initialTab?: "general" | "appearance" | "repository" | "environment";
-  } | null>(null);
-  // Phase 4: Group/Project preferences modal triggered from ProjectTreeSidebar gear.
-  const [nodeSettingsModal, setNodeSettingsModal] = useState<{
+  // Group-only preferences modal; project preferences now route through the
+  // `project-prefs` terminal-type plugin (see `openProjectPrefsSession`).
+  const [groupSettingsModal, setGroupSettingsModal] = useState<{
     id: string;
-    type: "group" | "project";
     name: string;
   } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
@@ -746,18 +740,60 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [projectTree]
   );
 
-  const handleFolderSettings = useCallback(
-    (folderId: string, folderName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => {
-      setFolderSettingsModal({ folderId, folderName, initialTab });
+  // Open (or reuse) a per-project preferences session. Project preferences
+  // used to live in a dialog (`ProjectPreferencesModal`); they are now a
+  // regular terminal-type tab keyed by `scopeKey: projectId` so repeat
+  // opens for the same project dedupe to one tab.
+  const openProjectPrefsSession = useCallback(
+    async (
+      projectId: string,
+      projectName: string,
+      initialTab?: "general" | "appearance" | "repository" | "environment"
+    ) => {
+      try {
+        const typeMetadata: Record<string, unknown> = {
+          projectId,
+          projectName,
+        };
+        if (initialTab) typeMetadata.initialTab = initialTab;
+        const session = await createSession({
+          name: `Prefs — ${projectName}`,
+          projectId,
+          terminalType: "project-prefs",
+          scopeKey: projectId,
+          typeMetadata,
+        });
+        if (session) {
+          setActiveSession(session.id);
+          setActiveView("terminal");
+        }
+      } catch (error) {
+        logSessionError("open project preferences session", error);
+      }
     },
-    []
+    [createSession, setActiveSession, setActiveView, logSessionError]
+  );
+
+  const handleFolderSettings = useCallback(
+    (
+      folderId: string,
+      folderName: string,
+      initialTab?: "general" | "appearance" | "repository" | "environment"
+    ) => {
+      void openProjectPrefsSession(folderId, folderName, initialTab);
+    },
+    [openProjectPrefsSession]
   );
 
   const handleNodeSettings = useCallback(
     (node: { id: string; type: "group" | "project"; name: string }) => {
-      setNodeSettingsModal(node);
+      if (node.type === "project") {
+        void openProjectPrefsSession(node.id, node.name);
+        return;
+      }
+      setGroupSettingsModal({ id: node.id, name: node.name });
     },
-    []
+    [openProjectPrefsSession]
   );
 
   // Get repo stats for a folder (for sidebar badges)
@@ -1278,16 +1314,19 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     foldersRef.current = folders;
   }, [folders]);
 
+  // Keep a ref to the latest opener so the event listener can stay stable
+  // (empty deps) while still calling the current closure.
+  const openProjectPrefsRef = useRef(openProjectPrefsSession);
+  useEffect(() => {
+    openProjectPrefsRef.current = openProjectPrefsSession;
+  }, [openProjectPrefsSession]);
+
   useEffect(() => {
     const handleOpenFolderPrefs = (e: CustomEvent<{ folderId: string }>) => {
       const { folderId } = e.detail;
       const folder = foldersRef.current.find((f) => f.id === folderId);
       if (folder) {
-        setFolderSettingsModal({
-          folderId,
-          folderName: folder.name,
-          initialTab: "environment",
-        });
+        void openProjectPrefsRef.current(folderId, folder.name, "environment");
       }
     };
 
@@ -1924,32 +1963,15 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isGitHubConnected={isGitHubConnected}
       />
 
-      {/* Legacy folder preferences modal → now routes to ProjectPreferencesModal
-          since Phase 6 consolidated folder prefs onto project nodes. */}
-      {folderSettingsModal && (
-        <ProjectPreferencesModal
-          open
-          onClose={() => setFolderSettingsModal(null)}
-          projectId={folderSettingsModal.folderId}
-          projectName={folderSettingsModal.folderName}
-        />
-      )}
-
-      {/* Phase 4: Group/Project preferences modal (triggered from ProjectTree gear). */}
-      {nodeSettingsModal?.type === "group" && (
+      {/* Group preferences modal (triggered from ProjectTree gear for groups).
+          Project preferences are served by the `project-prefs` terminal-type
+          plugin — see `openProjectPrefsSession`. */}
+      {groupSettingsModal && (
         <GroupPreferencesModal
           open
-          onClose={() => setNodeSettingsModal(null)}
-          groupId={nodeSettingsModal.id}
-          groupName={nodeSettingsModal.name}
-        />
-      )}
-      {nodeSettingsModal?.type === "project" && (
-        <ProjectPreferencesModal
-          open
-          onClose={() => setNodeSettingsModal(null)}
-          projectId={nodeSettingsModal.id}
-          projectName={nodeSettingsModal.name}
+          onClose={() => setGroupSettingsModal(null)}
+          groupId={groupSettingsModal.id}
+          groupName={groupSettingsModal.name}
         />
       )}
 
