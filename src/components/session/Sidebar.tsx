@@ -25,7 +25,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
@@ -89,6 +88,12 @@ interface SidebarProps {
   onProjectResumeClaudeSession: (projectId: string) => void;
   onProjectAdvancedSession: (projectId: string) => void;
   onProjectNewWorktree: (projectId: string) => void;
+  /**
+   * Open the per-project Secrets configuration as a terminal-type tab.
+   * Supplies both the project id (used as the session's scope key) and
+   * the current project name for the tab title.
+   */
+  onProjectOpenSecrets: (projectId: string, projectName: string) => void;
   trashCount: number;
   onTrashOpen: () => void;
   onSessionSchedule?: (sessionId: string) => void;
@@ -137,6 +142,7 @@ export function Sidebar({
   onProjectResumeClaudeSession,
   onProjectAdvancedSession,
   onProjectNewWorktree,
+  onProjectOpenSecrets,
   trashCount,
   onTrashOpen,
   onSessionSchedule,
@@ -188,11 +194,6 @@ export function Sidebar({
     }
   }, [collapsed, onCollapsedChange]);
 
-  // Secrets modal state. `secretsModalProjectId` holds the target project's
-  // id (SecretsConfigModal's internal prop is still named `initialFolderId`
-  // for historical reasons; a rename is deferred to Stage 2).
-  const [secretsModalOpen, setSecretsModalOpen] = useState(false);
-  const [secretsModalProjectId, setSecretsModalProjectId] = useState<string | null>(null);
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
   const { getNodePreferences } = usePreferencesContext();
@@ -486,10 +487,7 @@ export function Sidebar({
                   onProjectResumeClaudeSession={onProjectResumeClaudeSession}
                   onProjectAdvancedSession={onProjectAdvancedSession}
                   onProjectNewWorktree={onProjectNewWorktree}
-                  onProjectOpenSecrets={(projectId) => {
-                    setSecretsModalProjectId(projectId);
-                    setSecretsModalOpen(true);
-                  }}
+                  onProjectOpenSecrets={onProjectOpenSecrets}
                   onProjectOpenRepository={(fid, name) =>
                     onProjectSettings(fid, name, "repository")
                   }
@@ -599,18 +597,6 @@ export function Sidebar({
       )}
     </div>
     </TooltipProvider>
-
-      {/* Secrets configuration modal. `initialFolderId` is a legacy prop
-          name on the modal itself — the value we pass is the project's id,
-          which is what the backend secrets tables key on. */}
-      <SecretsConfigModal
-        open={secretsModalOpen}
-        onClose={() => {
-          setSecretsModalOpen(false);
-          setSecretsModalProjectId(null);
-        }}
-        initialFolderId={secretsModalProjectId}
-      />
     </>
   );
 }

@@ -52,7 +52,7 @@ interface Props {
   onProjectResumeClaudeSession: (projectId: string) => void;
   onProjectAdvancedSession: (projectId: string) => void;
   onProjectNewWorktree: (projectId: string) => void;
-  onProjectOpenSecrets: (projectId: string) => void;
+  onProjectOpenSecrets: (projectId: string, projectName: string) => void;
   onProjectOpenRepository: (projectId: string, name: string) => void;
   onProjectOpenFolderInOS: (projectId: string) => void;
   onProjectViewIssues?: (projectId: string) => void;
@@ -694,7 +694,7 @@ export const ProjectTreeSidebar = forwardRef<
             ? () => props.onOpenPreferences!({ id: p.id, type: "project", name: p.name })
             : undefined
         }
-        onOpenSecrets={() => props.onProjectOpenSecrets(p.id)}
+        onOpenSecrets={() => props.onProjectOpenSecrets(p.id, p.name)}
         onOpenRepository={() => props.onProjectOpenRepository(p.id, p.name)}
         onOpenFolderInOS={() => props.onProjectOpenFolderInOS(p.id)}
         onViewIssues={

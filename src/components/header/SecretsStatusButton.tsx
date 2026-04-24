@@ -3,11 +3,11 @@
 /**
  * SecretsStatusButton - Header indicator for secrets management
  *
- * Shows connection status and opens the secrets configuration modal.
- * Follows the same pattern as GitHubConnectButton.
+ * Shows connection status and opens the per-project Secrets configuration
+ * tab via the `open-secrets` CustomEvent (handled by SessionManager).
+ * Follows the same pattern as the Settings gear button.
  */
 
-import { useState } from "react";
 import { KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -16,12 +16,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SecretsConfigModal } from "@/components/secrets/SecretsConfigModal";
 import { useSecretsContext } from "@/contexts/SecretsContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 
 export function SecretsStatusButton() {
-  const [modalOpen, setModalOpen] = useState(false);
   const { folderConfigs, loading } = useSecretsContext();
   const { activeProject } = usePreferencesContext();
 
@@ -39,29 +37,36 @@ export function SecretsStatusButton() {
     ? `Secrets: ${activeConfig?.provider}`
     : "Secrets";
 
-  return (
-    <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            disabled={loading}
-            onClick={() => setModalOpen(true)}
-          >
-            <KeyRound
-              className={cn(
-                "h-4 w-4 transition-colors",
-                isConnected ? "text-green-400" : "text-muted-foreground"
-              )}
-            />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{tooltipLabel}</TooltipContent>
-      </Tooltip>
+  const handleClick = () => {
+    window.dispatchEvent(
+      new CustomEvent("open-secrets", {
+        detail: {
+          projectId: activeProject.folderId,
+          projectName: activeProject.folderName,
+        },
+      })
+    );
+  };
 
-      <SecretsConfigModal open={modalOpen} onClose={() => setModalOpen(false)} />
-    </>
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          disabled={loading || !activeProject.folderId}
+          onClick={handleClick}
+        >
+          <KeyRound
+            className={cn(
+              "h-4 w-4 transition-colors",
+              isConnected ? "text-green-400" : "text-muted-foreground"
+            )}
+          />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{tooltipLabel}</TooltipContent>
+    </Tooltip>
   );
 }
