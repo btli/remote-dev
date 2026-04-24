@@ -30,15 +30,17 @@ describe("TreeConnector", () => {
     expect(container.firstElementChild).not.toHaveAttribute("data-tree-last");
   });
 
-  it("sets --tree-connector-left based on depth", () => {
+  it("does not render the legacy vertical nesting bar CSS variables", () => {
+    // The `.tree-item::before` pseudo-element was removed along with its
+    // driving CSS variables. Asserting their absence pins the behavior so a
+    // regression would be caught here rather than via manual QA.
     const { container } = render(
       <TreeConnector depth={3} isLastChild={false}>
         <span />
       </TreeConnector>
     );
-    // depth*12 + 8 + 7 = 51 for depth 3
     const el = container.firstElementChild as HTMLElement;
-    expect(el.style.getPropertyValue("--tree-connector-left")).toBe("51px");
-    expect(el.style.getPropertyValue("--tree-connector-width")).toBe("8px");
+    expect(el.style.getPropertyValue("--tree-connector-left")).toBe("");
+    expect(el.style.getPropertyValue("--tree-connector-width")).toBe("");
   });
 });
