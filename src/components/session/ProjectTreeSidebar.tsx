@@ -476,7 +476,16 @@ export const ProjectTreeSidebar = forwardRef<
               onTouchStart={(e) => swipe.handleTouchStart(e, s.id)}
               onTouchMove={swipe.handleTouchMove}
               onTouchEnd={swipe.handleTouchEnd}
-              onClick={() => props.onSessionClick(s.id)}
+              onClick={() => {
+                // Tap on the row dismisses a committed swipe instead of
+                // activating the session. Gives the user an escape hatch
+                // when they swiped by accident and don't want to close.
+                if (swipe.swipedSessionId === s.id) {
+                  swipe.clearSwipe();
+                  return;
+                }
+                props.onSessionClick(s.id);
+              }}
               onClose={() => {
                 props.onSessionClose(s.id);
                 swipe.clearSwipe();
@@ -938,7 +947,16 @@ export const ProjectTreeSidebar = forwardRef<
                         onTouchStart={(e) => swipe.handleTouchStart(e, s.id)}
                         onTouchMove={swipe.handleTouchMove}
                         onTouchEnd={swipe.handleTouchEnd}
-                        onClick={() => props.onSessionClick(s.id)}
+                        onClick={() => {
+                // Tap on the row dismisses a committed swipe instead of
+                // activating the session. Gives the user an escape hatch
+                // when they swiped by accident and don't want to close.
+                if (swipe.swipedSessionId === s.id) {
+                  swipe.clearSwipe();
+                  return;
+                }
+                props.onSessionClick(s.id);
+              }}
                         onClose={() => {
                           props.onSessionClose(s.id);
                           swipe.clearSwipe();

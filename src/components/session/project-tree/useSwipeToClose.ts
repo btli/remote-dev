@@ -89,6 +89,9 @@ export function useSwipeToClose(
       if (canSwipe && !canSwipe(sessionId)) return;
       const touch = e.touches[0];
       if (!touch) return;
+      // Clear a prior swipe commit on a different row so its revealed
+      // button doesn't stay stuck while the user interacts elsewhere.
+      setSwipedSessionId((prev) => (prev && prev !== sessionId ? null : prev));
       touchRef.current = {
         sessionId,
         startX: touch.clientX,
