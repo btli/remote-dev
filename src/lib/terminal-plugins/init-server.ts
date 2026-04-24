@@ -18,6 +18,7 @@ import { RecordingsServerPlugin } from "./plugins/recordings-plugin-server";
 import { PRsServerPlugin } from "./plugins/prs-plugin-server";
 import { IssuesServerPlugin } from "./plugins/issues-plugin-server";
 import { ProfilesServerPlugin } from "./plugins/profiles-plugin-server";
+import { PortManagerServerPlugin } from "./plugins/port-manager-plugin-server";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PluginInit.Server");
@@ -46,6 +47,7 @@ export function initializeServerPlugins(): void {
   TerminalTypeServerRegistry.register(PRsServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(IssuesServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(ProfilesServerPlugin, { builtIn: true });
+  TerminalTypeServerRegistry.register(PortManagerServerPlugin, { builtIn: true });
 
   TerminalTypeServerRegistry.setDefaultType("shell");
 
