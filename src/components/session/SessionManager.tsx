@@ -503,16 +503,46 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     console.error(`Failed to ${action}:`, error);
   }, []);
 
+  // Tracks in-flight suspend/resume calls keyed by sessionId. Prevents a
+  // duplicate POST when the sync effect re-runs between POST-start and
+  // POST-complete — without this, `session.status` in the effect's closure
+  // still reflects the pre-transition value and a second call would fire,
+  // causing server "Cannot resume from state 'active'" errors (bd
+  // remote-dev-p0bu). Kept in a ref since it's pure coordination state that
+  // should not trigger re-renders when mutated.
+  const inFlightSyncRef = useRef<Map<string, Promise<void>>>(new Map());
+
   const syncSessionStatus = useCallback(
     async (sessionId: string, targetStatus: "active" | "suspended") => {
-      try {
-        if (targetStatus === "active") {
-          await resumeSession(sessionId);
-        } else {
-          await suspendSession(sessionId);
+      const inFlight = inFlightSyncRef.current.get(sessionId);
+      if (inFlight) {
+        // A sync is already in flight for this session. Await it so we
+        // don't issue a duplicate call — the caller (the effect below)
+        // will re-evaluate on the next render once status has settled.
+        await inFlight;
+        return;
+      }
+      const promise = (async () => {
+        try {
+          if (targetStatus === "active") {
+            await resumeSession(sessionId);
+          } else {
+            await suspendSession(sessionId);
+          }
+        } catch (error) {
+          logSessionError(`${targetStatus} session`, error);
         }
-      } catch (error) {
-        logSessionError(`${targetStatus} session`, error);
+      })();
+      inFlightSyncRef.current.set(sessionId, promise);
+      try {
+        await promise;
+      } finally {
+        // Only clear if the entry is still the one we set — guards against
+        // rare race where another call replaced it (shouldn't happen with
+        // the guard above, but keeps the ref clean).
+        if (inFlightSyncRef.current.get(sessionId) === promise) {
+          inFlightSyncRef.current.delete(sessionId);
+        }
       }
     },
     [resumeSession, suspendSession, logSessionError]
@@ -527,6 +557,11 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       const shouldBeActive = attachedSessionIds.has(session.id);
       const targetStatus = shouldBeActive ? "active" : "suspended";
       if (session.status === targetStatus) continue;
+      // Skip if an in-flight sync is already transitioning this session.
+      // Without this short-circuit, a re-render between POST-start and
+      // POST-complete would issue a duplicate resume/suspend on a session
+      // that's already mid-transition (bd remote-dev-p0bu).
+      if (inFlightSyncRef.current.has(session.id)) continue;
 
       void syncSessionStatus(session.id, targetStatus);
     }
@@ -743,6 +778,32 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       projectName: string,
       initialTab?: "general" | "appearance" | "repository" | "environment"
     ) => {
+      // Fast path — mirror openSettingsSession: if a project-prefs tab for
+      // this project is already open locally, just switch to it. Avoids a
+      // POST round-trip that can race with an in-flight suspend and
+      // accidentally close the tab (see bd remote-dev-ajt7).
+      const existing = sessions.find(
+        (s) =>
+          s.terminalType === "project-prefs" &&
+          s.scopeKey === projectId &&
+          s.status !== "closed" &&
+          s.status !== "trashed",
+      );
+      if (existing) {
+        setActiveSession(existing.id);
+        setActiveView("terminal");
+        // Apply deep-link patch on reuse: if the caller asked for a specific
+        // tab and the stored value differs, patch typeMetadata.initialTab.
+        if (initialTab) {
+          const storedTab = (existing.typeMetadata as { initialTab?: string } | null)?.initialTab;
+          if (storedTab !== initialTab) {
+            void updateSession(existing.id, {
+              typeMetadataPatch: { initialTab },
+            });
+          }
+        }
+        return;
+      }
       try {
         const typeMetadata: Record<string, unknown> = {
           projectId,
@@ -764,7 +825,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("open project preferences session", error);
       }
     },
-    [createSession, setActiveSession, setActiveView, logSessionError]
+    [sessions, createSession, setActiveSession, setActiveView, updateSession, logSessionError]
   );
 
   const handleFolderSettings = useCallback(
@@ -1644,6 +1705,22 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // the same project jumps to the existing tab.
   const openSecretsSession = useCallback(
     async (projectId: string, projectName: string) => {
+      // Fast path — mirror openSettingsSession: if a secrets tab for this
+      // project is already open locally, just switch to it. Avoids a POST
+      // round-trip that can race with an in-flight suspend and accidentally
+      // close the tab (see bd remote-dev-ajt7).
+      const existing = sessions.find(
+        (s) =>
+          s.terminalType === "secrets" &&
+          s.scopeKey === projectId &&
+          s.status !== "closed" &&
+          s.status !== "trashed",
+      );
+      if (existing) {
+        setActiveSession(existing.id);
+        setActiveView("terminal");
+        return;
+      }
       try {
         const session = await createSession({
           name: `Secrets — ${projectName}`,
@@ -1660,7 +1737,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("open secrets session", error);
       }
     },
-    [createSession, setActiveSession, setActiveView, logSessionError]
+    [sessions, createSession, setActiveSession, setActiveView, logSessionError]
   );
 
   // Listen for open-secrets event from the header Secrets button. The
@@ -1756,6 +1833,22 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // carrier, so the carrier choice is not user-visible.
   const openGroupPrefsSession = useCallback(
     async (groupId: string, groupName: string) => {
+      // Fast path — mirror openSettingsSession: if a group-prefs tab for
+      // this group is already open locally, just switch to it. Avoids a
+      // POST round-trip that can race with an in-flight suspend and
+      // accidentally close the tab (see bd remote-dev-ajt7).
+      const existing = sessions.find(
+        (s) =>
+          s.terminalType === "group-prefs" &&
+          s.scopeKey === groupId &&
+          s.status !== "closed" &&
+          s.status !== "trashed",
+      );
+      if (existing) {
+        setActiveSession(existing.id);
+        setActiveView("terminal");
+        return;
+      }
       const descendant = projectTree.projects.find((p) => p.groupId === groupId);
       const carrierProjectId =
         descendant?.id ??
@@ -1780,7 +1873,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("open group preferences session", error);
       }
     },
-    [projectTree.projects, resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]
+    [sessions, projectTree.projects, resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]
   );
 
   // Bind the forward-declared ref so `handleNodeSettings` (defined earlier)
