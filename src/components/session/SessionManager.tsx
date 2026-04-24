@@ -1338,6 +1338,10 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         });
         if (session) {
           setActiveSession(session.id);
+          // Force the terminal pane visible. Singleton session tabs render
+          // inside the terminal container; if the user is on chat view, the
+          // container is hidden and clicking Settings appears to do nothing.
+          setActiveView("terminal");
           // F5: seeding `typeMetadata.activeTab` only applies on CREATE. If
           // the server reused an existing Settings tab (scope-key dedup),
           // the requested section would be ignored. Patch the tab explicitly
@@ -1354,7 +1358,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("open settings session", error);
       }
     },
-    [activeProject.folderId, projectTree.projects, createSession, setActiveSession, updateSession, logSessionError]
+    [activeProject.folderId, projectTree.projects, createSession, setActiveSession, setActiveView, updateSession, logSessionError]
   );
 
   // Listen for open-settings event from Header gear button and Sidebar
@@ -1439,11 +1443,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       });
       if (session) {
         setActiveSession(session.id);
+        setActiveView("terminal");
       }
     } catch (error) {
       logSessionError("open recordings session", error);
     }
-  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, logSessionError]);
+  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, setActiveView, logSessionError]);
 
   // Open (or reuse) the global Profiles session. Scope key is fixed so
   // repeated opens jump to the existing tab instead of spawning duplicates.
@@ -1463,11 +1468,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       });
       if (session) {
         setActiveSession(session.id);
+        setActiveView("terminal");
       }
     } catch (error) {
       logSessionError("open profiles session", error);
     }
-  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, logSessionError]);
+  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, setActiveView, logSessionError]);
 
   // Handle view change from FolderTabBar (terminal/chat toggle)
   const handleViewChange = useCallback(

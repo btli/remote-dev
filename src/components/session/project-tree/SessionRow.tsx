@@ -154,7 +154,13 @@ export function SessionRow({
             e.stopPropagation();
             onClose();
           }}
-          className="absolute right-0 top-0 bottom-0 w-[72px] bg-destructive text-destructive-foreground flex items-center justify-center rounded-md"
+          // z-20 so the revealed button sits above the row even after the row
+          // snaps back to translateX(0) on touchend. Without this the row
+          // covers the button visually AND intercepts taps, making it look
+          // like "click does nothing". Width matches useSwipeToClose's
+          // DEFAULT_MAX_DRAG_PX (80px) so there's no visible gap between the
+          // button edge and the translated row.
+          className="absolute right-0 top-0 bottom-0 w-20 z-20 bg-destructive text-destructive-foreground flex items-center justify-center rounded-md"
         >
           <X className="w-4 h-4" />
         </button>
@@ -180,7 +186,14 @@ export function SessionRow({
             onClick();
           }
         }}
-        style={mergedInnerStyle}
+        // touchAction: pan-y tells the browser this element handles its
+        // own horizontal gestures but should defer vertical pans to native
+        // scroll. Without this hint, iOS Safari coalesces early touchmove
+        // events with accumulated motion, causing our axis-decision logic
+        // to lock "horizontal" on gestures the user intended as scrolls —
+        // and then preventDefault kills the scroll entirely. Symptom: scroll
+        // works intermittently inside the sidebar on mobile.
+        style={{ ...mergedInnerStyle, touchAction: "pan-y" }}
         className={cn(
           "group relative flex items-center gap-2 px-2 py-1.5 rounded-md",
           "transition-all duration-200",

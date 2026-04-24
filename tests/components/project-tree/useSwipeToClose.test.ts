@@ -79,6 +79,29 @@ describe("useSwipeToClose", () => {
       ctx.result.current.handleTouchEnd();
     });
     expect(ctx.result.current.swipedSessionId).toBe("s1");
+    // After commit the row must stay translated so the revealed close
+    // button stays visible. Regression guard for the "button reveals but
+    // click does nothing" bug.
+    const postStyle = ctx.result.current.getRowStyle("s1");
+    expect(postStyle.transform).toBe("translateX(-80px)");
+  });
+
+  it("handleTouchStart on a different row clears a prior swipe commit", () => {
+    const ctx = setup();
+    act(() => {
+      ctx.result.current.handleTouchStart(touchEvent(100, 200), "s1");
+    });
+    act(() => {
+      ctx.result.current.handleTouchMove(touchEvent(50, 200));
+    });
+    act(() => {
+      ctx.result.current.handleTouchEnd();
+    });
+    expect(ctx.result.current.swipedSessionId).toBe("s1");
+    act(() => {
+      ctx.result.current.handleTouchStart(touchEvent(100, 300), "s2");
+    });
+    expect(ctx.result.current.swipedSessionId).toBeNull();
   });
 
   it("horizontal swipe below threshold does not commit", () => {

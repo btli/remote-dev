@@ -89,6 +89,9 @@ export function useSwipeToClose(
       if (canSwipe && !canSwipe(sessionId)) return;
       const touch = e.touches[0];
       if (!touch) return;
+      // Clear a prior swipe commit on a different row so its revealed
+      // button doesn't stay stuck while the user interacts elsewhere.
+      setSwipedSessionId((prev) => (prev && prev !== sessionId ? null : prev));
       touchRef.current = {
         sessionId,
         startX: touch.clientX,
@@ -183,12 +186,21 @@ export function useSwipeToClose(
           transition: "none",
         };
       }
+      // After commit, keep the row translated so the revealed close button
+      // stays visible until the user taps it or the swipe is cleared.
+      // Without this the row snaps back over the button on touchend.
+      if (swipedSessionId === sessionId) {
+        return {
+          transform: `translateX(${-maxDragPx}px)`,
+          transition: "transform 200ms ease-out",
+        };
+      }
       return {
         transform: "translateX(0)",
         transition: "transform 200ms ease-out",
       };
     },
-    [currentDx],
+    [currentDx, swipedSessionId, maxDragPx],
   );
 
   return {
