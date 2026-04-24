@@ -54,8 +54,8 @@ interface PreferencesContextValue {
   nodeHasRepo: (ownerType: "group" | "project", ownerId: string) => boolean;
 
   // Update/delete currently only target projects (groups own preferences
-  // too, but mutation is driven by GroupPreferencesModal directly via the
-  // /api/node-preferences/group/:id route).
+  // too, but mutation is driven by the `group-prefs` terminal-tab plugin
+  // directly via the /api/node-preferences/group/:id route).
   updateFolderPreferences: (
     projectId: string,
     updates: UpdateFolderPreferencesInput

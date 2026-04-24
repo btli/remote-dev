@@ -23,6 +23,7 @@ import { TrashServerPlugin } from "./plugins/trash-plugin-server";
 import { ProjectPrefsServerPlugin } from "./plugins/project-prefs-plugin-server";
 import { GitHubMaintenanceServerPlugin } from "./plugins/github-maintenance-plugin-server";
 import { SecretsServerPlugin } from "./plugins/secrets-plugin-server";
+import { GroupPrefsServerPlugin } from "./plugins/group-prefs-plugin-server";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PluginInit.Server");
@@ -56,6 +57,7 @@ export function initializeServerPlugins(): void {
   TerminalTypeServerRegistry.register(ProjectPrefsServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(GitHubMaintenanceServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(SecretsServerPlugin, { builtIn: true });
+  TerminalTypeServerRegistry.register(GroupPrefsServerPlugin, { builtIn: true });
 
   TerminalTypeServerRegistry.setDefaultType("shell");
 

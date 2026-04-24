@@ -4,7 +4,6 @@ import { useState, useCallback, useEffect, useRef, useMemo, useSyncExternalStore
 import { Sidebar } from "./Sidebar";
 import { NewSessionWizard } from "./NewSessionWizard";
 import { SaveTemplateModal } from "./SaveTemplateModal";
-import { GroupPreferencesModal } from "@/components/preferences/GroupPreferencesModal";
 import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
@@ -192,12 +191,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   }, []);
 
 
-  // Group-only preferences modal; project preferences now route through the
-  // `project-prefs` terminal-type plugin (see `openProjectPrefsSession`).
-  const [groupSettingsModal, setGroupSettingsModal] = useState<{
-    id: string;
-    name: string;
-  } | null>(null);
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
   const [isSaveRecordingModalOpen, setIsSaveRecordingModalOpen] = useState(false);
@@ -785,13 +778,20 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [openProjectPrefsSession]
   );
 
+  // Forward-declared handler — wired to the actual group-prefs opener further
+  // down (see openGroupPrefsSession). Using a ref avoids circular callback
+  // deps between `handleNodeSettings` and `openGroupPrefsSession`.
+  const openGroupPrefsRef = useRef<
+    ((groupId: string, groupName: string) => Promise<void>) | null
+  >(null);
+
   const handleNodeSettings = useCallback(
     (node: { id: string; type: "group" | "project"; name: string }) => {
       if (node.type === "project") {
         void openProjectPrefsSession(node.id, node.name);
         return;
       }
-      setGroupSettingsModal({ id: node.id, name: node.name });
+      void openGroupPrefsRef.current?.(node.id, node.name);
     },
     [openProjectPrefsSession]
   );
@@ -1747,6 +1747,51 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
   }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
+  // Open (or reuse) a per-group Preferences session. Scope key is the groupId
+  // so each group has at most one prefs tab open; re-clicking the gear on the
+  // same group jumps to the existing tab. Needs a carrier projectId because
+  // `terminal_session.project_id` is NOT NULL — pick any descendant project
+  // of the group, else any project in the tree. The sidebar renders these
+  // sessions under the group (via typeMetadata.groupId), not under the
+  // carrier, so the carrier choice is not user-visible.
+  const openGroupPrefsSession = useCallback(
+    async (groupId: string, groupName: string) => {
+      const descendant = projectTree.projects.find((p) => p.groupId === groupId);
+      const carrierProjectId =
+        descendant?.id ??
+        resolveSingletonCarrierProjectId();
+      if (!carrierProjectId) {
+        console.error("Cannot open group preferences: no project available");
+        return;
+      }
+      try {
+        const session = await createSession({
+          name: `Prefs — ${groupName}`,
+          projectId: carrierProjectId,
+          terminalType: "group-prefs",
+          scopeKey: groupId,
+          typeMetadata: { groupId, groupName },
+        });
+        if (session) {
+          setActiveSession(session.id);
+          setActiveView("terminal");
+        }
+      } catch (error) {
+        logSessionError("open group preferences session", error);
+      }
+    },
+    [projectTree.projects, resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]
+  );
+
+  // Bind the forward-declared ref so `handleNodeSettings` (defined earlier)
+  // can dispatch group-prefs opens without a circular callback dependency.
+  useEffect(() => {
+    openGroupPrefsRef.current = openGroupPrefsSession;
+    return () => {
+      openGroupPrefsRef.current = null;
+    };
+  }, [openGroupPrefsSession]);
+
   // Handle view change from FolderTabBar (terminal/chat toggle)
   const handleViewChange = useCallback(
     (view: ActiveView) => {
@@ -2084,17 +2129,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         isGitHubConnected={isGitHubConnected}
       />
 
-      {/* Group preferences modal (triggered from ProjectTree gear for groups).
-          Project preferences are served by the `project-prefs` terminal-type
-          plugin — see `openProjectPrefsSession`. */}
-      {groupSettingsModal && (
-        <GroupPreferencesModal
-          open
-          onClose={() => setGroupSettingsModal(null)}
-          groupId={groupSettingsModal.id}
-          groupName={groupSettingsModal.name}
-        />
-      )}
+      {/* Group and project preferences are served by the `group-prefs` and
+          `project-prefs` terminal-type plugins — see `openGroupPrefsSession`
+          / `openProjectPrefsSession`. */}
 
       {/* Command Palette */}
       <CommandPalette

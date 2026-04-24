@@ -5,6 +5,12 @@ export interface MinimalSession {
   id: string;
   projectId: string | null;
   terminalType?: string | null;
+  /**
+   * JSON metadata blob. For group-prefs sessions this carries `groupId`
+   * so the sidebar can render them under their logical group rather than
+   * under the carrier project referenced by `projectId`.
+   */
+  typeMetadata?: Record<string, unknown> | null;
 }
 
 /**
@@ -17,6 +23,23 @@ function isGlobalSession(s: MinimalSession): boolean {
   return isGlobalTerminalType(s.terminalType ?? null);
 }
 
+/**
+ * Group-prefs sessions carry a carrier `projectId` purely to satisfy the NOT
+ * NULL FK on `terminal_session.project_id` — they logically belong to the
+ * group referenced by `typeMetadata.groupId`. The sidebar renders them under
+ * that group via `sessionsForGroup`, so per-project listings and counts must
+ * exclude them.
+ */
+function isGroupPrefsSession(s: MinimalSession): boolean {
+  return s.terminalType === "group-prefs";
+}
+
+function groupIdForGroupPrefs(s: MinimalSession): string | null {
+  const md = s.typeMetadata as { groupId?: unknown } | null | undefined;
+  if (!md) return null;
+  return typeof md.groupId === "string" && md.groupId.length > 0 ? md.groupId : null;
+}
+
 export function sessionsForProject(
   sessions: MinimalSession[],
   projectId: string,
@@ -26,7 +49,22 @@ export function sessionsForProject(
     (s) =>
       s.projectId === projectId &&
       !isGlobalSession(s) &&
+      !isGroupPrefsSession(s) &&
       (!opts.excludeFileSessions || s.terminalType !== "file")
+  );
+}
+
+/**
+ * Return every group-prefs session whose `typeMetadata.groupId` matches the
+ * supplied group id. These render under their group row in the sidebar rather
+ * than under the carrier project recorded in `projectId`.
+ */
+export function sessionsForGroup(
+  sessions: MinimalSession[],
+  groupId: string
+): MinimalSession[] {
+  return sessions.filter(
+    (s) => isGroupPrefsSession(s) && groupIdForGroupPrefs(s) === groupId
   );
 }
 
@@ -52,14 +90,18 @@ export function recursiveSessionCount(
       s.projectId != null &&
       ownProjectIds.has(s.projectId) &&
       s.terminalType !== "file" &&
-      !isGlobalSession(s)
+      !isGlobalSession(s) &&
+      !isGroupPrefsSession(s)
   ).length;
+  // Group-prefs sessions rendered directly under this group (via
+  // typeMetadata.groupId) contribute to the group's own count.
+  const ownGroupPrefsCount = sessionsForGroup(sessions, groupId).length;
   const childGroupIds = groups.filter((g) => g.parentGroupId === groupId).map((g) => g.id);
   const descendantCount = childGroupIds.reduce(
     (sum, cid) => sum + recursiveSessionCount(sessions, groups, projects, cid),
     0
   );
-  return directCount + descendantCount;
+  return directCount + ownGroupPrefsCount + descendantCount;
 }
 
 export interface RepoStats {

@@ -27,6 +27,7 @@ import {
   globalSessions as selectGlobalSessions,
   recursiveSessionCount,
   rolledUpRepoStats,
+  sessionsForGroup,
   sessionsForProject,
   type RepoStats,
 } from "@/lib/project-tree-session-utils";
@@ -812,10 +813,85 @@ export const ProjectTreeSidebar = forwardRef<
     </TreeConnector>
   );
 
+  // Render group-prefs terminal sessions attached to a group. Group-prefs
+  // sessions carry a carrier projectId (NOT NULL FK requires one) but are
+  // logically owned by the group referenced in `typeMetadata.groupId`. They
+  // render directly under their group row — not under the carrier project —
+  // so users see them alongside the group they configure.
+  const renderGroupPrefsSessions = (groupId: string, depth: number, hasMoreAfter: boolean) => {
+    const list = sessionsForGroup(activeSessions, groupId) as TerminalSession[];
+    if (list.length === 0) return null;
+    return list.map((s, i) => {
+      const isLast = !hasMoreAfter && i === list.length - 1;
+      return (
+        <TreeConnector key={s.id} depth={depth} isLastChild={isLast}>
+          <SessionContextMenu
+            session={s}
+            projects={projectOptions}
+            onStartEdit={() => setEditingNode({ id: s.id, type: "session" })}
+            onTogglePin={() => props.onSessionTogglePin(s.id)}
+            onMove={(targetProjectId) => {
+              props.onSessionMove(s.id, targetProjectId);
+            }}
+            onSchedule={
+              props.onSessionSchedule ? () => props.onSessionSchedule!(s.id) : undefined
+            }
+            onClose={() => props.onSessionClose(s.id)}
+          >
+            <div>
+              <SessionRow
+                session={s}
+                depth={depth}
+                dropIndicator={null}
+                isActive={s.id === activeSessionId}
+                isEditing={
+                  editingNode?.id === s.id && editingNode?.type === "session"
+                }
+                hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
+                agentStatus={null}
+                scheduleCount={0}
+                dragTranslateStyle={swipe.getRowStyle(s.id)}
+                swipeRevealed={swipe.swipedSessionId === s.id}
+                onTouchStart={(e) => swipe.handleTouchStart(e, s.id)}
+                onTouchMove={swipe.handleTouchMove}
+                onTouchEnd={swipe.handleTouchEnd}
+                onClick={() => {
+                  if (swipe.swipedSessionId === s.id) {
+                    swipe.clearSwipe();
+                    return;
+                  }
+                  props.onSessionClick(s.id);
+                }}
+                onClose={() => {
+                  props.onSessionClose(s.id);
+                  swipe.clearSwipe();
+                }}
+                onStartEdit={() => {
+                  props.onSessionStartEdit(s.id);
+                  setEditingNode({ id: s.id, type: "session" });
+                }}
+                onSaveEdit={(name) => {
+                  props.onSessionRename(s.id, name);
+                  setEditingNode(null);
+                }}
+                onCancelEdit={() => setEditingNode(null)}
+              />
+            </div>
+          </SessionContextMenu>
+        </TreeConnector>
+      );
+    });
+  };
+
   const renderGroupSubtree = (groupId: string, depth: number) => {
     const { groups: childGroups, projects: childProjects } = tree.getChildrenOfGroup(groupId);
+    const hasMoreAfterGroupPrefs =
+      childGroups.length > 0 ||
+      childProjects.length > 0 ||
+      creating?.parentGroupId === groupId;
     return (
       <>
+        {renderGroupPrefsSessions(groupId, depth, hasMoreAfterGroupPrefs)}
         {childGroups.map((g, i) =>
           renderGroupNode(
             g,
