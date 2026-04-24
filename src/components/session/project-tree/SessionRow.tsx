@@ -62,6 +62,12 @@ export interface SessionRowProps {
   // SessionMetadataBar, which hides itself when true. Defaults to false since
   // the new project tree does not yet expose a collapsed mode.
   isCollapsed?: boolean;
+  // When true, reserve extra left-margin equal to a chevron-button + gap so
+  // the row's icon lines up with sibling GroupRow/ProjectRow ICONS at the
+  // same depth, instead of with their chevron slots. Used for sessions that
+  // are direct children of a group-like header (Global section + group-prefs
+  // sessions) so they visually sit flush with peer project rows.
+  reserveChevronSpace?: boolean;
 }
 
 export function SessionRow({
@@ -91,6 +97,7 @@ export function SessionRow({
   onTouchMove,
   onTouchEnd,
   isCollapsed = false,
+  reserveChevronSpace = false,
 }: SessionRowProps) {
   const [local, setLocal] = useState(editValue ?? session.name);
   const committedRef = useRef(false);
@@ -139,8 +146,15 @@ export function SessionRow({
     return <Icon className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
   }
 
+  // Chevron-button width (12px, `h-3 w-3`) + sibling `gap-1.5` (6px) = 18px.
+  // Matches the horizontal space GroupRow/ProjectRow spend on their chevron
+  // before the icon. Reserved only when `reserveChevronSpace` is set, so
+  // sessions-under-projects (which are intentionally indented LESS than their
+  // parent's icon) keep their current offset.
+  const chevronReservePx = reserveChevronSpace ? 18 : 0;
+  const totalIndentPx = depth * 12 + chevronReservePx;
   const mergedInnerStyle: React.CSSProperties = {
-    marginLeft: depth > 0 ? `${depth * 12}px` : undefined,
+    marginLeft: totalIndentPx > 0 ? `${totalIndentPx}px` : undefined,
     ...(dragTranslateStyle ?? {}),
   };
 
