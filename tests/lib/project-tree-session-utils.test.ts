@@ -128,9 +128,9 @@ describe("isGlobalTerminalType", () => {
     expect(isGlobalTerminalType(null)).toBe(false);
     expect(isGlobalTerminalType(undefined)).toBe(false);
   });
-  it("GLOBAL_TERMINAL_TYPES contains settings/recordings/profiles", () => {
+  it("GLOBAL_TERMINAL_TYPES contains settings/recordings/profiles/port-manager", () => {
     expect(new Set(GLOBAL_TERMINAL_TYPES)).toEqual(
-      new Set(["settings", "recordings", "profiles"]),
+      new Set(["settings", "recordings", "profiles", "port-manager"]),
     );
   });
 });

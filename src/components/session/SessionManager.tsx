@@ -12,7 +12,6 @@ import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
 import { TrashModal } from "@/components/trash/TrashModal";
 import { ResumeSessionModal } from "./ResumeSessionModal";
 import { shouldPatchSettingsTab } from "./settings-deep-link";
-import { PortManagerModal } from "@/components/ports/PortManagerModal";
 import { BeadsSidebar } from "@/components/beads/BeadsSidebar";
 import type { GitHubIssueDTO } from "@/contexts/GitHubIssuesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
@@ -294,9 +293,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Schedule target session — passed to TaskSidebar to open schedule creation
   const [scheduleTargetSessionId, setScheduleTargetSessionId] = useState<string | null>(null);
-
-  // Port manager modal state
-  const [isPortsModalOpen, setIsPortsModalOpen] = useState(false);
 
   // Worktree name prompt state
   const [worktreePrompt, setWorktreePrompt] = useState<{ folderId: string } | null>(null);
@@ -1294,7 +1290,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           folderName: folder.name,
           initialTab: "environment",
         });
-        setIsPortsModalOpen(false); // Close port manager
       }
     };
 
@@ -1469,6 +1464,30 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
   }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
+  // Open (or reuse) the global Port Manager session. Scope key is fixed so
+  // repeated opens jump to the existing tab instead of spawning duplicates.
+  const openPortManagerSession = useCallback(async () => {
+    const carrierProjectId = resolveSingletonCarrierProjectId();
+    if (!carrierProjectId) {
+      console.error("Cannot open port manager: no project available");
+      return;
+    }
+    try {
+      const session = await createSession({
+        name: "Ports",
+        projectId: carrierProjectId,
+        terminalType: "port-manager",
+        scopeKey: "port-manager",
+      });
+      if (session) {
+        setActiveSession(session.id);
+        setActiveView("terminal");
+      }
+    } catch (error) {
+      logSessionError("open port manager session", error);
+    }
+  }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
+
   // Open (or reuse) the global Profiles session. Scope key is fixed so
   // repeated opens jump to the existing tab instead of spawning duplicates.
   const openProfilesSession = useCallback(async () => {
@@ -1585,7 +1604,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onTrashOpen={() => setIsTrashOpen(true)}
             onSessionSchedule={handleScheduleSession}
             onProfilesOpen={() => { void openProfilesSession(); }}
-            onPortsOpen={() => setIsPortsModalOpen(true)}
+            onPortsOpen={() => { void openPortManagerSession(); }}
             onViewIssues={handleViewIssues}
             onViewPRs={handleViewPRs}
             getFolderPinnedFiles={handleGetFolderPinnedFiles}
@@ -1907,12 +1926,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         projectPath={resumeModalProjectPath}
         profileId={resumeModalProfileId}
         onResume={handleResumeClaudeSession}
-      />
-
-      {/* Port Manager Modal */}
-      <PortManagerModal
-        open={isPortsModalOpen}
-        onClose={() => setIsPortsModalOpen(false)}
       />
 
       {/* Worktree Name Prompt */}

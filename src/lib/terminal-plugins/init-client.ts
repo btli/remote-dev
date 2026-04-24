@@ -18,6 +18,7 @@ import { RecordingsClientPlugin } from "./plugins/recordings-plugin-client";
 import { PRsClientPlugin } from "./plugins/prs-plugin-client";
 import { IssuesClientPlugin } from "./plugins/issues-plugin-client";
 import { ProfilesClientPlugin } from "./plugins/profiles-plugin-client";
+import { PortManagerClientPlugin } from "./plugins/port-manager-plugin-client";
 
 // Client-only: use console directly to avoid pulling the server-side logger
 // (which depends on better-sqlite3) into the browser bundle.
@@ -52,6 +53,7 @@ export function initializeClientPlugins(): void {
   TerminalTypeClientRegistry.register(PRsClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(IssuesClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(ProfilesClientPlugin, { builtIn: true });
+  TerminalTypeClientRegistry.register(PortManagerClientPlugin, { builtIn: true });
 
   TerminalTypeClientRegistry.setDefaultType("shell");
 
