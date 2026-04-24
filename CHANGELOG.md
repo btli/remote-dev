@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Non-tmux session resume no longer returns 410 / auto-deletes singleton
+  tabs** (remote-dev-nv4e): `ResumeSessionUseCase` now consults the server
+  plugin registry's `useTmux` flag and skips the `tmuxGateway.sessionExists()`
+  probe for plugins that declare `useTmux: false` (settings, recordings,
+  profiles, prefs, secrets, trash, port-manager, issues, prs, file, browser,
+  …). Previously any click on a non-tmux singleton tab after navigating away
+  issued `POST /api/sessions/:id/resume`, which returned 410 (tmux session
+  missing — because there never was one), and `SessionContext.resumeSession`
+  blindly treated every 410 as "tmux gone, auto-close" and DELETEd the
+  session. The client is also hardened as defense-in-depth: 410 now only
+  triggers auto-delete for tmux-backed terminal types
+  (`isTmuxBackedTerminalType`); non-tmux sessions surface the error and keep
+  the tab. Includes 19 new `ResumeSessionUseCase` unit tests and 10 new
+  `SessionContext` client tests covering both the server fast-path and the
+  client 410-branch fork.
 - **Singleton terminal tabs survive re-open**: Clicking the gear / Recordings /
   Profiles button while the corresponding singleton tab was already open (in
   the background after switching to another session) could previously appear

@@ -35,6 +35,8 @@ import { GitCredentialManager } from "@/application/services/GitCredentialManage
 import { CreateSessionUseCase } from "@/application/use-cases/session/CreateSessionUseCase";
 import { SuspendSessionUseCase } from "@/application/use-cases/session/SuspendSessionUseCase";
 import { ResumeSessionUseCase } from "@/application/use-cases/session/ResumeSessionUseCase";
+import { TerminalTypeServerRegistry } from "@/lib/terminal-plugins/server";
+import "@/lib/terminal-plugins/init-server";
 import { CloseSessionUseCase } from "@/application/use-cases/session/CloseSessionUseCase";
 import { ListSessionsUseCase } from "@/application/use-cases/session/ListSessionsUseCase";
 import { GetSessionUseCase } from "@/application/use-cases/session/GetSessionUseCase";
@@ -206,10 +208,22 @@ export const suspendSessionUseCase = new SuspendSessionUseCase(
 
 /**
  * Resume session use case.
+ *
+ * Injects a `usesTmux` policy backed by the server plugin registry so
+ * non-tmux terminal types (settings, recordings, profiles, prefs, secrets,
+ * trash, port-manager, issues, prs, file, browser, …) skip the
+ * `tmuxGateway.sessionExists()` probe. Without this, resuming a non-tmux
+ * singleton tab returns 410 and the client auto-deletes it (see
+ * SessionContext.tsx `resumeSession`).
+ *
+ * Falls back to `true` for unknown terminal types (same conservative
+ * default as `sessionUsesTmux` in `session-service.ts`).
  */
 export const resumeSessionUseCase = new ResumeSessionUseCase(
   sessionRepository,
-  tmuxGateway
+  tmuxGateway,
+  (terminalType) =>
+    TerminalTypeServerRegistry.get(terminalType)?.useTmux ?? true
 );
 
 /**
