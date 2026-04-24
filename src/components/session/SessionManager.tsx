@@ -1334,6 +1334,31 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   const openSettingsSession = useCallback(
     async (section?: string) => {
+      // Fast path: when an existing Settings tab is already open locally,
+      // jump to it directly instead of roundtripping through POST /api/sessions.
+      // Guards against a regression where clicking the gear a second time
+      // (after switching away to another tab) could close / mis-activate the
+      // singleton tab. Pure client-side activation is idempotent by
+      // construction — no create, no update, no close. If the requested
+      // section differs from the stored activeTab, issue the targeted patch.
+      const existing = sessions.find(
+        (s) =>
+          s.terminalType === "settings" &&
+          s.scopeKey === "settings" &&
+          s.status !== "closed" &&
+          s.status !== "trashed",
+      );
+      if (existing) {
+        setActiveSession(existing.id);
+        setActiveView("terminal");
+        if (shouldPatchSettingsTab(existing, section)) {
+          void updateSession(existing.id, {
+            typeMetadataPatch: { activeTab: section },
+          });
+        }
+        return;
+      }
+
       const carrierProjectId = resolveSingletonCarrierProjectId();
       if (!carrierProjectId) {
         console.error("Cannot open settings: no project available");
@@ -1371,7 +1396,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("open settings session", error);
       }
     },
-    [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, updateSession, logSessionError]
+    [sessions, resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, updateSession, logSessionError]
   );
 
   // Listen for open-settings event from Header gear button and Sidebar
@@ -1441,6 +1466,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // single tab. A project id is required by schema — use the active project
   // as a carrier.
   const openRecordingsSession = useCallback(async () => {
+    // Fast path — mirror openSettingsSession: if a Recordings tab is already
+    // open locally, just switch to it. Pure client-side activation is
+    // idempotent and avoids any server-side round-trip that could race with
+    // an in-flight suspend and accidentally close the singleton.
+    const existing = sessions.find(
+      (s) =>
+        s.terminalType === "recordings" &&
+        s.scopeKey === "recordings" &&
+        s.status !== "closed" &&
+        s.status !== "trashed",
+    );
+    if (existing) {
+      setActiveSession(existing.id);
+      setActiveView("terminal");
+      return;
+    }
+
     const carrierProjectId = resolveSingletonCarrierProjectId();
     if (!carrierProjectId) {
       console.error("Cannot open recordings: no project available");
@@ -1460,7 +1502,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     } catch (error) {
       logSessionError("open recordings session", error);
     }
-  }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
+  }, [sessions, resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
   // Open (or reuse) the global Port Manager session. Scope key is fixed so
   // repeated opens jump to the existing tab instead of spawning duplicates.
@@ -1489,6 +1531,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Open (or reuse) the global Profiles session. Scope key is fixed so
   // repeated opens jump to the existing tab instead of spawning duplicates.
   const openProfilesSession = useCallback(async () => {
+    // Fast path — mirror openSettingsSession: if a Profiles tab is already
+    // open locally, just switch to it. Pure client-side activation is
+    // idempotent and avoids any server-side round-trip that could race with
+    // an in-flight suspend and accidentally close the singleton.
+    const existing = sessions.find(
+      (s) =>
+        s.terminalType === "profiles" &&
+        s.scopeKey === "profiles" &&
+        s.status !== "closed" &&
+        s.status !== "trashed",
+    );
+    if (existing) {
+      setActiveSession(existing.id);
+      setActiveView("terminal");
+      return;
+    }
+
     const carrierProjectId = resolveSingletonCarrierProjectId();
     if (!carrierProjectId) {
       console.error("Cannot open profiles: no project available");
@@ -1508,7 +1567,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     } catch (error) {
       logSessionError("open profiles session", error);
     }
-  }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
+  }, [sessions, resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
   const openTrashSession = useCallback(async () => {
     const carrierProjectId = resolveSingletonCarrierProjectId();
