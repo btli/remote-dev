@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller. Issue clicks now stay within the issues tab layout. Closes
   bd remote-dev-1ebu.7.
 
+### Fixed
+
+- **Singleton terminal tabs survive re-open**: Clicking the gear / Recordings /
+  Profiles button while the corresponding singleton tab was already open (in
+  the background after switching to another session) could previously appear
+  to close the tab in some state configurations. `openSettingsSession`,
+  `openRecordingsSession`, and `openProfilesSession` now short-circuit to a
+  pure client-side `setActiveSession` + `setActiveView("terminal")` when a
+  non-terminal singleton for the requested scope already exists in local
+  state. The server-side `POST /api/sessions` round-trip is only taken when
+  no local singleton exists, eliminating any race between create/suspend/
+  dedup that could leave the tab in an unexpected status.
+
 ### Changed
 
 - **Sidebar Global section for singleton terminal tabs**: Sessions with
