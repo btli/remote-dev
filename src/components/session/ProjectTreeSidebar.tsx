@@ -57,6 +57,7 @@ interface Props {
   onProjectOpenFolderInOS: (projectId: string) => void;
   onProjectViewIssues?: (projectId: string) => void;
   onProjectViewPRs?: (projectId: string) => void;
+  onProjectViewMaintenance?: (projectId: string) => void;
   // Session handlers. `onSessionMove` takes the target project's `id` (or
   // null for the legacy no-project slot). The backend
   // /api/sessions/:id/folder route accepts `projectId` as of Phase G0a.
@@ -704,6 +705,11 @@ export const ProjectTreeSidebar = forwardRef<
         onViewPRs={
           props.onProjectViewPRs
             ? () => props.onProjectViewPRs!(p.id)
+            : undefined
+        }
+        onViewMaintenance={
+          props.onProjectViewMaintenance
+            ? () => props.onProjectViewMaintenance!(p.id)
             : undefined
         }
         onStartEdit={() => setEditingNode({ id: p.id, type: "project" })}

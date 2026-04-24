@@ -96,6 +96,7 @@ interface SidebarProps {
   onPortsOpen?: () => void;
   onViewIssues?: (folderId: string) => void;
   onViewPRs?: (folderId: string) => void;
+  onViewMaintenance?: (folderId: string) => void;
   getFolderPinnedFiles?: (folderId: string) => PinnedFile[];
   onOpenPinnedFile?: (folderId: string, file: PinnedFile) => void;
   /**
@@ -143,6 +144,7 @@ export function Sidebar({
   onPortsOpen,
   onViewIssues,
   onViewPRs,
+  onViewMaintenance,
   getFolderPinnedFiles,
   onOpenPinnedFile,
   onOpenNodePreferences,
@@ -494,6 +496,7 @@ export function Sidebar({
                   onProjectOpenFolderInOS={handleOpenFolder}
                   onProjectViewIssues={onViewIssues}
                   onProjectViewPRs={onViewPRs}
+                  onProjectViewMaintenance={onViewMaintenance}
                   onSessionTogglePin={onSessionTogglePin}
                   onSessionMove={onSessionMove}
                   onSessionReorder={onSessionReorder}

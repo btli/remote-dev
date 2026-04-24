@@ -887,6 +887,77 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     [getRepoInfoForFolder, createSession, setActiveSession, logSessionError]
   );
 
+  // Resolve the first project (active first, otherwise any) whose prefs
+  // chain resolves to a linked GitHub repo. Used by the Header GitHub icon
+  // to pick a carrier project for the maintenance tab now that the modal
+  // has been replaced with a per-repo terminal-type session.
+  const resolveMaintenanceCarrierFolderId = useCallback((): string | null => {
+    const activeProjectId =
+      projectTree.activeNode?.type === "project"
+        ? projectTree.activeNode.id
+        : null;
+    if (activeProjectId && getRepoInfoForFolder(activeProjectId)) {
+      return activeProjectId;
+    }
+    for (const p of projectTree.projects) {
+      if (getRepoInfoForFolder(p.id)) return p.id;
+    }
+    return null;
+  }, [projectTree.activeNode, projectTree.projects, getRepoInfoForFolder]);
+
+  // Handle viewing maintenance for a folder's linked repository.
+  // Opens (or reuses) a `github-maintenance` terminal-type session scoped
+  // to the repo. Dedup via scopeKey = repositoryId means one tab per repo.
+  const handleViewMaintenance = useCallback(
+    async (folderId: string) => {
+      const info = getRepoInfoForFolder(folderId);
+      if (!info) return;
+
+      try {
+        const session = await createSession({
+          name: `Maintenance — ${info.repositoryName}`,
+          projectId: folderId,
+          terminalType: "github-maintenance",
+          scopeKey: info.repositoryId,
+          typeMetadata: {
+            repositoryId: info.repositoryId,
+            repositoryName: info.repositoryName,
+            repositoryUrl: info.repositoryUrl,
+          },
+        });
+        if (session) {
+          setActiveSession(session.id);
+          setActiveView("terminal");
+        }
+      } catch (error) {
+        logSessionError("open github-maintenance session", error);
+      }
+    },
+    [getRepoInfoForFolder, createSession, setActiveSession, setActiveView, logSessionError]
+  );
+
+  // Listen for the Header's GitHub icon click. Picks a linked-repo project
+  // as carrier and opens the maintenance tab for that repo. If no project
+  // has a linked repo yet, kick off the OAuth connect flow instead so the
+  // user still has a way forward when the legacy modal would have shown
+  // the "Connect GitHub" empty state.
+  useEffect(() => {
+    const handleOpenMaintenance = () => {
+      const carrierId = resolveMaintenanceCarrierFolderId();
+      if (!carrierId) {
+        window.location.href = "/api/auth/github/link";
+        return;
+      }
+      void handleViewMaintenance(carrierId);
+    };
+    window.addEventListener("open-github-maintenance", handleOpenMaintenance);
+    return () =>
+      window.removeEventListener(
+        "open-github-maintenance",
+        handleOpenMaintenance
+      );
+  }, [handleViewMaintenance, resolveMaintenanceCarrierFolderId]);
+
   // Get pinned files for a folder (always a project id in the new model)
   const handleGetFolderPinnedFiles = useCallback(
     (folderId: string): PinnedFile[] => {
@@ -1725,6 +1796,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onPortsOpen={() => { void openPortManagerSession(); }}
             onViewIssues={handleViewIssues}
             onViewPRs={handleViewPRs}
+            onViewMaintenance={handleViewMaintenance}
             getFolderPinnedFiles={handleGetFolderPinnedFiles}
             onOpenPinnedFile={handleOpenPinnedFile}
             onOpenNodePreferences={handleNodeSettings}

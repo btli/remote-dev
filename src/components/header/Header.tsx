@@ -10,8 +10,7 @@ import { GitHubStatusIcon } from "./GitHubStatusIcon";
 import { SecretsStatusButton } from "./SecretsStatusButton";
 import { HeaderUserMenu } from "./HeaderUserMenu";
 import { AppearanceModeToggleCompact } from "@/components/appearance";
-import { GitHubMaintenanceModal } from "@/components/github/GitHubMaintenanceModal";
-import { GitHubProvider, useGitHubContext } from "@/contexts/GitHubContext";
+import { GitHubProvider } from "@/contexts/GitHubContext";
 import { useMobile } from "@/hooks/useMobile";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,8 +30,14 @@ interface HeaderProps {
 }
 
 function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps) {
-  const { isModalOpen, openModal, closeModal } = useGitHubContext();
   const isMobile = useMobile();
+
+  // The maintenance view is now a per-repo terminal-type tab rather than a
+  // global modal. Dispatch a window event so SessionManager can pick a
+  // linked-repo project as carrier and open (or reuse) the maintenance tab.
+  const openMaintenance = () => {
+    window.dispatchEvent(new CustomEvent("open-github-maintenance"));
+  };
 
   if (isMobile) {
     return (
@@ -53,7 +58,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
           <div className="flex items-center gap-1">
             <GitHubStatusIcon
               isConnected={isGitHubConnected}
-              onClick={openModal}
+              onClick={openMaintenance}
             />
             <SecretsStatusButton />
             <AppearanceModeToggleCompact />
@@ -78,8 +83,6 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
             </form>
           </div>
         </header>
-
-        <GitHubMaintenanceModal open={isModalOpen} onClose={closeModal} />
       </>
     );
   }
@@ -105,7 +108,7 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
           <ProxyEndpointIndicator />
           <GitHubStatusIcon
             isConnected={isGitHubConnected}
-            onClick={openModal}
+            onClick={openMaintenance}
           />
           <SecretsStatusButton />
           <AppearanceModeToggleCompact />
@@ -139,8 +142,6 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
           </Tooltip>
         </div>
       </header>
-
-      <GitHubMaintenanceModal open={isModalOpen} onClose={closeModal} />
     </>
   );
 }
