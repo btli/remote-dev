@@ -22,6 +22,7 @@ import { PortManagerClientPlugin } from "./plugins/port-manager-plugin-client";
 import { TrashClientPlugin } from "./plugins/trash-plugin-client";
 import { ProjectPrefsClientPlugin } from "./plugins/project-prefs-plugin-client";
 import { GitHubMaintenanceClientPlugin } from "./plugins/github-maintenance-plugin-client";
+import { SecretsClientPlugin } from "./plugins/secrets-plugin-client";
 
 // Client-only: use console directly to avoid pulling the server-side logger
 // (which depends on better-sqlite3) into the browser bundle.
@@ -60,6 +61,7 @@ export function initializeClientPlugins(): void {
   TerminalTypeClientRegistry.register(TrashClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(ProjectPrefsClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(GitHubMaintenanceClientPlugin, { builtIn: true });
+  TerminalTypeClientRegistry.register(SecretsClientPlugin, { builtIn: true });
 
   TerminalTypeClientRegistry.setDefaultType("shell");
 

@@ -1638,6 +1638,52 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
   }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
+  // Open (or reuse) the per-project Secrets configuration session. Each
+  // project gets its own tab — the project id is both the scope key (for
+  // server-side dedup) and the session's project_id. Reopening Secrets for
+  // the same project jumps to the existing tab.
+  const openSecretsSession = useCallback(
+    async (projectId: string, projectName: string) => {
+      try {
+        const session = await createSession({
+          name: `Secrets — ${projectName}`,
+          projectId,
+          terminalType: "secrets",
+          scopeKey: projectId,
+          typeMetadata: { projectId, projectName },
+        });
+        if (session) {
+          setActiveSession(session.id);
+          setActiveView("terminal");
+        }
+      } catch (error) {
+        logSessionError("open secrets session", error);
+      }
+    },
+    [createSession, setActiveSession, setActiveView, logSessionError]
+  );
+
+  // Listen for open-secrets event from the header Secrets button. The
+  // project id / name come from the event detail (resolved against the
+  // currently active project there); the handler falls back to the active
+  // project in the tree when the event didn't supply one.
+  useEffect(() => {
+    const handleOpenSecrets = (e: Event) => {
+      const detail = (e as CustomEvent<{
+        projectId?: string | null;
+        projectName?: string | null;
+      }>).detail;
+      const projectId = detail?.projectId ?? null;
+      if (!projectId) return;
+      const fallbackName =
+        projectTree.projects.find((p) => p.id === projectId)?.name ?? "Project";
+      const projectName = detail?.projectName || fallbackName;
+      void openSecretsSession(projectId, projectName);
+    };
+    window.addEventListener("open-secrets", handleOpenSecrets);
+    return () => window.removeEventListener("open-secrets", handleOpenSecrets);
+  }, [openSecretsSession, projectTree.projects]);
+
   // Open (or reuse) the global Profiles session. Scope key is fixed so
   // repeated opens jump to the existing tab instead of spawning duplicates.
   const openProfilesSession = useCallback(async () => {
@@ -1789,6 +1835,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onProjectResumeClaudeSession={handleFolderResumeClaudeSession}
             onProjectAdvancedSession={handleFolderAdvancedSession}
             onProjectNewWorktree={handleFolderNewWorktree}
+            onProjectOpenSecrets={(projectId, projectName) => {
+              void openSecretsSession(projectId, projectName);
+            }}
             trashCount={trashCount}
             onTrashOpen={() => { void openTrashSession(); }}
             onSessionSchedule={handleScheduleSession}
