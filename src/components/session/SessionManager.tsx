@@ -1321,11 +1321,20 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // Resolve a valid project_id for a global singleton session. The session's
   // project_id is never user-visible (Option C sidebar renders these in a
   // Global section regardless of projectId) but the DB requires NOT NULL + a
-  // valid FK. Prefer the active node when it's a project; otherwise fall back
-  // to any project. Returns null only if the user has zero projects.
+  // valid FK on projects.id. Prefer the active node when it's a project AND
+  // actually exists in the projects list; otherwise fall back to any project.
+  // Validating against projectTree.projects guards against stale activeNode
+  // state referencing a deleted project.
   const resolveSingletonCarrierProjectId = useCallback((): string | null => {
-    if (projectTree.activeNode?.type === "project") {
-      return projectTree.activeNode.id;
+    const activeProjectId =
+      projectTree.activeNode?.type === "project"
+        ? projectTree.activeNode.id
+        : null;
+    if (
+      activeProjectId &&
+      projectTree.projects.some((p) => p.id === activeProjectId)
+    ) {
+      return activeProjectId;
     }
     return projectTree.projects[0]?.id ?? null;
   }, [projectTree.activeNode, projectTree.projects]);

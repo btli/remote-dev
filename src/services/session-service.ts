@@ -870,6 +870,17 @@ export async function updateSession(
 
   // Build the DB-level updates, handling typeMetadataPatch merge
   const { typeMetadataPatch, ...directUpdates } = updates;
+
+  // Null out scope_key whenever the session transitions to closed or trashed
+  // so the partial UNIQUE index on (user_id, terminal_type, scope_key) frees
+  // the slot for a future create-session call with the same scope. Applies
+  // regardless of whether the caller explicitly set scopeKey in the patch.
+  const isBecomingInactive =
+    (updates.status === "closed" || updates.status === "trashed") &&
+    existing.status !== updates.status;
+  if (isBecomingInactive && directUpdates.scopeKey === undefined) {
+    (directUpdates as { scopeKey?: string | null }).scopeKey = null;
+  }
   let mergedTypeMetadata: string | undefined;
 
   if (typeMetadataPatch) {
