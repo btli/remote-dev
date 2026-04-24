@@ -20,6 +20,7 @@ import { IssuesClientPlugin } from "./plugins/issues-plugin-client";
 import { ProfilesClientPlugin } from "./plugins/profiles-plugin-client";
 import { PortManagerClientPlugin } from "./plugins/port-manager-plugin-client";
 import { TrashClientPlugin } from "./plugins/trash-plugin-client";
+import { ProjectPrefsClientPlugin } from "./plugins/project-prefs-plugin-client";
 
 // Client-only: use console directly to avoid pulling the server-side logger
 // (which depends on better-sqlite3) into the browser bundle.
@@ -56,6 +57,7 @@ export function initializeClientPlugins(): void {
   TerminalTypeClientRegistry.register(ProfilesClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(PortManagerClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(TrashClientPlugin, { builtIn: true });
+  TerminalTypeClientRegistry.register(ProjectPrefsClientPlugin, { builtIn: true });
 
   TerminalTypeClientRegistry.setDefaultType("shell");
 

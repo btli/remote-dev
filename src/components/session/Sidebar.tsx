@@ -100,8 +100,9 @@ interface SidebarProps {
   onOpenPinnedFile?: (folderId: string, file: PinnedFile) => void;
   /**
    * Invoked when the user clicks the settings gear on a ProjectTree row
-   * (group or project). Opens the corresponding
-   * Group/ProjectPreferencesModal. When omitted, gear icons are hidden.
+   * (group or project). Opens the GroupPreferencesModal for groups and
+   * the `project-prefs` terminal-type session for projects. When omitted,
+   * gear icons are hidden.
    */
   onOpenNodePreferences?: (node: {
     id: string;
