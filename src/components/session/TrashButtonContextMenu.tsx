@@ -39,7 +39,7 @@ interface Props extends ContentProps {
 /**
  * Right-click affordance on the sidebar footer Trash button. Restores the
  * legacy "Empty Permanently" escape hatch removed in Phase G; the primary
- * click opens the TrashModal (handled by the parent).
+ * click opens the Trash terminal-tab (handled by the parent).
  *
  * See remote-dev-mtv7.7.
  */

@@ -9,7 +9,6 @@ import { ProjectPreferencesModal } from "@/components/preferences/ProjectPrefere
 import { CommandPalette } from "@/components/CommandPalette";
 import { KeyboardShortcutsPanel } from "@/components/KeyboardShortcutsPanel";
 import { SaveRecordingModal } from "@/components/session/SaveRecordingModal";
-import { TrashModal } from "@/components/trash/TrashModal";
 import { ResumeSessionModal } from "./ResumeSessionModal";
 import { shouldPatchSettingsTab } from "./settings-deep-link";
 import { BeadsSidebar } from "@/components/beads/BeadsSidebar";
@@ -283,7 +282,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
 
   // Trash state from context
   const { count: trashCount, trashSession } = useTrashContext();
-  const [isTrashOpen, setIsTrashOpen] = useState(false);
 
   // Resume Claude Session modal state
   const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
@@ -1512,6 +1510,28 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     }
   }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
+  const openTrashSession = useCallback(async () => {
+    const carrierProjectId = resolveSingletonCarrierProjectId();
+    if (!carrierProjectId) {
+      console.error("Cannot open trash: no project available");
+      return;
+    }
+    try {
+      const session = await createSession({
+        name: "Trash",
+        projectId: carrierProjectId,
+        terminalType: "trash",
+        scopeKey: "trash",
+      });
+      if (session) {
+        setActiveSession(session.id);
+        setActiveView("terminal");
+      }
+    } catch (error) {
+      logSessionError("open trash session", error);
+    }
+  }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
+
   // Handle view change from FolderTabBar (terminal/chat toggle)
   const handleViewChange = useCallback(
     (view: ActiveView) => {
@@ -1601,7 +1621,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onProjectAdvancedSession={handleFolderAdvancedSession}
             onProjectNewWorktree={handleFolderNewWorktree}
             trashCount={trashCount}
-            onTrashOpen={() => setIsTrashOpen(true)}
+            onTrashOpen={() => { void openTrashSession(); }}
             onSessionSchedule={handleScheduleSession}
             onProfilesOpen={() => { void openProfilesSession(); }}
             onPortsOpen={() => { void openPortManagerSession(); }}
@@ -1915,9 +1935,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         duration={recordingDuration}
         sessionName={activeSessions.find((s) => s.id === activeSessionId)?.name}
       />
-
-      {/* Trash Modal */}
-      <TrashModal open={isTrashOpen} onClose={() => setIsTrashOpen(false)} />
 
       {/* Resume Claude Session Modal */}
       <ResumeSessionModal

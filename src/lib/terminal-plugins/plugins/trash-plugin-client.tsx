@@ -1,30 +1,35 @@
-"use client";
+/**
+ * TrashPlugin (client half) — React rendering for the Trash tab.
+ *
+ * Replaces the Dialog-based `TrashModal`: the list of trash items and the
+ * "Trash is empty" state now render directly in the workspace pane as a
+ * Global-section terminal tab. The confirm dialogs (`RestoreDialog`,
+ * `DeleteConfirmDialog`) remain as real Dialogs — they are short-lived
+ * yes/no affordances and don't warrant their own tab.
+ *
+ * @see ./trash-plugin-server.ts for lifecycle.
+ */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Trash2, RotateCcw, Calendar, GitBranch } from "lucide-react";
+import type {
+  TerminalTypeClientPlugin,
+  TerminalTypeClientComponentProps,
+} from "@/types/terminal-type-client";
 import { cn } from "@/lib/utils";
 import { useTrashContext } from "@/contexts/TrashContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { getDaysUntilExpiry } from "@/types/trash";
-import type { WorktreeTrashItem, TrashItemWithMetadata } from "@/types/trash";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import type {
+  WorktreeTrashItem,
+  TrashItemWithMetadata,
+} from "@/types/trash";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { RestoreDialog } from "./RestoreDialog";
-import { DeleteConfirmDialog } from "./DeleteConfirmDialog";
+import { RestoreDialog } from "@/components/trash/RestoreDialog";
+import { DeleteConfirmDialog } from "@/components/trash/DeleteConfirmDialog";
 
-interface TrashModalProps {
-  open: boolean;
-  onClose: () => void;
-}
-
-export function TrashModal({ open, onClose }: TrashModalProps) {
+function TrashTabContent({ session }: TerminalTypeClientComponentProps) {
   const {
     trashItems,
     loading,
@@ -36,9 +41,10 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
     cleanupExpired,
   } = useTrashContext();
 
-  const { refreshSessions } = useSessionContext();
+  const { refreshSessions, closeSession } = useSessionContext();
 
-  const [selectedItem, setSelectedItem] = useState<TrashItemWithMetadata | null>(null);
+  const [selectedItem, setSelectedItem] =
+    useState<TrashItemWithMetadata | null>(null);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isPathAvailable, setIsPathAvailable] = useState(true);
@@ -46,12 +52,12 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
 
-  // Trigger cleanup when modal opens
+  // Trigger cleanup when the tab mounts. Matches the modal's "cleanup on
+  // open" behavior; remount happens on every session.id change (new tab)
+  // so we don't need a separate `open` flag.
   useEffect(() => {
-    if (open) {
-      cleanupExpired();
-    }
-  }, [open, cleanupExpired]);
+    cleanupExpired();
+  }, [cleanupExpired]);
 
   const handleRestoreClick = async (item: TrashItemWithMetadata) => {
     const availability = await checkRestoreAvailability(item.id);
@@ -69,13 +75,19 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
     setShowDeleteDialog(true);
   };
 
-  const handleRestore = async (restorePath?: string, targetFolderId?: string | null) => {
+  const handleRestore = async (
+    restorePath?: string,
+    targetFolderId?: string | null
+  ) => {
     if (!selectedItem) return;
 
     setIsProcessing(true);
     setRestoreError(null);
     try {
-      const success = await restoreItem(selectedItem.id, { restorePath, targetFolderId });
+      const success = await restoreItem(selectedItem.id, {
+        restorePath,
+        targetFolderId,
+      });
       if (success) {
         setShowRestoreDialog(false);
         setSelectedItem(null);
@@ -83,7 +95,8 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
         await Promise.all([refreshTrash(), refreshSessions()]);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to restore";
+      const message =
+        error instanceof Error ? error.message : "Failed to restore";
       setRestoreError(message);
     } finally {
       setIsProcessing(false);
@@ -105,53 +118,56 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
     }
   };
 
+  // Close the Trash tab. Mirrors the modal's "Close" button: since the tab
+  // is a singleton (scope-key dedup), closing it is cheap — the next open
+  // reopens it via the carrier project.
+  const handleClose = useCallback(() => {
+    void closeSession(session.id);
+  }, [closeSession, session.id]);
+
   return (
-    <>
-      <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="w-5 h-5 text-muted-foreground" />
-              Trash
-            </DialogTitle>
-            <DialogDescription>
-              Items are automatically deleted after 30 days.
-            </DialogDescription>
-          </DialogHeader>
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-popover/30 shrink-0">
+        <Trash2 className="w-4 h-4 text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">Trash</span>
+        <span className="text-xs text-muted-foreground">
+          Items are automatically deleted after 30 days.
+        </span>
+      </div>
 
-          <ScrollArea className="max-h-[400px]">
-            {loading ? (
-              <div className="flex items-center justify-center py-8 text-muted-foreground">
-                Loading...
-              </div>
-            ) : isEmpty ? (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <Trash2 className="w-8 h-8 mb-2 opacity-50" />
-                <p className="text-sm">Trash is empty</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {trashItems.map((item) => (
-                  <TrashItemRow
-                    key={item.id}
-                    item={item}
-                    onRestore={() => handleRestoreClick(item)}
-                    onDelete={() => handleDeleteClick(item)}
-                  />
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-
-          {!isEmpty && (
-            <div className="flex justify-end pt-4 border-t border-border">
-              <Button variant="ghost" size="sm" onClick={onClose}>
-                Close
-              </Button>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <ScrollArea className="h-full">
+          {loading ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              Loading...
+            </div>
+          ) : isEmpty ? (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <Trash2 className="w-8 h-8 mb-2 opacity-50" />
+              <p className="text-sm">Trash is empty</p>
+            </div>
+          ) : (
+            <div className="space-y-2 p-4">
+              {trashItems.map((item) => (
+                <TrashItemRow
+                  key={item.id}
+                  item={item}
+                  onRestore={() => handleRestoreClick(item)}
+                  onDelete={() => handleDeleteClick(item)}
+                />
+              ))}
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+        </ScrollArea>
+      </div>
+
+      {!isEmpty && (
+        <div className="flex justify-end px-4 py-3 border-t border-border shrink-0">
+          <Button variant="ghost" size="sm" onClick={handleClose}>
+            Close
+          </Button>
+        </div>
+      )}
 
       {/* Restore confirmation dialog */}
       <RestoreDialog
@@ -180,7 +196,7 @@ export function TrashModal({ open, onClose }: TrashModalProps) {
         onDelete={handleDelete}
         isProcessing={isProcessing}
       />
-    </>
+    </div>
   );
 }
 
@@ -206,14 +222,15 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
       const worktreeItem = item as WorktreeTrashItem;
       const parts: string[] = [];
 
-      // Add folder name if available
       if (worktreeItem.metadata?.originalProjectName) {
         parts.push(worktreeItem.metadata.originalProjectName);
       }
 
-      // Add repo name if available and different from folder
-      if (worktreeItem.metadata?.repoName &&
-          worktreeItem.metadata.repoName !== worktreeItem.metadata?.originalProjectName) {
+      if (
+        worktreeItem.metadata?.repoName &&
+        worktreeItem.metadata.repoName !==
+          worktreeItem.metadata?.originalProjectName
+      ) {
         parts.push(worktreeItem.metadata.repoName);
       }
 
@@ -222,7 +239,6 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
     return null;
   };
 
-  // Get the branch name for worktree items
   const getBranchName = (): string | null => {
     if (item.resourceType === "worktree") {
       const worktreeItem = item as WorktreeTrashItem;
@@ -236,21 +252,19 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
 
   return (
     <div className="group flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-accent transition-colors">
-      {/* Icon */}
       <div className="shrink-0">
         <GitBranch className="w-4 h-4 text-primary" />
       </div>
 
-      {/* Info */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{item.resourceName}</p>
+        <p className="text-sm font-medium text-foreground truncate">
+          {item.resourceName}
+        </p>
 
-        {/* Folder/Repo path */}
         {itemPath && (
           <p className="text-xs text-muted-foreground truncate">{itemPath}</p>
         )}
 
-        {/* Branch and expiry info */}
         <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
           {branchName && (
             <span className="flex items-center gap-1">
@@ -260,14 +274,18 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
               </span>
             </span>
           )}
-          <span className={cn("flex items-center gap-1", isExpiringSoon && "text-amber-400")}>
+          <span
+            className={cn(
+              "flex items-center gap-1",
+              isExpiringSoon && "text-amber-400"
+            )}
+          >
             <Calendar className="w-3 h-3" />
             {formatDaysLeft(daysLeft)}
           </span>
         </div>
       </div>
 
-      {/* Actions */}
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <Button
           variant="ghost"
@@ -291,3 +309,15 @@ function TrashItemRow({ item, onRestore, onDelete }: TrashItemRowProps) {
     </div>
   );
 }
+
+/** Default trash client plugin instance */
+export const TrashClientPlugin: TerminalTypeClientPlugin = {
+  type: "trash",
+  displayName: "Trash",
+  description: "Restore or permanently delete trashed items",
+  icon: Trash2,
+  priority: 50,
+  builtIn: true,
+  component: TrashTabContent,
+  deriveTitle: () => "Trash",
+};
