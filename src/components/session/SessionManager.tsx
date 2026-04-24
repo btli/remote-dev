@@ -1318,10 +1318,21 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // project (or the first available one) as a carrier — terminal_session
   // requires project_id NOT NULL. Dedup ignores projectId, so subsequent
   // opens jump to the existing session even if the active project changes.
+  // Resolve a valid project_id for a global singleton session. The session's
+  // project_id is never user-visible (Option C sidebar renders these in a
+  // Global section regardless of projectId) but the DB requires NOT NULL + a
+  // valid FK. Prefer the active node when it's a project; otherwise fall back
+  // to any project. Returns null only if the user has zero projects.
+  const resolveSingletonCarrierProjectId = useCallback((): string | null => {
+    if (projectTree.activeNode?.type === "project") {
+      return projectTree.activeNode.id;
+    }
+    return projectTree.projects[0]?.id ?? null;
+  }, [projectTree.activeNode, projectTree.projects]);
+
   const openSettingsSession = useCallback(
     async (section?: string) => {
-      const carrierProjectId =
-        activeProject.folderId ?? projectTree.projects[0]?.id ?? null;
+      const carrierProjectId = resolveSingletonCarrierProjectId();
       if (!carrierProjectId) {
         console.error("Cannot open settings: no project available");
         return;
@@ -1358,7 +1369,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
         logSessionError("open settings session", error);
       }
     },
-    [activeProject.folderId, projectTree.projects, createSession, setActiveSession, setActiveView, updateSession, logSessionError]
+    [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, updateSession, logSessionError]
   );
 
   // Listen for open-settings event from Header gear button and Sidebar
@@ -1428,8 +1439,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   // single tab. A project id is required by schema — use the active project
   // as a carrier.
   const openRecordingsSession = useCallback(async () => {
-    const carrierProjectId =
-      activeProject.folderId ?? projectTree.projects[0]?.id ?? null;
+    const carrierProjectId = resolveSingletonCarrierProjectId();
     if (!carrierProjectId) {
       console.error("Cannot open recordings: no project available");
       return;
@@ -1448,13 +1458,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     } catch (error) {
       logSessionError("open recordings session", error);
     }
-  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, setActiveView, logSessionError]);
+  }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
   // Open (or reuse) the global Profiles session. Scope key is fixed so
   // repeated opens jump to the existing tab instead of spawning duplicates.
   const openProfilesSession = useCallback(async () => {
-    const carrierProjectId =
-      activeProject.folderId ?? projectTree.projects[0]?.id ?? null;
+    const carrierProjectId = resolveSingletonCarrierProjectId();
     if (!carrierProjectId) {
       console.error("Cannot open profiles: no project available");
       return;
@@ -1473,7 +1482,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     } catch (error) {
       logSessionError("open profiles session", error);
     }
-  }, [activeProject.folderId, projectTree.projects, createSession, setActiveSession, setActiveView, logSessionError]);
+  }, [resolveSingletonCarrierProjectId, createSession, setActiveSession, setActiveView, logSessionError]);
 
   // Handle view change from FolderTabBar (terminal/chat toggle)
   const handleViewChange = useCallback(
