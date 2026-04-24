@@ -842,6 +842,7 @@ export const ProjectTreeSidebar = forwardRef<
               <SessionRow
                 session={s}
                 depth={depth}
+                reserveChevronSpace
                 dropIndicator={null}
                 isActive={s.id === activeSessionId}
                 isEditing={
@@ -1054,6 +1055,7 @@ export const ProjectTreeSidebar = forwardRef<
                         <SessionRow
                           session={s}
                           depth={1}
+                          reserveChevronSpace
                           dropIndicator={null}
                           isActive={s.id === activeSessionId}
                           isEditing={
