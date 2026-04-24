@@ -16,12 +16,12 @@ import type { AgentProviderType, TerminalSession, CreateSessionInput } from "./s
  * - file: Read/edit file without terminal (CLAUDE.md editor)
  * - Custom types can be added via plugin registration
  */
-export type TerminalType = "shell" | "agent" | "file" | "browser" | "settings" | "recordings" | "issues" | "prs" | "profiles" | "port-manager" | "trash" | "project-prefs" | "github-maintenance" | "secrets" | string;
+export type TerminalType = "shell" | "agent" | "file" | "browser" | "settings" | "recordings" | "issues" | "prs" | "profiles" | "port-manager" | "trash" | "project-prefs" | "github-maintenance" | "secrets" | "group-prefs" | string;
 
 /**
  * Built-in terminal types (cannot be unregistered)
  */
-export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "loop", "settings", "recordings", "issues", "prs", "profiles", "port-manager", "trash", "project-prefs", "github-maintenance", "secrets"];
+export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "loop", "settings", "recordings", "issues", "prs", "profiles", "port-manager", "trash", "project-prefs", "github-maintenance", "secrets", "group-prefs"];
 
 /**
  * Terminal types that render as user-global singletons in the sidebar,

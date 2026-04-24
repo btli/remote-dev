@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sessionsForProject,
+  sessionsForGroup,
   recursiveSessionCount,
   rolledUpRepoStats,
   globalSessions,
@@ -132,6 +133,62 @@ describe("isGlobalTerminalType", () => {
     expect(new Set(GLOBAL_TERMINAL_TYPES)).toEqual(
       new Set(["settings", "recordings", "profiles", "port-manager", "trash"]),
     );
+  });
+});
+
+describe("sessionsForGroup (group-prefs carrier handling)", () => {
+  // group-prefs sessions carry a carrier projectId but logically belong to
+  // the group referenced by typeMetadata.groupId. They must be rendered
+  // under their group and NOT under the carrier project.
+  const gpSessions = [
+    { id: "shell1", projectId: "p1", terminalType: "shell" },
+    {
+      id: "gp1",
+      projectId: "p1",
+      terminalType: "group-prefs",
+      typeMetadata: { groupId: "g1", groupName: "g1" },
+    },
+    {
+      id: "gp2",
+      projectId: "p1",
+      terminalType: "group-prefs",
+      typeMetadata: { groupId: "g2", groupName: "g2" },
+    },
+    {
+      id: "gp3",
+      projectId: "p2",
+      terminalType: "group-prefs",
+      typeMetadata: { groupId: "g1", groupName: "g1" },
+    },
+  ];
+
+  it("sessionsForGroup returns every group-prefs session matching groupId", () => {
+    expect(sessionsForGroup(gpSessions, "g1").map((s) => s.id).sort()).toEqual([
+      "gp1",
+      "gp3",
+    ]);
+    expect(sessionsForGroup(gpSessions, "g2").map((s) => s.id)).toEqual(["gp2"]);
+    expect(sessionsForGroup(gpSessions, "gMissing")).toEqual([]);
+  });
+
+  it("sessionsForProject excludes group-prefs sessions from the carrier project", () => {
+    expect(sessionsForProject(gpSessions, "p1").map((s) => s.id)).toEqual(["shell1"]);
+    expect(sessionsForProject(gpSessions, "p2")).toEqual([]);
+  });
+
+  it("recursiveSessionCount counts group-prefs under their owning group", () => {
+    const gGroups = [
+      { id: "g1", parentGroupId: null, name: "g1", collapsed: false, sortOrder: 0 },
+      { id: "g2", parentGroupId: "g1", name: "g2", collapsed: false, sortOrder: 0 },
+    ];
+    const gProjects = [
+      { id: "p1", groupId: "g1", name: "p1", isAutoCreated: false, sortOrder: 0, collapsed: false },
+      { id: "p2", groupId: "g2", name: "p2", isAutoCreated: false, sortOrder: 0, collapsed: false },
+    ];
+    // g1: shell1 (under p1) + gp1/gp3 (under g1 directly) + gp2 (under g2 descendant) = 4
+    expect(recursiveSessionCount(gpSessions, gGroups, gProjects, "g1")).toBe(4);
+    // g2: just gp2 (owned by g2) — p2 has no non-group-prefs sessions
+    expect(recursiveSessionCount(gpSessions, gGroups, gProjects, "g2")).toBe(1);
   });
 });
 
