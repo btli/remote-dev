@@ -415,6 +415,91 @@ describe("singleton fast-path — reactivate without roundtripping", () => {
 });
 
 /**
+ * Sidebar-row click path (bd remote-dev-6mpg): clicking a session row in
+ * the sidebar while activeView !== "terminal" must force the terminal
+ * pane visible, otherwise the just-activated tab stays hidden behind chat
+ * view and looks closed. Mirrors handleSessionClick in SessionManager.tsx.
+ */
+describe("handleSessionClick — switch to terminal view on row click", () => {
+  /**
+   * Mirrors the body of `handleSessionClick` in SessionManager.tsx. Isolated
+   * here so we exercise the decision tree without mounting ~10 contexts.
+   */
+  function handleSessionClick(
+    sessionId: string,
+    opts: {
+      sessions: TerminalSession[];
+      setActiveSession: (id: string) => void;
+      setActiveView: (view: "terminal" | "chat") => void;
+      maybeAutoFollowFolder: (folderId: string | null) => void;
+    },
+  ): void {
+    const { sessions, setActiveSession, setActiveView, maybeAutoFollowFolder } =
+      opts;
+    setActiveSession(sessionId);
+    setActiveView("terminal");
+    const session = sessions.find((s) => s.id === sessionId);
+    const folderId =
+      (session as (TerminalSession & { projectId?: string | null }) | undefined)
+        ?.projectId || null;
+    maybeAutoFollowFolder(folderId);
+  }
+
+  it("activates the session AND switches activeView to terminal (chat → terminal)", () => {
+    // Reproducer for the exact user-reported flow: settings tab open,
+    // user clicked another tab (or switched to chat), then clicked the
+    // Global-section Settings row. Before the fix, activeView stayed on
+    // "chat" so the terminal pane hosting Settings was hidden.
+    const settings = makeSingleton(
+      "settings-1",
+      { terminalType: "settings", scopeKey: "settings" },
+      "active",
+    );
+    const setActiveSession = vi.fn();
+    const setActiveView = vi.fn();
+    const maybeAutoFollowFolder = vi.fn();
+
+    handleSessionClick("settings-1", {
+      sessions: [settings],
+      setActiveSession,
+      setActiveView,
+      maybeAutoFollowFolder,
+    });
+
+    expect(setActiveSession).toHaveBeenCalledWith("settings-1");
+    expect(setActiveView).toHaveBeenCalledWith("terminal");
+  });
+
+  it("applies the same fix for non-singleton session rows", () => {
+    // Not just singletons — any session row click from chat view must
+    // reveal the terminal pane. Otherwise the click looks like a no-op.
+    const shell = {
+      id: "shell-1",
+      terminalType: "shell",
+      scopeKey: null,
+      status: "active" as TerminalSession["status"],
+      typeMetadata: null,
+      projectId: "proj-1",
+    } as unknown as TerminalSession;
+
+    const setActiveSession = vi.fn();
+    const setActiveView = vi.fn();
+    const maybeAutoFollowFolder = vi.fn();
+
+    handleSessionClick("shell-1", {
+      sessions: [shell],
+      setActiveSession,
+      setActiveView,
+      maybeAutoFollowFolder,
+    });
+
+    expect(setActiveSession).toHaveBeenCalledWith("shell-1");
+    expect(setActiveView).toHaveBeenCalledWith("terminal");
+    expect(maybeAutoFollowFolder).toHaveBeenCalledWith("proj-1");
+  });
+});
+
+/**
  * In-flight sync dedup (bd remote-dev-p0bu): when SessionManager's sync
  * effect re-runs between POST-start and POST-complete, it previously
  * issued a duplicate resume/suspend on the already-transitioning session.

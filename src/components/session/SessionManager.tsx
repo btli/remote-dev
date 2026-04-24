@@ -1373,13 +1373,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleSessionClick = useCallback(
     (sessionId: string) => {
       setActiveSession(sessionId);
+      // Force the terminal pane visible. Session tabs (shell, agent, settings,
+      // recordings, profiles, *-prefs, secrets, file, browser) all render
+      // inside the terminal container; if the user is on chat view, the
+      // container is hidden and the session appears closed. Mirrors the
+      // explicit switch that openSettingsSession / openRecordingsSession /
+      // openProfilesSession already perform. Regression guard for
+      // bd remote-dev-6mpg — clicking a sidebar row (e.g. the Global-section
+      // Settings row) from chat view used to leave activeView on "chat",
+      // hiding the just-activated tab.
+      setActiveView("terminal");
       // Update active folder based on the session's folder
       // Use session.folderId directly for immediate availability (not sessionFolders which loads async)
       const session = sessions.find(s => s.id === sessionId);
       const folderId = session?.projectId || null;
       maybeAutoFollowFolder(folderId);
     },
-    [setActiveSession, sessions, maybeAutoFollowFolder]
+    [setActiveSession, setActiveView, sessions, maybeAutoFollowFolder]
   );
 
   // Keyboard shortcut handler - useEffectEvent always reads latest values
