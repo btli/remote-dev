@@ -16,8 +16,14 @@ import type { TerminalSession } from "@/types/session";
 import { shouldPatchSettingsTab } from "../settings-deep-link";
 
 type Singleton = {
-  terminalType: "settings" | "recordings" | "profiles";
-  scopeKey: "settings" | "recordings" | "profiles";
+  terminalType:
+    | "settings"
+    | "recordings"
+    | "profiles"
+    | "project-prefs"
+    | "group-prefs"
+    | "secrets";
+  scopeKey: string;
 };
 
 function makeSingleton(
@@ -94,6 +100,13 @@ const KINDS: Singleton[] = [
   { terminalType: "settings", scopeKey: "settings" },
   { terminalType: "recordings", scopeKey: "recordings" },
   { terminalType: "profiles", scopeKey: "profiles" },
+  // Scope-keyed singletons: scopeKey is the projectId/groupId, so the fast
+  // path only matches tabs for the same scope. Covers bd remote-dev-ajt7:
+  // the regression that persisted on project-prefs / group-prefs / secrets
+  // because their openers used to skip the client-side check entirely.
+  { terminalType: "project-prefs", scopeKey: "proj-1" },
+  { terminalType: "group-prefs", scopeKey: "group-1" },
+  { terminalType: "secrets", scopeKey: "proj-1" },
 ];
 
 describe("singleton fast-path — reactivate without roundtripping", () => {
@@ -241,5 +254,291 @@ describe("singleton fast-path — reactivate without roundtripping", () => {
     );
 
     expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  // Scope-keyed singletons use the projectId/groupId as scopeKey. The fast
+  // path must only match tabs with the same scope — opening prefs for
+  // project B must not reuse an existing tab for project A.
+  it("project-prefs: does NOT reuse a tab scoped to a different project", async () => {
+    const existingForA = makeSingleton(
+      "sA",
+      { terminalType: "project-prefs", scopeKey: "proj-A" },
+      "active",
+    );
+    const fresh = makeSingleton(
+      "sB",
+      { terminalType: "project-prefs", scopeKey: "proj-B" },
+      "active",
+    );
+    const createSession = vi.fn(async () => fresh);
+    const setActiveSession = vi.fn();
+
+    await openSingleton(
+      { terminalType: "project-prefs", scopeKey: "proj-B" },
+      {
+        sessions: [existingForA],
+        setActiveSession,
+        setActiveView: () => {},
+        createSession,
+        updateSession: vi.fn(),
+      },
+    );
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(setActiveSession).toHaveBeenCalledWith("sB");
+  });
+
+  it("group-prefs: does NOT reuse a tab scoped to a different group", async () => {
+    const existingForG1 = makeSingleton(
+      "s1",
+      { terminalType: "group-prefs", scopeKey: "group-1" },
+      "active",
+    );
+    const fresh = makeSingleton(
+      "s2",
+      { terminalType: "group-prefs", scopeKey: "group-2" },
+      "active",
+    );
+    const createSession = vi.fn(async () => fresh);
+    const setActiveSession = vi.fn();
+
+    await openSingleton(
+      { terminalType: "group-prefs", scopeKey: "group-2" },
+      {
+        sessions: [existingForG1],
+        setActiveSession,
+        setActiveView: () => {},
+        createSession,
+        updateSession: vi.fn(),
+      },
+    );
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(setActiveSession).toHaveBeenCalledWith("s2");
+  });
+
+  // Deep-link patch on reuse for project-prefs (mirrors settings). When the
+  // caller asks for a specific initialTab and the stored one differs, the
+  // opener should patch typeMetadata.initialTab via updateSession.
+  it("project-prefs: patches initialTab when requested tab differs from stored", async () => {
+    const existing = {
+      id: "s1",
+      terminalType: "project-prefs" as const,
+      scopeKey: "proj-1",
+      status: "active" as TerminalSession["status"],
+      typeMetadata: { projectId: "proj-1", initialTab: "general" },
+    } as unknown as TerminalSession;
+
+    const updateSession = vi.fn(async (_id: string, _patch: unknown) => undefined);
+    const createSession = vi.fn();
+
+    // Inline the project-prefs reuse logic from SessionManager.tsx.
+    const sessions = [existing];
+    const initialTab: "general" | "appearance" | "repository" | "environment" =
+      "appearance";
+    const match = sessions.find(
+      (s) =>
+        s.terminalType === "project-prefs" &&
+        s.scopeKey === "proj-1" &&
+        s.status !== "closed" &&
+        s.status !== "trashed",
+    );
+    expect(match).toBeDefined();
+    if (match) {
+      const storedTab = (match.typeMetadata as { initialTab?: string } | null)
+        ?.initialTab;
+      if (storedTab !== initialTab) {
+        await updateSession(match.id, {
+          typeMetadataPatch: { initialTab },
+        });
+      }
+    }
+
+    expect(updateSession).toHaveBeenCalledWith("s1", {
+      typeMetadataPatch: { initialTab: "appearance" },
+    });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it("project-prefs: does NOT patch initialTab when stored tab matches", async () => {
+    const existing = {
+      id: "s1",
+      terminalType: "project-prefs" as const,
+      scopeKey: "proj-1",
+      status: "active" as TerminalSession["status"],
+      typeMetadata: { projectId: "proj-1", initialTab: "appearance" },
+    } as unknown as TerminalSession;
+
+    const updateSession = vi.fn(async (_id: string, _patch: unknown) => undefined);
+
+    const initialTab: "general" | "appearance" | "repository" | "environment" =
+      "appearance";
+    const storedTab = (existing.typeMetadata as { initialTab?: string } | null)
+      ?.initialTab;
+    if (storedTab !== initialTab) {
+      await updateSession(existing.id, {
+        typeMetadataPatch: { initialTab },
+      });
+    }
+
+    expect(updateSession).not.toHaveBeenCalled();
+  });
+
+  it("secrets: does NOT reuse a tab scoped to a different project", async () => {
+    const existingForA = makeSingleton(
+      "sA",
+      { terminalType: "secrets", scopeKey: "proj-A" },
+      "active",
+    );
+    const fresh = makeSingleton(
+      "sB",
+      { terminalType: "secrets", scopeKey: "proj-B" },
+      "active",
+    );
+    const createSession = vi.fn(async () => fresh);
+    const setActiveSession = vi.fn();
+
+    await openSingleton(
+      { terminalType: "secrets", scopeKey: "proj-B" },
+      {
+        sessions: [existingForA],
+        setActiveSession,
+        setActiveView: () => {},
+        createSession,
+        updateSession: vi.fn(),
+      },
+    );
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(setActiveSession).toHaveBeenCalledWith("sB");
+  });
+});
+
+/**
+ * In-flight sync dedup (bd remote-dev-p0bu): when SessionManager's sync
+ * effect re-runs between POST-start and POST-complete, it previously
+ * issued a duplicate resume/suspend on the already-transitioning session.
+ * The fix tracks in-flight syncs in a Map<sessionId, Promise> so a second
+ * call returns the same promise instead of firing a new POST.
+ */
+describe("syncSessionStatus in-flight dedup", () => {
+  /**
+   * Mirrors the real `syncSessionStatus` in SessionManager.tsx. Isolated
+   * here so we don't need to mount the entire component with ~10 contexts.
+   */
+  function makeSyncer(opts: {
+    resumeSession: (id: string) => Promise<void>;
+    suspendSession: (id: string) => Promise<void>;
+  }) {
+    const inFlight = new Map<string, Promise<void>>();
+    async function syncSessionStatus(
+      sessionId: string,
+      targetStatus: "active" | "suspended",
+    ): Promise<void> {
+      const existing = inFlight.get(sessionId);
+      if (existing) {
+        await existing;
+        return;
+      }
+      const promise = (async () => {
+        try {
+          if (targetStatus === "active") {
+            await opts.resumeSession(sessionId);
+          } else {
+            await opts.suspendSession(sessionId);
+          }
+        } catch {
+          // swallow, mirrors component behavior
+        }
+      })();
+      inFlight.set(sessionId, promise);
+      try {
+        await promise;
+      } finally {
+        if (inFlight.get(sessionId) === promise) {
+          inFlight.delete(sessionId);
+        }
+      }
+    }
+    return { syncSessionStatus, inFlight };
+  }
+
+  it("deduplicates concurrent resume calls for the same session", async () => {
+    const resolveResumeRef: { current: (() => void) | null } = { current: null };
+    const resumeSession = vi.fn(
+      (_id: string): Promise<void> =>
+        new Promise<void>((resolve) => {
+          resolveResumeRef.current = resolve;
+        }),
+    );
+    const suspendSession = vi.fn(async () => undefined);
+
+    const { syncSessionStatus } = makeSyncer({ resumeSession, suspendSession });
+
+    // Fire two calls back-to-back — the second should await the first's
+    // in-flight promise instead of issuing a duplicate resume.
+    const first = syncSessionStatus("s1", "active");
+    const second = syncSessionStatus("s1", "active");
+
+    // resumeSession has been called exactly once; the second call is
+    // queued on the in-flight promise.
+    expect(resumeSession).toHaveBeenCalledTimes(1);
+
+    // Resolve the first call and wait for both to settle.
+    resolveResumeRef.current?.();
+    await Promise.all([first, second]);
+
+    expect(resumeSession).toHaveBeenCalledTimes(1);
+    expect(suspendSession).not.toHaveBeenCalled();
+  });
+
+  it("clears the in-flight entry after settlement so future calls proceed", async () => {
+    const resumeSession = vi.fn(async () => undefined);
+    const suspendSession = vi.fn(async () => undefined);
+
+    const { syncSessionStatus } = makeSyncer({ resumeSession, suspendSession });
+
+    await syncSessionStatus("s1", "active");
+    await syncSessionStatus("s1", "active");
+
+    // Each sequential call issues a fresh resume (no stale dedup entry).
+    expect(resumeSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not dedup across different session ids", async () => {
+    const resumeSession = vi.fn(async () => undefined);
+    const suspendSession = vi.fn(async () => undefined);
+
+    const { syncSessionStatus } = makeSyncer({ resumeSession, suspendSession });
+
+    await Promise.all([
+      syncSessionStatus("s1", "active"),
+      syncSessionStatus("s2", "active"),
+    ]);
+
+    expect(resumeSession).toHaveBeenCalledTimes(2);
+    expect(resumeSession).toHaveBeenCalledWith("s1");
+    expect(resumeSession).toHaveBeenCalledWith("s2");
+  });
+
+  it("swallows errors but still clears the in-flight entry", async () => {
+    const resumeSession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Cannot resume from state 'active'"))
+      .mockResolvedValueOnce(undefined);
+    const suspendSession = vi.fn(async () => undefined);
+
+    const { syncSessionStatus, inFlight } = makeSyncer({
+      resumeSession,
+      suspendSession,
+    });
+
+    // First call rejects internally but should not throw out of syncSessionStatus.
+    await syncSessionStatus("s1", "active");
+    expect(inFlight.has("s1")).toBe(false);
+
+    // Second call proceeds unhindered.
+    await syncSessionStatus("s1", "active");
+    expect(resumeSession).toHaveBeenCalledTimes(2);
   });
 });
