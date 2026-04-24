@@ -20,6 +20,7 @@ import {
   ExternalLink,
   CircleDot,
   GitPullRequest,
+  Wrench,
   Pencil,
   Trash2,
   Folder,
@@ -57,6 +58,7 @@ interface ContentProps {
   onOpenFolderInOS: () => void;
   onViewIssues?: () => void;
   onViewPRs?: () => void;
+  onViewMaintenance?: () => void;
   onStartEdit: () => void;
   onToggleCollapse?: () => void;
   /** Move this project under a new group. `null` targets the root. */
@@ -86,6 +88,7 @@ export function ProjectContextMenuContent({
   onOpenFolderInOS,
   onViewIssues,
   onViewPRs,
+  onViewMaintenance,
   onStartEdit,
   onToggleCollapse,
   onMoveToGroup,
@@ -155,6 +158,11 @@ export function ProjectContextMenuContent({
       {onViewPRs && hasLinkedRepo && (
         <button role="menuitem" onClick={onViewPRs}>
           <GitPullRequest className="mr-2 h-4 w-4" /> View PRs
+        </button>
+      )}
+      {onViewMaintenance && hasLinkedRepo && (
+        <button role="menuitem" onClick={onViewMaintenance}>
+          <Wrench className="mr-2 h-4 w-4" /> Maintenance
         </button>
       )}
       <button role="menuitem" onClick={onStartEdit}>
@@ -235,6 +243,7 @@ export function ProjectContextMenu({
   onOpenFolderInOS,
   onViewIssues,
   onViewPRs,
+  onViewMaintenance,
   onStartEdit,
   onToggleCollapse,
   onMoveToGroup,
@@ -301,6 +310,11 @@ export function ProjectContextMenu({
         {onViewPRs && hasLinkedRepo && (
           <ContextMenuItem onSelect={onViewPRs}>
             <GitPullRequest className="mr-2 h-4 w-4" /> View PRs
+          </ContextMenuItem>
+        )}
+        {onViewMaintenance && hasLinkedRepo && (
+          <ContextMenuItem onSelect={onViewMaintenance}>
+            <Wrench className="mr-2 h-4 w-4" /> Maintenance
           </ContextMenuItem>
         )}
         <ContextMenuItem onSelect={onStartEdit}>

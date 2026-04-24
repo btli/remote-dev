@@ -21,6 +21,7 @@ import { ProfilesServerPlugin } from "./plugins/profiles-plugin-server";
 import { PortManagerServerPlugin } from "./plugins/port-manager-plugin-server";
 import { TrashServerPlugin } from "./plugins/trash-plugin-server";
 import { ProjectPrefsServerPlugin } from "./plugins/project-prefs-plugin-server";
+import { GitHubMaintenanceServerPlugin } from "./plugins/github-maintenance-plugin-server";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("PluginInit.Server");
@@ -52,6 +53,7 @@ export function initializeServerPlugins(): void {
   TerminalTypeServerRegistry.register(PortManagerServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(TrashServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(ProjectPrefsServerPlugin, { builtIn: true });
+  TerminalTypeServerRegistry.register(GitHubMaintenanceServerPlugin, { builtIn: true });
 
   TerminalTypeServerRegistry.setDefaultType("shell");
 
