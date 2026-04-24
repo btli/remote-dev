@@ -1,5 +1,5 @@
 "use client";
-import { type ReactNode, type CSSProperties } from "react";
+import { type ReactNode } from "react";
 
 interface Props {
   depth: number;
@@ -7,14 +7,19 @@ interface Props {
   children: ReactNode;
 }
 
-export function TreeConnector({ depth, isLastChild, children }: Props) {
-  const left = depth * 12 + 8 + 7;
-  const style: CSSProperties & Record<string, string> = {
-    "--tree-connector-left": `${left}px`,
-    "--tree-connector-width": "8px",
-  };
+/**
+ * Wrapper for tree rows. Previously rendered vertical nesting guide bars via
+ * CSS custom properties consumed by a `.tree-item::before` pseudo-element.
+ * The bars were removed (they didn't align reliably with parent rows and the
+ * user preferred plain indentation), so this component is now a thin wrapper
+ * that preserves the last-child data attribute for potential styling hooks.
+ * `depth` is retained in the API because call-sites pass it through, but it
+ * no longer drives any layout — indentation is owned by the individual row
+ * components via `paddingLeft` / `marginLeft`.
+ */
+export function TreeConnector({ depth: _depth, isLastChild, children }: Props) {
   return (
-    <div className="tree-item" data-tree-last={isLastChild ? "true" : undefined} style={style}>
+    <div data-tree-last={isLastChild ? "true" : undefined}>
       {children}
     </div>
   );

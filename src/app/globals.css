@@ -677,31 +677,6 @@
   @apply h-7 text-[11px] px-2.5;
 }
 
-/* ============================================================================
-   Sidebar Tree View Lines - Vertical lines only
-   ============================================================================ */
-
-:root {
-  --tree-line-color: oklch(1 0 0 / 12%);
-}
-
-/* Tree item container */
-.tree-item {
-  position: relative;
-}
-
-/* Vertical line - full height */
-.tree-item::before {
-  content: '';
-  position: absolute;
-  left: var(--tree-connector-left);
-  top: 0;
-  width: 1px;
-  height: 100%;
-  background: var(--tree-line-color);
-  pointer-events: none;
-}
-
 /* Agent activity breathing animation */
 @keyframes agent-breathing {
   0%, 100% { opacity: 1; }

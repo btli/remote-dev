@@ -893,97 +893,137 @@ export const ProjectTreeSidebar = forwardRef<
       }}
     >
       {globalSessionList.length > 0 && (
-        <div data-testid="global-section" className="mb-1">
-          <button
-            type="button"
-            aria-expanded={!globalSectionCollapsed}
-            aria-label="Toggle global section"
-            onClick={() => setGlobalSectionCollapsed((v) => !v)}
-            className="flex w-full items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {globalSectionCollapsed ? (
-              <ChevronRight className="h-3 w-3" aria-hidden />
-            ) : (
-              <ChevronDown className="h-3 w-3" aria-hidden />
-            )}
-            <Globe className="h-3 w-3" aria-hidden />
-            <span>Global</span>
-            <span className="ml-auto text-[10px] font-normal text-muted-foreground">
-              {globalSessionList.length}
-            </span>
-          </button>
-          {!globalSectionCollapsed && (
-            <div data-testid="global-section-list">
-              {globalSessionList.map((s, i) => (
-                <TreeConnector
-                  key={s.id}
-                  depth={0}
-                  isLastChild={i === globalSessionList.length - 1}
-                >
-                  <SessionContextMenu
-                    session={s}
-                    projects={projectOptions}
-                    onStartEdit={() => setEditingNode({ id: s.id, type: "session" })}
-                    onTogglePin={() => props.onSessionTogglePin(s.id)}
-                    onMove={(targetProjectId) => {
-                      props.onSessionMove(s.id, targetProjectId);
-                    }}
-                    onSchedule={
-                      props.onSessionSchedule
-                        ? () => props.onSessionSchedule!(s.id)
-                        : undefined
-                    }
-                    onClose={() => props.onSessionClose(s.id)}
-                  >
-                    <div>
-                      <SessionRow
-                        session={s}
-                        depth={0}
-                        dropIndicator={null}
-                        isActive={s.id === activeSessionId}
-                        isEditing={
-                          editingNode?.id === s.id &&
-                          editingNode?.type === "session"
-                        }
-                        hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
-                        agentStatus={null}
-                        scheduleCount={0}
-                        dragTranslateStyle={swipe.getRowStyle(s.id)}
-                        swipeRevealed={swipe.swipedSessionId === s.id}
-                        onTouchStart={(e) => swipe.handleTouchStart(e, s.id)}
-                        onTouchMove={swipe.handleTouchMove}
-                        onTouchEnd={swipe.handleTouchEnd}
-                        onClick={() => {
-                // Tap on the row dismisses a committed swipe instead of
-                // activating the session. Gives the user an escape hatch
-                // when they swiped by accident and don't want to close.
-                if (swipe.swipedSessionId === s.id) {
-                  swipe.clearSwipe();
-                  return;
+        <TreeConnector
+          depth={0}
+          isLastChild={
+            rootOrdered.length === 0 && creating?.parentGroupId !== null
+          }
+        >
+          <div data-testid="global-section" className="relative space-y-0.5">
+            {/*
+              Global header. Structurally mirrors GroupRow at depth=0 so it
+              lines up with other top-level containers: same `px-2 py-1
+              rounded-md` shell, same chevron + icon layout, same right-side
+              count slot (a single min-w 24px span to match the session-count
+              column in GroupRow). Only the icon (Globe) and the uppercase
+              label style distinguish it visually. Child sessions render at
+              depth=1, matching how GroupRow's subtree renders a depth=1
+              project under a depth=0 group.
+            */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={!globalSectionCollapsed}
+              aria-label="Toggle global section"
+              onClick={() => setGlobalSectionCollapsed((v) => !v)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setGlobalSectionCollapsed((v) => !v);
                 }
-                props.onSessionClick(s.id);
               }}
-                        onClose={() => {
-                          props.onSessionClose(s.id);
-                          swipe.clearSwipe();
-                        }}
-                        onStartEdit={() => {
-                          props.onSessionStartEdit(s.id);
-                          setEditingNode({ id: s.id, type: "session" });
-                        }}
-                        onSaveEdit={(name) => {
-                          props.onSessionRename(s.id, name);
-                          setEditingNode(null);
-                        }}
-                        onCancelEdit={() => setEditingNode(null)}
-                      />
-                    </div>
-                  </SessionContextMenu>
-                </TreeConnector>
-              ))}
+              className="group flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-accent/50 transition-all duration-150"
+            >
+              <button
+                type="button"
+                aria-label="Toggle global section"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setGlobalSectionCollapsed((v) => !v);
+                }}
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                {globalSectionCollapsed ? (
+                  <ChevronRight className="h-3 w-3" />
+                ) : (
+                  <ChevronDown className="h-3 w-3" />
+                )}
+              </button>
+              <Globe className="w-3.5 h-3.5 shrink-0 text-primary" />
+              <div className="flex-1 min-w-0 flex items-center gap-1">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
+                  Global
+                </span>
+              </div>
+              <div className="flex items-center gap-1 shrink-0 ml-auto">
+                <span className="flex items-center gap-0.5 justify-end text-[9px] text-muted-foreground min-w-[24px]">
+                  {globalSessionList.length}
+                </span>
+              </div>
             </div>
-          )}
-        </div>
+            {!globalSectionCollapsed && (
+              <div data-testid="global-section-list">
+                {globalSessionList.map((s, i) => (
+                  <TreeConnector
+                    key={s.id}
+                    depth={1}
+                    isLastChild={i === globalSessionList.length - 1}
+                  >
+                    <SessionContextMenu
+                      session={s}
+                      projects={projectOptions}
+                      onStartEdit={() => setEditingNode({ id: s.id, type: "session" })}
+                      onTogglePin={() => props.onSessionTogglePin(s.id)}
+                      onMove={(targetProjectId) => {
+                        props.onSessionMove(s.id, targetProjectId);
+                      }}
+                      onSchedule={
+                        props.onSessionSchedule
+                          ? () => props.onSessionSchedule!(s.id)
+                          : undefined
+                      }
+                      onClose={() => props.onSessionClose(s.id)}
+                    >
+                      <div>
+                        <SessionRow
+                          session={s}
+                          depth={1}
+                          dropIndicator={null}
+                          isActive={s.id === activeSessionId}
+                          isEditing={
+                            editingNode?.id === s.id &&
+                            editingNode?.type === "session"
+                          }
+                          hasUnread={(sessionUnread.get(s.id) ?? 0) > 0}
+                          agentStatus={null}
+                          scheduleCount={0}
+                          dragTranslateStyle={swipe.getRowStyle(s.id)}
+                          swipeRevealed={swipe.swipedSessionId === s.id}
+                          onTouchStart={(e) => swipe.handleTouchStart(e, s.id)}
+                          onTouchMove={swipe.handleTouchMove}
+                          onTouchEnd={swipe.handleTouchEnd}
+                          onClick={() => {
+                            // Tap on the row dismisses a committed swipe instead of
+                            // activating the session. Gives the user an escape hatch
+                            // when they swiped by accident and don't want to close.
+                            if (swipe.swipedSessionId === s.id) {
+                              swipe.clearSwipe();
+                              return;
+                            }
+                            props.onSessionClick(s.id);
+                          }}
+                          onClose={() => {
+                            props.onSessionClose(s.id);
+                            swipe.clearSwipe();
+                          }}
+                          onStartEdit={() => {
+                            props.onSessionStartEdit(s.id);
+                            setEditingNode({ id: s.id, type: "session" });
+                          }}
+                          onSaveEdit={(name) => {
+                            props.onSessionRename(s.id, name);
+                            setEditingNode(null);
+                          }}
+                          onCancelEdit={() => setEditingNode(null)}
+                        />
+                      </div>
+                    </SessionContextMenu>
+                  </TreeConnector>
+                ))}
+              </div>
+            )}
+          </div>
+        </TreeConnector>
       )}
       {rootOrdered.map((entry, i) => {
         const isLast =
