@@ -21,6 +21,7 @@ import type {
 import { checkAuthResponse } from "@/lib/api-client";
 import { useDebouncedRefresh } from "@/hooks/useDebouncedRefresh";
 import type { AgentActivityStatus, SessionStatusIndicator, SessionProgress } from "@/types/terminal-type";
+import { isTmuxBackedTerminalType } from "@/types/terminal-type";
 import { useProjectTree } from "./ProjectTreeContext";
 
 const ACTIVE_SESSION_STORAGE_KEY = "remote-dev:activeSessionId";
@@ -604,13 +605,37 @@ export function SessionProvider({
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
 
-          // If tmux session is gone (410), auto-close the session
+          // 410 means the tmux session is gone — but that only makes sense
+          // for tmux-backed terminal types (shell/agent/loop). Non-tmux
+          // singletons (settings, recordings, profiles, prefs, secrets,
+          // trash, port-manager, issues, prs, file, browser, …) have no
+          // PTY behind them, so a 410 for one of those is a server-side
+          // bug (see ResumeSessionUseCase). Do **not** auto-delete those
+          // tabs — deleting a non-tmux singleton kicks the user out of
+          // their Settings / Recordings / Profiles pane unexpectedly.
           if (response.status === 410) {
-            console.warn(`Tmux session gone for ${sessionId}, auto-closing...`);
-            dispatch({ type: "DELETE", sessionId });
-            const deleteResponse = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
-            if (checkAuthResponse(deleteResponse)) return;
-            return; // Don't throw - session has been cleaned up
+            const session = state.sessions.find((s) => s.id === sessionId);
+            const tmuxBacked = isTmuxBackedTerminalType(session?.terminalType);
+            if (tmuxBacked) {
+              console.warn(`Tmux session gone for ${sessionId}, auto-closing...`);
+              dispatch({ type: "DELETE", sessionId });
+              const deleteResponse = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+              if (checkAuthResponse(deleteResponse)) return;
+              return; // Don't throw - session has been cleaned up
+            }
+
+            // Non-tmux session — refresh to recover the authoritative status
+            // (reducer already flipped to "active" optimistically) and
+            // surface the error to the caller so it can recover without
+            // losing the tab.
+            console.warn(
+              `Resume returned 410 for non-tmux session (${sessionId}, type=${session?.terminalType ?? "unknown"}); keeping tab.`
+            );
+            await refreshSessions();
+            throw new Error(
+              errorData.error ||
+                `Resume returned 410 for non-tmux session (${sessionId})`
+            );
           }
 
           await refreshSessions();
@@ -621,7 +646,7 @@ export function SessionProvider({
         throw error;
       }
     },
-    [refreshSessions]
+    [refreshSessions, state.sessions]
   );
 
   const setActiveSession = useCallback((sessionId: string | null) => {

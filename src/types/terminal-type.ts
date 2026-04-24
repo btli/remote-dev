@@ -49,6 +49,62 @@ export function isGlobalTerminalType(type: TerminalType | null | undefined): boo
 }
 
 /**
+ * Terminal types that are backed by a real tmux/PTY session. Mirrors the
+ * server-side `TerminalTypeServerPlugin.useTmux === true` plugins:
+ *
+ *   - `shell`     — standard bash/zsh
+ *   - `agent`     — AI agent process (Claude Code, Codex, etc.) as the shell
+ *   - `loop`      — loop-agent variant of `agent`
+ *
+ * Every other built-in terminal type (settings, recordings, profiles,
+ * port-manager, trash, issues, prs, project-prefs, group-prefs, secrets,
+ * github-maintenance, file, browser, …) is a pure UI panel with **no**
+ * tmux session behind it. Callers must not perform tmux-centric lifecycle
+ * actions (resume-implies-reattach, auto-delete on 410, …) for those types.
+ *
+ * Keep this list in sync with plugin `useTmux: true` declarations under
+ * `src/lib/terminal-plugins/plugins/*-server.ts`.
+ */
+export const TMUX_BACKED_TERMINAL_TYPES: readonly TerminalType[] = [
+  "shell",
+  "agent",
+  "loop",
+] as const;
+
+/**
+ * Whether the given terminal type is backed by a real tmux/PTY session.
+ *
+ * Unknown / custom types default to `true` so we stay safe for
+ * unregistered shell-like plugins — the existing server-side
+ * `sessionUsesTmux()` helper makes the same conservative choice.
+ */
+export function isTmuxBackedTerminalType(
+  type: TerminalType | null | undefined
+): boolean {
+  if (type == null) return true;
+  // Known non-tmux built-ins short-circuit to `false`.
+  if (
+    (GLOBAL_TERMINAL_TYPES as readonly string[]).includes(type) ||
+    type === "file" ||
+    type === "browser" ||
+    type === "issues" ||
+    type === "prs" ||
+    type === "project-prefs" ||
+    type === "group-prefs" ||
+    type === "secrets" ||
+    type === "github-maintenance"
+  ) {
+    return false;
+  }
+  // Known tmux-backed built-ins explicitly allow.
+  if ((TMUX_BACKED_TERMINAL_TYPES as readonly string[]).includes(type)) {
+    return true;
+  }
+  // Unknown custom types — assume tmux-backed (safer default).
+  return true;
+}
+
+/**
  * Session exit behavior determines what happens when the main process exits
  */
 export interface ExitBehavior {
