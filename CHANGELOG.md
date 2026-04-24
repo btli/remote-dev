@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Legacy `IssueDetailModal` dialog**: The Dialog-based issue detail view is
+  gone. The issues terminal-type plugin already owns an in-pane
+  `IssueDetailPanel` (selection persists via `selectedIssueNumber` in
+  `typeMetadata`), and the stale modal wiring in `TaskSidebar` was the last
+  caller. Issue clicks now stay within the issues tab layout. Closes
+  bd remote-dev-1ebu.7.
+
 ### Changed
 
 - **Sidebar Global section for singleton terminal tabs**: Sessions with

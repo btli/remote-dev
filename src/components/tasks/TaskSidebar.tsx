@@ -36,7 +36,6 @@ import {
   Repeat,
   Play,
 } from "lucide-react";
-import { IssueDetailModal } from "@/components/github/IssueDetailModal";
 import { getIssueIcon } from "@/components/github/issue-icons";
 import { CreateScheduleModal } from "@/components/schedule/CreateScheduleModal";
 import { EditScheduleModal } from "@/components/schedule/EditScheduleModal";
@@ -759,9 +758,6 @@ export function TaskSidebar({
   const { issues: githubIssues, isLoading: issuesLoading, refresh: refreshIssues } =
     useRepositoryIssues(githubRepoId);
 
-  // Issue detail modal state
-  const [selectedIssue, setSelectedIssue] = useState<GitHubIssueDTO | null>(null);
-
   // Fetch GitHub issues when section is expanded
   useEffect(() => {
     if (issuesExpanded && githubRepoId) {
@@ -1067,8 +1063,6 @@ export function TaskSidebar({
                             onViewPR(issue.number);
                           } else if (!issue.isPullRequest && onViewIssue) {
                             onViewIssue(issue.number);
-                          } else {
-                            setSelectedIssue(issue);
                           }
                         }}
                       />
@@ -1142,13 +1136,6 @@ export function TaskSidebar({
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
       )}
-
-      {/* Issue/PR detail modal */}
-      <IssueDetailModal
-        open={selectedIssue !== null}
-        onClose={() => setSelectedIssue(null)}
-        issue={selectedIssue}
-      />
 
       {/* Clear tasks confirmation dialog */}
       {clearDialogOpen && (
