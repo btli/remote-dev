@@ -1281,11 +1281,16 @@ export async function closeSession(
     });
   }
 
-  // Mark as closed in database
+  // Mark as closed in database. Null out scope_key at the same time so the
+  // partial UNIQUE index on (user_id, terminal_type, scope_key) frees the
+  // slot for a future create-session call with the same scope. Without this,
+  // the next "Open Settings" (or recordings/profiles) would fail the UNIQUE
+  // constraint because dedup skips closed rows but the index does not.
   await db
     .update(terminalSessions)
     .set({
       status: "closed",
+      scopeKey: null,
       updatedAt: new Date(),
     })
     .where(
