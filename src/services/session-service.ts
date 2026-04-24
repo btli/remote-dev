@@ -878,8 +878,11 @@ export async function updateSession(
   const isBecomingInactive =
     (updates.status === "closed" || updates.status === "trashed") &&
     existing.status !== updates.status;
-  if (isBecomingInactive && directUpdates.scopeKey === undefined) {
-    (directUpdates as { scopeKey?: string | null }).scopeKey = null;
+  const directUpdatesWithScope = directUpdates as typeof directUpdates & {
+    scopeKey?: string | null;
+  };
+  if (isBecomingInactive && directUpdatesWithScope.scopeKey === undefined) {
+    directUpdatesWithScope.scopeKey = null;
   }
   let mergedTypeMetadata: string | undefined;
 
