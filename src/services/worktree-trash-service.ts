@@ -237,10 +237,15 @@ export async function trashWorktreeSession(
   // NOT NULL, so we keep the original project_id on the trashed row — the
   // worktreeTrashMetadata table independently records originalProjectId for
   // restore purposes, and trashed sessions are filtered out of UI listings.
+  //
+  // Null out scope_key so the partial UNIQUE index on (user_id, terminal_type,
+  // scope_key) doesn't block a future create-session with the same scope
+  // (active rows only own the slot; trashed rows must release it).
   await db
     .update(terminalSessions)
     .set({
       status: "trashed",
+      scopeKey: null,
       updatedAt: new Date(),
     })
     .where(eq(terminalSessions.id, sessionId));
