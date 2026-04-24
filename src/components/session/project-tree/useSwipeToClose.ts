@@ -183,12 +183,21 @@ export function useSwipeToClose(
           transition: "none",
         };
       }
+      // After commit, keep the row translated so the revealed close button
+      // stays visible until the user taps it or the swipe is cleared.
+      // Without this the row snaps back over the button on touchend.
+      if (swipedSessionId === sessionId) {
+        return {
+          transform: `translateX(${-maxDragPx}px)`,
+          transition: "transform 200ms ease-out",
+        };
+      }
       return {
         transform: "translateX(0)",
         transition: "transform 200ms ease-out",
       };
     },
-    [currentDx],
+    [currentDx, swipedSessionId, maxDragPx],
   );
 
   return {

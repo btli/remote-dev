@@ -154,7 +154,11 @@ export function SessionRow({
             e.stopPropagation();
             onClose();
           }}
-          className="absolute right-0 top-0 bottom-0 w-[72px] bg-destructive text-destructive-foreground flex items-center justify-center rounded-md"
+          // z-20 so the revealed button sits above the row even after the row
+          // snaps back to translateX(0) on touchend. Without this the row
+          // covers the button visually AND intercepts taps, making it look
+          // like "click does nothing".
+          className="absolute right-0 top-0 bottom-0 w-[72px] z-20 bg-destructive text-destructive-foreground flex items-center justify-center rounded-md"
         >
           <X className="w-4 h-4" />
         </button>
