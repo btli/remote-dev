@@ -29,6 +29,7 @@ import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
+import { useSessionContext } from "@/contexts/SessionContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
 import {
@@ -36,6 +37,7 @@ import {
   type ProjectTreeSidebarHandle,
 } from "./ProjectTreeSidebar";
 import { TrashButtonContextMenu } from "./TrashButtonContextMenu";
+import { getSessionIconColor } from "./project-tree/sessionIconColor";
 import { TerminalTypeClientRegistry } from "@/lib/terminal-plugins/client";
 import {
   initializeClientPlugins,
@@ -216,6 +218,9 @@ export function Sidebar({
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
   const { getNodePreferences } = usePreferencesContext();
+  // Pulled from SessionContext (same source ProjectTreeSidebar uses) so the
+  // collapsed rail can color agent icons by their real-time activity status.
+  const { getAgentActivityStatus } = useSessionContext();
 
   // Resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -350,6 +355,7 @@ export function Sidebar({
                     onClick={() => onCollapsedChange(false)}
                     variant="ghost"
                     size="icon-sm"
+                    aria-label="Expand sidebar"
                     className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
                   >
                     <PanelLeft className="w-4 h-4" />
@@ -496,12 +502,25 @@ export function Sidebar({
               <div className="flex flex-col items-center gap-0.5">
                 {activeSessions.map((s) => {
                   const plugin = TerminalTypeClientRegistry.get(s.terminalType);
-                  const Icon = s.worktreeBranch
-                    ? GitBranch
-                    : (plugin?.icon ?? Terminal);
+                  // Always use the plugin icon — the rail is purpose-built to
+                  // surface the session type. Worktree state is reflected via
+                  // the icon color helper below (and in the expanded row's
+                  // metadata bar), not by replacing the icon. Without this
+                  // an agent session living in a worktree would render as
+                  // GitBranch and lose its agent-type signal entirely.
+                  const Icon = plugin?.icon ?? Terminal;
                   const derivedTitle = plugin?.deriveTitle?.(s) ?? null;
                   const displayTitle = derivedTitle ?? s.name;
                   const isActive = s.id === activeSessionId;
+                  // Reuse the same color helper SessionRow uses so agent
+                  // sessions get running/waiting/error/compacting affordances
+                  // in the rail too. Returns "text-{color}" plus optional
+                  // animation classes (e.g. "agent-breathing").
+                  const iconColor = getSessionIconColor(
+                    s,
+                    isActive,
+                    getAgentActivityStatus
+                  );
                   return (
                     <Tooltip key={s.id}>
                       <TooltipTrigger asChild>
@@ -514,11 +533,11 @@ export function Sidebar({
                           className={cn(
                             "h-7 w-7 transition-colors",
                             isActive
-                              ? "bg-accent text-primary"
-                              : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                              ? "bg-accent"
+                              : "hover:bg-accent"
                           )}
                         >
-                          <Icon className="w-3.5 h-3.5" />
+                          <Icon className={cn("w-3.5 h-3.5", iconColor)} />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent side="right">{displayTitle}</TooltipContent>

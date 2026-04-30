@@ -37,6 +37,19 @@ vi.mock("@/contexts/SessionMCPContext", () => ({
   useSessionMCPAutoLoad: () => undefined,
 }));
 
+// Activity status defaults to "idle" but tests can override per-session via
+// `setMockAgentStatus` to drive the running/waiting/error styling paths.
+const mockAgentStatuses = new Map<string, string>();
+function setMockAgentStatus(sessionId: string, status: string) {
+  mockAgentStatuses.set(sessionId, status);
+}
+vi.mock("@/contexts/SessionContext", () => ({
+  useSessionContext: () => ({
+    getAgentActivityStatus: (sessionId: string) =>
+      mockAgentStatuses.get(sessionId) ?? "idle",
+  }),
+}));
+
 // ProjectTreeSidebar is heavy (consumes many contexts) and is never rendered
 // in collapsed mode anyway. Stub it out so we don't have to mock the world.
 vi.mock("../ProjectTreeSidebar", () => ({
@@ -143,6 +156,7 @@ function renderCollapsedSidebar(opts: RenderOpts = {}) {
 describe("Sidebar collapsed mode (remote-dev-t9f3)", () => {
   beforeEach(() => {
     cleanup();
+    mockAgentStatuses.clear();
   });
 
   it("renders an icon button per active session and fires onSessionClick", () => {
@@ -184,10 +198,85 @@ describe("Sidebar collapsed mode (remote-dev-t9f3)", () => {
 
     expect(active).toHaveAttribute("aria-current", "true");
     expect(inactive).not.toHaveAttribute("aria-current");
-    // Active styling mirrors the SessionRow active subset (bg-accent + text-primary)
+    // Active button gets the bg-accent treatment; the inner icon picks up
+    // text-primary via getSessionIconColor for non-agent active sessions.
     expect(active.className).toMatch(/bg-accent/);
-    expect(active.className).toMatch(/text-primary/);
-    expect(inactive.className).not.toMatch(/text-primary/);
+    const activeIcon = active.querySelector("svg");
+    const inactiveIcon = inactive.querySelector("svg");
+    expect(activeIcon?.getAttribute("class") ?? "").toMatch(/text-primary/);
+    expect(inactiveIcon?.getAttribute("class") ?? "").not.toMatch(/text-primary/);
+  });
+
+  it("uses the plugin icon for an agent session even when worktreeBranch is set", () => {
+    // Agent sessions in worktrees should still surface the agent type — the
+    // pre-fix code returned GitBranch for any session with worktreeBranch and
+    // hid the type signal.
+    renderCollapsedSidebar({
+      sessions: [
+        makeSession({
+          id: "agent-wt",
+          name: "Agent on branch",
+          terminalType: "agent" as TerminalSession["terminalType"],
+          worktreeBranch: "feature/foo",
+        }),
+      ],
+    });
+    const btn = screen.getByRole("button", { name: "Agent on branch" });
+    const svg = btn.querySelector("svg");
+    const iconClass = svg?.getAttribute("class") ?? "";
+    // The agent plugin's icon is Sparkles; lucide stamps the lowercase tag
+    // name on the svg's class. GitBranch would produce "lucide-git-branch".
+    expect(iconClass).not.toMatch(/lucide-git-branch/);
+    expect(iconClass).toMatch(/lucide-sparkles/);
+  });
+
+  it("applies running-agent activity styling to the icon", () => {
+    setMockAgentStatus("agent-running", "running");
+    renderCollapsedSidebar({
+      sessions: [
+        makeSession({
+          id: "agent-running",
+          name: "Working agent",
+          terminalType: "agent" as TerminalSession["terminalType"],
+        }),
+      ],
+    });
+    const btn = screen.getByRole("button", { name: "Working agent" });
+    const svg = btn.querySelector("svg");
+    const iconClass = svg?.getAttribute("class") ?? "";
+    // getSessionIconColor returns "text-green-500 agent-breathing" for running.
+    expect(iconClass).toMatch(/text-green-500/);
+    expect(iconClass).toMatch(/agent-breathing/);
+  });
+
+  it("renders the rail without crashing when activity status is non-null", () => {
+    // Smoke test: every status the helper handles should render cleanly.
+    for (const status of ["waiting", "error", "compacting", "idle", "ended"]) {
+      mockAgentStatuses.clear();
+      setMockAgentStatus("smoke", status);
+      const { unmount } = renderCollapsedSidebar({
+        sessions: [
+          makeSession({
+            id: "smoke",
+            name: `agent-${status}`,
+            terminalType: "agent" as TerminalSession["terminalType"],
+          }),
+        ],
+      });
+      expect(
+        screen.getByRole("button", { name: `agent-${status}` })
+      ).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("exposes an accessible name on the collapsed expand button", () => {
+    // Tooltip text is not an accessible name; only aria-label / visible text
+    // counts for screen readers. Codex review flagged that the expand toggle
+    // had only a tooltip.
+    renderCollapsedSidebar({ sessions: [makeSession()] });
+    const expandBtn = screen.getByRole("button", { name: "Expand sidebar" });
+    expect(expandBtn).toHaveAttribute("aria-label", "Expand sidebar");
   });
 
   it("collapsed header dropdown contains the same create items as expanded", async () => {
