@@ -78,9 +78,23 @@ export function NotificationPanel({ open, onOpenChange, onJumpToSession }: Notif
                 key={n.id}
                 className={cn(
                   "group flex items-start gap-2 p-2 rounded-md hover:bg-muted/50 transition-colors",
-                  !n.readAt && "border-l-2 border-blue-400 bg-blue-400/5"
+                  // Unread state: leading attention-blue dot + flat bg-card.
+                  // No side-stripe per DESIGN.md "No Side-Stripe Rule".
+                  !n.readAt && "bg-card"
                 )}
               >
+                {/* Leading 12px (6px radius) dot in signal-attention.
+                    Render even when read, but only color it when unread, so
+                    the title alignment stays stable across rows. */}
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "mt-1.5 h-3 w-3 shrink-0 rounded-full",
+                    !n.readAt
+                      ? "bg-[var(--color-signal-attention)]"
+                      : "bg-transparent"
+                  )}
+                />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{n.title}</p>
                   {n.body && (
