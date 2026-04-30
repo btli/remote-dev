@@ -468,12 +468,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         textarea.setAttribute("x-webkit-speech", "false");
       }
 
-      // Track scroll position for mobile scroll-to-bottom indicator
+      // Track scroll position for mobile scroll-to-bottom indicator.
+      // In xterm v6 .xterm-viewport is a vestigial empty div; the real scroll host is
+      // .xterm-scrollable-element. Use the public buffer API instead — decoupled from DOM.
       terminal.onScroll(() => {
-        const viewport = xtermContainerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null;
-        if (!viewport) return;
-        const isAtBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
-        const scrolledUp = !isAtBottom;
+        const buf = terminal.buffer.active;
+        const scrolledUp = buf.viewportY < buf.baseY;
         if (scrolledUp !== isScrolledUpRef.current) {
           isScrolledUpRef.current = scrolledUp;
           onScrollStateChangeRef.current?.(scrolledUp);
@@ -1348,11 +1348,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [handleSendImage]);
 
-  // Mobile touch scrolling support
-  // xterm.js v6 uses a VS Code ScrollableElement internally to manage viewport scroll.
-  // Direct .xterm-viewport.scrollTop manipulation is NOT detected by this widget and
-  // gets overwritten on the next sync cycle. We must use terminal.scrollLines() which
-  // properly updates the buffer position and triggers the viewport sync.
+  // Mobile touch scrolling support.
+  // xterm v6 reparents .xterm-screen into a SmoothScrollableElement at
+  // .xterm-scrollable-element; .xterm-viewport survives only as a vestigial empty div.
+  // We translate touch deltas into synthetic WheelEvents on the scrollable element,
+  // which routes through xterm's pixel-native wheel pipeline (same path as trackpads).
   useEffect(() => {
     const container = terminalRef.current;
     if (!container) return;
@@ -1375,21 +1375,49 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     const computeCellHeight = (): number => {
       const terminal = xtermRef.current;
-      const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
-      if (terminal && terminal.rows > 0 && viewport && viewport.clientHeight > 0) {
-        return viewport.clientHeight / terminal.rows;
+      const scrollEl = container.querySelector('.xterm-scrollable-element') as HTMLElement | null;
+      if (terminal && terminal.rows > 0 && scrollEl && scrollEl.clientHeight > 0) {
+        return scrollEl.clientHeight / terminal.rows;
       }
       return fontSizeRef.current * 1.2;
     };
 
-    /** Consume accumulatedDelta and scroll the terminal by whole lines. */
-    const flushScrollLines = (): void => {
+    // xterm v6 mounts a SmoothScrollableElement at .xterm-scrollable-element which
+    // listens for native wheel events. Dispatching a synthetic WheelEvent feeds the
+    // same pixel-native pipeline used by desktop trackpads — no line quantization,
+    // no pixel→line math drift.
+    const dispatchScrollWheel = (deltaY: number): boolean => {
+      const scrollEl = container.querySelector('.xterm-scrollable-element') as HTMLElement | null;
+      if (!scrollEl) return false;
+      scrollEl.dispatchEvent(new WheelEvent('wheel', {
+        deltaY,
+        deltaMode: 0, // DOM_DELTA_PIXEL
+        bubbles: true,
+        cancelable: true,
+      }));
+      return true;
+    };
+
+    // Fallback path used only when .xterm-scrollable-element isn't queryable yet
+    // (race during terminal mount).
+    const fallbackScrollLines = (): void => {
       const h = computeCellHeight();
       if (h <= 0) return;
       const linesToScroll = Math.trunc(accumulatedDelta / h);
       if (linesToScroll !== 0) {
         xtermRef.current?.scrollLines(linesToScroll);
         accumulatedDelta -= linesToScroll * h;
+      }
+    };
+
+    const flushScroll = (): void => {
+      if (accumulatedDelta === 0) return;
+      const px = Math.trunc(accumulatedDelta);
+      if (px === 0) return;
+      if (dispatchScrollWheel(px)) {
+        accumulatedDelta -= px;
+      } else {
+        fallbackScrollLines();
       }
     };
 
@@ -1415,10 +1443,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
 
     const handleTouchMove = (e: TouchEvent) => {
+      // Bail before preventDefault for multi-touch so pinch/zoom still works.
       if (e.touches.length !== 1) {
         isScrolling = false;
         return;
       }
+
+      // Preempt browser pan on every single-touch move. touch-action: none cascades
+      // from .terminal.xterm, but iOS Safari has been observed to commit to a native
+      // pan if a single move slips through without preventDefault().
+      e.preventDefault();
 
       const currentY = e.touches[0].clientY;
       const deltaY = lastTouchY - currentY; // positive = finger moved up
@@ -1444,9 +1478,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       lastTouchTime = now;
 
       if (isScrolling) {
-        e.preventDefault();
         accumulatedDelta += deltaY;
-        flushScrollLines();
+        flushScroll();
       }
     };
 
@@ -1463,7 +1496,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
 
         accumulatedDelta += velocityY;
-        flushScrollLines();
+        flushScroll();
 
         velocityY *= MOMENTUM_DECAY;
         momentumAnimationId = requestAnimationFrame(applyMomentum);
