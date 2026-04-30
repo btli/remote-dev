@@ -43,6 +43,13 @@ const MAX_SIDEBAR_WIDTH = 400;
 const DEFAULT_SIDEBAR_WIDTH = 220;
 const COLLAPSED_SIDEBAR_WIDTH = 48;
 
+// Shared className for the footer action buttons (Profiles / Ports / Trash).
+const FOOTER_BUTTON_CLASS = cn(
+  "w-full flex items-center gap-1.5 px-2 py-1 rounded-md",
+  "text-xs text-muted-foreground hover:text-foreground",
+  "hover:bg-muted/50 transition-colors"
+);
+
 // Folder repo stats returned by getFolderRepoStats
 export interface FolderRepoStats {
   prCount: number;
@@ -523,18 +530,14 @@ export function Sidebar({
 
       {/* Footer - hide when collapsed */}
       {!collapsed && (
-        <div className="px-3 py-1.5 border-t border-border space-y-1">
+        <div className="px-1 py-1.5 border-t border-border space-y-0.5">
           {/* Profiles button */}
           {onProfilesOpen && (
             <button
               onClick={onProfilesOpen}
-              className={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-muted-foreground hover:text-foreground",
-                "hover:bg-muted/50 transition-colors"
-              )}
+              className={FOOTER_BUTTON_CLASS}
             >
-              <Fingerprint className="w-3.5 h-3.5" />
+              <Fingerprint className="w-3.5 h-3.5 shrink-0" />
               <span>Profiles</span>
               {profileCount > 0 && (
                 <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
@@ -547,13 +550,9 @@ export function Sidebar({
           {onPortsOpen && (
             <button
               onClick={onPortsOpen}
-              className={cn(
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                "text-xs text-muted-foreground hover:text-foreground",
-                "hover:bg-muted/50 transition-colors"
-              )}
+              className={FOOTER_BUTTON_CLASS}
             >
-              <Network className="w-3.5 h-3.5" />
+              <Network className="w-3.5 h-3.5 shrink-0" />
               <span>Ports</span>
               {allocations.length > 0 && (
                 <span className={cn(
@@ -575,13 +574,9 @@ export function Sidebar({
             >
               <button
                 onClick={onTrashOpen}
-                className={cn(
-                  "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                  "text-xs text-muted-foreground hover:text-foreground",
-                  "hover:bg-muted/50 transition-colors"
-                )}
+                className={FOOTER_BUTTON_CLASS}
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="w-3.5 h-3.5 shrink-0" />
                 <span>Trash</span>
                 <span className="ml-auto text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                   {trashCount}
@@ -589,7 +584,7 @@ export function Sidebar({
               </button>
             </TrashButtonContextMenu>
           )}
-          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+          <div className="flex items-center justify-between px-2 pt-1 text-[10px] text-muted-foreground">
             <span>New session</span>
             <kbd className="px-1 py-0.5 bg-muted rounded">⌘↵</kbd>
           </div>
