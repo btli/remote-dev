@@ -29,6 +29,7 @@ import { useProfileContext } from "@/contexts/ProfileContext";
 import { usePortContext } from "@/contexts/PortContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionMCP, useSessionMCPAutoLoad } from "@/contexts/SessionMCPContext";
+import { useSessionContext } from "@/contexts/SessionContext";
 import { MCPServersSection } from "@/components/mcp";
 import { FilesSection } from "./FilesSection";
 import {
@@ -36,6 +37,19 @@ import {
   type ProjectTreeSidebarHandle,
 } from "./ProjectTreeSidebar";
 import { TrashButtonContextMenu } from "./TrashButtonContextMenu";
+import { getSessionIconColor } from "./project-tree/sessionIconColor";
+import { TerminalTypeClientRegistry } from "@/lib/terminal-plugins/client";
+import {
+  initializeClientPlugins,
+  isClientPluginsInitialized,
+} from "@/lib/terminal-plugins/init-client";
+
+// Lazily initialize the client plugin registry so the collapsed-rail icon
+// lookup below sees the built-in plugins. Mirrors the same idempotent guard
+// used in SessionRow.tsx — safe during SSR, only mutates an in-memory Map.
+if (!isClientPluginsInitialized()) {
+  initializeClientPlugins();
+}
 
 // Sidebar width constraints
 const MIN_SIDEBAR_WIDTH = 180;
@@ -204,6 +218,9 @@ export function Sidebar({
   const { profileCount } = useProfileContext();
   const { allocations, activePorts } = usePortContext();
   const { getNodePreferences } = usePreferencesContext();
+  // Pulled from SessionContext (same source ProjectTreeSidebar uses) so the
+  // collapsed rail can color agent icons by their real-time activity status.
+  const { getAgentActivityStatus } = useSessionContext();
 
   // Resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -323,24 +340,82 @@ export function Sidebar({
         )}
         {/* Header */}
         <div className={cn(
-          "flex items-center border-b border-border h-10 shrink-0",
-          collapsed ? "justify-center px-1" : "justify-between px-3"
+          "flex items-center border-b border-border shrink-0",
+          collapsed ? "justify-center px-1 py-1" : "justify-between px-3 h-10"
         )}>
           {collapsed ? (
-            // Collapsed header - just toggle button
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  onClick={() => onCollapsedChange(false)}
-                  variant="ghost"
-                  size="icon-sm"
-                  className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
-                >
-                  <PanelLeft className="w-4 h-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Expand sidebar</TooltipContent>
-            </Tooltip>
+            // Collapsed header - expand toggle + create dropdown so the rail
+            // exposes the same actions as the expanded header. Without the
+            // dropdown the rail is functionally empty when sessions exist
+            // (see remote-dev-t9f3).
+            <div className="flex flex-col items-center gap-1 py-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => onCollapsedChange(false)}
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Expand sidebar"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
+                  >
+                    <PanelLeft className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Expand sidebar</TooltipContent>
+              </Tooltip>
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Create"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Create</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent side="right" align="start" className="w-44">
+                  <DropdownMenuItem onClick={handleNewGroup}>
+                    <FolderPlus className="w-3.5 h-3.5 mr-2" />
+                    New Group
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleNewProject}>
+                    <Briefcase className="w-3.5 h-3.5 mr-2" />
+                    New Project
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onQuickNewSession}>
+                    <Terminal className="w-3.5 h-3.5 mr-2" />
+                    New Terminal
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onNewAgent}>
+                    <Sparkles className="w-3.5 h-3.5 mr-2" />
+                    New Agent
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      if (activeProjectId && projectHasRepo(activeProjectId)) {
+                        onProjectNewWorktree(activeProjectId);
+                      }
+                    }}
+                    disabled={!activeProjectId || !projectHasRepo(activeProjectId)}
+                  >
+                    <GitBranch className="w-3.5 h-3.5 mr-2" />
+                    New Worktree
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onNewSession}>
+                    <Settings className="w-3.5 h-3.5 mr-2" />
+                    Advanced...
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           ) : (
             // Expanded header
             <>
@@ -412,103 +487,116 @@ export function Sidebar({
       <div
           className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5"
         >
-          {activeSessions.length === 0 ? (
-            collapsed ? (
-              // Collapsed empty state - dropdown mirroring the expanded header
-              <div className="flex flex-col items-center py-4">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10"
-                      aria-label="Create"
-                    >
-                      <Plus className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="right" align="start" className="w-44">
-                    <DropdownMenuItem onClick={handleNewGroup}>
-                      <FolderPlus className="w-3.5 h-3.5 mr-2" />
-                      New Group
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleNewProject}>
-                      <Briefcase className="w-3.5 h-3.5 mr-2" />
-                      New Project
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={onQuickNewSession}>
-                      <Terminal className="w-3.5 h-3.5 mr-2" />
-                      New Terminal
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={onNewAgent}>
-                      <Sparkles className="w-3.5 h-3.5 mr-2" />
-                      New Agent
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={onNewSession}>
-                      <Settings className="w-3.5 h-3.5 mr-2" />
-                      Advanced...
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+          {collapsed ? (
+            // Collapsed body — vertical icon rail. Each session becomes an
+            // icon-only button (with tooltip + active-state styling) so the
+            // rail is functionally usable when sessions exist (remote-dev-t9f3).
+            // GLOBAL_TERMINAL_TYPES (settings/recordings/profiles) appear
+            // inline since they're just sessions with their own plugin icon.
+            activeSessions.length === 0 ? (
+              <div className="flex justify-center pt-2 text-[10px] text-muted-foreground/60">
+                {/* Header dropdown already provides the create affordance,
+                    so an empty rail intentionally renders nothing. */}
               </div>
             ) : (
-              <div className="text-center py-8 px-2">
-                <Terminal className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
-                <p className="text-xs text-muted-foreground mb-2">No sessions</p>
-                <div className="flex flex-col gap-1 items-center">
-                  <Button
-                    onClick={onQuickNewSession}
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs text-primary hover:text-primary/80 hover:bg-primary/10"
-                  >
-                    <Plus className="w-3 h-3 mr-1" />
-                    New Session
-                  </Button>
-                  <button
-                    onClick={onNewSession}
-                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Advanced options...
-                  </button>
-                </div>
+              <div className="flex flex-col items-center gap-0.5">
+                {activeSessions.map((s) => {
+                  const plugin = TerminalTypeClientRegistry.get(s.terminalType);
+                  // Always use the plugin icon — the rail is purpose-built to
+                  // surface the session type. Worktree state is reflected via
+                  // the icon color helper below (and in the expanded row's
+                  // metadata bar), not by replacing the icon. Without this
+                  // an agent session living in a worktree would render as
+                  // GitBranch and lose its agent-type signal entirely.
+                  const Icon = plugin?.icon ?? Terminal;
+                  const derivedTitle = plugin?.deriveTitle?.(s) ?? null;
+                  const displayTitle = derivedTitle ?? s.name;
+                  const isActive = s.id === activeSessionId;
+                  // Reuse the same color helper SessionRow uses so agent
+                  // sessions get running/waiting/error/compacting affordances
+                  // in the rail too. Returns "text-{color}" plus optional
+                  // animation classes (e.g. "agent-breathing").
+                  const iconColor = getSessionIconColor(
+                    s,
+                    isActive,
+                    getAgentActivityStatus
+                  );
+                  return (
+                    <Tooltip key={s.id}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          onClick={() => onSessionClick(s.id)}
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={displayTitle}
+                          aria-current={isActive ? "true" : undefined}
+                          className={cn(
+                            "h-7 w-7 transition-colors",
+                            isActive
+                              ? "bg-accent"
+                              : "hover:bg-accent"
+                          )}
+                        >
+                          <Icon className={cn("w-3.5 h-3.5", iconColor)} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">{displayTitle}</TooltipContent>
+                    </Tooltip>
+                  );
+                })}
               </div>
             )
+          ) : activeSessions.length === 0 ? (
+            <div className="text-center py-8 px-2">
+              <Terminal className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
+              <p className="text-xs text-muted-foreground mb-2">No sessions</p>
+              <div className="flex flex-col gap-1 items-center">
+                <Button
+                  onClick={onQuickNewSession}
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-primary hover:text-primary/80 hover:bg-primary/10"
+                >
+                  <Plus className="w-3 h-3 mr-1" />
+                  New Session
+                </Button>
+                <button
+                  onClick={onNewSession}
+                  className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Advanced options...
+                </button>
+              </div>
+            </div>
           ) : (
-            <>
-              {/* Project tree (groups + projects). Replaces the legacy folder
-                  tree rendering path as of Phase G1. */}
-              {!collapsed && (
-                <ProjectTreeSidebar
-                  ref={projectTreeRef}
-                  getProjectRepoStats={getFolderRepoStats}
-                  onOpenPreferences={onOpenNodePreferences}
-                  onSessionClick={onSessionClick}
-                  onSessionClose={(sid) => onSessionClose(sid)}
-                  onSessionStartEdit={() => {}}
-                  onSessionRename={onSessionRename}
-                  onProjectNewSession={onProjectNewSession}
-                  onProjectNewAgent={onProjectNewAgent}
-                  onProjectResumeClaudeSession={onProjectResumeClaudeSession}
-                  onProjectAdvancedSession={onProjectAdvancedSession}
-                  onProjectNewWorktree={onProjectNewWorktree}
-                  onProjectOpenSecrets={onProjectOpenSecrets}
-                  onProjectOpenRepository={(fid, name) =>
-                    onProjectSettings(fid, name, "repository")
-                  }
-                  onProjectOpenFolderInOS={handleOpenFolder}
-                  onProjectViewIssues={onViewIssues}
-                  onProjectViewPRs={onViewPRs}
-                  onProjectViewMaintenance={onViewMaintenance}
-                  onSessionTogglePin={onSessionTogglePin}
-                  onSessionMove={onSessionMove}
-                  onSessionReorder={onSessionReorder}
-                  onSessionSchedule={onSessionSchedule}
-                />
-              )}
-            </>
+            // Project tree (groups + projects). Replaces the legacy folder
+            // tree rendering path as of Phase G1.
+            <ProjectTreeSidebar
+              ref={projectTreeRef}
+              getProjectRepoStats={getFolderRepoStats}
+              onOpenPreferences={onOpenNodePreferences}
+              onSessionClick={onSessionClick}
+              onSessionClose={(sid) => onSessionClose(sid)}
+              onSessionStartEdit={() => {}}
+              onSessionRename={onSessionRename}
+              onProjectNewSession={onProjectNewSession}
+              onProjectNewAgent={onProjectNewAgent}
+              onProjectResumeClaudeSession={onProjectResumeClaudeSession}
+              onProjectAdvancedSession={onProjectAdvancedSession}
+              onProjectNewWorktree={onProjectNewWorktree}
+              onProjectOpenSecrets={onProjectOpenSecrets}
+              onProjectOpenRepository={(fid, name) =>
+                onProjectSettings(fid, name, "repository")
+              }
+              onProjectOpenFolderInOS={handleOpenFolder}
+              onProjectViewIssues={onViewIssues}
+              onProjectViewPRs={onViewPRs}
+              onProjectViewMaintenance={onViewMaintenance}
+              onSessionTogglePin={onSessionTogglePin}
+              onSessionMove={onSessionMove}
+              onSessionReorder={onSessionReorder}
+              onSessionSchedule={onSessionSchedule}
+            />
           )}
       </div>
 
@@ -526,6 +614,78 @@ export function Sidebar({
       {/* MCP Servers Section - only show when agent session is selected */}
       {isAgentSession && mcpSupported && (
         <MCPServersSection collapsed={collapsed} />
+      )}
+
+      {/* Footer - collapsed icon rail */}
+      {collapsed && (onProfilesOpen || onPortsOpen || trashCount > 0) && (
+        <div className="px-1 py-1.5 border-t border-border flex flex-col items-center gap-1">
+          {onProfilesOpen && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={onProfilesOpen}
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Profiles"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
+                >
+                  <Fingerprint className="w-3.5 h-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                Profiles{profileCount > 0 ? ` (${profileCount})` : ""}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {onPortsOpen && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={onPortsOpen}
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Ports"
+                  className={cn(
+                    "h-7 w-7 hover:bg-accent",
+                    activePorts.size > 0
+                      ? "text-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <Network className="w-3.5 h-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                Ports
+                {allocations.length > 0
+                  ? ` (${activePorts.size > 0 ? `${activePorts.size}/${allocations.length}` : allocations.length})`
+                  : ""}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {trashCount > 0 && (
+            <Tooltip>
+              <TrashButtonContextMenu
+                onEmptyPermanently={handleEmptyTrashPermanently}
+              >
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={onTrashOpen}
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Trash"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-accent"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </TooltipTrigger>
+              </TrashButtonContextMenu>
+              <TooltipContent side="right">
+                Trash ({trashCount})
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
       )}
 
       {/* Footer - hide when collapsed */}
