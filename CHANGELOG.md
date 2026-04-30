@@ -18,16 +18,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Mobile web terminal: swipe now scrolls tmux/xterm output** (GH#178,
-  remote-dev-61c1): xterm v6 made `.xterm-viewport` a vestigial empty div and
-  moved real scroll handling into a `SmoothScrollableElement` at
-  `.xterm-scrollable-element`. Touch handler now dispatches synthetic
-  `WheelEvent`s with pixel-native `deltaY` against the scrollable element
-  (same pipeline used by desktop trackpads), bypassing line-quantized
-  `scrollLines()`. Also fixes two latent v5→v6 bugs: the "Latest" pill never
-  appeared because `onScroll` read `viewport.scrollTop` (always 0), and the
-  cell-height calculation read the wrong element. iOS Safari pan preemption
-  hardened by moving `e.preventDefault()` to the top of `touchmove`.
+- **Mobile web terminal: swipe now scrolls in TUI apps like Claude Code, vim,
+  less** (GH#178, remote-dev-61c1, follow-up to PR #209): the synthetic
+  `WheelEvent` approach shipped in PR #209 didn't actually scroll inside
+  alt-screen TUIs because xterm v6's `CoreBrowserTerminal.ts:818-820`
+  collapses every wheel event to a single `ESC[A`/`ESC[B`, and
+  `consumeWheelEvent` rate-limits small per-frame deltas to zero. Touch
+  handler now bypasses xterm's wheel pipeline entirely. Two paths gated on
+  the live buffer state: normal buffer (shell with scrollback) calls
+  `terminal.scrollLines(±N)` directly per cell-height of finger travel; alt
+  buffer (Claude Code, vim, less, htop) emits `ESC[A`/`ESC[B` (or the SS3
+  forms when `applicationCursorKeysMode` is set) per cell-height via the
+  existing input WebSocket channel. Buffer type and DECCKM are re-read on
+  every flush so DECSET 1049 transitions and vim mode toggles mid-swipe
+  behave correctly. (Earlier PR #209 also fixed the latent "Latest" pill
+  always-hidden bug and the wrong-element cell-height read; those remain.)
+  iOS Safari pan preemption hardened by moving `e.preventDefault()` to the
+  top of `touchmove`.
 - **Non-tmux session resume no longer returns 410 / auto-deletes singleton
   tabs** (remote-dev-nv4e): `ResumeSessionUseCase` now consults the server
   plugin registry's `useTmux` flag and skips the `tmuxGateway.sessionExists()`
