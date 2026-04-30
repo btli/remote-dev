@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 
 import { BottomTabBar } from "@/components/mobile/BottomTabBar";
+import { MobileShell } from "@/components/mobile/MobileShell";
+import { MOBILE_BREAKPOINT_PX } from "@/hooks/useMobile";
 
 // matchMedia shim. happy-dom doesn't ship a usable implementation; tests
 // override `prefers-reduced-motion` per case.
@@ -138,6 +140,69 @@ describe("BottomTabBar", () => {
     expect(bar.style.transitionTimingFunction.replace(/\s+/g, "")).toBe(
       "cubic-bezier(0.32,0.72,0,1)"
     );
+  });
+
+  it("binds the real shell scroll container (not window) when rendered through MobileShell", () => {
+    // Regression: a plain `useRef` was always null on the first render of
+    // <MobileShell>, so <BottomTabBar> fell back to `window` listeners. The
+    // shell's actual scroller is `100dvh`, leaving `window.scrollY` at 0,
+    // so the auto-hide would never fire. The fix uses a state-callback ref
+    // in <MobileShell> so the element propagates as a prop after mount.
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 420,
+    });
+    window.matchMedia = vi.fn().mockImplementation((query: string) => {
+      const mobileQuery = `(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`;
+      return {
+        matches: query === mobileQuery,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    });
+
+    render(
+      <MobileShell activeTab="sessions" onTabChange={() => {}}>
+        <div style={{ height: 2000 }}>tall content</div>
+      </MobileShell>
+    );
+
+    const scroller = screen.getByTestId("mobile-shell-scroll") as HTMLDivElement;
+    const bar = screen.getByTestId("mobile-bottom-tab-bar");
+
+    // Patch scrollTop on the real shell scroller — only matters if the bar
+    // is actually listening to it.
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      get() {
+        return (scroller as unknown as { _y: number })._y ?? 0;
+      },
+      set(v: number) {
+        (scroller as unknown as { _y: number })._y = v;
+      },
+    });
+
+    expect(bar.getAttribute("data-state")).toBe("visible");
+
+    // Scroll the SHELL container, not window. If the prop wiring is
+    // broken (null ref → window fallback) this dispatch is ignored and
+    // the bar stays visible.
+    act(() => {
+      scroller.scrollTop = 240;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(bar.getAttribute("data-state")).toBe("hidden");
+
+    act(() => {
+      scroller.scrollTop = 100;
+      scroller.dispatchEvent(new Event("scroll"));
+    });
+    expect(bar.getAttribute("data-state")).toBe("visible");
   });
 
   it("respects forceHidden as a hard override", () => {
