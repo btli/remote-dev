@@ -146,21 +146,20 @@ export function SessionRow({
     return <Icon className={cn("w-3.5 h-3.5 shrink-0", iconColor)} />;
   }
 
-  // Reserve horizontal space equivalent to the chevron column used by
-  // GroupRow/ProjectRow. Their chevron-button width (12px, `h-3 w-3`) plus
-  // sibling `gap-1.5` (6px) = 18px. However, GroupRow/ProjectRow apply their
-  // depth indent via inline `paddingLeft`, which overrides the row's `px-2`
-  // (8px) padding-left. SessionRow indents via `marginLeft`, so its `px-2`
-  // padding-left still applies on top. To make the icon land at the same X
-  // as a sibling project's icon, we subtract that 8px here:
-  //   chevron(12) + gap(6) - px-2 left(8) = 10px.
-  // Only applied when reserveChevronSpace is set (i.e. for top-level / under-
-  // group sessions). Sessions-under-projects intentionally indent LESS than
-  // their parent's icon and keep their current offset.
-  const chevronReservePx = reserveChevronSpace ? 10 : 0;
-  const totalIndentPx = depth * 12 + chevronReservePx;
+  // Indent with inline paddingLeft (matches GroupRow/ProjectRow). The inline
+  // paddingLeft overrides Tailwind `px-2`'s padding-left (inline > class),
+  // so the row's `px-2` only contributes its right padding. Two cases:
+  //   non-reserve: sessions-under-projects keep their historical visual
+  //     offset — when this row used `marginLeft` outside `px-2` the icon
+  //     sat at depth*12 + px-2-left(8). Reproducing that here means
+  //     padding-left = depth*12 + 8.
+  //   reserve: sessions-under-groups (incl. GLOBAL) align with sibling
+  //     ProjectRow / GroupRow ICONS at the same depth. Those rows put
+  //     their icon at depth*12 + chevron(12) + gap(6) = depth*12 + 18.
+  const indentBase = reserveChevronSpace ? 18 : 8;
+  const indentPx = depth * 12 + indentBase;
   const mergedInnerStyle: React.CSSProperties = {
-    marginLeft: totalIndentPx > 0 ? `${totalIndentPx}px` : undefined,
+    paddingLeft: `${indentPx}px`,
     ...(dragTranslateStyle ?? {}),
   };
 
