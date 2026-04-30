@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-04-30
+
+Pre-mobile-redesign baseline. Captures all changes since v0.3.6 as a rollback
+point ahead of the gesture-first PWA redesign.
+
 ### Removed
 
 - **Legacy `IssueDetailModal` dialog**: The Dialog-based issue detail view is
