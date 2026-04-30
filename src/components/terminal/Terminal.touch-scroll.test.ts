@@ -17,11 +17,16 @@ import { createTouchScrollHandlers, TOUCH_SCROLL_ACTIVATION_PX } from "./touch-s
 const CELL_HEIGHT = 16;
 const ROWS = 24;
 
+type MouseTrackingMode = "none" | "x10" | "vt200" | "drag" | "any";
+
 interface XtermStub {
   rows: number;
   scrollLines: (n: number) => void;
   buffer: { active: { type: "normal" | "alternate" } };
-  modes: { applicationCursorKeysMode: boolean };
+  modes: {
+    applicationCursorKeysMode: boolean;
+    mouseTrackingMode: MouseTrackingMode;
+  };
 }
 
 interface Harness {
@@ -33,6 +38,7 @@ interface Harness {
   feedTouchSequence: (yPositions: number[]) => void;
   setBufferType: (t: "normal" | "alternate") => void;
   setApplicationCursorKeys: (v: boolean) => void;
+  setMouseTrackingMode: (m: MouseTrackingMode) => void;
 }
 
 function makeHarness(opts: { withScrollEl?: boolean; bufferType?: "normal" | "alternate" } = {}): Harness {
@@ -56,7 +62,7 @@ function makeHarness(opts: { withScrollEl?: boolean; bufferType?: "normal" | "al
     rows: ROWS,
     scrollLines: (n: number) => scrollLinesCalls.push(n),
     buffer: { active: { type: bufferType } },
-    modes: { applicationCursorKeysMode: false },
+    modes: { applicationCursorKeysMode: false, mouseTrackingMode: "none" },
   };
 
   let nowValue = 0;
@@ -92,6 +98,9 @@ function makeHarness(opts: { withScrollEl?: boolean; bufferType?: "normal" | "al
     },
     setApplicationCursorKeys: (v) => {
       xterm.modes.applicationCursorKeysMode = v;
+    },
+    setMouseTrackingMode: (m) => {
+      xterm.modes.mouseTrackingMode = m;
     },
     feedTouchSequence: (yPositions: number[]) => {
       if (yPositions.length === 0) return;
@@ -148,7 +157,49 @@ describe("touch-scroll: normal buffer (scrollback)", () => {
   });
 });
 
-describe("touch-scroll: alt buffer (TUI apps)", () => {
+describe("touch-scroll: app has mouse-wheel reporting (Claude Code, vim with mouse, less -m, lazygit)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  for (const mode of ["vt200", "drag", "any"] as const) {
+    it(`(${mode}) emits SGR wheel-DOWN report (CSI < 65;1;1 M) per cell when finger swipes up (forward)`, () => {
+      const h = makeHarness({ bufferType: "alternate" });
+      h.setMouseTrackingMode(mode);
+      h.feedTouchSequence([500, 480, 460, 440, 420, 400]);
+      expect(h.scrollLinesCalls).toEqual([]);
+      expect(h.inputBytes.join("")).toBe("\x1b[<65;1;1M".repeat(6));
+    });
+
+    it(`(${mode}) emits SGR wheel-UP report (CSI < 64;1;1 M) per cell when finger swipes down (back)`, () => {
+      const h = makeHarness({ bufferType: "alternate" });
+      h.setMouseTrackingMode(mode);
+      h.feedTouchSequence([100, 120, 140, 160, 180, 200]);
+      expect(h.inputBytes.join("")).toBe("\x1b[<64;1;1M".repeat(6));
+    });
+  }
+
+  it("(x10) does NOT use the wheel-report path — falls through to scrollback / arrow keys", () => {
+    const h = makeHarness({ bufferType: "alternate" });
+    h.setMouseTrackingMode("x10");
+    h.feedTouchSequence([500, 480, 460, 440, 420, 400]);
+    // x10 doesn't carry wheel events, so we fall through to the alt-buffer
+    // arrow-key path.
+    expect(h.inputBytes.join("")).toBe("\x1b[B".repeat(6));
+  });
+
+  it("wheel-report path takes precedence over buffer type (mouse mode in normal buffer)", () => {
+    const h = makeHarness({ bufferType: "normal" });
+    h.setMouseTrackingMode("vt200");
+    h.feedTouchSequence([500, 480, 460, 440, 420, 400]);
+    // The app is the source of truth — we forward the wheel even though we
+    // *could* scroll xterm's scrollback.
+    expect(h.scrollLinesCalls).toEqual([]);
+    expect(h.inputBytes.join("")).toBe("\x1b[<65;1;1M".repeat(6));
+  });
+});
+
+describe("touch-scroll: alt buffer fallback (no mouse reporting)", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
   });
@@ -157,33 +208,28 @@ describe("touch-scroll: alt buffer (TUI apps)", () => {
     const h = makeHarness({ bufferType: "alternate" });
     h.feedTouchSequence([500, 480, 460, 440, 420, 400]);
     expect(h.scrollLinesCalls).toEqual([]);
-    const joined = h.inputBytes.join("");
-    expect(joined).toBe("\x1b[B".repeat(6));
+    expect(h.inputBytes.join("")).toBe("\x1b[B".repeat(6));
   });
 
   it("emits ESC[A per cell-height when finger swipes down (older)", () => {
     const h = makeHarness({ bufferType: "alternate" });
     h.feedTouchSequence([100, 120, 140, 160, 180, 200]);
-    const joined = h.inputBytes.join("");
-    expect(joined).toBe("\x1b[A".repeat(6));
+    expect(h.inputBytes.join("")).toBe("\x1b[A".repeat(6));
   });
 
   it("uses ESC O A / ESC O B (SS3) when applicationCursorKeysMode is on", () => {
     const h = makeHarness({ bufferType: "alternate" });
     h.setApplicationCursorKeys(true);
     h.feedTouchSequence([500, 480, 460, 440, 420, 400]);
-    const joined = h.inputBytes.join("");
-    expect(joined).toBe("\x1bOB".repeat(6));
+    expect(h.inputBytes.join("")).toBe("\x1bOB".repeat(6));
   });
 
   it("re-reads buffer type per flush (DECSET 1049 mid-gesture switches paths)", () => {
     const h = makeHarness({ bufferType: "normal" });
-    // First gesture in normal buffer: ~40 px upward = 2 cells of scrollback.
     h.feedTouchSequence([500, 480, 460]);
     expect(h.scrollLinesCalls.reduce((a, b) => a + b, 0)).toBe(2);
     expect(h.inputBytes).toEqual([]);
 
-    // App enters alt screen between gestures.
     h.setBufferType("alternate");
     h.feedTouchSequence([460, 440, 420]);
     expect(h.inputBytes.join("")).toBe("\x1b[B\x1b[B");

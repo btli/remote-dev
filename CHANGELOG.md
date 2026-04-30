@@ -18,18 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Mobile web terminal: swipe now scrolls in TUI apps like Claude Code, vim,
-  less** (GH#178, remote-dev-61c1, follow-up to PR #209): the synthetic
-  `WheelEvent` approach shipped in PR #209 didn't actually scroll inside
-  alt-screen TUIs because xterm v6's `CoreBrowserTerminal.ts:818-820`
-  collapses every wheel event to a single `ESC[A`/`ESC[B`, and
-  `consumeWheelEvent` rate-limits small per-frame deltas to zero. Touch
-  handler now bypasses xterm's wheel pipeline entirely. Two paths gated on
-  the live buffer state: normal buffer (shell with scrollback) calls
-  `terminal.scrollLines(±N)` directly per cell-height of finger travel; alt
-  buffer (Claude Code, vim, less, htop) emits `ESC[A`/`ESC[B` (or the SS3
-  forms when `applicationCursorKeysMode` is set) per cell-height via the
-  existing input WebSocket channel. Buffer type and DECCKM are re-read on
+- **Mobile web terminal: swipe now actually scrolls Claude Code / vim / less
+  / lazygit chat history** (GH#178, remote-dev-61c1, follow-up to PR #210):
+  PR #210 sent arrow keys (`ESC[A`/`ESC[B`) to alt-buffer apps, which TUIs
+  with mouse-wheel reporting interpret as cursor movement, not scroll —
+  visible regression in Claude Code, vim with `mouse=a`, less -m, lazygit,
+  tmux mouse mode. Fixed by detecting `terminal.modes.mouseTrackingMode` and
+  routing accordingly: when the app negotiated wheel reporting (vt200, drag,
+  any), emit SGR mouse-wheel reports (`CSI < 64;1;1 M` back, `CSI < 65;1;1
+  M` forward) per cell-height of finger travel — the same bytes desktop
+  wheel produces. Falls through to scrollback (normal buffer) or arrow
+  keys (alt buffer with no mouse mode, rare) when the app doesn't accept
+  wheel reports. Buffer type, mouse mode, and DECCKM are re-read on
   every flush so DECSET 1049 transitions and vim mode toggles mid-swipe
   behave correctly. (Earlier PR #209 also fixed the latent "Latest" pill
   always-hidden bug and the wrong-element cell-height read; those remain.)

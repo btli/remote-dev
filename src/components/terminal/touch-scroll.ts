@@ -2,26 +2,31 @@
 //
 // xterm v6 was not designed for touch (upstream confirmation:
 // https://github.com/xtermjs/xterm.js/issues/5377). Its wheel pipeline
-// collapses each WheelEvent into at most ONE up/down sequence in the
-// alt-screen path (CoreBrowserTerminal.ts:818-820: "simply send a single
-// up or down sequence"). Synthetic 60Hz WheelEvent dispatch therefore
-// produces ~5–7 arrow keys for a full thumb swipe regardless of deltaY
-// magnitude — looks broken in TUIs like Claude Code, vim, less.
+// collapses each WheelEvent into at most ONE wheel/up/down event regardless
+// of magnitude. Synthetic 60Hz WheelEvent dispatch therefore looks broken.
 //
-// We bypass xterm's wheel pipeline entirely. Two paths gated on the live
-// buffer state:
+// We bypass xterm's wheel pipeline and choose the right path per flush
+// based on what the running app actually negotiated:
 //
-//   1. Normal buffer (shell at prompt with scrollback): call
-//      terminal.scrollLines(±N) directly for each cell-height of
-//      accumulated finger travel.
+//   1. App enabled mouse-wheel reporting (mouseTrackingMode is
+//      vt200/drag/any — Claude Code, vim with `mouse=a`, less -m, lazygit,
+//      tmux mouse on): emit SGR mouse-wheel reports (`CSI < 64;1;1 M`
+//      back, `CSI < 65;1;1 M` forward) directly via the input WebSocket.
+//      Each report is one "wheel click" the app interprets as scroll.
+//      Modern TUIs negotiate SGR encoding (DECSET 1006) alongside
+//      tracking; SGR is what we send.
 //
-//   2. Alt buffer (Claude Code, vim, less, htop): emit ESC[A / ESC[B
-//      (or ESC O A / ESC O B when DECCKM is set) per cell-height directly
-//      via the existing input WebSocket channel — same bytes the keyboard
-//      already sends.
+//   2. Normal buffer with scrollback, no mouse reporting (shell at
+//      prompt): call terminal.scrollLines(±N) directly. App doesn't see
+//      the gesture; xterm's scrollback moves under the user.
 //
-// Buffer type and DECCKM are read on every flush (not cached at gesture
-// start) so DECSET 1049 transitions and vim mode toggles mid-swipe behave
+//   3. Alt buffer, no mouse reporting (rare — vim with `mouse=`, htop
+//      without mouse): emit ESC[A / ESC[B (or ESC O A / ESC O B under
+//      DECCKM) per cell. Mirrors what xterm's own outer wheel listener
+//      (CoreBrowserTerminal.ts:838) does for desktop wheel in this state.
+//
+// Buffer type, mouse-tracking mode, and DECCKM are re-read on every
+// flush so DECSET 1049 / mouse-mode / vim mode toggles mid-swipe behave
 // correctly.
 
 // Pixel slop a single-touch swipe must exceed before we treat it as a scroll
@@ -39,7 +44,10 @@ export interface XTermSlice {
   readonly rows: number;
   scrollLines(amount: number): void;
   readonly buffer: { readonly active: { readonly type: "normal" | "alternate" } };
-  readonly modes: { readonly applicationCursorKeysMode: boolean };
+  readonly modes: {
+    readonly applicationCursorKeysMode: boolean;
+    readonly mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any";
+  };
 }
 
 export interface TouchScrollDeps {
@@ -114,26 +122,41 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
     if (lines === 0) return;
     accumPx -= lines * cellHeight;
 
-    const buf = xterm.buffer.active;
-    if (buf.type === "normal") {
-      // Scrollback: positive lines = view moves down through buffer = newer
-      // content; negative = older. xterm's scrollLines(N) uses the same sign.
+    // Sign convention (consistent across all three paths below):
+    //   accumPx > 0  → finger moved up overall → user wants newer content
+    //                  → forward (wheel-down / ESC[B / scrollLines(+N))
+    //   accumPx < 0  → finger moved down → user wants older content
+    //                  → back (wheel-up / ESC[A / scrollLines(-N))
+    const forward = lines > 0;
+    const count = Math.abs(lines);
+
+    // Path 1 — app accepts mouse-wheel reports. We emit one SGR wheel report
+    // per line of finger travel; the app handles internal scroll itself
+    // (Claude Code chat history, vim with mouse, less, lazygit, tmux mouse).
+    const tracking = xterm.modes.mouseTrackingMode;
+    if (tracking === "vt200" || tracking === "drag" || tracking === "any") {
+      // SGR mouse-wheel: ESC[<{code};{col};{row}M
+      // code = 64 (WHEEL bit) | action (0=UP/back, 1=DOWN/forward).
+      // (col, row) = (1, 1) — apps that scroll on wheel don't gate on coords.
+      const code = forward ? 65 : 64;
+      sendInput(`\x1b[<${code};1;1M`.repeat(count));
+      return;
+    }
+
+    // Path 2 — normal buffer, no mouse reporting: move xterm scrollback.
+    if (xterm.buffer.active.type === "normal") {
       xterm.scrollLines(lines);
       return;
     }
 
-    // Alt buffer: emit |lines| arrow keys. Sign maps swipe direction to the
-    // user's expectation:
-    //   accumPx > 0  → finger moved up overall → user wants to advance
-    //                  (newer / down-arrow / ESC[B)
-    //   accumPx < 0  → finger moved down → user wants to go back
-    //                  (older / up-arrow / ESC[A)
-    // DECCKM (applicationCursorKeysMode) swaps CSI for SS3.
+    // Path 3 — alt buffer, no mouse reporting (rare). Mirror xterm's own
+    // outer wheel listener at CoreBrowserTerminal.ts:838: emit one arrow
+    // key per line. DECCKM (applicationCursorKeysMode) swaps CSI for SS3.
     const appCursor = xterm.modes.applicationCursorKeysMode;
-    const seq = lines > 0
+    const seq = forward
       ? (appCursor ? "\x1bOB" : "\x1b[B")
       : (appCursor ? "\x1bOA" : "\x1b[A");
-    sendInput(seq.repeat(Math.abs(lines)));
+    sendInput(seq.repeat(count));
   };
 
   const cancelMomentum = (): void => {
