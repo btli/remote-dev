@@ -295,7 +295,9 @@ export function DirectoryBrowser({
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2 text-left transition-colors",
                       "hover:bg-accent cursor-pointer",
-                      isSelected && "bg-primary/20 border-l-2 border-primary"
+                      // No side-stripe per DESIGN.md "No Side-Stripe Rule".
+                      // Selection is a background tint only.
+                      isSelected && "bg-primary/10"
                     )}
                   >
                     {entry.isDirectory ? (
