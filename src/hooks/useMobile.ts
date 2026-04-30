@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 /**
  * Detects whether the device is mobile based on user-agent and touch capability.
@@ -34,4 +34,65 @@ function getServerSnapshot(): boolean {
 
 export function useMobile(): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
+/**
+ * Tailwind's `md` breakpoint. Below this width we render the mobile composition.
+ * Kept as a constant so JS-side checks and CSS-side `md:` classes stay in lock-step.
+ */
+export const MOBILE_BREAKPOINT_PX = 768;
+
+/**
+ * Viewport-width-based mobile detector for the mobile redesign shell.
+ *
+ * Returns true when the window is narrower than the Tailwind `md` breakpoint
+ * (768px). Unlike {@link useMobile}, this responds to live resize, so a desktop
+ * window resized below 768px (or a tablet rotated to portrait) flips into the
+ * mobile composition. SSR-safe: returns false during server render.
+ */
+export function useIsMobileViewport(): boolean {
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < MOBILE_BREAKPOINT_PX;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`);
+    const update = () => setIsMobile(mql.matches);
+    update();
+    // Older Safari uses addListener; modern browsers expose addEventListener.
+    if (typeof mql.addEventListener === "function") {
+      mql.addEventListener("change", update);
+      return () => mql.removeEventListener("change", update);
+    }
+    mql.addListener(update);
+    return () => mql.removeListener(update);
+  }, []);
+
+  return isMobile;
+}
+
+/**
+ * SSR-safe `prefers-reduced-motion` reader. Returns true when the user has
+ * asked the OS to reduce non-essential motion. Components reading this should
+ * fall back to instant transitions when it's true.
+ */
+export function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(mql.matches);
+    update();
+    if (typeof mql.addEventListener === "function") {
+      mql.addEventListener("change", update);
+      return () => mql.removeEventListener("change", update);
+    }
+    mql.addListener(update);
+    return () => mql.removeListener(update);
+  }, []);
+
+  return reduced;
 }
