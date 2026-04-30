@@ -51,10 +51,12 @@ export const MOBILE_BREAKPOINT_PX = 768;
  * mobile composition. SSR-safe: returns false during server render.
  */
 export function useIsMobileViewport(): boolean {
-  const [isMobile, setIsMobile] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.innerWidth < MOBILE_BREAKPOINT_PX;
-  });
+  // Always start `false` on both server and first client render so the
+  // markup hashes line up — otherwise React 19 throws a hydration mismatch
+  // the first time a real mobile user lands on the page. The effect below
+  // calls `update()` synchronously on mount, flipping us to the correct
+  // value within a single frame, so the visible behavior is unchanged.
+  const [isMobile, setIsMobile] = useState<boolean>(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
