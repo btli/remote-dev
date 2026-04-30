@@ -16,7 +16,7 @@
  * active and listens for `onTabChange`. Real screens land in later phases.
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -59,7 +59,14 @@ export function MobileShell({
   bottomInsetClassName,
 }: MobileShellProps) {
   const isMobile = useIsMobileViewport();
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // We use a state-callback ref rather than `useRef` because the scroll
+  // element reference must propagate to <BottomTabBar>'s `useEffect` so it
+  // can bind a `scroll` listener to the real container. A plain ref is
+  // null on the first render and never triggers a re-render when it
+  // mounts, so the bar would silently fall back to `window` listeners —
+  // and the shell's actual scroller is `100dvh`, leaving `window.scrollY`
+  // pinned at 0 forever.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
 
   // Memo'd so the swipe-up hook doesn't re-bind every render.
   const handleReveal = useCallback(() => {
@@ -87,7 +94,7 @@ export function MobileShell({
       <div className="pt-safe-top" aria-hidden="true" />
 
       <div
-        ref={scrollRef}
+        ref={setScrollEl}
         data-testid="mobile-shell-scroll"
         className={cn(
           "flex-1 overflow-y-auto overscroll-contain",
@@ -100,7 +107,7 @@ export function MobileShell({
       <BottomTabBar
         activeTab={activeTab}
         onTabChange={onTabChange}
-        scrollContainer={scrollRef.current}
+        scrollContainer={scrollEl}
         forceHidden={forceHidden}
         badges={badges}
       />
