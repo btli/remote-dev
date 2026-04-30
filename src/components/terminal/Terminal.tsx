@@ -1370,7 +1370,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     const handlers = createTouchScrollHandlers({
       container,
       getXterm: () => xtermRef.current,
-      getFontSize: () => fontSizeRef.current,
+      sendInput: (data: string) => {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "input", data }));
+        }
+      },
     });
 
     container.addEventListener("touchstart", handlers.handleTouchStart, { passive: true });

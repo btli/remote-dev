@@ -1,41 +1,63 @@
-// Mobile touch-scroll algorithm for the xterm.js terminal.
+// Mobile touch-scroll for the xterm.js terminal.
 //
-// Extracted as a pure factory so the unit test runs the same code path as
-// production rather than a parallel implementation. Imported by Terminal.tsx
-// (driver) and Terminal.touch-scroll.test.ts (asserts).
+// xterm v6 was not designed for touch (upstream confirmation:
+// https://github.com/xtermjs/xterm.js/issues/5377). Its wheel pipeline
+// collapses each WheelEvent into at most ONE up/down sequence in the
+// alt-screen path (CoreBrowserTerminal.ts:818-820: "simply send a single
+// up or down sequence"). Synthetic 60Hz WheelEvent dispatch therefore
+// produces ~5–7 arrow keys for a full thumb swipe regardless of deltaY
+// magnitude — looks broken in TUIs like Claude Code, vim, less.
 //
-// xterm v6 reparents .xterm-screen into a SmoothScrollableElement at
-// .xterm-scrollable-element; .xterm-viewport survives only as a vestigial
-// empty div. We translate touch deltas into synthetic WheelEvents that bubble
-// from .xterm-scrollable-element up through .xterm — both xterm's
-// SmoothScrollableElement listener (normal scrollback) and CoreBrowserTerminal
-// root listener (which forwards wheel as escape sequences when the running
-// app has enabled mouse-wheel reporting, e.g. vim, less, tmux mouse mode)
-// hang off that bubbling chain, so bubbles must be true.
-
-import type { Terminal as XTermType } from "@xterm/xterm";
+// We bypass xterm's wheel pipeline entirely. Two paths gated on the live
+// buffer state:
+//
+//   1. Normal buffer (shell at prompt with scrollback): call
+//      terminal.scrollLines(±N) directly for each cell-height of
+//      accumulated finger travel.
+//
+//   2. Alt buffer (Claude Code, vim, less, htop): emit ESC[A / ESC[B
+//      (or ESC O A / ESC O B when DECCKM is set) per cell-height directly
+//      via the existing input WebSocket channel — same bytes the keyboard
+//      already sends.
+//
+// Buffer type and DECCKM are read on every flush (not cached at gesture
+// start) so DECSET 1049 transitions and vim mode toggles mid-swipe behave
+// correctly.
 
 // Pixel slop a single-touch swipe must exceed before we treat it as a scroll
-// gesture (rather than a tap).
+// gesture rather than a tap.
 export const TOUCH_SCROLL_ACTIVATION_PX = 5;
 
 const MOMENTUM_START_THRESHOLD = 1.5;
 const MOMENTUM_STOP_THRESHOLD = 0.3;
-const MOMENTUM_DECAY = 0.95; // Feels closer to iOS native momentum
+const MOMENTUM_DECAY = 0.95;
 const MAX_VELOCITY_SAMPLES = 5;
 
+// Minimal terminal-instance surface this module needs. We avoid importing
+// xterm's full Terminal type so the unit test can stub against a small object.
+export interface XTermSlice {
+  readonly rows: number;
+  scrollLines(amount: number): void;
+  readonly buffer: { readonly active: { readonly type: "normal" | "alternate" } };
+  readonly modes: { readonly applicationCursorKeysMode: boolean };
+}
+
 export interface TouchScrollDeps {
-  /** Outer container we attach touch listeners to. */
+  /** Outer container the touch listeners attach to. */
   container: HTMLElement;
-  /** Returns the live xterm instance for the fallback line-scroll path. */
-  getXterm: () => Pick<XTermType, "rows" | "scrollLines"> | null;
-  /** Returns the live font-size used as a last-resort cell-height fallback. */
-  getFontSize: () => number;
-  /** Test seam — defaults to `requestAnimationFrame` / `cancelAnimationFrame`. */
-  raf?: (cb: () => void) => number;
-  cancelRaf?: (id: number) => void;
-  /** Test seam — defaults to `performance.now()`. */
+  /** Live xterm instance (returns null before xterm is mounted). */
+  getXterm: () => XTermSlice | null;
+  /**
+   * Send raw bytes to the running PTY. Used for the alt-buffer arrow-key
+   * path. Same channel the on-screen keyboard already uses.
+   */
+  sendInput: (data: string) => void;
+  /** Test seam — defaults to performance.now(). */
   now?: () => number;
+  /** Test seam — defaults to requestAnimationFrame. */
+  raf?: (cb: () => void) => number;
+  /** Test seam — defaults to cancelAnimationFrame. */
+  cancelRaf?: (id: number) => void;
 }
 
 export interface TouchScrollHandlers {
@@ -48,10 +70,10 @@ export interface TouchScrollHandlers {
 }
 
 export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHandlers {
-  const { container, getXterm, getFontSize } = deps;
+  const { container, getXterm, sendInput } = deps;
+  const now = deps.now ?? (() => performance.now());
   const raf = deps.raf ?? ((cb) => requestAnimationFrame(cb));
   const cancelRaf = deps.cancelRaf ?? ((id) => cancelAnimationFrame(id));
-  const now = deps.now ?? (() => performance.now());
 
   let touchStartY = 0;
   let lastTouchY = 0;
@@ -59,7 +81,7 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
   let velocityY = 0;
   let isScrolling = false;
   let momentumAnimationId: number | null = null;
-  let accumulatedDelta = 0;
+  let accumPx = 0;
   let cachedScrollEl: HTMLElement | null = null;
 
   const velocitySamples: number[] = [];
@@ -70,47 +92,48 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
     return cachedScrollEl;
   };
 
-  const computeCellHeight = (): number => {
+  const getCellHeight = (): number => {
     const xterm = getXterm();
     const el = resolveScrollEl();
     if (xterm && xterm.rows > 0 && el && el.clientHeight > 0) {
       return el.clientHeight / xterm.rows;
     }
-    return getFontSize() * 1.2;
+    return 0;
   };
 
-  const dispatchScrollWheel = (deltaY: number): boolean => {
-    const el = resolveScrollEl();
-    if (!el) return false;
-    el.dispatchEvent(
-      new WheelEvent("wheel", {
-        deltaY,
-        deltaMode: 0, // DOM_DELTA_PIXEL
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    return true;
-  };
-
-  const fallbackScrollLines = (): void => {
-    const h = computeCellHeight();
-    if (h <= 0) return;
-    const linesToScroll = Math.trunc(accumulatedDelta / h);
-    if (linesToScroll !== 0) {
-      getXterm()?.scrollLines(linesToScroll);
-      accumulatedDelta -= linesToScroll * h;
-    }
-  };
-
+  // Convert |accumPx| / cellHeight into integer line steps, sign of accumPx,
+  // emit them via the buffer-appropriate path, and decrement accumPx by the
+  // pixels consumed.
   const flushScroll = (): void => {
-    const px = Math.trunc(accumulatedDelta);
-    if (px === 0) return;
-    if (dispatchScrollWheel(px)) {
-      accumulatedDelta -= px;
-    } else {
-      fallbackScrollLines();
+    const xterm = getXterm();
+    if (!xterm) return;
+    const cellHeight = getCellHeight();
+    if (cellHeight <= 0) return;
+
+    const lines = Math.trunc(accumPx / cellHeight);
+    if (lines === 0) return;
+    accumPx -= lines * cellHeight;
+
+    const buf = xterm.buffer.active;
+    if (buf.type === "normal") {
+      // Scrollback: positive lines = view moves down through buffer = newer
+      // content; negative = older. xterm's scrollLines(N) uses the same sign.
+      xterm.scrollLines(lines);
+      return;
     }
+
+    // Alt buffer: emit |lines| arrow keys. Sign maps swipe direction to the
+    // user's expectation:
+    //   accumPx > 0  → finger moved up overall → user wants to advance
+    //                  (newer / down-arrow / ESC[B)
+    //   accumPx < 0  → finger moved down → user wants to go back
+    //                  (older / up-arrow / ESC[A)
+    // DECCKM (applicationCursorKeysMode) swaps CSI for SS3.
+    const appCursor = xterm.modes.applicationCursorKeysMode;
+    const seq = lines > 0
+      ? (appCursor ? "\x1bOB" : "\x1b[B")
+      : (appCursor ? "\x1bOA" : "\x1b[A");
+    sendInput(seq.repeat(Math.abs(lines)));
   };
 
   const cancelMomentum = (): void => {
@@ -128,10 +151,8 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
       lastTouchTime = now();
       velocityY = 0;
       velocitySamples.length = 0;
-      accumulatedDelta = 0;
+      accumPx = 0;
       isScrolling = false;
-      // Drop any stale node so resolveScrollEl re-queries — handles the case
-      // where xterm reparented its DOM between gestures (theme/font change).
       cachedScrollEl = null;
     }
   };
@@ -142,9 +163,8 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
       return;
     }
 
-    // Preempt browser pan on every single-touch move. touch-action: none cascades
-    // from .terminal.xterm, but iOS Safari has been observed to commit to a native
-    // pan if a single move slips through without preventDefault().
+    // touch-action: none cascades from .terminal.xterm but iOS Safari has been
+    // observed to commit to a native pan if a single move slips through.
     e.preventDefault();
 
     const currentY = e.touches[0].clientY;
@@ -153,7 +173,7 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
     const timeDelta = t - lastTouchTime;
 
     if (timeDelta > 0) {
-      const instantVelocity = (deltaY / timeDelta) * 16; // Normalize to ~60fps frame
+      const instantVelocity = (deltaY / timeDelta) * 16;
       velocitySamples.push(instantVelocity);
       if (velocitySamples.length > MAX_VELOCITY_SAMPLES) {
         velocitySamples.shift();
@@ -169,7 +189,7 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
     lastTouchTime = t;
 
     if (isScrolling) {
-      accumulatedDelta += deltaY;
+      accumPx += deltaY;
       flushScroll();
     }
   };
@@ -183,7 +203,7 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
         momentumAnimationId = null;
         return;
       }
-      accumulatedDelta += velocityY;
+      accumPx += velocityY;
       flushScroll();
       velocityY *= MOMENTUM_DECAY;
       momentumAnimationId = raf(applyMomentum);
@@ -198,7 +218,7 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
     cancelMomentum();
     isScrolling = false;
     velocityY = 0;
-    accumulatedDelta = 0;
+    accumPx = 0;
   };
 
   return { handleTouchStart, handleTouchMove, handleTouchEnd, handleTouchCancel, cancelMomentum };
