@@ -999,6 +999,7 @@ export const ProjectTreeSidebar = forwardRef<
                   setGlobalSectionCollapsed((v) => !v);
                 }
               }}
+              style={{ paddingLeft: "0px" }}
               className="group flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-accent/50 transition-all duration-150"
             >
               <button
