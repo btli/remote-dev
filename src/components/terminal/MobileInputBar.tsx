@@ -157,7 +157,8 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
       <form
         onSubmit={handleSubmit}
         className={cn(
-          "flex items-end gap-1.5 px-2 py-1.5 bg-popover/95 backdrop-blur-sm border-t border-border",
+          // Solid bg-card + hairline per DESIGN.md "Flat-By-Default Rule".
+          "flex items-end gap-1.5 px-2 py-1.5 bg-card border-t border-border",
           className
         )}
       >

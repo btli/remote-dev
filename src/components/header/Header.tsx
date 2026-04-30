@@ -42,7 +42,10 @@ function HeaderContent({ isGitHubConnected, userEmail, onSignOut }: HeaderProps)
   if (isMobile) {
     return (
       <>
-        <header className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/30 backdrop-blur-sm">
+        {/* Solid bg-card + hairline per DESIGN.md "Flat-By-Default Rule".
+            Glassmorphism is a current artifact, not a target — see DESIGN.md
+            "Glass-Earns-Its-Place Rule". */}
+        <header className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card">
           <div className="flex items-center gap-2">
             <Image
               src="/favicon.svg"

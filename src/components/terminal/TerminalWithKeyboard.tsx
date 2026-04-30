@@ -219,7 +219,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
           <button
             type="button"
             onClick={() => terminalRef.current?.scrollToBottom?.()}
-            className="absolute bottom-[calc(theme(spacing.16)+env(safe-area-inset-bottom))] right-3 z-30 flex items-center gap-1.5 rounded-full bg-primary/90 backdrop-blur-sm px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary active:scale-95 animate-in fade-in slide-in-from-bottom-2 duration-200"
+            // Solid bg-primary + hairline ring per DESIGN.md
+            // "Flat-By-Default Rule" + "Glass-Earns-Its-Place Rule".
+            className="absolute bottom-[calc(theme(spacing.16)+env(safe-area-inset-bottom))] right-3 z-30 flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground ring-1 ring-border/40 shadow-sm transition-all hover:bg-primary/90 active:scale-95 animate-in fade-in slide-in-from-bottom-2 duration-200"
           >
             <ChevronDown className="w-3.5 h-3.5" />
             <span>Latest</span>
