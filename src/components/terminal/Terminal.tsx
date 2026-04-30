@@ -12,6 +12,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
+import { TOUCH_SCROLL_ACTIVATION_PX } from "./touch-scroll-constants";
 
 const SETTLE_MIN_WIDTH = 100;
 const SETTLE_MIN_HEIGHT = 80;
@@ -471,14 +472,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Track scroll position for mobile scroll-to-bottom indicator.
       // In xterm v6 .xterm-viewport is a vestigial empty div; the real scroll host is
       // .xterm-scrollable-element. Use the public buffer API instead — decoupled from DOM.
-      terminal.onScroll(() => {
+      // Alt-screen apps (vim/htop) have no scrollback; the buffer-activate listener
+      // clears any stale "scrolled up" state when the user enters/exits an alt-screen
+      // app, since onScroll won't fire for the buffer switch itself.
+      const updateScrollState = () => {
         const buf = terminal.buffer.active;
-        const scrolledUp = buf.viewportY < buf.baseY;
+        const scrolledUp = buf.type === "normal" && buf.viewportY < buf.baseY;
         if (scrolledUp !== isScrolledUpRef.current) {
           isScrolledUpRef.current = scrolledUp;
           onScrollStateChangeRef.current?.(scrolledUp);
         }
-      });
+      };
+      terminal.onScroll(updateScrollState);
+      terminal.buffer.onBufferChange(updateScrollState);
 
       // Custom keyboard handler for macOS shortcuts, clipboard, and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
@@ -1357,7 +1363,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     const container = terminalRef.current;
     if (!container) return;
 
-    const SCROLL_ACTIVATION_PX = 5;
     const MOMENTUM_START_THRESHOLD = 1.5;
     const MOMENTUM_STOP_THRESHOLD = 0.3;
     const MOMENTUM_DECAY = 0.95; // Feels closer to iOS native momentum
@@ -1370,14 +1375,15 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     let isScrolling = false;
     let momentumAnimationId: number | null = null;
     let accumulatedDelta = 0;
+    // Cached at gesture start so the ~60Hz momentum loop doesn't re-query the DOM.
+    let cachedScrollEl: HTMLElement | null = null;
 
     const velocitySamples: number[] = [];
 
     const computeCellHeight = (): number => {
       const terminal = xtermRef.current;
-      const scrollEl = container.querySelector('.xterm-scrollable-element') as HTMLElement | null;
-      if (terminal && terminal.rows > 0 && scrollEl && scrollEl.clientHeight > 0) {
-        return scrollEl.clientHeight / terminal.rows;
+      if (terminal && terminal.rows > 0 && cachedScrollEl && cachedScrollEl.clientHeight > 0) {
+        return cachedScrollEl.clientHeight / terminal.rows;
       }
       return fontSizeRef.current * 1.2;
     };
@@ -1385,21 +1391,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     // xterm v6 mounts a SmoothScrollableElement at .xterm-scrollable-element which
     // listens for native wheel events. Dispatching a synthetic WheelEvent feeds the
     // same pixel-native pipeline used by desktop trackpads — no line quantization,
-    // no pixel→line math drift.
+    // no pixel→line math drift. bubbles:false because the scrollable element is
+    // the only intended target; we don't want page-level wheel listeners to react.
     const dispatchScrollWheel = (deltaY: number): boolean => {
-      const scrollEl = container.querySelector('.xterm-scrollable-element') as HTMLElement | null;
-      if (!scrollEl) return false;
-      scrollEl.dispatchEvent(new WheelEvent('wheel', {
+      if (!cachedScrollEl) return false;
+      cachedScrollEl.dispatchEvent(new WheelEvent('wheel', {
         deltaY,
         deltaMode: 0, // DOM_DELTA_PIXEL
-        bubbles: true,
+        bubbles: false,
         cancelable: true,
       }));
       return true;
     };
 
-    // Fallback path used only when .xterm-scrollable-element isn't queryable yet
-    // (race during terminal mount).
+    // Fallback used only if .xterm-scrollable-element isn't in the DOM yet.
     const fallbackScrollLines = (): void => {
       const h = computeCellHeight();
       if (h <= 0) return;
@@ -1411,7 +1416,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
 
     const flushScroll = (): void => {
-      if (accumulatedDelta === 0) return;
       const px = Math.trunc(accumulatedDelta);
       if (px === 0) return;
       if (dispatchScrollWheel(px)) {
@@ -1439,6 +1443,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         velocitySamples.length = 0;
         accumulatedDelta = 0;
         isScrolling = false;
+        cachedScrollEl = container.querySelector('.xterm-scrollable-element') as HTMLElement | null;
       }
     };
 
@@ -1469,7 +1474,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         velocityY = velocitySamples.reduce((a, b) => a + b, 0) / velocitySamples.length;
       }
 
-      if (!isScrolling && Math.abs(currentY - touchStartY) > SCROLL_ACTIVATION_PX) {
+      if (!isScrolling && Math.abs(currentY - touchStartY) > TOUCH_SCROLL_ACTIVATION_PX) {
         isScrolling = true;
       }
 
@@ -1486,8 +1491,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     const handleTouchEnd = () => {
       if (!isScrolling) return;
       isScrolling = false;
-
-      if (!xtermRef.current) return;
 
       const applyMomentum = () => {
         if (Math.abs(velocityY) < MOMENTUM_STOP_THRESHOLD) {
