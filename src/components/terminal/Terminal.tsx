@@ -12,6 +12,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
+import { createTouchScrollHandlers } from "./touch-scroll";
 
 const SETTLE_MIN_WIDTH = 100;
 const SETTLE_MIN_HEIGHT = 80;
@@ -193,6 +194,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const [authError, setAuthError] = useState<string | null>(null);
   const isScrolledUpRef = useRef(false);
   const isUnmountingRef = useRef(false);
+  // IDisposables registered against the terminal that need explicit cleanup
+  // (xterm's own dispose() does this for listeners it tracks, but not for ones
+  // we attach via the public API on a third-party reference).
+  const terminalDisposablesRef = useRef<{ dispose: () => void }[]>([]);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const intentionalExitRef = useRef(false);
@@ -468,17 +473,23 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         textarea.setAttribute("x-webkit-speech", "false");
       }
 
-      // Track scroll position for mobile scroll-to-bottom indicator
-      terminal.onScroll(() => {
-        const viewport = xtermContainerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null;
-        if (!viewport) return;
-        const isAtBottom = viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 10;
-        const scrolledUp = !isAtBottom;
+      // Track scroll position for mobile scroll-to-bottom indicator.
+      // In xterm v6 .xterm-viewport is a vestigial empty div; the real scroll host is
+      // .xterm-scrollable-element. Use the public buffer API instead — decoupled from DOM.
+      // Alt-screen apps (vim/htop) have no scrollback; the buffer-change listener
+      // clears any stale "scrolled up" state when the user enters/exits an alt-screen
+      // app, since onScroll won't fire for the buffer switch itself.
+      const updateScrollState = () => {
+        const buf = terminal.buffer.active;
+        const scrolledUp = buf.type === "normal" && buf.viewportY < buf.baseY;
         if (scrolledUp !== isScrolledUpRef.current) {
           isScrolledUpRef.current = scrolledUp;
           onScrollStateChangeRef.current?.(scrolledUp);
         }
-      });
+      };
+      const scrollDisposable = terminal.onScroll(updateScrollState);
+      const bufferChangeDisposable = terminal.buffer.onBufferChange(updateScrollState);
+      terminalDisposablesRef.current.push(scrollDisposable, bufferChangeDisposable);
 
       // Custom keyboard handler for macOS shortcuts, clipboard, and special key sequences
       // xterm.js doesn't translate Cmd/Option key combinations by default
@@ -993,6 +1004,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         clearTimeout(reconnectTimeoutRef.current);
       }
       wsRef.current?.close();
+      for (const d of terminalDisposablesRef.current) d.dispose();
+      terminalDisposablesRef.current = [];
       webglAddonRef.current?.dispose();
       imageAddonRef.current?.dispose();
       xtermRef.current?.dispose();
@@ -1348,152 +1361,29 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     };
   }, [handleSendImage]);
 
-  // Mobile touch scrolling support
-  // xterm.js v6 uses a VS Code ScrollableElement internally to manage viewport scroll.
-  // Direct .xterm-viewport.scrollTop manipulation is NOT detected by this widget and
-  // gets overwritten on the next sync cycle. We must use terminal.scrollLines() which
-  // properly updates the buffer position and triggers the viewport sync.
+  // Mobile touch scrolling support — algorithm lives in ./touch-scroll.ts so the
+  // unit test runs the same code path as production.
   useEffect(() => {
     const container = terminalRef.current;
     if (!container) return;
 
-    const SCROLL_ACTIVATION_PX = 5;
-    const MOMENTUM_START_THRESHOLD = 1.5;
-    const MOMENTUM_STOP_THRESHOLD = 0.3;
-    const MOMENTUM_DECAY = 0.95; // Feels closer to iOS native momentum
-    const MAX_VELOCITY_SAMPLES = 5;
+    const handlers = createTouchScrollHandlers({
+      container,
+      getXterm: () => xtermRef.current,
+      getFontSize: () => fontSizeRef.current,
+    });
 
-    let touchStartY = 0;
-    let lastTouchY = 0;
-    let lastTouchTime = 0;
-    let velocityY = 0;
-    let isScrolling = false;
-    let momentumAnimationId: number | null = null;
-    let accumulatedDelta = 0;
-
-    const velocitySamples: number[] = [];
-
-    const computeCellHeight = (): number => {
-      const terminal = xtermRef.current;
-      const viewport = container.querySelector('.xterm-viewport') as HTMLElement | null;
-      if (terminal && terminal.rows > 0 && viewport && viewport.clientHeight > 0) {
-        return viewport.clientHeight / terminal.rows;
-      }
-      return fontSizeRef.current * 1.2;
-    };
-
-    /** Consume accumulatedDelta and scroll the terminal by whole lines. */
-    const flushScrollLines = (): void => {
-      const h = computeCellHeight();
-      if (h <= 0) return;
-      const linesToScroll = Math.trunc(accumulatedDelta / h);
-      if (linesToScroll !== 0) {
-        xtermRef.current?.scrollLines(linesToScroll);
-        accumulatedDelta -= linesToScroll * h;
-      }
-    };
-
-    const cancelMomentum = (): void => {
-      if (momentumAnimationId) {
-        cancelAnimationFrame(momentumAnimationId);
-        momentumAnimationId = null;
-      }
-    };
-
-    const handleTouchStart = (e: TouchEvent) => {
-      cancelMomentum();
-
-      if (e.touches.length === 1) {
-        touchStartY = e.touches[0].clientY;
-        lastTouchY = touchStartY;
-        lastTouchTime = performance.now();
-        velocityY = 0;
-        velocitySamples.length = 0;
-        accumulatedDelta = 0;
-        isScrolling = false;
-      }
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) {
-        isScrolling = false;
-        return;
-      }
-
-      const currentY = e.touches[0].clientY;
-      const deltaY = lastTouchY - currentY; // positive = finger moved up
-      const now = performance.now();
-      const timeDelta = now - lastTouchTime;
-
-      // Track velocity with rolling average
-      if (timeDelta > 0) {
-        const instantVelocity = (deltaY / timeDelta) * 16; // Normalize to ~60fps frame
-        velocitySamples.push(instantVelocity);
-        if (velocitySamples.length > MAX_VELOCITY_SAMPLES) {
-          velocitySamples.shift();
-        }
-        velocityY = velocitySamples.reduce((a, b) => a + b, 0) / velocitySamples.length;
-      }
-
-      if (!isScrolling && Math.abs(currentY - touchStartY) > SCROLL_ACTIVATION_PX) {
-        isScrolling = true;
-      }
-
-      // Always update position/time so velocity samples are per-frame, not cumulative
-      lastTouchY = currentY;
-      lastTouchTime = now;
-
-      if (isScrolling) {
-        e.preventDefault();
-        accumulatedDelta += deltaY;
-        flushScrollLines();
-      }
-    };
-
-    const handleTouchEnd = () => {
-      if (!isScrolling) return;
-      isScrolling = false;
-
-      if (!xtermRef.current) return;
-
-      const applyMomentum = () => {
-        if (Math.abs(velocityY) < MOMENTUM_STOP_THRESHOLD) {
-          momentumAnimationId = null;
-          return;
-        }
-
-        accumulatedDelta += velocityY;
-        flushScrollLines();
-
-        velocityY *= MOMENTUM_DECAY;
-        momentumAnimationId = requestAnimationFrame(applyMomentum);
-      };
-
-      if (Math.abs(velocityY) > MOMENTUM_START_THRESHOLD) {
-        momentumAnimationId = requestAnimationFrame(applyMomentum);
-      }
-    };
-
-    // Reset all scroll state (used by touchcancel when iOS interrupts a gesture)
-    const handleTouchCancel = () => {
-      cancelMomentum();
-      isScrolling = false;
-      velocityY = 0;
-      accumulatedDelta = 0;
-    };
-
-    // Register on container — fires before xterm's document-level handlers
-    container.addEventListener("touchstart", handleTouchStart, { passive: true });
-    container.addEventListener("touchmove", handleTouchMove, { passive: false });
-    container.addEventListener("touchend", handleTouchEnd, { passive: true });
-    container.addEventListener("touchcancel", handleTouchCancel, { passive: true });
+    container.addEventListener("touchstart", handlers.handleTouchStart, { passive: true });
+    container.addEventListener("touchmove", handlers.handleTouchMove, { passive: false });
+    container.addEventListener("touchend", handlers.handleTouchEnd, { passive: true });
+    container.addEventListener("touchcancel", handlers.handleTouchCancel, { passive: true });
 
     return () => {
-      cancelMomentum();
-      container.removeEventListener("touchstart", handleTouchStart);
-      container.removeEventListener("touchmove", handleTouchMove);
-      container.removeEventListener("touchend", handleTouchEnd);
-      container.removeEventListener("touchcancel", handleTouchCancel);
+      handlers.cancelMomentum();
+      container.removeEventListener("touchstart", handlers.handleTouchStart);
+      container.removeEventListener("touchmove", handlers.handleTouchMove);
+      container.removeEventListener("touchend", handlers.handleTouchEnd);
+      container.removeEventListener("touchcancel", handlers.handleTouchCancel);
     };
   }, []);
 

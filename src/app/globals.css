@@ -569,18 +569,6 @@
   overscroll-behavior: contain;  /* Prevent pull-to-refresh and rubber-band on terminal */
 }
 
-/* Hide xterm scrollbar and configure touch behavior */
-.xterm-viewport {
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE and Edge */
-  touch-action: none;           /* Prevent browser default scroll — JS handles it */
-  overscroll-behavior: contain;  /* Contain scroll within viewport, no chain to parent */
-}
-
-.xterm-viewport::-webkit-scrollbar {
-  display: none; /* Chrome, Safari, Opera */
-}
-
 /* ============================================================================
    Date/Time Input Styling - Dark theme compatible
    ============================================================================ */
