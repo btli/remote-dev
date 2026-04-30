@@ -320,7 +320,11 @@ export function Sidebar({
     <TooltipProvider delayDuration={200}>
     <div
       className={cn(
-        "h-full flex flex-col bg-card/50 backdrop-blur-md border-r border-border",
+        // Below the `md` breakpoint we render flat (DESIGN.md
+        // "Glass-Earns-Its-Place Rule"). Desktop keeps its existing
+        // glassmorphism for now; the desktop redesign comes in a later phase.
+        "h-full flex flex-col border-r border-border",
+        "bg-card md:bg-card/50 md:backdrop-blur-md",
         "transition-[width] duration-200 relative shrink-0",
         "pl-safe-left",
         isResizing && "select-none"

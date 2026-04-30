@@ -75,9 +75,8 @@ export function BottomTabBar({
   // falls back to window when none is given. Direction wins over velocity:
   // any upward delta re-shows, any downward delta past HIDE_AFTER_PX hides.
   useEffect(() => {
-    const target: HTMLElement | Window =
-      scrollContainer ?? (typeof window === "undefined" ? null : window) ?? null;
-    if (!target) return;
+    if (typeof window === "undefined") return;
+    const target: HTMLElement | Window = scrollContainer ?? window;
 
     const readScrollY = (): number => {
       if (target === window) return window.scrollY;

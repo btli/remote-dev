@@ -234,7 +234,8 @@ export function MobileKeyboard({
   return (
     <div
       className={cn(
-        "flex flex-col gap-1.5 p-2 bg-popover/95 backdrop-blur-sm border-t border-border",
+        // Solid bg-card + hairline per DESIGN.md "Flat-By-Default Rule".
+        "flex flex-col gap-1.5 p-2 bg-card border-t border-border",
         "pb-safe-bottom",
         className
       )}
