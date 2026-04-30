@@ -87,11 +87,16 @@ export function NotificationPanel({ open, onOpenChange, onJumpToSession }: Notif
                     Render even when read, but only color it when unread, so
                     the title alignment stays stable across rows. */}
                 <span
+                  data-testid="notification-unread-dot"
                   aria-hidden="true"
                   className={cn(
                     "mt-1.5 h-3 w-3 shrink-0 rounded-full",
+                    // Solid variant for the dot — the alpha-blended
+                    // `--color-signal-attention` is intentional for the
+                    // halo glow but washes out against bg-card in light
+                    // mode when used as a solid fill.
                     !n.readAt
-                      ? "bg-[var(--color-signal-attention)]"
+                      ? "bg-[var(--color-signal-attention-solid)]"
                       : "bg-transparent"
                   )}
                 />

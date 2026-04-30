@@ -406,6 +406,7 @@
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
   --color-signal-attention: var(--signal-attention);
+  --color-signal-attention-solid: var(--signal-attention-solid);
 }
 
 :root {
@@ -414,8 +415,15 @@
    * Signal accent. The single chromatic value allowed in app chrome —
    * agent-needs-attention halo, unread indicators, focus pings. Documented
    * in DESIGN.md "Signal" section. Same value in both themes.
+   *
+   * `--signal-attention` keeps an 80% alpha so the halo keyframes blend
+   * gracefully against any background. `--signal-attention-solid` is the
+   * same hue at full alpha, used for solid fills (e.g., unread dots) where
+   * blending against bg-card would otherwise wash the color out — most
+   * obvious in light mode.
    */
   --signal-attention: oklch(0.6 0.2 250 / 0.8);
+  --signal-attention-solid: oklch(0.6 0.2 250);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -452,6 +460,7 @@
 .dark {
   /* Signal accent stays the same across themes — see :root for rationale. */
   --signal-attention: oklch(0.6 0.2 250 / 0.8);
+  --signal-attention-solid: oklch(0.6 0.2 250);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
