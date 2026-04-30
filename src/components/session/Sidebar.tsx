@@ -43,6 +43,13 @@ const MAX_SIDEBAR_WIDTH = 400;
 const DEFAULT_SIDEBAR_WIDTH = 220;
 const COLLAPSED_SIDEBAR_WIDTH = 48;
 
+// Shared className for the footer action buttons (Profiles / Ports / Trash).
+const FOOTER_BUTTON_CLASS = cn(
+  "w-full flex items-center gap-1.5 px-2 py-1 rounded-md",
+  "text-xs text-muted-foreground hover:text-foreground",
+  "hover:bg-muted/50 transition-colors"
+);
+
 // Folder repo stats returned by getFolderRepoStats
 export interface FolderRepoStats {
   prCount: number;
@@ -528,11 +535,7 @@ export function Sidebar({
           {onProfilesOpen && (
             <button
               onClick={onProfilesOpen}
-              className={cn(
-                "w-full flex items-center gap-1.5 px-2 py-1 rounded-md",
-                "text-xs text-muted-foreground hover:text-foreground",
-                "hover:bg-muted/50 transition-colors"
-              )}
+              className={FOOTER_BUTTON_CLASS}
             >
               <Fingerprint className="w-3.5 h-3.5 shrink-0" />
               <span>Profiles</span>
@@ -547,11 +550,7 @@ export function Sidebar({
           {onPortsOpen && (
             <button
               onClick={onPortsOpen}
-              className={cn(
-                "w-full flex items-center gap-1.5 px-2 py-1 rounded-md",
-                "text-xs text-muted-foreground hover:text-foreground",
-                "hover:bg-muted/50 transition-colors"
-              )}
+              className={FOOTER_BUTTON_CLASS}
             >
               <Network className="w-3.5 h-3.5 shrink-0" />
               <span>Ports</span>
@@ -575,11 +574,7 @@ export function Sidebar({
             >
               <button
                 onClick={onTrashOpen}
-                className={cn(
-                  "w-full flex items-center gap-1.5 px-2 py-1 rounded-md",
-                  "text-xs text-muted-foreground hover:text-foreground",
-                  "hover:bg-muted/50 transition-colors"
-                )}
+                className={FOOTER_BUTTON_CLASS}
               >
                 <Trash2 className="w-3.5 h-3.5 shrink-0" />
                 <span>Trash</span>
