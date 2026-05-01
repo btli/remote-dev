@@ -19,6 +19,7 @@ colors:
   destructive: "oklch(0.577 0.245 27.325)"
   destructive-dark: "oklch(0.704 0.191 22.216)"
   signal-attention: "oklch(0.6 0.2 250 / 0.8)"
+  signal-running: "oklch(0.65 0.17 152)"
   midnight-primary: "oklch(0.55 0.18 270)"
   midnight-accent: "oklch(0.65 0.15 250)"
   terminal-tokyo-bg: "#1a1b26"
@@ -147,6 +148,7 @@ The palette is achromatic neutral by default with one signal accent (notificatio
 
 ### Signal (the only chromatic colors in app chrome)
 - **Attention Blue** (`oklch(0.6 0.2 250 / 0.8)`): Pulses around agent sessions waiting for input (notification ring halo). The single decoratively-colored value in the chrome.
+- **Signal Running** (`oklch(0.65 0.17 152)`): pip color when an agent session is actively executing.
 - **Destructive** (`oklch(0.577 0.245 27.325)`): Errors, destructive confirmations only. Not for "primary action" buttons.
 
 ### Terminal (always dark, never themed by app theme)

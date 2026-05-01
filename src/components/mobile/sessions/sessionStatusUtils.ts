@@ -9,8 +9,8 @@ import type { AgentActivityStatus } from "@/types/terminal-type";
  *
  * The visual vocabulary is intentionally narrow:
  *   - "needs attention" → pip is `--color-signal-attention-solid`, halo on
- *   - "running" → pip is `bg-emerald-500` (the only green in chrome; signal,
- *     not decoration)
+ *   - "running" → pip is `--color-signal-running` (the active-execution
+ *     signal token; signal, not decoration — see DESIGN.md "Signal" section)
  *   - "idle" → pip is `bg-foreground/40`, the default achromatic state
  *   - "error" → pip is `bg-destructive`
  *   - "suspended" → pip is `bg-muted-foreground/40`
@@ -137,7 +137,7 @@ export function pipClassName(state: SessionPipState): string {
     case "attention":
       return "bg-[var(--color-signal-attention-solid)]";
     case "running":
-      return "bg-emerald-500";
+      return "bg-[var(--color-signal-running)]";
     case "error":
       return "bg-destructive";
     case "suspended":
