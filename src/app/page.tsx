@@ -27,6 +27,7 @@ import { PeerChatProvider } from "@/contexts/PeerChatContext";
 import { ChannelProvider } from "@/contexts/ChannelContext";
 import { SessionManager } from "@/components/session/SessionManager";
 import { Header } from "@/components/header/Header";
+import { MobileViewportSwitch } from "@/components/mobile/MobileViewportSwitch";
 import type { TerminalSession } from "@/types/session";
 
 export default async function Home() {
@@ -111,19 +112,21 @@ export default async function Home() {
                                   <NotificationProvider>
                                     <ChannelProvider>
                                     <PeerChatProvider>
-                                    <div className="flex h-screen flex-col bg-background">
-                                      {/* Header - hidden on mobile, shown in sidebar instead */}
-                                      <Header
-                                        isGitHubConnected={isGitHubConnected}
-                                        userEmail={session.user.email || ""}
-                                        onSignOut={async () => {
-                                          "use server";
-                                          await signOut();
-                                        }}
-                                      />
-                                      {/* Main content */}
-                                      <SessionManager isGitHubConnected={isGitHubConnected} />
-                                    </div>
+                                    <MobileViewportSwitch isGitHubConnected={isGitHubConnected}>
+                                      <div className="flex h-screen flex-col bg-background">
+                                        {/* Header - hidden on mobile, shown in sidebar instead */}
+                                        <Header
+                                          isGitHubConnected={isGitHubConnected}
+                                          userEmail={session.user.email || ""}
+                                          onSignOut={async () => {
+                                            "use server";
+                                            await signOut();
+                                          }}
+                                        />
+                                        {/* Main content */}
+                                        <SessionManager isGitHubConnected={isGitHubConnected} />
+                                      </div>
+                                    </MobileViewportSwitch>
                                     </PeerChatProvider>
                                     </ChannelProvider>
                                   </NotificationProvider>
