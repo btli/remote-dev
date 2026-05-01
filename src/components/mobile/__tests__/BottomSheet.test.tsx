@@ -115,7 +115,11 @@ describe("BottomSheet", () => {
           <button type="button" data-testid="second-btn">second</button>
         </BottomSheet>
       );
-      const panel = await waitFor(() => screen.getByTestId("mobile-bottom-sheet"));
+      // Wait for the focus-trap effect to install (gated on `entered`).
+      await waitFor(() =>
+        expect(screen.getByTestId("first-btn")).toHaveFocus()
+      );
+      const panel = screen.getByTestId("mobile-bottom-sheet");
       const second = screen.getByTestId("second-btn");
       second.focus();
       expect(second).toHaveFocus();
@@ -131,13 +135,57 @@ describe("BottomSheet", () => {
           <button type="button" data-testid="second-btn">second</button>
         </BottomSheet>
       );
-      const panel = await waitFor(() => screen.getByTestId("mobile-bottom-sheet"));
+      await waitFor(() =>
+        expect(screen.getByTestId("first-btn")).toHaveFocus()
+      );
+      const panel = screen.getByTestId("mobile-bottom-sheet");
       const first = screen.getByTestId("first-btn");
-      first.focus();
+      // first-btn is already focused from auto-focus above.
       expect(first).toHaveFocus();
       // Shift+Tab from first → cycle to last.
       fireEvent.keyDown(panel, { key: "Tab", shiftKey: true });
       expect(screen.getByTestId("second-btn")).toHaveFocus();
+    });
+
+    it("body scroll lock survives concurrent nested sheets (refcount)", async () => {
+      const { rerender } = render(
+        <>
+          <BottomSheet open={true} onOpenChange={vi.fn()} ariaLabel="A">
+            <div>a</div>
+          </BottomSheet>
+          <BottomSheet open={true} onOpenChange={vi.fn()} ariaLabel="B">
+            <div>b</div>
+          </BottomSheet>
+        </>
+      );
+      await waitFor(() => screen.getAllByTestId("mobile-bottom-sheet"));
+      // Both sheets open → body locked.
+      expect(document.body.style.overflow).toBe("hidden");
+      // Close the first sheet — body should still be locked because the
+      // second sheet is still open. Naive save/restore would unlock here.
+      rerender(
+        <>
+          <BottomSheet open={false} onOpenChange={vi.fn()} ariaLabel="A">
+            <div>a</div>
+          </BottomSheet>
+          <BottomSheet open={true} onOpenChange={vi.fn()} ariaLabel="B">
+            <div>b</div>
+          </BottomSheet>
+        </>
+      );
+      expect(document.body.style.overflow).toBe("hidden");
+      // Close the second sheet — body unlocks.
+      rerender(
+        <>
+          <BottomSheet open={false} onOpenChange={vi.fn()} ariaLabel="A">
+            <div>a</div>
+          </BottomSheet>
+          <BottomSheet open={false} onOpenChange={vi.fn()} ariaLabel="B">
+            <div>b</div>
+          </BottomSheet>
+        </>
+      );
+      await waitFor(() => expect(document.body.style.overflow).toBe(""));
     });
 
     it("restores focus to the previously-focused element on close", async () => {

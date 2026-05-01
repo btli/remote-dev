@@ -80,13 +80,25 @@ export function BottomSheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onOpenChange]);
 
-  // Body scroll lock while open.
+  // Body scroll lock while open. Refcounted on a body data-attribute so
+  // multiple concurrent sheets don't leak a permanent locked state. Naive
+  // save/restore breaks under nested sheets: the second sheet would save
+  // `prev = "hidden"` (set by the first), and on its close would restore
+  // "hidden" — locking scroll forever. Only the first sheet actually
+  // applies the lock; only the last one to close releases it.
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const body = document.body;
+    const count = Number(body.dataset.scrollLockCount ?? "0") + 1;
+    body.dataset.scrollLockCount = String(count);
+    if (count === 1) body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = prev;
+      const next = Math.max(
+        0,
+        Number(body.dataset.scrollLockCount ?? "1") - 1
+      );
+      body.dataset.scrollLockCount = String(next);
+      if (next === 0) body.style.overflow = "";
     };
   }, [open]);
 
