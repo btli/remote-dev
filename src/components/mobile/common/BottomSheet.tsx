@@ -122,6 +122,49 @@ export function BottomSheet({
     return () => window.clearTimeout(t);
   }, [open, mounted, reducedMotion]);
 
+  // Focus trap: WCAG / aria-modal compliance. When the sheet enters, move
+  // focus to the first focusable child (or the panel itself when no
+  // focusable children exist), trap Tab/Shift+Tab inside, and restore
+  // focus to the previously-focused element when the sheet closes.
+  useEffect(() => {
+    if (!entered) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const previouslyFocused =
+      typeof document !== "undefined"
+        ? (document.activeElement as HTMLElement | null)
+        : null;
+    const focusableSelector =
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const getFocusables = () =>
+      Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector));
+    const initial = getFocusables()[0] ?? panel;
+    initial.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const list = getFocusables();
+      if (list.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        last.focus();
+        e.preventDefault();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        first.focus();
+        e.preventDefault();
+      }
+    };
+    panel.addEventListener("keydown", onKey);
+    return () => {
+      panel.removeEventListener("keydown", onKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [entered]);
+
   if (!isClient) return null;
   if (!mounted) return null;
 
@@ -169,6 +212,7 @@ export function BottomSheet({
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
         aria-label={!title ? ariaLabel : undefined}
+        tabIndex={-1}
         data-testid="mobile-bottom-sheet"
         className={cn(
           "relative z-10 flex flex-col",

@@ -94,4 +94,83 @@ describe("BottomSheet", () => {
     fireEvent.click(screen.getByLabelText("Close sheet"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
+
+  describe("focus trap", () => {
+    it("moves focus to the first focusable element on enter", async () => {
+      render(
+        <BottomSheet open={true} onOpenChange={vi.fn()} ariaLabel="Test">
+          <button type="button" data-testid="first-btn">first</button>
+          <button type="button" data-testid="second-btn">second</button>
+        </BottomSheet>
+      );
+      await waitFor(() => {
+        expect(screen.getByTestId("first-btn")).toHaveFocus();
+      });
+    });
+
+    it("Tab from the last focusable cycles to the first", async () => {
+      render(
+        <BottomSheet open={true} onOpenChange={vi.fn()} ariaLabel="Test">
+          <button type="button" data-testid="first-btn">first</button>
+          <button type="button" data-testid="second-btn">second</button>
+        </BottomSheet>
+      );
+      const panel = await waitFor(() => screen.getByTestId("mobile-bottom-sheet"));
+      const second = screen.getByTestId("second-btn");
+      second.focus();
+      expect(second).toHaveFocus();
+      // Tab from last → cycle to first.
+      fireEvent.keyDown(panel, { key: "Tab" });
+      expect(screen.getByTestId("first-btn")).toHaveFocus();
+    });
+
+    it("Shift+Tab from the first focusable cycles to the last", async () => {
+      render(
+        <BottomSheet open={true} onOpenChange={vi.fn()} ariaLabel="Test">
+          <button type="button" data-testid="first-btn">first</button>
+          <button type="button" data-testid="second-btn">second</button>
+        </BottomSheet>
+      );
+      const panel = await waitFor(() => screen.getByTestId("mobile-bottom-sheet"));
+      const first = screen.getByTestId("first-btn");
+      first.focus();
+      expect(first).toHaveFocus();
+      // Shift+Tab from first → cycle to last.
+      fireEvent.keyDown(panel, { key: "Tab", shiftKey: true });
+      expect(screen.getByTestId("second-btn")).toHaveFocus();
+    });
+
+    it("restores focus to the previously-focused element on close", async () => {
+      // Place an external trigger that will own focus before the sheet
+      // opens. The two-phase mount means the focus-trap effect runs after
+      // `entered` flips true; whatever document.activeElement is at that
+      // moment is what we'll restore on cleanup.
+      const Wrapper = ({ open }: { open: boolean }) => (
+        <>
+          <button
+            type="button"
+            data-testid="external-trigger"
+            autoFocus
+          >
+            trigger
+          </button>
+          <BottomSheet open={open} onOpenChange={vi.fn()} ariaLabel="Test">
+            <button type="button" data-testid="inside-btn">inside</button>
+          </BottomSheet>
+        </>
+      );
+      const { rerender } = render(<Wrapper open={false} />);
+      const trigger = screen.getByTestId("external-trigger");
+      trigger.focus();
+      expect(trigger).toHaveFocus();
+      // Open the sheet — focus moves to the first inside button.
+      rerender(<Wrapper open={true} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("inside-btn")).toHaveFocus()
+      );
+      // Close the sheet — focus should be restored to the trigger.
+      rerender(<Wrapper open={false} />);
+      await waitFor(() => expect(trigger).toHaveFocus());
+    });
+  });
 });
