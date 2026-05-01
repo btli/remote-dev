@@ -374,76 +374,82 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
         ) : null}
       </header>
 
-      {/* Content area: error banner + list (or empty state). */}
-      <div
-        ref={setRefBoth}
-        data-testid="mobile-sessions-scroll"
-        className="flex-1 overflow-y-auto overscroll-contain"
-        style={{
-          // Visual pull indicator: translate the content down a few px while
-          // dragging. The hook returns 0 in reduced-motion, so this stays
-          // stationary then.
-          transform: pull.pullDistance > 0 ? `translateY(${pull.pullDistance}px)` : undefined,
-          transitionProperty: pull.pullDistance === 0 ? "transform" : "none",
-          transitionDuration: pull.pullDistance === 0 ? "180ms" : "0ms",
-        }}
-      >
+      {/* Content area: error banner + list (or empty state).
+
+          The pull-to-refresh indicator is an absolutely-positioned sibling
+          above the scroll container — animating its OWN translate. Putting
+          the transform on the scroll container itself stacked with iOS
+          Safari's rubber-band scroll, producing a doubled-bounce visual. */}
+      <div className="relative flex flex-1 flex-col">
         {/* Subtle pull/refresh indicator: a single line of muted text, no
-            big spinner overlay. */}
+            big spinner overlay. pointer-events-none so it never blocks taps
+            on rows behind; z-10 so it's drawn over the list when active. */}
         {(pull.pullDistance > 0 || pull.isRefreshing) ? (
           <div
-            className="flex items-center justify-center py-2 text-xs text-muted-foreground"
             data-testid="mobile-sessions-refresh-indicator"
             role="status"
             aria-live="polite"
+            className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center py-2 text-xs text-muted-foreground"
+            style={{
+              transform: `translateY(${Math.max(0, pull.pullDistance - 16)}px)`,
+              transitionProperty: pull.pullDistance === 0 ? "transform, opacity" : "none",
+              transitionDuration: pull.pullDistance === 0 ? "180ms" : "0ms",
+              opacity: pull.isRefreshing ? 1 : Math.min(1, pull.pullDistance / 60),
+            }}
           >
             {pull.isRefreshing ? "Refreshing…" : "Pull to refresh"}
           </div>
         ) : null}
 
-        {errorMessage ? (
-          <div
-            data-testid="mobile-sessions-error"
-            role="alert"
-            className="m-3 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive"
-          >
-            {errorMessage}
-          </div>
-        ) : null}
+        <div
+          ref={setRefBoth}
+          data-testid="mobile-sessions-scroll"
+          className="flex-1 overflow-y-auto overscroll-contain"
+        >
+          {errorMessage ? (
+            <div
+              data-testid="mobile-sessions-error"
+              role="alert"
+              className="m-3 rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive"
+            >
+              {errorMessage}
+            </div>
+          ) : null}
 
-        {isLoading && visibleSessions.length === 0 ? (
-          <SessionListSkeleton />
-        ) : visibleSessions.length === 0 ? (
-          <SessionsEmptyState
-            hasProject={
-              !!activeNode &&
-              (activeNode.type === "project" ||
-                projectTree.projects.length > 0)
-            }
-            projectName={
-              activeNode?.type === "project"
-                ? projectTree.getProject(activeNode.id)?.name ?? null
-                : null
-            }
-            onChooseProject={() => setTreeSheetOpen(true)}
-            onStartSession={() => setNewSessionOpen(true)}
-          />
-        ) : (
-          <ul role="list" data-testid="mobile-sessions-list">
-            {visibleSessions.map((s) => (
-              <li key={s.id}>
-                <MobileSessionRow
-                  session={s}
-                  activity={sessionCtx.getAgentActivityStatus(s.id)}
-                  active={s.id === sessionCtx.activeSessionId}
-                  onTap={handleTapSession}
-                  onLongPress={(id) => setActionSheetSessionId(id)}
-                  onSwipeSuspend={performSuspend}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
+          {isLoading && visibleSessions.length === 0 ? (
+            <SessionListSkeleton />
+          ) : visibleSessions.length === 0 ? (
+            <SessionsEmptyState
+              hasProject={
+                !!activeNode &&
+                (activeNode.type === "project" ||
+                  projectTree.projects.length > 0)
+              }
+              projectName={
+                activeNode?.type === "project"
+                  ? projectTree.getProject(activeNode.id)?.name ?? null
+                  : null
+              }
+              onChooseProject={() => setTreeSheetOpen(true)}
+              onStartSession={() => setNewSessionOpen(true)}
+            />
+          ) : (
+            <ul role="list" data-testid="mobile-sessions-list">
+              {visibleSessions.map((s) => (
+                <li key={s.id}>
+                  <MobileSessionRow
+                    session={s}
+                    activity={sessionCtx.getAgentActivityStatus(s.id)}
+                    active={s.id === sessionCtx.activeSessionId}
+                    onTap={handleTapSession}
+                    onLongPress={(id) => setActionSheetSessionId(id)}
+                    onSwipeSuspend={performSuspend}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       {/* Sheets */}
