@@ -21,6 +21,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import type { PinnedFile } from "@/types/pinned-files";
 
 export type ProjectPrefsInitialTab =
   | "general"
@@ -63,7 +64,7 @@ interface ProjectPrefs {
   githubRepoId?: string | null;
   localRepoPath?: string | null;
   defaultAgentProvider?: string | null;
-  pinnedFiles?: string[] | null;
+  pinnedFiles?: PinnedFile[] | null;
 }
 
 const EMPTY: ProjectPrefs = {};
@@ -210,15 +211,41 @@ export function ProjectPreferencesView({
               <Label htmlFor="project-pinned">Pinned files (one per line)</Label>
               <textarea
                 id="project-pinned"
-                value={(prefs.pinnedFiles ?? []).join("\n")}
+                value={(Array.isArray(prefs.pinnedFiles)
+                  ? prefs.pinnedFiles
+                  : []
+                )
+                  .map((f) => f.path)
+                  .filter(Boolean)
+                  .join("\n")}
                 onChange={(e) => {
-                  const lines = e.target.value
+                  const existing = Array.isArray(prefs.pinnedFiles)
+                    ? prefs.pinnedFiles
+                    : [];
+                  const byPath = new Map(existing.map((f) => [f.path, f]));
+                  const now = new Date().toISOString();
+                  const items: PinnedFile[] = e.target.value
                     .split("\n")
                     .map((line) => line.trim())
-                    .filter(Boolean);
+                    .filter(Boolean)
+                    .map((path, index) => {
+                      const prev = byPath.get(path);
+                      if (prev) {
+                        // Preserve existing metadata; refresh sortOrder.
+                        return { ...prev, sortOrder: index };
+                      }
+                      const name = path.split("/").pop() ?? path;
+                      return {
+                        id: crypto.randomUUID(),
+                        path,
+                        name,
+                        sortOrder: index,
+                        createdAt: now,
+                      };
+                    });
                   setPrefs({
                     ...prefs,
-                    pinnedFiles: lines.length ? lines : null,
+                    pinnedFiles: items.length ? items : null,
                   });
                 }}
                 rows={3}
