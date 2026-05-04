@@ -86,7 +86,12 @@ export function ActionSheet({
             <button
               type="button"
               role="menuitem"
-              disabled={item.disabled}
+              // Use aria-disabled (not the native `disabled` attribute) so the
+              // item stays in the a11y tree and is announced as "unavailable"
+              // rather than removed entirely. We gate the click handler in
+              // {@link handleSelect} (which closes the sheet without invoking
+              // onSelect when item.disabled is true).
+              aria-disabled={item.disabled ? "true" : undefined}
               onClick={() => handleSelect(item)}
               data-action-id={item.id}
               data-destructive={item.destructive ? "true" : undefined}

@@ -59,8 +59,16 @@ export function MobileNotificationRow({
   // types are unread-only and don't carry the "needs attention" semantic.
   const showHalo = notification.type === "agent_waiting" && isUnread;
 
+  // Right-swipe = "mark unread". The server has no mark-unread endpoint, so
+  // letting users swipe a read row right would commit a no-op gesture (and
+  // surface a confusing "local-only state" toast). Instead we disable the
+  // right-swipe entirely on read rows — the behind-layer hint is hidden too,
+  // so the gesture isn't advertised. Left-swipe (delete) is always enabled.
+  const enableRightSwipe = isUnread;
+
   const swipe = useNotificationSwipe({
     enabled: enableGestures,
+    enableRightSwipe,
     onDelete: () => onDelete(notification),
     onToggleRead: () => onToggleRead(notification),
   });
@@ -109,16 +117,20 @@ export function MobileNotificationRow({
       >
         Delete
       </div>
-      {/* Behind layer (left): swipe-right = toggle-read hint */}
-      <div
-        aria-hidden="true"
-        className={cn(
-          "pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4",
-          "text-xs font-medium text-muted-foreground"
-        )}
-      >
-        {isUnread ? "Mark read" : "Mark unread"}
-      </div>
+      {/* Behind layer (left): swipe-right = toggle-read hint. Only rendered
+          when right-swipe is actually wired up (unread rows) so we don't
+          advertise a gesture that no-ops. */}
+      {enableRightSwipe ? (
+        <div
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4",
+            "text-xs font-medium text-muted-foreground"
+          )}
+        >
+          Mark read
+        </div>
+      ) : null}
 
       <div
         data-testid="mobile-notification-row"
@@ -128,6 +140,7 @@ export function MobileNotificationRow({
         role="button"
         tabIndex={0}
         aria-label={`Notification: ${notification.title}`}
+        aria-expanded={hasExpandableBody ? expanded : undefined}
         onTouchStart={(e) => {
           swipe.bind.onTouchStart(e);
           longPress.bind.onTouchStart(e);

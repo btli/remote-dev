@@ -34,7 +34,7 @@
  * feature can land without further IA churn.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -90,22 +90,55 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
   const [actionTargetId, setActionTargetId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Set of notification IDs the user has swipe-deleted but whose server DELETE
+  // is still pending in the 5s undo window. We hide them from the list
+  // optimistically; if the timer fires, the context's deleteNotification runs
+  // and the row drops out of `notifCtx.notifications` for real. If the user
+  // hits Undo, we cancel the timer and clear the ID — the original row is
+  // already in the context's state, so it just reappears in place.
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  // Track in-flight delete timers so we can clear them on unmount (avoid
+  // firing a server delete after the tab unmounts) and on Undo.
+  const pendingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
+
+  useEffect(() => {
+    const timers = pendingTimersRef.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
   const counts = useMemo(() => {
-    const all = notifCtx.notifications.length;
-    const unread = notifCtx.notifications.filter((n) => !n.readAt).length;
-    const mentions = notifCtx.notifications.filter(isMention).length;
+    const all = notifCtx.notifications.filter(
+      (n) => !pendingDeleteIds.has(n.id)
+    ).length;
+    const unread = notifCtx.notifications.filter(
+      (n) => !pendingDeleteIds.has(n.id) && !n.readAt
+    ).length;
+    const mentions = notifCtx.notifications.filter(
+      (n) => !pendingDeleteIds.has(n.id) && isMention(n)
+    ).length;
     return { all, unread, mentions };
-  }, [notifCtx.notifications]);
+  }, [notifCtx.notifications, pendingDeleteIds]);
 
   const visible = useMemo(() => {
+    const base = notifCtx.notifications.filter(
+      (n) => !pendingDeleteIds.has(n.id)
+    );
     if (filter === "unread") {
-      return notifCtx.notifications.filter((n) => !n.readAt);
+      return base.filter((n) => !n.readAt);
     }
     if (filter === "mentions") {
-      return notifCtx.notifications.filter(isMention);
+      return base.filter(isMention);
     }
-    return notifCtx.notifications;
-  }, [filter, notifCtx.notifications]);
+    return base;
+  }, [filter, notifCtx.notifications, pendingDeleteIds]);
 
   const handleRefresh = useCallback(async () => {
     setErrorMessage(null);
@@ -122,7 +155,9 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
   const performJump = useCallback(
     (notification: NotificationEvent) => {
       if (!notification.sessionId) {
-        toast("This notification has no associated session.");
+        toast("This notification has no associated session.", {
+          id: `notif-jump-no-session:${notification.id}`,
+        });
         return;
       }
       if (!notification.readAt) {
@@ -134,15 +169,20 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
     [notifCtx, sessionCtx, onSwitchTab]
   );
 
-  // Toggle read: read → unread is a UI-only optimistic flip (the server
-  // doesn't expose a "mark unread" endpoint). Unread → read goes through
-  // the canonical markRead path.
+  // Toggle read: only unread → read is supported (the server has no
+  // mark-unread endpoint). Read rows have their right-swipe gesture disabled
+  // upstream in MobileNotificationRow, so this only fires for unread rows.
+  // We still gate defensively in case a programmatic caller invokes it on a
+  // read row.
   const performToggleRead = useCallback(
     (notification: NotificationEvent) => {
       if (notification.readAt) {
-        // We don't have an API for unread; surface gracefully so the user
-        // understands the action is best-effort.
-        toast("Marked as unread is a local-only state.");
+        // Read rows shouldn't reach this path via gesture; the right-swipe
+        // is disabled on read rows. If we get here from another caller, fail
+        // closed with a single dedup-id'd toast rather than silently no-op.
+        toast("Marked as unread is a local-only state.", {
+          id: `notif-toggle-read:${notification.id}`,
+        });
         return;
       }
       void notifCtx.markRead([notification.id]);
@@ -150,30 +190,57 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
     [notifCtx]
   );
 
-  // Delete with 5s undo. We optimistically remove via the context's
-  // `deleteNotification` (which already writes to the server). The Undo
-  // action calls `addNotification` to re-insert the row at the top — the
-  // server-side delete still happened, but the user sees their item again
-  // and can re-undelete by pressing Undo a second time within 5s.
-  //
-  // Note: this is the same pattern the SessionsTab uses for swipe-suspend
-  // (toast with action: { label: "Undo" }).
+  // Delete with 5s undo. We hide the row locally (via pendingDeleteIds) but
+  // defer the actual server DELETE until the toast's 5s window elapses.
+  // Pressing Undo within that window cancels the timer, clears the local
+  // hide, and the row reappears in place — no rehydration, no server churn.
   const performDelete = useCallback(
     (notification: NotificationEvent) => {
-      const snapshot = notification;
-      void notifCtx.deleteNotification(notification.id).catch(() => {
-        toast.error("Couldn't delete notification.");
+      // Optimistic local hide.
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev);
+        next.add(notification.id);
+        return next;
       });
-      toast(`Deleted "${snapshot.title}"`, {
+
+      // If a previous delete for the same ID is still pending (user
+      // double-swiped), clear it before scheduling the new one.
+      const existing = pendingTimersRef.current.get(notification.id);
+      if (existing) clearTimeout(existing);
+
+      const timer = setTimeout(() => {
+        pendingTimersRef.current.delete(notification.id);
+        void notifCtx.deleteNotification(notification.id).catch(() => {
+          toast.error("Couldn't delete notification.", {
+            id: `notif-delete-error:${notification.id}`,
+          });
+          // Server delete failed; surface the row again so it isn't
+          // silently lost from the user's view.
+          setPendingDeleteIds((prev) => {
+            const next = new Set(prev);
+            next.delete(notification.id);
+            return next;
+          });
+        });
+      }, 5000);
+      pendingTimersRef.current.set(notification.id, timer);
+
+      toast(`Deleted "${notification.title}"`, {
+        id: `notif-delete:${notification.id}`,
         duration: 5000,
         action: {
           label: "Undo",
           onClick: () => {
-            // Restore the row optimistically. The server record is gone;
-            // a refresh would clobber it, but the user sees their item
-            // back and can act on it again. Persistent restore is a
-            // separate ticket — the UX contract here is "5s undo".
-            notifCtx.addNotification(snapshot);
+            const t = pendingTimersRef.current.get(notification.id);
+            if (t) {
+              clearTimeout(t);
+              pendingTimersRef.current.delete(notification.id);
+            }
+            setPendingDeleteIds((prev) => {
+              const next = new Set(prev);
+              next.delete(notification.id);
+              return next;
+            });
           },
         },
       });
@@ -182,7 +249,9 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
   );
 
   const performMarkUnread = useCallback(() => {
-    toast("Marked as unread is a local-only state.");
+    toast("Marked as unread is a local-only state.", {
+      id: "notif-mark-unread-info",
+    });
   }, []);
 
   // Action sheet items for the long-pressed notification.
@@ -222,7 +291,7 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
       // Per-project mute API doesn't exist yet — slot is reserved.
       disabled: true,
       onSelect: () => {
-        toast("Mute project coming soon.");
+        toast("Mute project coming soon.", { id: "notif-mute-project-info" });
       },
     });
     items.push({

@@ -13,7 +13,19 @@ import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/re
 import { MobileNotificationRow } from "@/components/mobile/notifications/MobileNotificationRow";
 import type { NotificationEvent } from "@/types/notification";
 
-afterEach(() => cleanup());
+// Mock the reduced-motion hook so individual tests can opt into the
+// reduced-motion code path. Default = false so the halo test below still
+// renders the halo for unread agent_waiting rows.
+const reducedMotionMock = vi.fn<() => boolean>(() => false);
+vi.mock("@/hooks/useMobile", () => ({
+  usePrefersReducedMotion: () => reducedMotionMock(),
+}));
+
+afterEach(() => {
+  cleanup();
+  reducedMotionMock.mockReset();
+  reducedMotionMock.mockImplementation(() => false);
+});
 
 function makeNotification(
   over: Partial<NotificationEvent> = {}
@@ -184,8 +196,62 @@ describe("MobileNotificationRow", () => {
     const row = screen.getByTestId("mobile-notification-row");
     const body = screen.getByTestId("mobile-notification-body");
     expect(body.dataset.expanded).toBe("false");
+    expect(row.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(row);
     expect(body.dataset.expanded).toBe("true");
+    expect(row.getAttribute("aria-expanded")).toBe("true");
     expect(onTap).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits aria-expanded when there is no expandable body", () => {
+    render(
+      <MobileNotificationRow
+        notification={makeNotification({ body: null })}
+        onTap={vi.fn()}
+        onLongPress={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleRead={vi.fn()}
+      />
+    );
+    const row = screen.getByTestId("mobile-notification-row");
+    expect(row.hasAttribute("aria-expanded")).toBe(false);
+  });
+
+  it("does NOT render the halo when prefers-reduced-motion is set", () => {
+    reducedMotionMock.mockImplementation(() => true);
+    render(
+      <MobileNotificationRow
+        notification={makeNotification()}
+        onTap={vi.fn()}
+        onLongPress={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleRead={vi.fn()}
+      />
+    );
+    // The dot is still rendered (unread treatment), but the halo sibling
+    // must be omitted entirely so reduced-motion users don't see the
+    // pulse animation.
+    expect(screen.queryByTestId("mobile-notification-halo")).toBeNull();
+    const dot = screen.getByTestId("mobile-notification-dot");
+    expect(dot.className).toMatch(/bg-\[var\(--color-signal-attention-solid\)\]/);
+  });
+
+  it("does NOT dispatch onToggleRead when swiped right on a read row", () => {
+    const onToggleRead = vi.fn();
+    render(
+      <MobileNotificationRow
+        notification={makeNotification({ readAt: new Date() })}
+        onTap={vi.fn()}
+        onLongPress={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleRead={onToggleRead}
+      />
+    );
+    const row = screen.getByTestId("mobile-notification-row");
+    fireEvent.touchStart(row, { touches: [{ clientX: 50, clientY: 30 }] });
+    fireEvent.touchMove(row, { touches: [{ clientX: 200, clientY: 30 }] });
+    fireEvent.touchEnd(row);
+    // Right-swipe is gated off for read rows — no callback fires.
+    expect(onToggleRead).not.toHaveBeenCalled();
   });
 });

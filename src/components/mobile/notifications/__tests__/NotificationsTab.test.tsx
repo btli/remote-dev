@@ -196,23 +196,65 @@ describe("NotificationsTab", () => {
     expect(notifMockState.markAllRead).toHaveBeenCalled();
   });
 
-  it("dispatches deleteNotification with undo toast on swipe-left", () => {
-    const target = makeNotification({ id: "n1", title: "swipe-target" });
-    notifMockState.notifications = [target];
-    notifMockState.unreadCount = 1;
-    render(<NotificationsTab />);
-    const row = screen.getByTestId("mobile-notification-row");
-    fireEvent.touchStart(row, { touches: [{ clientX: 200, clientY: 30 }] });
-    fireEvent.touchMove(row, { touches: [{ clientX: 60, clientY: 30 }] });
-    fireEvent.touchEnd(row);
-    expect(notifMockState.deleteNotification).toHaveBeenCalledWith("n1");
-    // Toast invoked with the 5s undo action.
-    const toastFn = toast as unknown as ReturnType<typeof vi.fn>;
-    expect(toastFn).toHaveBeenCalled();
-    const lastCall = toastFn.mock.calls[toastFn.mock.calls.length - 1];
-    expect(lastCall?.[0]).toContain("swipe-target");
-    expect(lastCall?.[1]?.duration).toBe(5000);
-    expect(lastCall?.[1]?.action?.label).toBe("Undo");
+  it("hides the row optimistically and shows an undo toast on swipe-left, deferring the server delete by 5s", () => {
+    vi.useFakeTimers();
+    try {
+      const target = makeNotification({ id: "n1", title: "swipe-target" });
+      notifMockState.notifications = [target];
+      notifMockState.unreadCount = 1;
+      render(<NotificationsTab />);
+      const row = screen.getByTestId("mobile-notification-row");
+      fireEvent.touchStart(row, { touches: [{ clientX: 200, clientY: 30 }] });
+      fireEvent.touchMove(row, { touches: [{ clientX: 60, clientY: 30 }] });
+      fireEvent.touchEnd(row);
+
+      // Server delete is deferred — must NOT be called immediately.
+      expect(notifMockState.deleteNotification).not.toHaveBeenCalled();
+
+      // Toast invoked with the 5s undo action and a stable id.
+      const toastFn = toast as unknown as ReturnType<typeof vi.fn>;
+      expect(toastFn).toHaveBeenCalled();
+      const lastCall = toastFn.mock.calls[toastFn.mock.calls.length - 1];
+      expect(lastCall?.[0]).toContain("swipe-target");
+      expect(lastCall?.[1]?.id).toBe("notif-delete:n1");
+      expect(lastCall?.[1]?.duration).toBe(5000);
+      expect(lastCall?.[1]?.action?.label).toBe("Undo");
+
+      // After 5s, the deferred delete fires.
+      vi.advanceTimersByTime(5000);
+      expect(notifMockState.deleteNotification).toHaveBeenCalledWith("n1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Undo cancels the deferred delete entirely (no server call) when pressed within 5s", () => {
+    vi.useFakeTimers();
+    try {
+      const target = makeNotification({ id: "n1", title: "swipe-target" });
+      notifMockState.notifications = [target];
+      notifMockState.unreadCount = 1;
+      render(<NotificationsTab />);
+      const row = screen.getByTestId("mobile-notification-row");
+      fireEvent.touchStart(row, { touches: [{ clientX: 200, clientY: 30 }] });
+      fireEvent.touchMove(row, { touches: [{ clientX: 60, clientY: 30 }] });
+      fireEvent.touchEnd(row);
+
+      // Grab the Undo handler off the toast call.
+      const toastFn = toast as unknown as ReturnType<typeof vi.fn>;
+      const lastCall = toastFn.mock.calls[toastFn.mock.calls.length - 1];
+      const undo = lastCall?.[1]?.action?.onClick as (() => void) | undefined;
+      expect(typeof undo).toBe("function");
+
+      // Press Undo before the timer fires, then drain the timer queue.
+      undo?.();
+      vi.advanceTimersByTime(5000);
+
+      // Server delete must not have been called at all.
+      expect(notifMockState.deleteNotification).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("dispatches markRead on swipe-right when the row is unread", () => {

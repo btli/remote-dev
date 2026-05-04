@@ -28,6 +28,16 @@ import { useSwipeAction } from "../sessions/useSwipeAction";
 
 export interface UseNotificationSwipeOptions {
   enabled?: boolean;
+  /**
+   * When false, the right-swipe (toggle-read) gesture is fully disabled — the
+   * underlying right-direction `useSwipeAction` is not wired in, so the touch
+   * handlers never accumulate a positive offset and never fire `onToggleRead`.
+   * Left-swipe (delete) is unaffected.
+   *
+   * Use this on read rows where "mark unread" would no-op (the server has no
+   * mark-unread endpoint). Defaults to true.
+   */
+  enableRightSwipe?: boolean;
   /** Threshold in px to trigger a swipe action. Default 72. */
   threshold?: number;
   onDelete: () => void;
@@ -49,7 +59,13 @@ export interface UseNotificationSwipeState {
 export function useNotificationSwipe(
   options: UseNotificationSwipeOptions
 ): UseNotificationSwipeState {
-  const { enabled = true, threshold = 72, onDelete, onToggleRead } = options;
+  const {
+    enabled = true,
+    enableRightSwipe = true,
+    threshold = 72,
+    onDelete,
+    onToggleRead,
+  } = options;
 
   const left = useSwipeAction({
     direction: "left",
@@ -60,7 +76,7 @@ export function useNotificationSwipe(
   const right = useSwipeAction({
     direction: "right",
     threshold,
-    enabled,
+    enabled: enabled && enableRightSwipe,
     onSwipe: onToggleRead,
   });
 
