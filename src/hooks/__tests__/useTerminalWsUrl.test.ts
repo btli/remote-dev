@@ -1,14 +1,7 @@
 /**
- * Tests for `useTerminalWsUrl` — verifies the resolver covers the four
- * deployment shapes the terminal WebSocket runs in:
- *   1. Localhost dev (uses NEXT_PUBLIC_TERMINAL_PORT, fallback 3001)
- *   2. Remote https tunnel (wss://hostname/ws)
- *   3. Remote http tunnel (ws://hostname/ws)
- *   4. SSR / `typeof window === "undefined"` (legacy ws://localhost:3001)
- *
- * Background: this hook was extracted from SessionManager because MobileApp
- * was not passing `wsUrl` into MobileSessionView, leaving the mobile
- * single-session view stuck on "Reconnecting" — see remote-dev-8h39.
+ * Tests for `useTerminalWsUrl` and the underlying `resolveTerminalWsUrl`.
+ * Covers the four deployment shapes the terminal WebSocket runs in:
+ * localhost dev, https tunnel, http tunnel, and SSR.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -19,7 +12,6 @@ import {
   resolveTerminalWsUrl,
 } from "@/hooks/useTerminalWsUrl";
 
-// Save the real `window.location` so we can restore it between tests.
 const REAL_LOCATION = window.location;
 
 function setLocation(opts: {
@@ -27,8 +19,7 @@ function setLocation(opts: {
   hostname: string;
   port?: string;
 }): void {
-  // happy-dom: window.location is read-only via assignment but we can
-  // replace it via Object.defineProperty.
+  // happy-dom: window.location is read-only via assignment; replace via defineProperty.
   Object.defineProperty(window, "location", {
     configurable: true,
     writable: true,
@@ -63,52 +54,55 @@ describe("useTerminalWsUrl", () => {
     }
   });
 
-  it("returns ws://localhost:<NEXT_PUBLIC_TERMINAL_PORT> on localhost", () => {
-    setLocation({ protocol: "http:", hostname: "localhost", port: "6001" });
-    const { result } = renderHook(() => useTerminalWsUrl());
-    expect(result.current).toBe("ws://localhost:6002");
-  });
+  const cases: Array<{
+    name: string;
+    location: { protocol: string; hostname: string; port?: string };
+    expected: string;
+  }> = [
+    {
+      name: "localhost uses NEXT_PUBLIC_TERMINAL_PORT",
+      location: { protocol: "http:", hostname: "localhost", port: "6001" },
+      expected: "ws://localhost:6002",
+    },
+    {
+      name: "127.0.0.1 is treated as localhost",
+      location: { protocol: "http:", hostname: "127.0.0.1", port: "6001" },
+      expected: "ws://localhost:6002",
+    },
+    {
+      name: "https tunnel without explicit port → wss://host/ws",
+      location: { protocol: "https:", hostname: "rdv.example.com" },
+      expected: "wss://rdv.example.com/ws",
+    },
+    {
+      name: "https tunnel with explicit port → wss://host:port/ws",
+      location: { protocol: "https:", hostname: "rdv.example.com", port: "8443" },
+      expected: "wss://rdv.example.com:8443/ws",
+    },
+    {
+      name: "http on non-localhost hostname → ws://host/ws",
+      location: { protocol: "http:", hostname: "rdv.lan" },
+      expected: "ws://rdv.lan/ws",
+    },
+  ];
 
-  it("treats 127.0.0.1 as localhost", () => {
-    setLocation({ protocol: "http:", hostname: "127.0.0.1", port: "6001" });
-    const { result } = renderHook(() => useTerminalWsUrl());
-    expect(result.current).toBe("ws://localhost:6002");
-  });
+  for (const { name, location, expected } of cases) {
+    it(name, () => {
+      setLocation(location);
+      const { result } = renderHook(() => useTerminalWsUrl());
+      expect(result.current).toBe(expected);
+    });
+  }
 
   it("falls back to port 3001 on localhost when NEXT_PUBLIC_TERMINAL_PORT is unset", () => {
     delete process.env.NEXT_PUBLIC_TERMINAL_PORT;
     setLocation({ protocol: "http:", hostname: "localhost", port: "6001" });
-    const { result } = renderHook(() => useTerminalWsUrl());
-    expect(result.current).toBe("ws://localhost:3001");
-  });
-
-  it("returns wss://<host>/ws over https (cloudflared tunnel, default port)", () => {
-    setLocation({ protocol: "https:", hostname: "rdv.example.com" });
-    const { result } = renderHook(() => useTerminalWsUrl());
-    expect(result.current).toBe("wss://rdv.example.com/ws");
-  });
-
-  it("returns wss://<host>:<port>/ws over https with an explicit port", () => {
-    setLocation({
-      protocol: "https:",
-      hostname: "rdv.example.com",
-      port: "8443",
-    });
-    const { result } = renderHook(() => useTerminalWsUrl());
-    expect(result.current).toBe("wss://rdv.example.com:8443/ws");
-  });
-
-  it("returns ws://<host>/ws over http on a non-localhost hostname", () => {
-    setLocation({ protocol: "http:", hostname: "rdv.lan" });
-    const { result } = renderHook(() => useTerminalWsUrl());
-    expect(result.current).toBe("ws://rdv.lan/ws");
+    expect(resolveTerminalWsUrl()).toBe("ws://localhost:3001");
   });
 
   it("returns the legacy ws://localhost:3001 placeholder during SSR", () => {
-    // We can't drive useMemo via renderHook with `window` undefined
-    // because React itself reads `window` during render. Instead we
-    // exercise the pure resolver — the hook is just `useMemo(resolve, [])`
-    // and the SSR branch lives entirely in `resolveTerminalWsUrl`.
+    // `renderHook` always provides a real `window`, so the SSR branch can
+    // only be exercised by calling the resolver with `window` stubbed out.
     vi.stubGlobal("window", undefined);
     try {
       expect(resolveTerminalWsUrl()).toBe("ws://localhost:3001");

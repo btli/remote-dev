@@ -214,11 +214,9 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
 
   const sessionCtx = useSessionContext();
   const projectTree = useProjectTree();
-  // Resolve the terminal WebSocket URL once so MobileSessionView's
-  // useTerminalWebSocket hook receives the correct URL (the hook's default
-  // `ws://localhost:3001` is wrong on prod and on the standard dev port
-  // 6002). Shared with SessionManager via the same hook — see
-  // remote-dev-8h39.
+  // Shared resolver with SessionManager — without an explicit URL,
+  // MobileSessionView falls back to `ws://localhost:3001`, which is wrong
+  // on prod and on the standard 6002 dev port.
   const wsUrl = useTerminalWsUrl();
 
   const activeSession = useMemo(() => {

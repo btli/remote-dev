@@ -219,9 +219,8 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const sessionsRef = useRef(sessions);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
 
-  // Compute WebSocket URL based on current location (supports cloudflared tunnels).
-  // Logic lives in `useTerminalWsUrl` so the mobile single-session view can
-  // share the exact same resolver — see remote-dev-8h39.
+  // Terminal WebSocket URL (handles localhost dev + cloudflared tunnels).
+  // Shared with MobileApp via `useTerminalWsUrl`.
   const wsUrl = useTerminalWsUrl();
 
   // Note: No longer need refs for keyboard handler - useEffectEvent handles this
