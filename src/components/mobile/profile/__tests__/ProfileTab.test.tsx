@@ -19,10 +19,6 @@ import userEvent from "@testing-library/user-event";
 
 import { ProfileTab } from "@/components/mobile/profile/ProfileTab";
 
-vi.mock("next-auth/react", () => ({
-  signOut: vi.fn(),
-}));
-
 afterEach(() => cleanup());
 
 describe("ProfileTab", () => {

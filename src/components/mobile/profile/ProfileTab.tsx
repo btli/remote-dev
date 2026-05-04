@@ -27,7 +27,6 @@
  */
 
 import { useCallback, useState } from "react";
-import { signOut } from "next-auth/react";
 import {
   Boxes,
   CircleAlert,
@@ -73,7 +72,13 @@ export interface ProfileTabProps {
   email: string | null | undefined;
   displayName: string | null | undefined;
   isGitHubConnected: boolean;
-  /** Optional override (test seam). Defaults to NextAuth's signOut(). */
+  /**
+   * Optional override (test seam). Defaults to a navigation to the
+   * server-side `/api/auth/signout` route, which clears BOTH the
+   * NextAuth JWT cookie and the Cloudflare Access cookie. The legacy
+   * client-only `next-auth/react` `signOut` was a no-op for CF Access
+   * users — see {@link DEFAULT_SIGN_OUT_HREF}.
+   */
   signOut?: () => Promise<void> | void;
   /** Optional override (test seam). Defaults to redirecting to the link route. */
   onConnectGitHub?: () => void;
@@ -81,6 +86,7 @@ export interface ProfileTabProps {
 }
 
 const DEFAULT_GITHUB_LINK_HREF = "/api/auth/github/link";
+const DEFAULT_SIGN_OUT_HREF = "/api/auth/signout";
 
 export function ProfileTab({
   email,
@@ -108,10 +114,16 @@ export function ProfileTab({
       await signOutOverride();
       return;
     }
-    // NextAuth's client `signOut` redirects to the post-logout URL. We
-    // explicitly send the user back to /login so the CF Access cookie
-    // (if any) can re-issue cleanly on the next visit.
-    await signOut({ callbackUrl: "/login" });
+    // Route through the server endpoint so BOTH auth modes are cleared:
+    //   - NextAuth credentials: server signOut clears the JWT cookie.
+    //   - Cloudflare Access: redirects through the CF logout URL, which
+    //     deletes the `CF_Authorization` cookie on the team domain and
+    //     bounces back to /login.
+    // Using window.location (not fetch) ensures the browser follows the
+    // cross-origin redirect chain to Cloudflare and back.
+    if (typeof window !== "undefined") {
+      window.location.href = DEFAULT_SIGN_OUT_HREF;
+    }
   }, [signOutOverride]);
 
   const signOutItems: ActionSheetItem[] = [

@@ -20,14 +20,41 @@
  * `pop()`, or `reset()` to bounce all the way back to the index.
  *
  * Hardware/browser back: each `push` adds a `history` entry tagged with
- * `{ profileNav: <screen> }`. A `popstate` listener treats any history
- * pop while a screen is pushed as a stack pop. UI-driven `pop()` calls
- * `history.back()` so the listener is the single source of truth — that
- * way Android's hardware back button, the browser back button, and the
- * in-app back chevron all flow through one path.
+ * `{ profileNav: { depth, screen } }`. The popstate listener reconciles
+ * against `event.state` rather than blindly slicing, so other history
+ * actors (hash links, deep links, etc.) can't desync the stack.
+ *
+ * Unmount: if the user is mid-stack and `ProfileTab` unmounts (e.g.
+ * tab switch), the cleanup rolls history back by the number of owned
+ * entries — otherwise those entries leak and Browser Back appears
+ * broken (consuming invisible entries).
+ *
+ * Double-tap: a pending-pop guard prevents a fast double-tap on the
+ * back chevron from issuing two `history.back()` calls before the
+ * first `popstate` fires (which would otherwise leave the app).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+/**
+ * The shape we embed into `history.pushState`'s state arg. Reading this
+ * back in the popstate handler lets us reconcile with the *intended*
+ * stack depth rather than guessing.
+ */
+interface ProfileNavHistoryState {
+  /**
+   * Stack depth this history entry corresponds to (1-based: a depth of
+   * 1 means "first pushed screen sits on top"). Absent for entries we
+   * didn't push.
+   */
+  depth: number;
+  /** Screen identifier — only used for diagnostics. */
+  screen: string;
+}
+
+interface ReadableState {
+  profileNav?: ProfileNavHistoryState;
+}
 
 export interface NavStack<Screen extends string> {
   /** Stack of pushed screens, oldest-first. Empty array means "index". */
@@ -59,6 +86,14 @@ function hasHistoryApi(): boolean {
   );
 }
 
+/**
+ * Window in which a follow-up `pop()` is suppressed if the popstate
+ * event hasn't fired yet. Prevents a fast double-tap on the back
+ * chevron from issuing two `history.back()` calls (which can leave
+ * the app entirely instead of going back one screen).
+ */
+const PENDING_POP_TIMEOUT_MS = 600;
+
 export function useProfileNavStack<Screen extends string>(): NavStack<Screen> {
   const [stack, setStack] = useState<Screen[]>([]);
 
@@ -69,21 +104,43 @@ export function useProfileNavStack<Screen extends string>(): NavStack<Screen> {
   // The popstate listener must observe the latest stack to decide
   // whether to swallow a pop or let it bubble to the platform.
   const stackLengthRef = useRef(0);
+  // Suppresses follow-up `pop()` calls while a `history.back()` is in
+  // flight. Cleared on popstate or after a timeout fallback.
+  const pendingPopRef = useRef(false);
+  const pendingPopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks whether the cleanup path should roll back history. We set
+  // this to `false` in `reset()` so we don't double-roll.
+  const shouldRollbackOnUnmountRef = useRef(true);
+
   useEffect(() => {
     stackLengthRef.current = stack.length;
   }, [stack.length]);
 
-  const push = useCallback((screen: Screen) => {
-    setStack((prev) => [...prev, screen]);
-    if (hasHistoryApi()) {
-      try {
-        window.history.pushState({ profileNav: screen }, "");
-        pushedCountRef.current += 1;
-      } catch {
-        // History API may throw in sandboxed contexts; the in-memory
-        // stack still works, just without hardware-back integration.
-      }
+  function clearPendingPop() {
+    pendingPopRef.current = false;
+    if (pendingPopTimerRef.current !== null) {
+      clearTimeout(pendingPopTimerRef.current);
+      pendingPopTimerRef.current = null;
     }
+  }
+
+  const push = useCallback((screen: Screen) => {
+    setStack((prev) => {
+      const nextDepth = prev.length + 1;
+      if (hasHistoryApi()) {
+        try {
+          const state: ReadableState = {
+            profileNav: { depth: nextDepth, screen },
+          };
+          window.history.pushState(state, "");
+          pushedCountRef.current += 1;
+        } catch {
+          // History API may throw in sandboxed contexts; the in-memory
+          // stack still works, just without hardware-back integration.
+        }
+      }
+      return [...prev, screen];
+    });
   }, []);
 
   const pop = useCallback(() => {
@@ -91,11 +148,23 @@ export function useProfileNavStack<Screen extends string>(): NavStack<Screen> {
     // source of truth for stack mutation. When history isn't available
     // (or no entry was pushed), fall back to mutating directly.
     if (hasHistoryApi() && pushedCountRef.current > 0) {
+      // Double-tap guard: if a previous pop is still in flight, drop
+      // the second invocation to avoid issuing two history.back() calls.
+      if (pendingPopRef.current) {
+        return;
+      }
+      pendingPopRef.current = true;
+      pendingPopTimerRef.current = setTimeout(() => {
+        // Fallback for browsers that swallowed the popstate event.
+        pendingPopRef.current = false;
+        pendingPopTimerRef.current = null;
+      }, PENDING_POP_TIMEOUT_MS);
       try {
         window.history.back();
         return;
       } catch {
         // fall through to direct mutation
+        clearPendingPop();
       }
     }
     setStack((prev) => (prev.length === 0 ? prev : prev.slice(0, -1)));
@@ -105,6 +174,10 @@ export function useProfileNavStack<Screen extends string>(): NavStack<Screen> {
     const count = pushedCountRef.current;
     setStack((prev) => (prev.length === 0 ? prev : []));
     pushedCountRef.current = 0;
+    // Reset already drained owned entries; the unmount path must not
+    // try to roll them back a second time.
+    shouldRollbackOnUnmountRef.current = false;
+    clearPendingPop();
     if (count > 0 && hasHistoryApi()) {
       try {
         // Roll the history back by the number of entries we pushed.
@@ -116,23 +189,70 @@ export function useProfileNavStack<Screen extends string>(): NavStack<Screen> {
   }, []);
 
   // popstate listener: any browser/hardware back while a screen is
-  // pushed pops the in-memory stack. We don't push a replacement entry
-  // here — the platform already removed the entry on its side.
+  // pushed pops the in-memory stack. We reconcile against
+  // `event.state.profileNav.depth` so other history actors (hash
+  // changes, in-app deep links, etc.) can't slice our stack into
+  // inconsistency.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    function onPopState() {
-      if (stackLengthRef.current === 0) {
-        // Already on the index; let the platform handle the pop. This
-        // can happen if other code pushed history entries.
+    function onPopState(event: PopStateEvent) {
+      // Whatever the outcome, this popstate satisfies the in-flight
+      // back() request.
+      clearPendingPop();
+      const state = (event.state as ReadableState | null) ?? null;
+      const targetDepth = state?.profileNav?.depth ?? 0;
+      const currentDepth = stackLengthRef.current;
+      if (currentDepth === 0) {
+        // Already on the index; let the platform handle the pop.
         return;
       }
-      setStack((prev) => (prev.length === 0 ? prev : prev.slice(0, -1)));
-      if (pushedCountRef.current > 0) {
-        pushedCountRef.current -= 1;
+      if (targetDepth >= currentDepth) {
+        // Forward navigation in history (or unrelated state shape that
+        // claims an equal/greater depth). Don't slice.
+        return;
       }
+      // Either we're leaving the profile area entirely
+      // (targetDepth === 0) or we're popping to a shallower depth.
+      const removedCount = currentDepth - targetDepth;
+      pushedCountRef.current = Math.max(
+        0,
+        pushedCountRef.current - removedCount
+      );
+      setStack((prev) => {
+        if (prev.length <= targetDepth) return prev;
+        return prev.slice(0, targetDepth);
+      });
     }
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  // Unmount cleanup: if the host (e.g. ProfileTab) unmounts while we
+  // still own pushed history entries, drain them with a single
+  // history.go(-n). Otherwise those entries leak: the user switches
+  // tabs, hits the OS back button, and consumes invisible entries
+  // before actually navigating away. We do NOT reset the in-memory
+  // stack here because the hook is going away with the host.
+  //
+  // Caveat: this triggers popstate events the listener has already
+  // unsubscribed from (cleanup runs in reverse-order, so the listener
+  // is gone by the time go() schedules its events).
+  useEffect(() => {
+    return () => {
+      clearPendingPop();
+      if (
+        shouldRollbackOnUnmountRef.current &&
+        pushedCountRef.current > 0 &&
+        hasHistoryApi()
+      ) {
+        try {
+          window.history.go(-pushedCountRef.current);
+        } catch {
+          // Best effort; nothing else to do.
+        }
+        pushedCountRef.current = 0;
+      }
+    };
   }, []);
 
   return useMemo(
