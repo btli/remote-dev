@@ -17,7 +17,7 @@
  * on the bottom bar.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -70,6 +70,11 @@ function saveRecentProjectIds(ids: string[]): void {
   } catch {
     // Ignore storage errors (quota, private mode, etc.).
   }
+}
+
+function lastActivityTime(session: TerminalSession): number {
+  const v = session.lastActivityAt;
+  return v instanceof Date ? v.getTime() : new Date(v).getTime();
 }
 
 export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
@@ -136,11 +141,7 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
     const pinned = activeId ? scoped.filter((s) => s.id === activeId) : [];
     const rest = scoped
       .filter((s) => s.id !== activeId)
-      .sort((a, b) => {
-        const at = a.lastActivityAt instanceof Date ? a.lastActivityAt.getTime() : new Date(a.lastActivityAt).getTime();
-        const bt = b.lastActivityAt instanceof Date ? b.lastActivityAt.getTime() : new Date(b.lastActivityAt).getTime();
-        return bt - at;
-      });
+      .sort((a, b) => lastActivityTime(b) - lastActivityTime(a));
     return [...pinned, ...rest];
   }, [sessionCtx.sessions, sessionCtx.activeSessionId, activeNode]);
 
@@ -287,16 +288,6 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
     [projectTree]
   );
 
-  // First-render: hook up an outer scroll element ref-callback for pull-to-refresh.
-  const outerRef = useRef<HTMLDivElement>(null);
-  const setRefBoth = useCallback(
-    (el: HTMLDivElement | null) => {
-      outerRef.current = el;
-      pull.ref(el);
-    },
-    [pull]
-  );
-
   return (
     <div className="flex h-full flex-col">
       {/* Header strip */}
@@ -402,7 +393,7 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
         ) : null}
 
         <div
-          ref={setRefBoth}
+          ref={pull.ref}
           data-testid="mobile-sessions-scroll"
           className="flex-1 overflow-y-auto overscroll-contain"
         >
