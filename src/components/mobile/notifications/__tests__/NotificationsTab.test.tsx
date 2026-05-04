@@ -507,6 +507,63 @@ describe("NotificationsTab", () => {
     fireEvent.touchEnd(scroll);
   });
 
+  it("does not render the 'Clear all' button when there are no notifications", () => {
+    notifMockState.notifications = [];
+    render(<NotificationsTab />);
+    expect(
+      screen.queryByTestId("mobile-notifications-clear-all")
+    ).toBeNull();
+  });
+
+  it("renders the 'Clear all' button when notifications exist", () => {
+    notifMockState.notifications = [makeNotification()];
+    notifMockState.unreadCount = 1;
+    render(<NotificationsTab />);
+    expect(
+      screen.getByTestId("mobile-notifications-clear-all")
+    ).toBeInTheDocument();
+  });
+
+  it("'Clear all' opens a confirmation dialog and calls deleteAllNotifications on confirm", async () => {
+    const user = userEvent.setup();
+    notifMockState.notifications = [
+      makeNotification({ id: "n1" }),
+      makeNotification({ id: "n2" }),
+    ];
+    notifMockState.unreadCount = 2;
+    render(<NotificationsTab />);
+
+    // Tap the button: dialog opens but server delete must NOT have fired.
+    await user.click(screen.getByTestId("mobile-notifications-clear-all"));
+    expect(notifMockState.deleteAllNotifications).not.toHaveBeenCalled();
+
+    // Confirm in the dialog.
+    const confirm = await screen.findByTestId(
+      "mobile-notifications-clear-all-confirm"
+    );
+    await user.click(confirm);
+    expect(notifMockState.deleteAllNotifications).toHaveBeenCalledTimes(1);
+
+    // Success toast lands with a stable id.
+    const toastFn = toast as unknown as ReturnType<typeof vi.fn>;
+    const calls = toastFn.mock.calls.map((c) => c[0]);
+    expect(
+      calls.some((m) => typeof m === "string" && /Cleared 2 notifications/.test(m))
+    ).toBe(true);
+  });
+
+  it("'Clear all' Cancel does not invoke deleteAllNotifications", async () => {
+    const user = userEvent.setup();
+    notifMockState.notifications = [makeNotification()];
+    notifMockState.unreadCount = 1;
+    render(<NotificationsTab />);
+    await user.click(screen.getByTestId("mobile-notifications-clear-all"));
+    // Dismiss with the AlertDialog Cancel button.
+    const cancel = await screen.findByRole("button", { name: /Cancel/i });
+    await user.click(cancel);
+    expect(notifMockState.deleteAllNotifications).not.toHaveBeenCalled();
+  });
+
   it("renders the error banner when refresh() rejects via pull-to-refresh", async () => {
     // Regression for adversarial finding P2-E: the tab has an error
     // banner UI but the old `refresh()` swallowed errors. With the new

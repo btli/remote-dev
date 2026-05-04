@@ -435,6 +435,7 @@ export function SessionsTab({ isGitHubConnected }: SessionsTabProps) {
                     onTap={handleTapSession}
                     onLongPress={(id) => setActionSheetSessionId(id)}
                     onSwipeSuspend={performSuspend}
+                    onSwipeClose={performClose}
                   />
                 </li>
               ))}

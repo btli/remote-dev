@@ -1,12 +1,5 @@
 "use client";
 
-// `usePullToRefresh` returns plain state values (`pullDistance`,
-// `isRefreshing`) and a callback ref (`ref`). The Next 16 / React 19
-// `react-hooks/refs` rule mistakes the `pull.*` field reads for ref
-// accesses (because of the name `ref`). We follow the canonical pattern
-// established by SessionsTab (Phase 2) and disable the rule for this file.
-/* eslint-disable react-hooks/refs */
-
 /**
  * NotificationsTab — Phase 4 mobile redesign Notifications tab.
  *
@@ -43,6 +36,17 @@ import { useSessionContext } from "@/contexts/SessionContext";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { usePrefersReducedMotion } from "@/hooks/useMobile";
 import type { NotificationEvent } from "@/types/notification";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import { ActionSheet, type ActionSheetItem } from "../common/ActionSheet";
 import type { MobileTab } from "../BottomTabBar";
@@ -91,6 +95,10 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
   const [filter, setFilter] = useState<NotificationFilter>("all");
   const [actionTargetId, setActionTargetId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Clear-all dialog open + in-flight gate. The button is disabled while
+  // the deletion is running so a double-tap can't fire the request twice.
+  const [clearAllOpen, setClearAllOpen] = useState(false);
+  const [clearAllInFlight, setClearAllInFlight] = useState(false);
 
   // Set of notification IDs the user has swipe-deleted but whose server DELETE
   // is still pending in the 5s undo window. The context owns this state so
@@ -203,6 +211,29 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
     [scheduleDelete]
   );
 
+  // Clear all: confirmation-based (the server delete is irreversible — once
+  // the rows are gone there's no restore endpoint, so an undo toast would
+  // lie). Disable the button while the request is in flight to prevent a
+  // double-fire on a stuttery tap.
+  const performClearAll = useCallback(async () => {
+    setClearAllInFlight(true);
+    const count = notifCtx.notifications.filter(
+      (n) => !pendingDeleteIds.has(n.id)
+    ).length;
+    try {
+      await notifCtx.deleteAllNotifications();
+      toast(count === 1 ? "Cleared 1 notification" : `Cleared ${count} notifications`, {
+        id: "notif-clear-all",
+      });
+    } catch {
+      // The context already re-fetched on failure so the rows reappear.
+      toast.error("Couldn't clear notifications.", { id: "notif-clear-all-error" });
+    } finally {
+      setClearAllInFlight(false);
+      setClearAllOpen(false);
+    }
+  }, [notifCtx, pendingDeleteIds]);
+
   const performMarkUnread = useCallback(() => {
     toast("Marked as unread is a local-only state.", {
       id: "notif-mark-unread-info",
@@ -289,24 +320,44 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
           onChange={setFilter}
           counts={counts}
         />
-        {notifCtx.unreadCount > 0 ? (
-          <button
-            type="button"
-            onClick={() => {
-              void notifCtx.markAllRead();
-            }}
-            data-testid="mobile-notifications-mark-all-read"
-            className={cn(
-              "shrink-0 rounded-md px-2 min-h-[36px] text-xs",
-              "font-normal text-muted-foreground",
-              "hover:bg-accent/40 active:bg-accent/60",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-            )}
-            aria-label="Mark all notifications as read"
-          >
-            Mark all read
-          </button>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-1">
+          {notifCtx.unreadCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                void notifCtx.markAllRead();
+              }}
+              data-testid="mobile-notifications-mark-all-read"
+              className={cn(
+                "shrink-0 rounded-md px-2 min-h-[44px] text-xs",
+                "font-normal text-muted-foreground",
+                "hover:bg-accent/40 active:bg-accent/60",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              )}
+              aria-label="Mark all notifications as read"
+            >
+              Mark all read
+            </button>
+          ) : null}
+          {counts.all > 0 ? (
+            <button
+              type="button"
+              onClick={() => setClearAllOpen(true)}
+              disabled={clearAllInFlight}
+              data-testid="mobile-notifications-clear-all"
+              className={cn(
+                "shrink-0 rounded-md px-2 min-h-[44px] text-sm",
+                "font-normal text-muted-foreground",
+                "hover:text-destructive active:text-destructive",
+                "disabled:opacity-50 disabled:pointer-events-none",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              )}
+              aria-label="Clear all notifications"
+            >
+              Clear all
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {/* Content: error banner + list + pull-to-refresh indicator.
@@ -410,6 +461,40 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
         subtitle={actionTarget?.sessionName ?? undefined}
         items={actionItems}
       />
+
+      <AlertDialog
+        open={clearAllOpen}
+        onOpenChange={(open) => {
+          if (clearAllInFlight) return;
+          setClearAllOpen(open);
+        }}
+      >
+        <AlertDialogContent data-testid="mobile-notifications-clear-all-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all notifications?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={clearAllInFlight}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="mobile-notifications-clear-all-confirm"
+              disabled={clearAllInFlight}
+              onClick={(e) => {
+                // Keep the dialog mounted while the request is in flight
+                // so the button can show its disabled state. The handler
+                // closes it on success or failure.
+                e.preventDefault();
+                void performClearAll();
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Clear all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

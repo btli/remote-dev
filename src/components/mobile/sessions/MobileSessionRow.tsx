@@ -12,7 +12,13 @@
  * Interactions:
  *   - Tap: select the session.
  *   - Long-press: open action sheet via `onLongPress`.
- *   - Swipe-left past threshold: fire `onSwipeSuspend`.
+ *   - Swipe-left (active sessions): two-stage. Past `SUSPEND_THRESHOLD` →
+ *     `onSwipeSuspend`; past `CLOSE_THRESHOLD` → `onSwipeClose`. The
+ *     behind-layer label switches between "Suspend" and "Close" with a
+ *     destructive tone in stage 1 to match iOS Mail.
+ *   - Swipe-left (suspended sessions): single-stage → `onSwipeClose`
+ *     (suspend isn't a meaningful action on an already-suspended row).
+ *   - Closed/trashed sessions: no swipe, no long-press.
  *
  * Reduced motion: the attention halo is suppressed; the pip remains static.
  */
@@ -30,6 +36,14 @@ import {
 } from "./sessionStatusUtils";
 import { useLongPress, useSwipeAction } from "./useSwipeAction";
 
+// Two-stage swipe thresholds. Stage 0 (Suspend) lines up with the canonical
+// 72px single-threshold used elsewhere in the mobile UI; stage 1 (Close)
+// requires a deeper commit so a casual swipe doesn't accidentally destroy
+// state. 180px is far enough that the user has to pass through Suspend
+// territory first — matches iOS Mail's two-stage behavior visually.
+const SUSPEND_THRESHOLD = 72;
+const CLOSE_THRESHOLD = 180;
+
 export interface MobileSessionRowProps {
   session: TerminalSession;
   activity: AgentActivityStatus;
@@ -38,6 +52,7 @@ export interface MobileSessionRowProps {
   onTap: (sessionId: string) => void;
   onLongPress: (sessionId: string) => void;
   onSwipeSuspend: (sessionId: string) => void;
+  onSwipeClose: (sessionId: string) => void;
   /** When false, swipe and long-press are disabled (e.g. closed/trashed sessions). */
   enableGestures?: boolean;
 }
@@ -50,6 +65,7 @@ export function MobileSessionRow({
   onTap,
   onLongPress,
   onSwipeSuspend,
+  onSwipeClose,
   enableGestures = true,
 }: MobileSessionRowProps) {
   const reducedMotion = usePrefersReducedMotion();
@@ -59,10 +75,23 @@ export function MobileSessionRow({
     [session, activity]
   );
 
+  // Active rows: two-stage swipe (Suspend → Close).
+  // Suspended rows: single-stage swipe (Close only — Suspend is N/A).
+  // Closed/trashed: no swipe (gesturesEnabled gate).
+  const swipeEnabled = enableGestures && (
+    session.status === "active" || session.status === "suspended"
+  );
   const swipe = useSwipeAction({
     direction: "left",
-    enabled: enableGestures && session.status === "active",
-    onSwipe: () => onSwipeSuspend(session.id),
+    enabled: swipeEnabled,
+    stages: session.status === "active"
+      ? [
+          { threshold: SUSPEND_THRESHOLD, onCommit: () => onSwipeSuspend(session.id) },
+          { threshold: CLOSE_THRESHOLD, onCommit: () => onSwipeClose(session.id) },
+        ]
+      : [
+          { threshold: SUSPEND_THRESHOLD, onCommit: () => onSwipeClose(session.id) },
+        ],
   });
 
   const longPress = useLongPress({
@@ -85,18 +114,43 @@ export function MobileSessionRow({
         "overflow-hidden"
       )}
     >
-      {/* Behind layer: swipe-to-suspend hint */}
-      {session.status === "active" ? (
-        <div
-          aria-hidden="true"
-          className={cn(
-            "pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4",
-            "text-xs font-medium text-muted-foreground"
-          )}
-        >
-          Suspend
-        </div>
-      ) : null}
+      {/* Behind layer: swipe affordance label. The label and tone switch
+          mid-drag to telegraph which action will commit on release. For
+          active rows: stage 0 = Suspend (muted), stage 1 = Close
+          (destructive). For suspended rows there's only one stage: Close. */}
+      {swipeEnabled ? (() => {
+        // Decide what the row will commit if released right now.
+        let label = "Suspend";
+        let destructive = false;
+        if (session.status === "suspended") {
+          label = "Close";
+          // Single-stage close — tone the label as destructive whenever
+          // the user has crossed the threshold so they get the same
+          // visual tell as the active-row two-stage flow.
+          destructive = swipe.stageIndex >= 0;
+        } else if (session.status === "active") {
+          if (swipe.stageIndex >= 1) {
+            label = "Close";
+            destructive = true;
+          } else {
+            label = "Suspend";
+          }
+        }
+        return (
+          <div
+            aria-hidden="true"
+            data-testid="mobile-session-swipe-affordance"
+            data-stage={swipe.stageIndex}
+            className={cn(
+              "pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4",
+              "text-xs font-medium",
+              destructive ? "text-destructive" : "text-muted-foreground"
+            )}
+          >
+            {label}
+          </div>
+        );
+      })() : null}
 
       {/* Row content. Swipe and long-press both want touch handlers — compose
           them rather than letting the spread order silently nuke one set.

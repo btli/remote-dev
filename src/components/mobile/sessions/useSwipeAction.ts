@@ -13,11 +13,35 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * scroll container priority when the user is mostly scrolling.
  */
 
+/**
+ * A "stage" gates an additional commit threshold beyond the primary one.
+ * Used for two-stage swipes (iOS Mail style): release before stage 0 → no
+ * action, between stage 0 and stage 1 → primary commit, past stage 1 →
+ * secondary commit. Stages must be ordered by ascending `threshold`.
+ *
+ * When `stages` is provided it takes precedence over the legacy
+ * `threshold` + `onSwipe` pair.
+ */
+export interface SwipeStage {
+  /** Distance (px, absolute value) at which this stage becomes active. */
+  threshold: number;
+  /** Fires when the user releases past this stage's threshold but not past
+   *  the next stage's threshold. */
+  onCommit: () => void;
+}
+
 export interface UseSwipeActionOptions {
   direction?: "left" | "right";
   threshold?: number;
   enabled?: boolean;
-  onSwipe: () => void;
+  /** Single-stage commit handler. Ignored when `stages` is provided. */
+  onSwipe?: () => void;
+  /**
+   * Optional staged commits. Index 0 fires when release distance is in
+   * [stages[0].threshold, stages[1].threshold), index 1 fires when past
+   * stages[1].threshold, etc. Two stages is the supported case today.
+   */
+  stages?: SwipeStage[];
 }
 
 export interface UseSwipeActionState {
@@ -26,6 +50,12 @@ export interface UseSwipeActionState {
    * for right. 0 when not dragging or after a successful swipe fires.
    */
   offset: number;
+  /**
+   * Index of the currently-armed stage based on live offset, or -1 when
+   * the offset hasn't crossed the first stage. -1 also when stages were
+   * not configured (single-stage callers can ignore this).
+   */
+  stageIndex: number;
   /** Touch handlers to spread onto the row's outer element. */
   bind: {
     onTouchStart: (e: React.TouchEvent<HTMLElement>) => void;
@@ -38,7 +68,14 @@ export interface UseSwipeActionState {
 const DEFAULT_THRESHOLD = 72;
 
 export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionState {
-  const { direction = "left", threshold = DEFAULT_THRESHOLD, onSwipe, enabled = true } = options;
+  const { direction = "left", threshold = DEFAULT_THRESHOLD, onSwipe, enabled = true, stages } = options;
+
+  // Build a stable stage array: prefer explicit `stages`; otherwise derive
+  // a single-stage shape from `threshold` + `onSwipe` so the rest of the
+  // hook only deals with one model.
+  const effectiveStages: SwipeStage[] = stages && stages.length > 0
+    ? stages
+    : (onSwipe ? [{ threshold, onCommit: onSwipe }] : []);
 
   const [offset, setOffsetState] = useState(0);
   const offsetRef = useRef(0);
@@ -50,10 +87,12 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
   const startY = useRef<number | null>(null);
   const dragging = useRef(false);
 
-  const onSwipeRef = useRef(onSwipe);
+  // Keep the latest stage callbacks in a ref so consumers can pass fresh
+  // closures without re-arming the touch handlers each render.
+  const stagesRef = useRef(effectiveStages);
   useEffect(() => {
-    onSwipeRef.current = onSwipe;
-  }, [onSwipe]);
+    stagesRef.current = effectiveStages;
+  });
 
   const reset = useCallback(() => {
     startX.current = null;
@@ -116,22 +155,46 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
       return;
     }
     const current = offsetRef.current;
-    const triggered =
-      direction === "left" ? current <= -threshold : current >= threshold;
-    if (triggered) {
-      // Snap back visually first; consumer can show a toast.
-      setOffset(0);
-      onSwipeRef.current();
-    } else {
-      setOffset(0);
+    const distance = direction === "left" ? -current : current;
+    const armed = stagesRef.current;
+    // Walk from highest threshold downward and fire the first stage the
+    // release distance has cleared. No commit if it's below the lowest
+    // threshold.
+    let committed: SwipeStage | null = null;
+    for (let i = armed.length - 1; i >= 0; i--) {
+      const stage = armed[i];
+      if (!stage) continue;
+      if (distance >= stage.threshold) {
+        committed = stage;
+        break;
+      }
     }
+    setOffset(0);
+    if (committed) committed.onCommit();
     startX.current = null;
     startY.current = null;
     dragging.current = false;
-  }, [direction, threshold, reset, setOffset]);
+  }, [direction, reset, setOffset]);
+
+  // Live stage index based on the current offset. Recomputed cheaply on
+  // every render — the offset changes during a drag are already triggering
+  // re-renders; this just lets consumers swap labels mid-drag.
+  let stageIndex = -1;
+  if (effectiveStages.length > 0) {
+    const distance = direction === "left" ? -offset : offset;
+    for (let i = effectiveStages.length - 1; i >= 0; i--) {
+      const stage = effectiveStages[i];
+      if (!stage) continue;
+      if (distance >= stage.threshold) {
+        stageIndex = i;
+        break;
+      }
+    }
+  }
 
   return {
     offset,
+    stageIndex,
     bind: {
       onTouchStart,
       onTouchMove,
