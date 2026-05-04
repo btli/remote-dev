@@ -60,6 +60,10 @@ export function useThreadTakeoverSwipe(
   const startX = useRef<number | null>(null);
   const startY = useRef<number | null>(null);
   const trackingRef = useRef(false);
+  // `dragOffsetRef` shadows `dragOffsetPx` so onTouchEnd reads the latest
+  // value even when React 18 batching delays the state update past the end
+  // of the gesture. The state flavor still drives rendering.
+  const dragOffsetRef = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [dragOffsetPx, setDragOffsetPx] = useState(0);
 
@@ -67,6 +71,7 @@ export function useThreadTakeoverSwipe(
     startX.current = null;
     startY.current = null;
     trackingRef.current = false;
+    dragOffsetRef.current = 0;
     setDragging(false);
     setDragOffsetPx(0);
   }, []);
@@ -88,6 +93,7 @@ export function useThreadTakeoverSwipe(
       startX.current = t.clientX;
       startY.current = t.clientY;
       trackingRef.current = true;
+      dragOffsetRef.current = 0;
       setDragging(false);
       setDragOffsetPx(0);
     },
@@ -112,12 +118,15 @@ export function useThreadTakeoverSwipe(
       // We only react to rightward drags from the left edge.
       if (dx <= 0) {
         if (dragging) {
-          setDragging(false);
-          setDragOffsetPx(0);
+          // Leftward reversal cancels the gesture entirely; otherwise
+          // `trackingRef` would stay true and a subsequent rightward
+          // motion would resume the drag mid-flight from a stale anchor.
+          reset();
         }
         return;
       }
 
+      dragOffsetRef.current = dx;
       setDragging(true);
       setDragOffsetPx(dx);
     },
@@ -129,14 +138,17 @@ export function useThreadTakeoverSwipe(
       reset();
       return;
     }
-    const triggered = dragOffsetPx >= horizontalThresholdPx;
+    // Read from the ref so React 18's batched state updates can't hand us
+    // a stale `dragOffsetPx` here.
+    const triggered = dragOffsetRef.current >= horizontalThresholdPx;
+    dragOffsetRef.current = 0;
     setDragging(false);
     setDragOffsetPx(0);
     trackingRef.current = false;
     startX.current = null;
     startY.current = null;
     if (triggered) onDismissRef.current();
-  }, [dragOffsetPx, horizontalThresholdPx, reset]);
+  }, [horizontalThresholdPx, reset]);
 
   return {
     dragging,

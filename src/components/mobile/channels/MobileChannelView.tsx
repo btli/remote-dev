@@ -70,11 +70,25 @@ export function MobileChannelView({ onBack, onOpenThread }: MobileChannelViewPro
   }, [activeChannelMessages, isUserScrolled]);
 
   // Mark the channel read when we see new messages and we're not viewing
-  // an optimistic placeholder. Mirrors ChannelView's behaviour.
+  // an optimistic placeholder. Mirrors ChannelView's behaviour. Gated on a
+  // ref tracking the last-marked id so unrelated context updates (which
+  // produce a new `activeChannelMessages` reference but the same trailing
+  // message) don't refire the request on every render.
+  const lastMarkedRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Reset the tracker when the user switches channels so the new channel
+    // gets its first read mark even if the message id happens to collide.
+    lastMarkedRef.current = null;
+  }, [activeChannelId]);
   useEffect(() => {
     if (!activeChannelId || activeChannelMessages.length === 0) return;
     const last = activeChannelMessages[activeChannelMessages.length - 1];
-    if (last && !last.id.startsWith("opt-")) {
+    if (
+      last &&
+      !last.id.startsWith("opt-") &&
+      last.id !== lastMarkedRef.current
+    ) {
+      lastMarkedRef.current = last.id;
       void markChannelRead(activeChannelId, last.id);
     }
   }, [activeChannelId, activeChannelMessages, markChannelRead]);

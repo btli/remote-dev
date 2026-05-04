@@ -25,6 +25,7 @@ import { useChannelContext } from "@/contexts/ChannelContext";
 import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { ChannelMessageRow } from "@/components/channels/ChannelMessageRow";
 
+import { useDialogPolish } from "../common/useDialogPolish";
 import { MobileChannelComposer } from "./MobileChannelComposer";
 import { useThreadTakeoverSwipe } from "./useThreadTakeoverSwipe";
 
@@ -82,6 +83,11 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
     return () => window.removeEventListener("keydown", onKey);
   }, [entered, onClose]);
 
+  // Focus trap + body scroll lock — WCAG / aria-modal compliance. Refcounts
+  // on `document.body.dataset.scrollLockCount` so concurrent BottomSheets
+  // and this takeover don't clobber each other's lock.
+  useDialogPolish({ active: entered, panelRef: containerRef });
+
   // Resolve the parent message from the active channel.
   const parentMessage = useMemo(
     () =>
@@ -91,11 +97,28 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
     [openThreadId, activeChannelMessages]
   );
 
-  // Auto-scroll to bottom on incoming replies (chat default).
+  // Auto-scroll to bottom only when a NEW reply arrives. Without the length
+  // gate, every unrelated context update (e.g. peer summary refresh) would
+  // produce a new `threadMessages` array reference and snap the user back
+  // to the bottom while they're reading earlier replies.
+  const prevLengthRef = useRef(0);
   useEffect(() => {
-    if (!entered) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+    if (!entered) {
+      prevLengthRef.current = 0;
+      return;
+    }
+    if (threadMessages.length > prevLengthRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+    }
+    prevLengthRef.current = threadMessages.length;
   }, [entered, threadMessages]);
+
+  // When the takeover targets a different parent message, treat it as a
+  // fresh thread and reset the length tracker so the first paint scrolls
+  // to bottom again.
+  useEffect(() => {
+    prevLengthRef.current = 0;
+  }, [openThreadId]);
 
   const handleSend = useCallback(
     async (text: string) => {
