@@ -90,13 +90,12 @@ export function getSessionPresentation(
   }
 
   if (RUNNING_STATUSES.has(activity)) {
+    // activity is "running" or "compacting" here; either label reads
+    // correctly inline.
     return {
       pip: "running",
       needsAttention: false,
-      subtitle:
-        activity === "compacting"
-          ? `compacting · ${formatRelativeTime(session.lastActivityAt)}`
-          : `running · ${formatRelativeTime(session.lastActivityAt)}`,
+      subtitle: `${activity} · ${formatRelativeTime(session.lastActivityAt)}`,
       subtitleMono: true,
     };
   }
