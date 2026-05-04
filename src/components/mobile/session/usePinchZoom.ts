@@ -8,25 +8,21 @@
  * distance to initial finger distance, clamped to a reasonable range so
  * the consumer doesn't accidentally crank the font size to 80px.
  *
- * Touch handlers are attached at the React level by spreading `bind`
- * onto a host element. The hook deliberately doesn't subscribe to
- * `window.touchmove`: that would steal vertical scroll out of the
- * terminal output panel.
+ * The hook attaches native (non-passive) `touchstart` / `touchmove`
+ * listeners imperatively via a ref callback. This is deliberate: React's
+ * synthetic touch handlers are passive, and `touch-action: pan-y` alone
+ * is not enough on iOS Safari 15+, where the browser may stop firing
+ * `touchmove` for two-finger gestures on a `pan-y` element. Owning the
+ * listener with `{ passive: false }` lets us call `preventDefault()` for
+ * multi-touch and keep pinch firing reliably while still allowing
+ * single-finger vertical pan-through to native scroll.
  *
- * The hook also debounces the call into a single trailing notification per
- * gesture-end via `onScaleCommit(factor)`. Consumers can persist the
+ * The hook also debounces the call into a single trailing notification
+ * per gesture-end via `onScaleCommit(factor)`. Consumers can persist the
  * resulting font size on commit and ignore the rapid in-flight updates.
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import type { Touch as ReactTouch, TouchEvent } from "react";
-
-export interface PinchZoomBind {
-  onTouchStart: (e: TouchEvent<HTMLElement>) => void;
-  onTouchMove: (e: TouchEvent<HTMLElement>) => void;
-  onTouchEnd: () => void;
-  onTouchCancel: () => void;
-}
 
 export interface UsePinchZoomOptions {
   /**
@@ -45,11 +41,16 @@ export interface UsePinchZoomOptions {
   enabled?: boolean;
 }
 
+export interface PinchZoomBind {
+  /** Attach to the host element via `ref={pinch.ref}`. */
+  ref: (node: HTMLElement | null) => void;
+}
+
 const DEFAULT_THRESHOLD = 12;
 const MIN_FACTOR = 0.6;
 const MAX_FACTOR = 1.8;
 
-function fingerDistance(t1: ReactTouch, t2: ReactTouch): number {
+function fingerDistance(t1: Touch, t2: Touch): number {
   const dx = t1.clientX - t2.clientX;
   const dy = t1.clientY - t2.clientY;
   return Math.sqrt(dx * dx + dy * dy);
@@ -63,61 +64,93 @@ export function usePinchZoom(options: UsePinchZoomOptions = {}): PinchZoomBind {
     enabled = true,
   } = options;
 
-  const startDistRef = useRef<number | null>(null);
-  const lastFactorRef = useRef<number>(1);
-
+  // Latest callback refs so the effect doesn't re-bind on every render.
   const onScaleRef = useRef(onScale);
   const onScaleCommitRef = useRef(onScaleCommit);
+  const thresholdRef = useRef(thresholdPx);
+  const enabledRef = useRef(enabled);
   useEffect(() => {
     onScaleRef.current = onScale;
     onScaleCommitRef.current = onScaleCommit;
-  }, [onScale, onScaleCommit]);
+    thresholdRef.current = thresholdPx;
+    enabledRef.current = enabled;
+  }, [onScale, onScaleCommit, thresholdPx, enabled]);
 
-  const onTouchStart = useCallback(
-    (e: TouchEvent<HTMLElement>) => {
-      if (!enabled) return;
+  // The currently bound element + its detach function. We use a ref
+  // callback rather than `useEffect(() => ref.current)` so that swapping
+  // the element in/out (e.g. when the parent unmounts/remounts the
+  // viewport) cleans up listeners deterministically.
+  const detachRef = useRef<(() => void) | null>(null);
+
+  const ref = useCallback((node: HTMLElement | null) => {
+    if (detachRef.current) {
+      detachRef.current();
+      detachRef.current = null;
+    }
+    if (!node) return;
+
+    let startDist: number | null = null;
+    let lastFactor = 1;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (!enabledRef.current) return;
       if (e.touches.length !== 2) {
-        startDistRef.current = null;
+        startDist = null;
         return;
       }
-      const [t1, t2] = [e.touches[0], e.touches[1]];
-      startDistRef.current = fingerDistance(t1, t2);
-      lastFactorRef.current = 1;
-    },
-    [enabled]
-  );
+      startDist = fingerDistance(e.touches[0], e.touches[1]);
+      lastFactor = 1;
+    };
 
-  const onTouchMove = useCallback(
-    (e: TouchEvent<HTMLElement>) => {
-      if (!enabled || startDistRef.current === null) return;
+    const onTouchMove = (e: TouchEvent) => {
+      if (!enabledRef.current || startDist === null) return;
       if (e.touches.length !== 2) return;
-      const [t1, t2] = [e.touches[0], e.touches[1]];
-      const dist = fingerDistance(t1, t2);
-      if (Math.abs(dist - startDistRef.current) < thresholdPx) return;
+      // Owning the gesture: prevent the browser's native pinch-zoom
+      // from running in parallel with our font scaling. Requires the
+      // listener be registered with { passive: false }.
+      e.preventDefault();
+      const dist = fingerDistance(e.touches[0], e.touches[1]);
+      if (Math.abs(dist - startDist) < thresholdRef.current) return;
       const factor = Math.max(
         MIN_FACTOR,
-        Math.min(MAX_FACTOR, dist / startDistRef.current)
+        Math.min(MAX_FACTOR, dist / startDist)
       );
-      lastFactorRef.current = factor;
+      lastFactor = factor;
       onScaleRef.current?.(factor);
-    },
-    [enabled, thresholdPx]
-  );
+    };
 
-  const finishGesture = useCallback(() => {
-    if (startDistRef.current === null) return;
-    const final = lastFactorRef.current;
-    startDistRef.current = null;
-    lastFactorRef.current = 1;
-    if (Math.abs(final - 1) > 0.001) {
-      onScaleCommitRef.current?.(final);
-    }
+    const finishGesture = () => {
+      if (startDist === null) return;
+      const final = lastFactor;
+      startDist = null;
+      lastFactor = 1;
+      if (Math.abs(final - 1) > 0.001) {
+        onScaleCommitRef.current?.(final);
+      }
+    };
+
+    node.addEventListener("touchstart", onTouchStart, { passive: false });
+    node.addEventListener("touchmove", onTouchMove, { passive: false });
+    node.addEventListener("touchend", finishGesture);
+    node.addEventListener("touchcancel", finishGesture);
+
+    detachRef.current = () => {
+      node.removeEventListener("touchstart", onTouchStart);
+      node.removeEventListener("touchmove", onTouchMove);
+      node.removeEventListener("touchend", finishGesture);
+      node.removeEventListener("touchcancel", finishGesture);
+    };
   }, []);
 
-  return {
-    onTouchStart,
-    onTouchMove,
-    onTouchEnd: finishGesture,
-    onTouchCancel: finishGesture,
-  };
+  // Detach on unmount.
+  useEffect(() => {
+    return () => {
+      if (detachRef.current) {
+        detachRef.current();
+        detachRef.current = null;
+      }
+    };
+  }, []);
+
+  return { ref };
 }

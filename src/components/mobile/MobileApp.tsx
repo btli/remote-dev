@@ -90,7 +90,14 @@ function usePersistedFontSize(): number | undefined {
 
 export function MobileApp({ isGitHubConnected }: MobileAppProps) {
   const [activeTab, setActiveTab] = useState<MobileTab>("sessions");
-  const [tabBarRevealed, setTabBarRevealed] = useState(false);
+  // Use a monotonic counter rather than a boolean so that any repeated
+  // call to handleRequestRevealTabBar re-arms the auto-collapse effect.
+  // (The bottom-edge swipe gesture is currently disabled while the bar
+  // is revealed, so back-to-back swipes can't actually fire today, but
+  // a boolean true→true transition would be a silent footgun for any
+  // future caller — counter is the defensive choice.)
+  const [revealSeq, setRevealSeq] = useState(0);
+  const tabBarRevealed = revealSeq > 0;
   // Persisted terminal font size, hydration-safe (returns undefined during
   // SSR + first client render, then real value once useSyncExternalStore
   // resolves on the client).
@@ -98,16 +105,16 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
 
   // When the bottom tab bar is revealed via the bottom-edge swipe, auto-
   // collapse it after a short delay so the session view goes back to
-  // full-bleed. Only runs while a session is open (which is when the bar
-  // is hidden in the first place).
+  // full-bleed. The dependency on `revealSeq` (vs. a boolean) means
+  // every swipe-up resets the timer.
   useEffect(() => {
-    if (!tabBarRevealed) return;
+    if (revealSeq === 0) return;
     const t = window.setTimeout(
-      () => setTabBarRevealed(false),
+      () => setRevealSeq(0),
       TAB_BAR_REVEAL_DURATION_MS
     );
     return () => window.clearTimeout(t);
-  }, [tabBarRevealed]);
+  }, [revealSeq]);
 
   const sessionCtx = useSessionContext();
   const projectTree = useProjectTree();
@@ -164,14 +171,16 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
   // session view full-bleed, but only when a tap on a tab item didn't
   // already navigate away.
   const handleRequestRevealTabBar = useCallback(() => {
-    setTabBarRevealed(true);
+    // Increment the counter so the auto-collapse effect re-runs from
+    // zero on every reveal (back-to-back swipes restart the timer).
+    setRevealSeq((n) => n + 1);
   }, []);
 
   const handleTabChange = useCallback(
     (tab: MobileTab) => {
       // If user tapped a different tab, switch and clear reveal state so
       // the new tab's normal auto-hide-on-scroll behavior takes over.
-      setTabBarRevealed(false);
+      setRevealSeq(0);
       setActiveTab(tab);
     },
     []

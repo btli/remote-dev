@@ -403,20 +403,20 @@ export function MobileSessionView({
           tappable without false positives.
 
           touchAction: "pan-y" tells the browser we own pinch (and any
-          horizontal pan), but allow native vertical scroll. Without this,
-          iOS Safari runs its own pinch-to-zoom in parallel with our font
-          scaling, producing a double-zoom effect. React's synthetic touch
-          listeners are passive, so they cannot preventDefault() on
-          touchmove — declarative `touch-action` is the only reliable way
-          to suppress the browser gesture. Do not change to "none": that
-          breaks vertical scroll-back through scrollback history. */}
+          horizontal pan), but allow native vertical scroll. Belt-and-
+          braces: `usePinchZoom` also owns native (non-passive)
+          touchstart/touchmove listeners so it can preventDefault() the
+          browser's pinch-zoom on multi-touch — `touch-action: pan-y`
+          alone is unreliable on iOS Safari 15+, where two-finger
+          gestures may stop firing `touchmove` on a pan-y element. Do
+          not change to "none": that breaks single-finger vertical
+          scroll-back through scrollback history. */}
       <div
-        ref={scrollRef}
+        ref={(node) => {
+          scrollRef.current = node;
+          pinch.ref(node);
+        }}
         onScroll={handleScroll}
-        onTouchStart={pinch.onTouchStart}
-        onTouchMove={pinch.onTouchMove}
-        onTouchEnd={pinch.onTouchEnd}
-        onTouchCancel={pinch.onTouchCancel}
         data-testid="mobile-session-output"
         data-font-size={fontSize}
         className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
