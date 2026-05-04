@@ -199,7 +199,7 @@ export const MobileInputBar = forwardRef<HTMLTextAreaElement, MobileInputBarProp
             "relative p-2 rounded-md shrink-0 touch-manipulation",
             "transition-colors duration-200",
             disabled && "text-muted-foreground/40",
-            !disabled && longPressActive && "text-green-400 bg-green-400/20",
+            !disabled && longPressActive && "text-[var(--color-signal-running)] bg-[var(--color-signal-running)]/20",
             !disabled && !longPressActive && "text-primary active:bg-primary/20"
           )}
           aria-label="Send (hold to insert without executing)"

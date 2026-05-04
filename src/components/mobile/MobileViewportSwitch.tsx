@@ -17,22 +17,34 @@ import type { ReactNode } from "react";
 
 import { useIsMobileViewport } from "@/hooks/useMobile";
 
-import { MobileApp } from "./MobileApp";
+import { MobileApp, type MobileAuthUser } from "./MobileApp";
 
 export interface MobileViewportSwitchProps {
   isGitHubConnected: boolean;
+  /**
+   * Server-resolved authenticated user (handles both NextAuth and CF
+   * Access). Forwarded to {@link MobileApp} as the source of truth for
+   * mobile auth gating.
+   */
+  initialUser: MobileAuthUser | null;
   /** The desktop composition. Rendered at >=768px. */
   children: ReactNode;
 }
 
 export function MobileViewportSwitch({
   isGitHubConnected,
+  initialUser,
   children,
 }: MobileViewportSwitchProps) {
   const isMobile = useIsMobileViewport();
 
   if (isMobile) {
-    return <MobileApp isGitHubConnected={isGitHubConnected} />;
+    return (
+      <MobileApp
+        isGitHubConnected={isGitHubConnected}
+        initialUser={initialUser}
+      />
+    );
   }
 
   return <>{children}</>;

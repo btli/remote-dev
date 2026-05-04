@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import { NotificationPanel } from "@/components/notifications/NotificationPanel";
 import type { NotificationEvent } from "@/types/notification";
@@ -10,7 +10,14 @@ vi.mock("@/contexts/NotificationContext", () => ({
   useNotificationContext: vi.fn(),
 }));
 
+vi.mock("sonner", () => ({
+  toast: Object.assign(vi.fn(), {
+    error: vi.fn(),
+  }),
+}));
+
 import { useNotificationContext } from "@/contexts/NotificationContext";
+import { toast } from "sonner";
 
 function makeNotification(overrides: Partial<NotificationEvent> = {}): NotificationEvent {
   return {
@@ -29,6 +36,8 @@ function makeNotification(overrides: Partial<NotificationEvent> = {}): Notificat
 
 afterEach(() => {
   vi.restoreAllMocks();
+  (toast as unknown as ReturnType<typeof vi.fn>).mockClear();
+  (toast.error as unknown as ReturnType<typeof vi.fn>).mockClear();
 });
 
 describe("NotificationPanel unread dot", () => {
@@ -62,6 +71,45 @@ describe("NotificationPanel unread dot", () => {
     const dot = screen.getByTestId("notification-unread-dot");
     expect(dot.className).toContain("bg-[var(--color-signal-attention-solid)]");
     expect(dot.className).not.toContain("bg-[var(--color-signal-attention)]");
+  });
+
+  it("surfaces a toast and does not throw when 'Clear all' rejects", async () => {
+    // Regression for the Codex re-review P1 finding: deleteAllNotifications
+    // now propagates server failures (so callers can react), but the desktop
+    // 'Clear all' button still called it bare. A failed clear-all produced
+    // an unhandled rejected promise from a click handler. The fix wraps the
+    // call with `.catch()` and surfaces a sonner toast.
+    const deleteAll = vi.fn().mockRejectedValue(new Error("boom"));
+    vi.mocked(useNotificationContext).mockReturnValue({
+      notifications: [makeNotification()],
+      markRead: vi.fn(),
+      markAllRead: vi.fn(),
+      deleteNotification: vi.fn(),
+      deleteAllNotifications: deleteAll,
+      unreadCount: 0,
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    } as unknown as ReturnType<typeof useNotificationContext>);
+
+    render(
+      <NotificationPanel
+        open
+        onOpenChange={() => {}}
+        onJumpToSession={() => {}}
+      />
+    );
+
+    const clearAll = screen.getByRole("button", { name: /Clear all/ });
+    fireEvent.click(clearAll);
+    expect(deleteAll).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Failed to clear notifications",
+        expect.objectContaining({ id: "notif-clear-all-error" })
+      );
+    });
   });
 
   it("renders a transparent placeholder dot when the notification is read", () => {
