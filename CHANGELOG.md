@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mobile redesign Phase 4: Notifications tab** (remote-dev-qvpf). The
+  mobile Notifications tab preserves the existing notification model and
+  the canonical attention-blue halo end-to-end. Filter chips (All / Unread
+  / Mentions) sticky to top, count pills on Unread / Mentions. Each row
+  uses a leading 12px (6px-radius) dot in `--color-signal-attention-solid`
+  for unread state instead of a colored side-stripe (DESIGN.md "No
+  Side-Stripe Rule"); the `notification-ring-pulse` halo renders on
+  `agent_waiting` rows and is suppressed under `prefers-reduced-motion`.
+  Swipe-left = delete with 5s undo toast (sonner); swipe-right = toggle
+  read; long-press opens an ActionSheet with Jump to session, Mark
+  read/unread, Mute project, and Dismiss. Tapping a row inline-expands the
+  body (no push navigation) and marks unread items read. Pull-to-refresh
+  uses the canonical absolutely-positioned indicator pattern. Empty state
+  copy is "Inbox zero" for the All filter; filter-specific empties for
+  Unread and Mentions. New files under
+  `src/components/mobile/notifications/` (`NotificationsTab`,
+  `MobileNotificationRow`, `NotificationFilterChips`,
+  `useNotificationSwipe`). Wired into `MobileApp.tsx`.
 - **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
   home is now the Sessions tab. A header strip with a project switcher chip,
   a `+ New` pill, and a recent-projects rail sits above a session list with

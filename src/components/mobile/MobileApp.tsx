@@ -18,13 +18,13 @@ import { useState } from "react";
 import { MobileShell } from "./MobileShell";
 import type { MobileTab } from "./BottomTabBar";
 import { SessionsTab } from "./sessions/SessionsTab";
+import { NotificationsTab } from "./notifications/NotificationsTab";
 
 export interface MobileAppProps {
   isGitHubConnected: boolean;
 }
 
-const PLACEHOLDER_COPY: Record<Exclude<MobileTab, "sessions">, { title: string; phase: string }> = {
-  notifications: { title: "Notifications", phase: "Phase 4" },
+const PLACEHOLDER_COPY: Record<Exclude<MobileTab, "sessions" | "notifications">, { title: string; phase: string }> = {
   channels: { title: "Channels", phase: "Phase 5" },
   profile: { title: "Profile", phase: "Phase 6" },
 };
@@ -32,16 +32,23 @@ const PLACEHOLDER_COPY: Record<Exclude<MobileTab, "sessions">, { title: string; 
 export function MobileApp({ isGitHubConnected }: MobileAppProps) {
   const [activeTab, setActiveTab] = useState<MobileTab>("sessions");
 
+  let content;
+  if (activeTab === "sessions") {
+    content = <SessionsTab isGitHubConnected={isGitHubConnected} />;
+  } else if (activeTab === "notifications") {
+    content = <NotificationsTab onSwitchTab={setActiveTab} />;
+  } else {
+    content = (
+      <EmptyTabPlaceholder
+        title={PLACEHOLDER_COPY[activeTab].title}
+        phase={PLACEHOLDER_COPY[activeTab].phase}
+      />
+    );
+  }
+
   return (
     <MobileShell activeTab={activeTab} onTabChange={setActiveTab}>
-      {activeTab === "sessions" ? (
-        <SessionsTab isGitHubConnected={isGitHubConnected} />
-      ) : (
-        <EmptyTabPlaceholder
-          title={PLACEHOLDER_COPY[activeTab].title}
-          phase={PLACEHOLDER_COPY[activeTab].phase}
-        />
-      )}
+      {content}
     </MobileShell>
   );
 }
