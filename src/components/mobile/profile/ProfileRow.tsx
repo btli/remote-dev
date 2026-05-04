@@ -29,7 +29,7 @@ export interface ProfileRowProps {
   value?: ReactNode;
   /** True for sign-out and similar; renders the label in destructive ink. */
   destructive?: boolean;
-  /** Disables the row visually. The row still calls onPress on tap. */
+  /** Disables the row visually and suppresses tap/click events. */
   disabled?: boolean;
   /** Hide the trailing chevron. Useful for terminal "Sign out" style rows. */
   hideChevron?: boolean;
@@ -53,7 +53,6 @@ export function ProfileRow({
   return (
     <button
       type="button"
-      role="menuitem"
       data-row={rowId}
       data-destructive={destructive ? "true" : undefined}
       onClick={onPress}

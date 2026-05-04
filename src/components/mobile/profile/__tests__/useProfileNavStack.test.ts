@@ -65,4 +65,35 @@ describe("useProfileNavStack", () => {
     expect(result.current.current).toBeNull();
     expect(result.current.isPushed).toBe(false);
   });
+
+  it("pops the stack when a popstate event fires (Android/browser back)", () => {
+    const { result } = renderHook(() => useProfileNavStack<Screen>());
+    act(() => result.current.push("a"));
+    act(() => result.current.push("b"));
+    expect(result.current.isPushed).toBe(true);
+    expect(result.current.current).toBe("b");
+
+    // Simulate hardware back / browser back: dispatch popstate directly
+    // so we exercise the listener regardless of how the test environment
+    // implements history.back().
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    });
+    expect(result.current.current).toBe("a");
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    });
+    expect(result.current.isPushed).toBe(false);
+    expect(result.current.current).toBeNull();
+  });
+
+  it("ignores popstate when already on the index", () => {
+    const { result } = renderHook(() => useProfileNavStack<Screen>());
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    });
+    expect(result.current.isPushed).toBe(false);
+    expect(result.current.stack).toEqual([]);
+  });
 });

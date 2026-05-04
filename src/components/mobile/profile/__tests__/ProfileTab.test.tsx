@@ -51,7 +51,7 @@ describe("ProfileTab", () => {
         isGitHubConnected={true}
       />
     );
-    const githubRow = screen.getByRole("menuitem", { name: /GitHub accounts/ });
+    const githubRow = screen.getByRole("button", { name: /GitHub accounts/ });
     expect(githubRow).toHaveTextContent("Connected");
   });
 
@@ -64,7 +64,7 @@ describe("ProfileTab", () => {
         isGitHubConnected={false}
       />
     );
-    await user.click(screen.getByRole("menuitem", { name: /Account/ }));
+    await user.click(screen.getByRole("button", { name: /Account/ }));
     expect(screen.getByTestId("mobile-profile-tab")).toHaveAttribute(
       "data-screen",
       "account"
@@ -82,7 +82,7 @@ describe("ProfileTab", () => {
         isGitHubConnected={false}
       />
     );
-    await user.click(screen.getByRole("menuitem", { name: /Settings/ }));
+    await user.click(screen.getByRole("button", { name: /Settings/ }));
     expect(screen.getByTestId("mobile-profile-tab")).toHaveAttribute(
       "data-screen",
       "settings"
@@ -103,7 +103,7 @@ describe("ProfileTab", () => {
         isGitHubConnected={false}
       />
     );
-    await user.click(screen.getByRole("menuitem", { name: /Sign out/ }));
+    await user.click(screen.getByRole("button", { name: /Sign out/ }));
     // The sheet renders its items in a list keyed by data-testid. The
     // presence of the action-sheet items container distinguishes this
     // surface from a modal confirmation dialog (which would render under
@@ -125,11 +125,11 @@ describe("ProfileTab", () => {
         signOut={onSignOut}
       />
     );
-    await user.click(screen.getByRole("menuitem", { name: /Sign out/ }));
+    await user.click(screen.getByRole("button", { name: /Sign out/ }));
     // Scope the second click to the action sheet's items list so we don't
-    // accidentally re-click the row in the index. Both rows render
-    // role="menuitem"; we identify the sheet's confirm via its
-    // data-action-id.
+    // accidentally re-click the row in the index. The index row is a
+    // plain <button>, while the sheet's confirm renders role="menuitem";
+    // we identify the sheet's confirm via its data-action-id.
     await waitFor(() => {
       const items = screen.getByTestId("mobile-action-sheet-items");
       expect(items.querySelector('[data-action-id="confirm-sign-out"]')).not.toBeNull();
@@ -154,7 +154,7 @@ describe("ProfileTab", () => {
         onConnectGitHub={onConnect}
       />
     );
-    await user.click(screen.getByRole("menuitem", { name: /GitHub accounts/ }));
+    await user.click(screen.getByRole("button", { name: /GitHub accounts/ }));
     await user.click(screen.getByTestId("mobile-profile-github-add"));
     expect(onConnect).toHaveBeenCalledTimes(1);
   });

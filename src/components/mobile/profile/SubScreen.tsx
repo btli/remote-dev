@@ -74,7 +74,7 @@ export function SubScreen({
           )}
         >
           <ChevronLeft aria-hidden="true" className="h-5 w-5" strokeWidth={1.75} />
-          <span className="text-[15px]">Back</span>
+          <span className="text-[15px]">{backLabel}</span>
         </button>
         <h1 className="absolute left-1/2 -translate-x-1/2 truncate text-[15px] font-medium leading-tight text-foreground">
           {title}
