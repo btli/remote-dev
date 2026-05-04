@@ -80,7 +80,7 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
   // `useSession` is consulted only for live updates after the initial
   // server render (e.g. post-GitHub-link). It is NEVER the source of
   // truth for "am I authenticated?" — see file-level docblock.
-  const { data: clientSession } = useSession();
+  const { data: clientSession, status: clientSessionStatus } = useSession();
   const firstRun = useFirstRun();
 
   // Derived: prefer the server-passed user, fall back to the live client
@@ -125,7 +125,21 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
   // this component renders. If `initialUser` is null AND the client
   // session also hasn't filled in, treat this as "not yet authenticated"
   // and keep the lock screen up rather than flashing the tab shell.
+  //
+  // Copy split:
+  //   - While the NextAuth client session is still resolving (`loading`),
+  //     show a generic "Loading" — we genuinely don't know yet whether
+  //     this is a credentials user, a CF Access user, or unauthenticated.
+  //     Showing the CF Access copy here would mislead local-dev users.
+  //   - Once the client session resolves to `unauthenticated` AND we
+  //     still have no `initialUser`, then we are confident the user is
+  //     not signed in; show the CF-branded copy because in production
+  //     the only way back in is via the CF Access challenge (the
+  //     middleware will have already issued the redirect).
   if (!resolvedUser) {
+    if (clientSessionStatus === "loading") {
+      return <MobileLockScreen message="Loading" detail="Just a second." />;
+    }
     return (
       <MobileLockScreen
         message="Authenticating via Cloudflare Access"

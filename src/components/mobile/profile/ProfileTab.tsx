@@ -114,16 +114,33 @@ export function ProfileTab({
       await signOutOverride();
       return;
     }
+    if (typeof window === "undefined") return;
     // Route through the server endpoint so BOTH auth modes are cleared:
     //   - NextAuth credentials: server signOut clears the JWT cookie.
     //   - Cloudflare Access: redirects through the CF logout URL, which
     //     deletes the `CF_Authorization` cookie on the team domain and
     //     bounces back to /login.
-    // Using window.location (not fetch) ensures the browser follows the
-    // cross-origin redirect chain to Cloudflare and back.
-    if (typeof window !== "undefined") {
-      window.location.href = DEFAULT_SIGN_OUT_HREF;
+    //
+    // We POST (not navigate) because GET sign-out is a CSRF logout
+    // vector — a `<img src>` from any third-party page could trigger it.
+    // The fetch follows the redirect chain transparently; if a redirect
+    // happens the browser exposes the final URL via `response.url` and
+    // we navigate there. If something fails we fall through to /login so
+    // the user is never stranded.
+    try {
+      const response = await fetch(DEFAULT_SIGN_OUT_HREF, {
+        method: "POST",
+        redirect: "follow",
+        credentials: "same-origin",
+      });
+      if (response.redirected && response.url) {
+        window.location.href = response.url;
+        return;
+      }
+    } catch {
+      // fall through to the local login redirect
     }
+    window.location.href = "/login";
   }, [signOutOverride]);
 
   const signOutItems: ActionSheetItem[] = [

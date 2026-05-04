@@ -72,8 +72,27 @@ describe("MobileApp auth gating", () => {
 
   it("renders the lock screen when initialUser is null and useSession() is also unauthenticated", () => {
     render(<MobileApp isGitHubConnected={false} initialUser={null} />);
-    expect(screen.getByTestId("mobile-lock-screen")).toBeInTheDocument();
+    const lock = screen.getByTestId("mobile-lock-screen");
+    expect(lock).toBeInTheDocument();
+    // Once we know the client session is `unauthenticated`, the CF Access
+    // copy is appropriate (CF is the only re-auth path in production).
+    expect(lock).toHaveTextContent(/Cloudflare Access/i);
     expect(screen.queryByTestId("mock-sessions-tab")).toBeNull();
+  });
+
+  it("renders generic loading copy (NOT Cloudflare Access) while the client session is still loading", () => {
+    useSessionMock.mockReturnValue({
+      data: null,
+      status: "loading",
+      update: vi.fn(),
+    });
+    render(<MobileApp isGitHubConnected={false} initialUser={null} />);
+    const lock = screen.getByTestId("mobile-lock-screen");
+    expect(lock).toBeInTheDocument();
+    // Crucial: do NOT mislead credentials/localhost users with CF copy
+    // before we know what auth path is in play.
+    expect(lock).not.toHaveTextContent(/Cloudflare Access/i);
+    expect(lock).toHaveTextContent(/Loading/i);
   });
 
   it("falls back to the live client session when initialUser is null but useSession() is authenticated", () => {

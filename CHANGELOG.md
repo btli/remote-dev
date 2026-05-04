@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Sign-out hardening**: `/api/auth/signout` no longer exports a GET handler
+  (removed CSRF logout vector — third-party `<img src>` could trigger
+  sign-out). The POST handler additionally rejects cross-origin requests via
+  an Origin/Referer same-origin check. Removed the `joyfulhouse` placeholder
+  default for `CF_ACCESS_TEAM` from both the signout route and
+  `src/lib/cloudflare-access.ts`: an unset team no longer silently redirects
+  users to a foreign Cloudflare tenant or attempts JWKS fetches against one.
+  `MobileLockScreen` now shows generic "Loading" copy while the NextAuth
+  client session is resolving, and only switches to "Authenticating via
+  Cloudflare Access" once the session is confirmed unauthenticated, so
+  credentials/localhost users no longer see misleading CF copy.
+
 ### Added
 
 - **Mobile redesign Phase 6: Auth flow + Profile tab** (remote-dev-lud6).
