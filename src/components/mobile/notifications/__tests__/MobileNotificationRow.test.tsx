@@ -236,6 +236,42 @@ describe("MobileNotificationRow", () => {
     expect(dot.className).toMatch(/bg-\[var\(--color-signal-attention-solid\)\]/);
   });
 
+  it("suppresses the synthetic click that fires after long-press releases", async () => {
+    // Regression for adversarial finding P1-C: on touch devices a
+    // touchend → click sequence is dispatched by the browser. If we don't
+    // suppress that click, the row's tap handler runs immediately after
+    // the long-press fires — which on an unread row marks it as read,
+    // potentially yanking the action sheet's target row out of the
+    // Unread filter while the sheet is still open.
+    const onTap = vi.fn();
+    const onLongPress = vi.fn();
+    render(
+      <MobileNotificationRow
+        notification={makeNotification({ body: "Long body" })}
+        onTap={onTap}
+        onLongPress={onLongPress}
+        onDelete={vi.fn()}
+        onToggleRead={vi.fn()}
+      />
+    );
+    const row = screen.getByTestId("mobile-notification-row");
+    fireEvent.mouseDown(row, { clientX: 30, clientY: 30, button: 0 });
+    await waitFor(() => expect(onLongPress).toHaveBeenCalled(), {
+      timeout: 1500,
+    });
+    // The synthetic click that follows the long-press release must not
+    // run the row's onTap or toggle expansion.
+    fireEvent.mouseUp(row);
+    fireEvent.click(row);
+    expect(onTap).not.toHaveBeenCalled();
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+
+    // A subsequent genuine click clears the suppression flag and runs
+    // the tap handler normally.
+    fireEvent.click(row);
+    expect(onTap).toHaveBeenCalledTimes(1);
+  });
+
   it("does NOT dispatch onToggleRead when swiped right on a read row", () => {
     const onToggleRead = vi.fn();
     render(

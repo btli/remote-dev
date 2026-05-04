@@ -34,7 +34,7 @@
  * feature can land without further IA churn.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -91,28 +91,11 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Set of notification IDs the user has swipe-deleted but whose server DELETE
-  // is still pending in the 5s undo window. We hide them from the list
-  // optimistically; if the timer fires, the context's deleteNotification runs
-  // and the row drops out of `notifCtx.notifications` for real. If the user
-  // hits Undo, we cancel the timer and clear the ID — the original row is
-  // already in the context's state, so it just reappears in place.
-  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
-    () => new Set()
-  );
-
-  // Track in-flight delete timers so we can clear them on unmount (avoid
-  // firing a server delete after the tab unmounts) and on Undo.
-  const pendingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
-    new Map()
-  );
-
-  useEffect(() => {
-    const timers = pendingTimersRef.current;
-    return () => {
-      for (const t of timers.values()) clearTimeout(t);
-      timers.clear();
-    };
-  }, []);
+  // is still pending in the 5s undo window. The context owns this state so
+  // the deferred delete survives this tab unmounting/remounting (which
+  // happens when the user switches tabs in MobileApp). If we owned the
+  // timers locally, switching tabs mid-undo would silently cancel them.
+  const { pendingDeleteIds, scheduleDelete } = notifCtx;
 
   const counts = useMemo(() => {
     const all = notifCtx.notifications.filter(
@@ -190,40 +173,19 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
     [notifCtx]
   );
 
-  // Delete with 5s undo. We hide the row locally (via pendingDeleteIds) but
-  // defer the actual server DELETE until the toast's 5s window elapses.
-  // Pressing Undo within that window cancels the timer, clears the local
-  // hide, and the row reappears in place — no rehydration, no server churn.
+  // Delete with 5s undo. The context owns the timer + pendingDeleteIds set,
+  // so this survives a tab unmount mid-undo (e.g. user switches to Sessions
+  // tab before the 5s elapses). Pressing Undo cancels the scheduled delete;
+  // on server failure the context restores the row and we surface a toast.
   const performDelete = useCallback(
     (notification: NotificationEvent) => {
-      // Optimistic local hide.
-      setPendingDeleteIds((prev) => {
-        const next = new Set(prev);
-        next.add(notification.id);
-        return next;
-      });
-
-      // If a previous delete for the same ID is still pending (user
-      // double-swiped), clear it before scheduling the new one.
-      const existing = pendingTimersRef.current.get(notification.id);
-      if (existing) clearTimeout(existing);
-
-      const timer = setTimeout(() => {
-        pendingTimersRef.current.delete(notification.id);
-        void notifCtx.deleteNotification(notification.id).catch(() => {
-          toast.error("Couldn't delete notification.", {
+      const handle = scheduleDelete(notification.id, 5000, {
+        onError: () => {
+          toast.error("Failed to delete — restored.", {
             id: `notif-delete-error:${notification.id}`,
           });
-          // Server delete failed; surface the row again so it isn't
-          // silently lost from the user's view.
-          setPendingDeleteIds((prev) => {
-            const next = new Set(prev);
-            next.delete(notification.id);
-            return next;
-          });
-        });
-      }, 5000);
-      pendingTimersRef.current.set(notification.id, timer);
+        },
+      });
 
       toast(`Deleted "${notification.title}"`, {
         id: `notif-delete:${notification.id}`,
@@ -231,21 +193,12 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
         action: {
           label: "Undo",
           onClick: () => {
-            const t = pendingTimersRef.current.get(notification.id);
-            if (t) {
-              clearTimeout(t);
-              pendingTimersRef.current.delete(notification.id);
-            }
-            setPendingDeleteIds((prev) => {
-              const next = new Set(prev);
-              next.delete(notification.id);
-              return next;
-            });
+            handle.cancel();
           },
         },
       });
     },
-    [notifCtx]
+    [scheduleDelete]
   );
 
   const performMarkUnread = useCallback(() => {
@@ -254,10 +207,13 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
     });
   }, []);
 
-  // Action sheet items for the long-pressed notification.
+  // Action sheet items for the long-pressed notification. We look up the
+  // target from the full notifications list (not `visible`) so a filter
+  // change or a deferred-delete that hides the row mid-flight doesn't
+  // suddenly null out our actionTarget while the sheet is still open.
   const actionTarget = useMemo(
-    () => visible.find((n) => n.id === actionTargetId) ?? null,
-    [visible, actionTargetId]
+    () => notifCtx.notifications.find((n) => n.id === actionTargetId) ?? null,
+    [notifCtx.notifications, actionTargetId]
   );
 
   const actionItems = useMemo<ActionSheetItem[]>(() => {

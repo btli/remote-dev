@@ -14,6 +14,54 @@ import userEvent from "@testing-library/user-event";
 import { NotificationsTab } from "@/components/mobile/notifications/NotificationsTab";
 import type { NotificationEvent } from "@/types/notification";
 
+// Pending-delete + scheduling now lives in NotificationContext (see P1-A
+// fix). The test harness models the contract: scheduleDelete adds to the
+// pending set and arms a fake timer; cancel + the timer firing both clear
+// the pending flag. We expose the underlying maps so tests can assert
+// state transitions without poking React internals.
+const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+interface ScheduleOptions {
+  onError?: (error: unknown) => void;
+}
+
+function makeScheduleDelete() {
+  return vi.fn((id: string, delayMs: number, options?: ScheduleOptions) => {
+    const existing = pendingTimers.get(id);
+    if (existing) clearTimeout(existing);
+    notifMockState.pendingDeleteIds = new Set(notifMockState.pendingDeleteIds);
+    notifMockState.pendingDeleteIds.add(id);
+    const timer = setTimeout(() => {
+      pendingTimers.delete(id);
+      notifMockState
+        .deleteNotification(id)
+        .catch((err: unknown) => {
+          options?.onError?.(err);
+        })
+        .finally(() => {
+          notifMockState.pendingDeleteIds = new Set(
+            notifMockState.pendingDeleteIds
+          );
+          notifMockState.pendingDeleteIds.delete(id);
+        });
+    }, delayMs);
+    pendingTimers.set(id, timer);
+    return {
+      cancel: () => {
+        const t = pendingTimers.get(id);
+        if (t) {
+          clearTimeout(t);
+          pendingTimers.delete(id);
+        }
+        notifMockState.pendingDeleteIds = new Set(
+          notifMockState.pendingDeleteIds
+        );
+        notifMockState.pendingDeleteIds.delete(id);
+      },
+    };
+  });
+}
+
 const notifMockState = {
   notifications: [] as NotificationEvent[],
   unreadCount: 0,
@@ -26,6 +74,9 @@ const notifMockState = {
   addNotification: vi.fn(),
   registerJumpHandler: vi.fn(),
   latestUnreadSessionId: null as string | null,
+  pendingDeleteIds: new Set<string>(),
+  scheduleDelete: makeScheduleDelete(),
+  cancelDelete: vi.fn(),
 };
 
 const sessionMockState = {
@@ -75,8 +126,13 @@ beforeEach(() => {
   notifMockState.deleteNotification = vi.fn().mockResolvedValue(undefined);
   notifMockState.addNotification = vi.fn();
   notifMockState.latestUnreadSessionId = null;
+  notifMockState.pendingDeleteIds = new Set();
+  notifMockState.scheduleDelete = makeScheduleDelete();
+  notifMockState.cancelDelete = vi.fn();
+  pendingTimers.clear();
   sessionMockState.setActiveSession = vi.fn();
   (toast as unknown as ReturnType<typeof vi.fn>).mockClear();
+  (toast.error as unknown as ReturnType<typeof vi.fn>).mockClear();
 });
 
 afterEach(() => cleanup());
@@ -302,5 +358,103 @@ describe("NotificationsTab", () => {
     expect(notifMockState.markRead).toHaveBeenCalledWith(["n1"]);
     expect(sessionMockState.setActiveSession).toHaveBeenCalledWith("s1");
     expect(onSwitchTab).toHaveBeenCalledWith("sessions");
+  });
+
+  it("preserves the deferred-delete timer when the tab unmounts mid-undo (context owns the timer, not the tab)", () => {
+    // Regression for adversarial finding P1-A: tab unmount must not
+    // silently cancel the pending server delete. The context owns the
+    // timer, so the tab can come and go without affecting it.
+    vi.useFakeTimers();
+    try {
+      const target = makeNotification({ id: "n1", title: "swipe-target" });
+      notifMockState.notifications = [target];
+      notifMockState.unreadCount = 1;
+      const { unmount } = render(<NotificationsTab />);
+      const row = screen.getByTestId("mobile-notification-row");
+      fireEvent.touchStart(row, { touches: [{ clientX: 200, clientY: 30 }] });
+      fireEvent.touchMove(row, { touches: [{ clientX: 60, clientY: 30 }] });
+      fireEvent.touchEnd(row);
+
+      // Simulate the tab unmounting partway through the 5s undo window
+      // (e.g. the user switches to the Sessions tab in MobileApp).
+      vi.advanceTimersByTime(2000);
+      unmount();
+
+      // The deferred delete must still fire after the remaining time.
+      vi.advanceTimersByTime(3000);
+      expect(notifMockState.deleteNotification).toHaveBeenCalledWith("n1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces an error toast and clears pendingDeleteIds when the deferred delete fails", async () => {
+    // Regression for adversarial finding P1-B: a failing DELETE must not
+    // leave the row hidden forever. The error path (a) shows a toast and
+    // (b) removes the id from pendingDeleteIds so the row reappears.
+    vi.useFakeTimers();
+    try {
+      notifMockState.deleteNotification = vi
+        .fn()
+        .mockRejectedValue(new Error("boom"));
+      const target = makeNotification({ id: "n1", title: "swipe-target" });
+      notifMockState.notifications = [target];
+      notifMockState.unreadCount = 1;
+      render(<NotificationsTab />);
+      const row = screen.getByTestId("mobile-notification-row");
+      fireEvent.touchStart(row, { touches: [{ clientX: 200, clientY: 30 }] });
+      fireEvent.touchMove(row, { touches: [{ clientX: 60, clientY: 30 }] });
+      fireEvent.touchEnd(row);
+
+      // Trip the deferred delete; let microtasks settle so the rejection
+      // propagates through .catch().finally().
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(notifMockState.deleteNotification).toHaveBeenCalledWith("n1");
+      const errorToast = toast.error as unknown as ReturnType<typeof vi.fn>;
+      expect(errorToast).toHaveBeenCalledWith(
+        "Failed to delete — restored.",
+        expect.objectContaining({ id: "notif-delete-error:n1" })
+      );
+      // pendingDeleteIds was cleared in the .finally() path so the row is
+      // no longer hidden — the harness rotates a fresh Set on each clear.
+      expect(notifMockState.pendingDeleteIds.has("n1")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renders the error banner when refresh() rejects via pull-to-refresh", async () => {
+    // Regression for adversarial finding P2-E: the tab has an error
+    // banner UI but the old `refresh()` swallowed errors. With the new
+    // contract, refresh propagates and the banner renders.
+    notifMockState.refresh = vi.fn().mockRejectedValue(new Error("offline"));
+    notifMockState.notifications = [];
+    render(<NotificationsTab />);
+    // Drive the pull-to-refresh path directly. The hook's onRefresh is
+    // wired to handleRefresh which awaits refresh() and sets the banner
+    // on rejection. We simulate the refresh by invoking refresh
+    // ourselves through a tiny shim: the hook already exercises the
+    // happy path elsewhere; here we just need the error banner to land.
+    //
+    // The cleanest path is to call the refresh directly via the
+    // notification context mock and assert the tab renders the error.
+    // Pull-to-refresh fires handleRefresh on the hook; rather than
+    // simulate touches at the right offsets, we exercise the same code
+    // path by triggering the markAllRead button (which doesn't call
+    // refresh) — instead, drive it via a known UI: the error banner is
+    // populated from handleRefresh's catch. We reproduce that by
+    // dispatching pull-to-refresh on the scroll container.
+    const scroll = screen.getByTestId("mobile-notifications-scroll");
+    Object.defineProperty(scroll, "scrollTop", { value: 0, configurable: true });
+    fireEvent.touchStart(scroll, { touches: [{ clientY: 0 }] });
+    fireEvent.touchMove(scroll, { touches: [{ clientY: 200 }] });
+    fireEvent.touchEnd(scroll);
+    // The banner appears once the rejected refresh promise settles.
+    await waitFor(() => {
+      expect(screen.getByTestId("mobile-notifications-error")).toHaveTextContent(
+        /Couldn't load notifications/
+      );
+    });
   });
 });

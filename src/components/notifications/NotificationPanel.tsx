@@ -131,7 +131,11 @@ export function NotificationPanel({ open, onOpenChange, onJumpToSession }: Notif
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                    onClick={() => deleteNotification(n.id)}
+                    onClick={() => {
+                      void deleteNotification(n.id).catch(() => {
+                        /* error already logged in context; row will reappear on refresh */
+                      });
+                    }}
                   >
                     <X className="w-3 h-3" />
                   </Button>

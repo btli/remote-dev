@@ -22,7 +22,7 @@
  *     {@link useNotificationSwipe} which handles vertical-bias / threshold.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/useMobile";
@@ -73,9 +73,18 @@ export function MobileNotificationRow({
     onToggleRead: () => onToggleRead(notification),
   });
 
+  // Long-press needs to suppress the synthetic click that fires on touch
+  // release. Without this guard, lifting the finger after a 600ms hold
+  // triggers `handleClick`, which on an unread row marks it read or toggles
+  // body expansion — both of which can yank the action sheet's target row
+  // out from under the user (especially in the Unread filter).
+  const longPressFiredRef = useRef(false);
   const longPress = useLongPress({
     enabled: enableGestures,
-    onLongPress: () => onLongPress(notification),
+    onLongPress: () => {
+      longPressFiredRef.current = true;
+      onLongPress(notification);
+    },
   });
 
   const relativeTime = useMemo(() => {
@@ -92,6 +101,13 @@ export function MobileNotificationRow({
   const hasExpandableBody = Boolean(notification.body);
 
   const handleClick = () => {
+    // Swallow the click that fires synthetically right after a long-press
+    // fires (touchend → click on touch devices, mouseup → click on desktop
+    // test runners). The next genuine tap clears the flag and runs.
+    if (longPressFiredRef.current) {
+      longPressFiredRef.current = false;
+      return;
+    }
     if (hasExpandableBody) {
       // Inline expansion only — never pushes a new screen.
       setExpanded((e) => !e);
