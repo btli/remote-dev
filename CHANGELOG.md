@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Phase 3 mobile session view: adversarial-review fixes** (PR #220). Replaced
+  the saturated `text-green-400 bg-green-400/20` long-press indicator on
+  `MobileInputBar` with the token-based `--color-signal-running` to honor the
+  DESIGN.md achromatic-default rule. The bottom tab bar now auto-collapses
+  3.5s after a swipe-up reveal so the session view returns to full-bleed
+  without the user having to dismiss it manually. The terminal viewport
+  declares `touch-action: pan-y` to suppress iOS Safari's native pinch-to-zoom
+  while preserving vertical scroll, eliminating the double-zoom on font
+  resize. Persisted font size is now read via `useSyncExternalStore` to
+  prevent a hydration mismatch under React 19 / Next.js 16. Extracted the
+  shared `AnsiStripper` to `src/lib/terminal/ansi-stripper.ts` so
+  `MobileTerminalView` and the new `MobileSessionView` can't drift apart.
+
 ### Added
 
 - **Mobile redesign Phase 4: Notifications tab** (remote-dev-qvpf). The
@@ -27,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `src/components/mobile/notifications/` (`NotificationsTab`,
   `MobileNotificationRow`, `NotificationFilterChips`,
   `useNotificationSwipe`). Wired into `MobileApp.tsx`.
+
 - **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
   home is now the Sessions tab. A header strip with a project switcher chip,
   a `+ New` pill, and a recent-projects rail sits above a session list with
