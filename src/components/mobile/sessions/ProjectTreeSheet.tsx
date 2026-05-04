@@ -92,8 +92,7 @@ function buildFlatTree(
       if (isOpen) {
         walk(g.id, depth + 1);
         for (const p of childProjects(g.id)) {
-          if (!matches(p.name) && !forceExpand) continue;
-          if (forceExpand && !matches(p.name)) continue;
+          if (!matches(p.name)) continue;
           out.push({
             kind: "project",
             id: p.id,
@@ -315,7 +314,7 @@ export function ProjectTreeSheet({
                   "flex w-full min-h-[44px] items-center rounded-md px-2 text-left",
                   "text-sm font-normal text-foreground",
                   "hover:bg-accent/40 active:bg-accent/60",
-                  tree.activeNode?.type === "project" && tree.activeNode.id === row.id && "bg-accent/30 font-medium"
+                  projectSelected && "bg-accent/30 font-medium"
                 )}
                 style={{ paddingLeft: `${row.depth * 12 + 12}px` }}
               >
