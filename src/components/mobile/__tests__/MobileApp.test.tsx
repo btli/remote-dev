@@ -44,6 +44,36 @@ vi.mock("@/components/mobile/auth/useFirstRun", () => ({
   }),
 }));
 
+// Phase 3 wired Session + ProjectTree context calls into MobileApp's body
+// (always evaluated, before the auth gate). The Phase 6 auth-gating tests
+// don't care about those, so stub the hooks rather than wrap each render
+// in real providers.
+vi.mock("@/contexts/SessionContext", () => ({
+  useSessionContext: () => ({
+    sessions: [],
+    activeSessionId: null,
+    setActiveSession: vi.fn(),
+    suspendSession: vi.fn().mockResolvedValue(undefined),
+    closeSession: vi.fn().mockResolvedValue(undefined),
+    getAgentActivityStatus: vi.fn().mockReturnValue("idle"),
+  }),
+}));
+vi.mock("@/contexts/ProjectTreeContext", () => ({
+  useProjectTree: () => ({
+    getProject: () => undefined,
+  }),
+}));
+// MobileSessionView and NotificationsTab are never rendered by these
+// tests (no active session, no notifications tab activated), but
+// stub them anyway so import-time side effects don't pull in heavy
+// trees that need providers.
+vi.mock("@/components/mobile/session/MobileSessionView", () => ({
+  MobileSessionView: () => <div data-testid="mock-session-view" />,
+}));
+vi.mock("@/components/mobile/notifications/NotificationsTab", () => ({
+  NotificationsTab: () => <div data-testid="mock-notifications-tab" />,
+}));
+
 beforeEach(() => {
   // Default: simulate CF Access production — no NextAuth client session.
   useSessionMock.mockReturnValue({

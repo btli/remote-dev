@@ -721,6 +721,16 @@
   border-radius: inherit;
 }
 
+/* Honor reduced-motion globally so any caller (including legacy mobile
+   surfaces that don't gate the className on a reduced-motion hook) gets
+   a static halo instead of a pulsing animation. */
+@media (prefers-reduced-motion: reduce) {
+  .notification-ring {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--signal-attention);
+  }
+}
+
 /* ============================================================================
    Safe Area Inset Utilities - iOS/Android notch and home indicator support
    Requires viewportFit: "cover" (set in src/app/layout.tsx)

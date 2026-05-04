@@ -61,8 +61,13 @@ describe("ActionSheet", () => {
     );
     await waitFor(() => screen.getByRole("menuitem", { name: "X" }));
     const button = screen.getByRole("menuitem", { name: "X" }) as HTMLButtonElement;
-    expect(button.disabled).toBe(true);
-    await user.click(button).catch(() => {});
+    // We use aria-disabled rather than the native disabled attribute so the
+    // item stays in the a11y tree as "unavailable" instead of being removed.
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.disabled).toBe(false);
+    await user.click(button);
     expect(onSelect).not.toHaveBeenCalled();
+    // Sheet still closes on tap (consistent with existing behavior).
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
