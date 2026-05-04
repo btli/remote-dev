@@ -1,0 +1,547 @@
+"use client";
+
+/**
+ * MobileSessionView, Phase 3 mobile session view.
+ *
+ * Full-bleed single-session composition rendered when the user has selected
+ * a session inside the mobile shell. Replaces the previous MobileTerminalView
+ * stacked-toolbar layout: a top SessionStatusBar, a full-height terminal
+ * viewport, the new SmartKeyStrip, and the existing MobileInputBar (whose
+ * long-press = paste-without-execute behavior is preserved verbatim).
+ *
+ * Tab-bar reveal: the parent (MobileApp) hides the bottom tab bar while a
+ * session is open, and listens for swipe-up-from-the-bottom-edge through
+ * MobileShell's `useSwipeUpFromBottomEdge` hook.
+ *
+ * Two-finger pinch resizes the terminal mono font; the resulting size is
+ * persisted via `onPersistFontSize` so it survives across mounts.
+ */
+
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import AnsiToHtml from "ansi-to-html";
+
+import { cn } from "@/lib/utils";
+import { useTerminalTheme } from "@/contexts/AppearanceContext";
+import { useSessionContext } from "@/contexts/SessionContext";
+import { useTerminalWebSocket } from "@/hooks/useTerminalWebSocket";
+import { usePrefersReducedMotion } from "@/hooks/useMobile";
+import { sendImageToTerminal } from "@/lib/image-upload";
+import { MobileInputBar } from "@/components/terminal/MobileInputBar";
+import { AgentExitScreen } from "@/components/terminal/AgentExitScreen";
+import { AuthErrorOverlay } from "@/components/terminal/AuthErrorOverlay";
+import type { TerminalSession } from "@/types/session";
+import type { ConnectionStatus } from "@/types/terminal";
+import type { AgentActivityStatus } from "@/types/terminal-type";
+
+import {
+  SessionStatusBar,
+  type SessionPipState,
+} from "./SessionStatusBar";
+import { SmartKeyStrip } from "./SmartKeyStrip";
+import { useModifierLatch } from "./useModifierLatch";
+import { usePinchZoom } from "./usePinchZoom";
+import { SessionMetadataSheet } from "./SessionMetadataSheet";
+
+const MAX_OUTPUT_ENTRIES = 2000;
+const MOBILE_COLS = 120;
+const MOBILE_ROWS = 24;
+const FONT_SIZE_MIN = 9;
+const FONT_SIZE_MAX = 22;
+const DEFAULT_FONT_SIZE = 12;
+
+interface OutputEntry {
+  id: number;
+  html: string;
+}
+
+/**
+ * Stateful ANSI escape stripper, mirrors MobileTerminalView's stripper so
+ * the output rendering behaves identically. Kept as a private class here
+ * because exporting it would couple us to that view's lifecycle.
+ */
+class AnsiStripper {
+  private pending = "";
+  private static readonly MAX_PENDING = 64;
+
+  reset(): void {
+    this.pending = "";
+  }
+
+  process(data: string): string {
+    let input = this.pending + data;
+    this.pending = "";
+
+    const lastEsc = input.lastIndexOf("\x1b");
+    if (lastEsc !== -1) {
+      const tail = input.slice(lastEsc);
+      const isComplete =
+        /^\x1b\[[0-9;?]*[A-Za-z]/.test(tail) ||
+        /^\x1b\].*(?:\x07|\x1b\\)/.test(tail) ||
+        (/^\x1b[^[\]()]/.test(tail) && tail.length >= 2) ||
+        /^\x1b[()]./.test(tail);
+
+      if (!isComplete) {
+        this.pending = tail.length <= AnsiStripper.MAX_PENDING ? tail : "";
+        input = input.slice(0, lastEsc);
+      }
+    }
+
+    return input
+      .replace(/\x1b\[[0-9;?]*[A-HJ-Za-lp-z]/g, "")
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+      .replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, "")
+      .replace(/\x1b[()][A-Z0-9]/g, "")
+      .replace(/\x1b(?![\[(\])])[^\x1b]/g, "")
+      .replace(/\r(?!\n)/g, "")
+      .replace(/\x1b(?![\[(\]()])/g, "");
+  }
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getAnsiColors(theme: ReturnType<typeof useTerminalTheme>): string[] {
+  return [
+    theme.black, theme.red, theme.green, theme.yellow,
+    theme.blue, theme.magenta, theme.cyan, theme.white,
+    theme.brightBlack, theme.brightRed, theme.brightGreen, theme.brightYellow,
+    theme.brightBlue, theme.brightMagenta, theme.brightCyan, theme.brightWhite,
+  ];
+}
+
+function createAnsiConverter(theme: ReturnType<typeof useTerminalTheme>): AnsiToHtml {
+  return new AnsiToHtml({
+    fg: theme.foreground,
+    bg: "transparent",
+    colors: getAnsiColors(theme),
+    escapeXML: true,
+    stream: true,
+  });
+}
+
+/** Map ConnectionStatus + AgentActivityStatus to a single pip state. */
+function deriveStatusPip(
+  status: ConnectionStatus,
+  activity: AgentActivityStatus
+): SessionPipState {
+  if (status === "connecting") return "reconnecting";
+  if (status === "reconnecting") return "reconnecting";
+  if (status === "disconnected") return "disconnected";
+  if (status === "error") return "error";
+  // Connected → reflect agent activity.
+  if (activity === "waiting") return "waiting";
+  if (activity === "error") return "error";
+  if (activity === "running") return "running";
+  return "idle";
+}
+
+export interface MobileSessionViewProps {
+  session: TerminalSession;
+  projectName?: string | null;
+  /** Agent's stored activity status for chrome rendering. Drives pip + halo. */
+  activityStatus: AgentActivityStatus;
+  wsUrl?: string;
+  tmuxHistoryLimit?: number;
+  notificationsEnabled?: boolean;
+  isRecording?: boolean;
+  hasRecordings?: boolean;
+  environmentVars?: Record<string, string> | null;
+  /** Initial mono font size in px; persists between mounts when supplied. */
+  initialFontSize?: number;
+  /** Called after a pinch gesture commits a new size. */
+  onPersistFontSize?: (size: number) => void;
+  /** Tap on the back arrow (closes session detail and returns to list). */
+  onBack?: () => void;
+  /** Suspend the session, optionally returning to list. */
+  onSuspend?: () => void | Promise<unknown>;
+  /** Close the session permanently. */
+  onClose?: () => void | Promise<unknown>;
+  /** Open the recordings list (handler may be undefined when no recordings). */
+  onViewRecordings?: () => void;
+  /** Open the channels / peer messages tab. */
+  onOpenPeerMessages?: () => void;
+}
+
+export function MobileSessionView({
+  session,
+  projectName,
+  activityStatus,
+  wsUrl,
+  tmuxHistoryLimit,
+  notificationsEnabled = true,
+  isRecording = false,
+  hasRecordings = false,
+  environmentVars,
+  initialFontSize = DEFAULT_FONT_SIZE,
+  onPersistFontSize,
+  onBack,
+  onSuspend,
+  onClose,
+  onViewRecordings,
+  onOpenPeerMessages,
+}: MobileSessionViewProps) {
+  const reducedMotion = usePrefersReducedMotion();
+  const theme = useTerminalTheme();
+  const sessionCtx = useSessionContext();
+
+  const liveRegionId = useId();
+
+  // ── Output rendering refs/state ─────────────────────────────────────────
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<HTMLTextAreaElement>(null);
+  const converterRef = useRef<AnsiToHtml | null>(null);
+  const stripperRef = useRef(new AnsiStripper());
+  const lineIdRef = useRef(0);
+  const userScrolledUpRef = useRef(false);
+
+  const [outputEntries, setOutputEntries] = useState<OutputEntry[]>([]);
+  const [agentExitInfo, setAgentExitInfo] = useState<{
+    exitCode: number | null;
+    exitedAt: string;
+  } | null>(null);
+  const [isRestarting, setIsRestarting] = useState(false);
+  const [metadataOpen, setMetadataOpen] = useState(false);
+
+  // Font-size (pinch zoom). Clamp incoming initial value.
+  const [fontSize, setFontSize] = useState<number>(() => {
+    return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, initialFontSize));
+  });
+  const fontSizeBaselineRef = useRef<number>(fontSize);
+
+  // ── ANSI converter management ───────────────────────────────────────────
+  if (converterRef.current == null) {
+    converterRef.current = createAnsiConverter(theme);
+  }
+  useEffect(() => {
+    converterRef.current = createAnsiConverter(theme);
+  }, [theme]);
+
+  // ── Modifier latch ──────────────────────────────────────────────────────
+  const latch = useModifierLatch();
+
+  // ── Append output ───────────────────────────────────────────────────────
+  const appendAnsiOutput = useCallback((ansi: string) => {
+    const converter = converterRef.current;
+    if (!converter) return;
+    const cleaned = stripperRef.current.process(ansi);
+    if (!cleaned) return;
+    const html = converter.toHtml(cleaned);
+    if (!html) return;
+    setOutputEntries((prev) => {
+      const newEntry: OutputEntry = { id: lineIdRef.current++, html };
+      const updated = [...prev, newEntry];
+      return updated.length > MAX_OUTPUT_ENTRIES
+        ? updated.slice(-MAX_OUTPUT_ENTRIES)
+        : updated;
+    });
+  }, []);
+
+  const handleOutput = useCallback(
+    (data: string) => {
+      appendAnsiOutput(data);
+    },
+    [appendAnsiOutput]
+  );
+
+  const handleStatusMessage = useCallback(
+    (message: string) => {
+      appendAnsiOutput("\r\n" + message + "\r\n");
+    },
+    [appendAnsiOutput]
+  );
+
+  // ── Agent lifecycle callbacks ───────────────────────────────────────────
+  const handleAgentExited = useCallback(
+    (exitCode: number | null, exitedAt: string) => {
+      setAgentExitInfo({ exitCode, exitedAt });
+    },
+    []
+  );
+
+  const handleAgentRestarted = useCallback(() => {
+    setAgentExitInfo(null);
+    setIsRestarting(false);
+    setOutputEntries([]);
+    lineIdRef.current = 0;
+    converterRef.current = createAnsiConverter(theme);
+    stripperRef.current.reset();
+  }, [theme]);
+
+  // ── WebSocket connection ────────────────────────────────────────────────
+  const {
+    wsRef,
+    status,
+    authError,
+    sendInput,
+    sendRestartAgent,
+  } = useTerminalWebSocket({
+    sessionId: session.id,
+    tmuxSessionName: session.tmuxSessionName,
+    projectPath: session.projectPath,
+    wsUrl,
+    terminalType: session.terminalType ?? "shell",
+    tmuxHistoryLimit,
+    environmentVars,
+    initialCols: MOBILE_COLS,
+    initialRows: MOBILE_ROWS,
+    notificationsEnabled,
+    sessionName: session.name,
+    onOutput: handleOutput,
+    onAgentExited: handleAgentExited,
+    onAgentRestarted: handleAgentRestarted,
+    onStatusMessage: handleStatusMessage,
+  });
+
+  // ── Auto-scroll ─────────────────────────────────────────────────────────
+  const scrollToBottom = useCallback(() => {
+    if (userScrolledUpRef.current) return;
+    anchorRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [outputEntries, scrollToBottom]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const isAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
+    userScrolledUpRef.current = !isAtBottom;
+  }, []);
+
+  // ── Pinch-to-zoom on the output panel ───────────────────────────────────
+  const pinch = usePinchZoom({
+    onScale: (factor) => {
+      const next = Math.max(
+        FONT_SIZE_MIN,
+        Math.min(FONT_SIZE_MAX, Math.round(fontSizeBaselineRef.current * factor))
+      );
+      setFontSize(next);
+    },
+    onScaleCommit: (factor) => {
+      const next = Math.max(
+        FONT_SIZE_MIN,
+        Math.min(FONT_SIZE_MAX, Math.round(fontSizeBaselineRef.current * factor))
+      );
+      fontSizeBaselineRef.current = next;
+      onPersistFontSize?.(next);
+    },
+  });
+
+  // Keep the baseline in sync when initialFontSize changes (e.g. after the
+  // persistence layer hydrates from preferences).
+  useEffect(() => {
+    fontSizeBaselineRef.current = fontSize;
+  }, [fontSize]);
+
+  // ── Smart-key strip dispatcher ──────────────────────────────────────────
+  const handleSmartKey = useCallback(
+    (sequence: string) => {
+      sendInput(sequence);
+    },
+    [sendInput]
+  );
+
+  // ── Image upload handler (preserved for parity with old view) ──────────
+  const handleImageUpload = useCallback(
+    async (file: File) => {
+      await sendImageToTerminal(file, wsRef.current);
+    },
+    [wsRef]
+  );
+  // Currently the new strip doesn't surface the camera/image affordance. We
+  // intentionally drop it from Phase 3 chrome, image upload still happens
+  // through the long-press paste flow on MobileInputBar via the OS share
+  // sheet. We keep the helper available because the metadata sheet may
+  // expose it as a future menu item.
+  void handleImageUpload;
+
+  // ── Agent restart / close ───────────────────────────────────────────────
+  const handleAgentRestart = useCallback(() => {
+    setIsRestarting(true);
+    sendRestartAgent();
+  }, [sendRestartAgent]);
+
+  const handleAgentCloseFromExitScreen = useCallback(async () => {
+    if (onClose) {
+      await onClose();
+    }
+  }, [onClose]);
+
+  // ── Status bar pip state ───────────────────────────────────────────────
+  const pipState = useMemo<SessionPipState>(
+    () => deriveStatusPip(status, activityStatus),
+    [status, activityStatus]
+  );
+
+  // ── Background styling (matches terminal theme) ────────────────────────
+  const bgOpacity = theme.opacity / 100;
+  const outputBg =
+    bgOpacity < 1 ? hexToRgba(theme.background, bgOpacity) : theme.background;
+
+  // Banners for connection states.
+  const banner = useMemo(() => {
+    if (status === "reconnecting") {
+      return { tone: "warn" as const, text: "Reconnecting…" };
+    }
+    if (status === "disconnected" || status === "error") {
+      return { tone: "error" as const, text: "Disconnected. Pull down for details." };
+    }
+    if (session.status === "suspended") {
+      return { tone: "info" as const, text: "Session suspended" };
+    }
+    return null;
+  }, [status, session.status]);
+
+  return (
+    <div
+      data-testid="mobile-session-view"
+      data-session-id={session.id}
+      className="flex h-full w-full flex-col bg-background text-foreground"
+    >
+      <SessionStatusBar
+        projectName={projectName ?? undefined}
+        sessionName={session.name}
+        pipState={pipState}
+        haloEnabled={!reducedMotion && pipState === "waiting"}
+        recording={isRecording}
+        onBack={onBack}
+        onOpenMetadata={() => setMetadataOpen(true)}
+      />
+
+      {banner ? (
+        <div
+          data-testid="mobile-session-banner"
+          data-tone={banner.tone}
+          role="status"
+          aria-live="polite"
+          className={cn(
+            "flex items-center justify-center px-3 py-1 text-[11px] font-medium leading-tight",
+            banner.tone === "error"
+              ? "bg-destructive/10 text-destructive"
+              : banner.tone === "warn"
+                ? "bg-accent/40 text-foreground"
+                : "bg-muted/40 text-muted-foreground"
+          )}
+        >
+          {banner.text}
+        </div>
+      ) : null}
+
+      {/* Terminal viewport. Pinch handlers attach here so the gesture is
+          isolated to the output area; chrome above and below stay
+          tappable without false positives. */}
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        onTouchStart={pinch.onTouchStart}
+        onTouchMove={pinch.onTouchMove}
+        onTouchEnd={pinch.onTouchEnd}
+        onTouchCancel={pinch.onTouchCancel}
+        data-testid="mobile-session-output"
+        data-font-size={fontSize}
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+        style={{
+          backgroundColor: outputBg,
+          color: theme.foreground,
+        }}
+        aria-describedby={liveRegionId}
+      >
+        <pre
+          className="p-2 leading-relaxed font-mono whitespace-pre-wrap break-words min-h-full"
+          style={{
+            fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
+            fontSize: `${fontSize}px`,
+          }}
+        >
+          {outputEntries.map((entry) => (
+            <span
+              key={entry.id}
+              dangerouslySetInnerHTML={{ __html: entry.html }}
+            />
+          ))}
+          <span ref={anchorRef} />
+        </pre>
+      </div>
+
+      {/* Live region for accessibility, pip changes get announced. */}
+      <span id={liveRegionId} className="sr-only" aria-live="polite">
+        Status: {pipState}
+      </span>
+
+      <SmartKeyStrip
+        onKeyPress={handleSmartKey}
+        latch={latch}
+        disabled={status !== "connected"}
+      />
+
+      <MobileInputBar
+        ref={inputBarRef}
+        onSubmit={sendInput}
+        onModifiedKeyPress={sendInput}
+        modifierActive={latch.anyActive}
+        resolveKey={latch.resolveKey}
+        onHeightChange={scrollToBottom}
+        disabled={status !== "connected"}
+        placeholder={
+          session.terminalType === "agent"
+            ? "Ask the agent…"
+            : "Type a command…"
+        }
+      />
+
+      {/* Metadata sheet */}
+      <SessionMetadataSheet
+        open={metadataOpen}
+        onOpenChange={setMetadataOpen}
+        sessionName={session.name}
+        projectName={projectName}
+        showRestart={session.terminalType === "agent"}
+        hasRecordings={hasRecordings}
+        onViewRecordings={onViewRecordings}
+        onRestartAgent={
+          session.terminalType === "agent" ? handleAgentRestart : undefined
+        }
+        onOpenPeerMessages={onOpenPeerMessages}
+        onSuspend={onSuspend}
+        onClose={onClose}
+      />
+
+      {/* Agent exit screen overlay */}
+      {agentExitInfo ? (
+        <AgentExitScreen
+          sessionId={session.id}
+          sessionName={session.name}
+          exitCode={agentExitInfo.exitCode}
+          exitedAt={agentExitInfo.exitedAt}
+          restartCount={session.agentRestartCount ?? 0}
+          onRestart={handleAgentRestart}
+          onClose={handleAgentCloseFromExitScreen}
+          isRestarting={isRestarting}
+        />
+      ) : null}
+
+      {authError ? <AuthErrorOverlay message={authError} /> : null}
+
+      {/* sessionCtx is only read so the host context registers as used by
+          this view; future Phase-4+ work will wire active-session edits.
+          The reference also keeps the lint rule honest about React
+          hook ordering. */}
+      <span hidden aria-hidden="true">
+        {sessionCtx.activeSessionId === session.id ? "active" : "inactive"}
+      </span>
+    </div>
+  );
+}

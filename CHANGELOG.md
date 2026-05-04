@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mobile redesign Phase 3: Single-session view** (remote-dev-6asf). The
+  mobile session route is now a full-bleed composition: a top
+  `SessionStatusBar` with project / session / status pip plus the canonical
+  attention-blue halo when an agent is waiting, a full-height terminal
+  viewport with two-finger pinch-to-zoom on the mono font (clamped 9–22px,
+  persisted), a horizontal `SmartKeyStrip` (Esc, Tab, Ctrl/Alt/Shift latches,
+  arrow keys with hold-to-repeat, common punctuation, dedicated Ctrl-C), and
+  the existing `MobileInputBar` (long-press = paste-without-execute is
+  preserved). The bottom tab bar is hidden while a session is open and
+  re-shows on swipe-up from the bottom edge. A pull-down metadata sheet
+  exposes Restart agent / Recordings / Peer messages / Suspend / Close.
+  Reconnect and suspend banners surface non-modally above the viewport.
+  Reduced-motion users get instant transitions and a static halo. New
+  `useModifierLatch` (one-shot vs sticky state machine, double-tap promotes
+  to sticky) and `usePinchZoom` hooks, plus `MobileSessionView`,
+  `SessionStatusBar`, `SmartKeyStrip`, and `SessionMetadataSheet` components.
+
 - **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
   home is now the Sessions tab. A header strip with a project switcher chip,
   a `+ New` pill, and a recent-projects rail sits above a session list with
