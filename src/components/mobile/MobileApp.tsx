@@ -25,14 +25,14 @@ import { useSessionContext } from "@/contexts/SessionContext";
 import { MobileShell } from "./MobileShell";
 import type { MobileTab } from "./BottomTabBar";
 import { SessionsTab } from "./sessions/SessionsTab";
+import { NotificationsTab } from "./notifications/NotificationsTab";
 import { MobileSessionView } from "./session/MobileSessionView";
 
 export interface MobileAppProps {
   isGitHubConnected: boolean;
 }
 
-const PLACEHOLDER_COPY: Record<Exclude<MobileTab, "sessions">, { title: string; phase: string }> = {
-  notifications: { title: "Notifications", phase: "Phase 4" },
+const PLACEHOLDER_COPY: Record<Exclude<MobileTab, "sessions" | "notifications">, { title: string; phase: string }> = {
   channels: { title: "Channels", phase: "Phase 5" },
   profile: { title: "Profile", phase: "Phase 6" },
 };
@@ -194,7 +194,8 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
       onTabChange={handleTabChange}
       forceHidden={sessionOpen}
       onRequestRevealTabBar={handleRequestRevealTabBar}
-      // When a session is open, the view manages its own scroll regions,       // remove the default bottom inset (which makes room for the tab bar)
+      // When a session is open, the view manages its own scroll regions,
+      // remove the default bottom inset (which makes room for the tab bar)
       // so the smart-key strip + input bar can sit flush at the bottom.
       bottomInsetClassName={sessionOpen ? "pb-0" : undefined}
     >
@@ -213,6 +214,8 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
         />
       ) : activeTab === "sessions" ? (
         <SessionsTab isGitHubConnected={isGitHubConnected} />
+      ) : activeTab === "notifications" ? (
+        <NotificationsTab onSwitchTab={handleTabChange} />
       ) : (
         <EmptyTabPlaceholder
           title={PLACEHOLDER_COPY[activeTab].title}

@@ -79,22 +79,39 @@ export function useIsMobileViewport(): boolean {
  * SSR-safe `prefers-reduced-motion` reader. Returns true when the user has
  * asked the OS to reduce non-essential motion. Components reading this should
  * fall back to instant transitions when it's true.
+ *
+ * Implemented via {@link useSyncExternalStore} so the FIRST client render
+ * already returns the real value (no `useState(false)` → effect flip), which
+ * eliminates the one-frame animation flash reduced-motion users would
+ * otherwise see on mount. SSR still returns `false` (the only safe default —
+ * we can't read `window.matchMedia` on the server), and React reconciles to
+ * the real value synchronously on the client's first render.
  */
+function reducedMotionSubscribe(callback: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
+  if (typeof mql.addEventListener === "function") {
+    mql.addEventListener("change", callback);
+    return () => mql.removeEventListener("change", callback);
+  }
+  // Older Safari fallback.
+  mql.addListener(callback);
+  return () => mql.removeListener(callback);
+}
+
+function reducedMotionGetSnapshot(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function reducedMotionGetServerSnapshot(): boolean {
+  return false;
+}
+
 export function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReduced(mql.matches);
-    update();
-    if (typeof mql.addEventListener === "function") {
-      mql.addEventListener("change", update);
-      return () => mql.removeEventListener("change", update);
-    }
-    mql.addListener(update);
-    return () => mql.removeListener(update);
-  }, []);
-
-  return reduced;
+  return useSyncExternalStore(
+    reducedMotionSubscribe,
+    reducedMotionGetSnapshot,
+    reducedMotionGetServerSnapshot
+  );
 }

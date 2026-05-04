@@ -24,22 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Mobile redesign Phase 3: Single-session view** (remote-dev-6asf). The
-  mobile session route is now a full-bleed composition: a top
-  `SessionStatusBar` with project / session / status pip plus the canonical
-  attention-blue halo when an agent is waiting, a full-height terminal
-  viewport with two-finger pinch-to-zoom on the mono font (clamped 9–22px,
-  persisted), a horizontal `SmartKeyStrip` (Esc, Tab, Ctrl/Alt/Shift latches,
-  arrow keys with hold-to-repeat, common punctuation, dedicated Ctrl-C), and
-  the existing `MobileInputBar` (long-press = paste-without-execute is
-  preserved). The bottom tab bar is hidden while a session is open and
-  re-shows on swipe-up from the bottom edge. A pull-down metadata sheet
-  exposes Restart agent / Recordings / Peer messages / Suspend / Close.
-  Reconnect and suspend banners surface non-modally above the viewport.
-  Reduced-motion users get instant transitions and a static halo. New
-  `useModifierLatch` (one-shot vs sticky state machine, double-tap promotes
-  to sticky) and `usePinchZoom` hooks, plus `MobileSessionView`,
-  `SessionStatusBar`, `SmartKeyStrip`, and `SessionMetadataSheet` components.
+- **Mobile redesign Phase 4: Notifications tab** (remote-dev-qvpf). The
+  mobile Notifications tab preserves the existing notification model and
+  the canonical attention-blue halo end-to-end. Filter chips (All / Unread
+  / Mentions) sticky to top, count pills on Unread / Mentions. Each row
+  uses a leading 12px (6px-radius) dot in `--color-signal-attention-solid`
+  for unread state instead of a colored side-stripe (DESIGN.md "No
+  Side-Stripe Rule"); the `notification-ring-pulse` halo renders on
+  `agent_waiting` rows and is suppressed under `prefers-reduced-motion`.
+  Swipe-left = delete with 5s undo toast (sonner); swipe-right = toggle
+  read; long-press opens an ActionSheet with Jump to session, Mark
+  read/unread, Mute project, and Dismiss. Tapping a row inline-expands the
+  body (no push navigation) and marks unread items read. Pull-to-refresh
+  uses the canonical absolutely-positioned indicator pattern. Empty state
+  copy is "Inbox zero" for the All filter; filter-specific empties for
+  Unread and Mentions. New files under
+  `src/components/mobile/notifications/` (`NotificationsTab`,
+  `MobileNotificationRow`, `NotificationFilterChips`,
+  `useNotificationSwipe`). Wired into `MobileApp.tsx`.
 
 - **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
   home is now the Sessions tab. A header strip with a project switcher chip,
