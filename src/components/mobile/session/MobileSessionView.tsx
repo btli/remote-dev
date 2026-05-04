@@ -28,6 +28,7 @@ import {
 import AnsiToHtml from "ansi-to-html";
 
 import { cn } from "@/lib/utils";
+import { AnsiStripper } from "@/lib/terminal/ansi-stripper";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useTerminalWebSocket } from "@/hooks/useTerminalWebSocket";
@@ -59,49 +60,6 @@ const DEFAULT_FONT_SIZE = 12;
 interface OutputEntry {
   id: number;
   html: string;
-}
-
-/**
- * Stateful ANSI escape stripper, mirrors MobileTerminalView's stripper so
- * the output rendering behaves identically. Kept as a private class here
- * because exporting it would couple us to that view's lifecycle.
- */
-class AnsiStripper {
-  private pending = "";
-  private static readonly MAX_PENDING = 64;
-
-  reset(): void {
-    this.pending = "";
-  }
-
-  process(data: string): string {
-    let input = this.pending + data;
-    this.pending = "";
-
-    const lastEsc = input.lastIndexOf("\x1b");
-    if (lastEsc !== -1) {
-      const tail = input.slice(lastEsc);
-      const isComplete =
-        /^\x1b\[[0-9;?]*[A-Za-z]/.test(tail) ||
-        /^\x1b\].*(?:\x07|\x1b\\)/.test(tail) ||
-        (/^\x1b[^[\]()]/.test(tail) && tail.length >= 2) ||
-        /^\x1b[()]./.test(tail);
-
-      if (!isComplete) {
-        this.pending = tail.length <= AnsiStripper.MAX_PENDING ? tail : "";
-        input = input.slice(0, lastEsc);
-      }
-    }
-
-    return input
-      .replace(/\x1b\[[0-9;?]*[A-HJ-Za-lp-z]/g, "")
-      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-      .replace(/\x1b[PX^_][^\x1b]*\x1b\\/g, "")
-      .replace(/\x1b[()][A-Z0-9]/g, "")
-      .replace(/\x1b(?![\[(\])])[^\x1b]/g, "")
-      .replace(/\r(?!\n)/g, "")
-      .replace(/\x1b(?![\[(\]()])/g, "");
-  }
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -442,7 +400,16 @@ export function MobileSessionView({
 
       {/* Terminal viewport. Pinch handlers attach here so the gesture is
           isolated to the output area; chrome above and below stay
-          tappable without false positives. */}
+          tappable without false positives.
+
+          touchAction: "pan-y" tells the browser we own pinch (and any
+          horizontal pan), but allow native vertical scroll. Without this,
+          iOS Safari runs its own pinch-to-zoom in parallel with our font
+          scaling, producing a double-zoom effect. React's synthetic touch
+          listeners are passive, so they cannot preventDefault() on
+          touchmove — declarative `touch-action` is the only reliable way
+          to suppress the browser gesture. Do not change to "none": that
+          breaks vertical scroll-back through scrollback history. */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
@@ -456,6 +423,7 @@ export function MobileSessionView({
         style={{
           backgroundColor: outputBg,
           color: theme.foreground,
+          touchAction: "pan-y",
         }}
         aria-describedby={liveRegionId}
       >

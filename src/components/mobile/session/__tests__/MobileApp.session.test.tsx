@@ -242,6 +242,76 @@ describe("MobileApp single-session view (Phase 3)", () => {
     expect(barAfter.getAttribute("data-state")).toBe("visible");
   });
 
+  it("auto-collapses the revealed tab bar after the inactivity timeout", () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession();
+      sessionMockState.sessions = [session];
+      sessionMockState.activeSessionId = session.id;
+      renderApp();
+      const bar = screen.getByTestId("mobile-bottom-tab-bar");
+      expect(bar.getAttribute("data-state")).toBe("hidden");
+
+      const innerHeight = window.innerHeight;
+      const startY = innerHeight - 8;
+      const endY = innerHeight - 80;
+
+      act(() => {
+        const startTouch = new Touch({
+          identifier: 1,
+          target: window as unknown as EventTarget,
+          clientX: 100,
+          clientY: startY,
+        });
+        window.dispatchEvent(
+          new TouchEvent("touchstart", {
+            touches: [startTouch],
+            targetTouches: [startTouch],
+            changedTouches: [startTouch],
+            bubbles: true,
+          })
+        );
+        const moveTouch = new Touch({
+          identifier: 1,
+          target: window as unknown as EventTarget,
+          clientX: 100,
+          clientY: endY,
+        });
+        window.dispatchEvent(
+          new TouchEvent("touchmove", {
+            touches: [moveTouch],
+            targetTouches: [moveTouch],
+            changedTouches: [moveTouch],
+            bubbles: true,
+          })
+        );
+        window.dispatchEvent(
+          new TouchEvent("touchend", {
+            touches: [],
+            targetTouches: [],
+            changedTouches: [],
+            bubbles: true,
+          })
+        );
+      });
+
+      expect(
+        screen.getByTestId("mobile-bottom-tab-bar").getAttribute("data-state")
+      ).toBe("visible");
+
+      // Advance past the auto-collapse timeout (3500ms — see MobileApp).
+      act(() => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      expect(
+        screen.getByTestId("mobile-bottom-tab-bar").getAttribute("data-state")
+      ).toBe("hidden");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clearing the active session returns the SessionsTab", () => {
     const session = makeSession();
     sessionMockState.sessions = [session];

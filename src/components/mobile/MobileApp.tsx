@@ -16,7 +16,7 @@
  * terminal.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
@@ -38,6 +38,9 @@ const PLACEHOLDER_COPY: Record<Exclude<MobileTab, "sessions">, { title: string; 
 };
 
 const FONT_SIZE_STORAGE_KEY = "remote-dev:mobile:terminal-font-size";
+
+/** ms the bottom tab bar stays revealed after a swipe-up before auto-collapsing. */
+const TAB_BAR_REVEAL_DURATION_MS = 3500;
 
 function readPersistedFontSize(): number | undefined {
   if (typeof window === "undefined") return undefined;
@@ -61,9 +64,50 @@ function writePersistedFontSize(size: number): void {
   }
 }
 
+/**
+ * Hydration-safe persisted font size reader.
+ *
+ * useSyncExternalStore is the React-blessed way to read browser-only state
+ * during render: getServerSnapshot returns `undefined` so the SSR + first-
+ * client-render markup match (no hydration mismatch), then React tears
+ * down + re-runs with the real localStorage value on the client.
+ *
+ * No subscribe, the value never changes mid-session for a single MobileApp
+ * mount — writes happen via writePersistedFontSize but the consumer
+ * (MobileSessionView) holds its own state and ignores prop changes after
+ * mount, so we don't bother notifying.
+ */
+function subscribePersistedFontSize(): () => void {
+  return () => {};
+}
+function usePersistedFontSize(): number | undefined {
+  return useSyncExternalStore(
+    subscribePersistedFontSize,
+    readPersistedFontSize,
+    () => undefined
+  );
+}
+
 export function MobileApp({ isGitHubConnected }: MobileAppProps) {
   const [activeTab, setActiveTab] = useState<MobileTab>("sessions");
   const [tabBarRevealed, setTabBarRevealed] = useState(false);
+  // Persisted terminal font size, hydration-safe (returns undefined during
+  // SSR + first client render, then real value once useSyncExternalStore
+  // resolves on the client).
+  const persistedFontSize = usePersistedFontSize();
+
+  // When the bottom tab bar is revealed via the bottom-edge swipe, auto-
+  // collapse it after a short delay so the session view goes back to
+  // full-bleed. Only runs while a session is open (which is when the bar
+  // is hidden in the first place).
+  useEffect(() => {
+    if (!tabBarRevealed) return;
+    const t = window.setTimeout(
+      () => setTabBarRevealed(false),
+      TAB_BAR_REVEAL_DURATION_MS
+    );
+    return () => window.clearTimeout(t);
+  }, [tabBarRevealed]);
 
   const sessionCtx = useSessionContext();
   const projectTree = useProjectTree();
@@ -133,7 +177,7 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
     []
   );
 
-  const initialFontSize = useMemo(() => readPersistedFontSize(), []);
+  const initialFontSize = persistedFontSize;
 
   return (
     <MobileShell
