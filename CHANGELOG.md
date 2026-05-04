@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mobile redesign Phase 6: Auth flow + Profile tab** (remote-dev-lud6).
+  Polishes the post-Cloudflare-Access landing into a calm, two-step flow:
+  a `MobileLockScreen` interstitial ("Authenticating via Cloudflare Access")
+  while the session resolves, then a one-time `MobileWelcomeScreen` with a
+  signed-in-as line, an optional Connect-GitHub CTA, and a Skip-for-now
+  button. First-run state is persisted via a localStorage flag
+  (`remote-dev:mobile:welcome-seen:v1`) so subsequent visits jump straight
+  to Sessions. The GitHub OAuth callback's `?github=connected` query param
+  now surfaces a one-shot success toast on the Sessions tab and is stripped
+  from the URL on read. The Profile tab ships as a pushed-row stack
+  (Account, GitHub accounts, Projects, Agent profiles, Secrets, Ports,
+  Trash, Settings, About, Sign out) with a tab-local navigation stack —
+  no modals for routine settings, every row pushes a sub-screen, and Sign
+  out confirms via an `ActionSheet` (not a dialog). Sub-screens beyond
+  About are intentionally stubbed in this build with a TODO note pointing
+  at the desktop component to port; the navigation chrome and primary
+  flows are real.
 - **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
   home is now the Sessions tab. A header strip with a project switcher chip,
   a `+ New` pill, and a recent-projects rail sits above a session list with
