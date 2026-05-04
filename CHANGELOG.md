@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Phase 3 mobile session view: adversarial-review fixes** (PR #220). Replaced
+  the saturated `text-green-400 bg-green-400/20` long-press indicator on
+  `MobileInputBar` with the token-based `--color-signal-running` to honor the
+  DESIGN.md achromatic-default rule. The bottom tab bar now auto-collapses
+  3.5s after a swipe-up reveal so the session view returns to full-bleed
+  without the user having to dismiss it manually. The terminal viewport
+  declares `touch-action: pan-y` to suppress iOS Safari's native pinch-to-zoom
+  while preserving vertical scroll, eliminating the double-zoom on font
+  resize. Persisted font size is now read via `useSyncExternalStore` to
+  prevent a hydration mismatch under React 19 / Next.js 16. Extracted the
+  shared `AnsiStripper` to `src/lib/terminal/ansi-stripper.ts` so
+  `MobileTerminalView` and the new `MobileSessionView` can't drift apart.
+
 ### Added
+
+- **Mobile redesign Phase 3: Single-session view** (remote-dev-6asf). The
+  mobile session route is now a full-bleed composition: a top
+  `SessionStatusBar` with project / session / status pip plus the canonical
+  attention-blue halo when an agent is waiting, a full-height terminal
+  viewport with two-finger pinch-to-zoom on the mono font (clamped 9–22px,
+  persisted), a horizontal `SmartKeyStrip` (Esc, Tab, Ctrl/Alt/Shift latches,
+  arrow keys with hold-to-repeat, common punctuation, dedicated Ctrl-C), and
+  the existing `MobileInputBar` (long-press = paste-without-execute is
+  preserved). The bottom tab bar is hidden while a session is open and
+  re-shows on swipe-up from the bottom edge. A pull-down metadata sheet
+  exposes Restart agent / Recordings / Peer messages / Suspend / Close.
+  Reconnect and suspend banners surface non-modally above the viewport.
+  Reduced-motion users get instant transitions and a static halo. New
+  `useModifierLatch` (one-shot vs sticky state machine, double-tap promotes
+  to sticky) and `usePinchZoom` hooks, plus `MobileSessionView`,
+  `SessionStatusBar`, `SmartKeyStrip`, and `SessionMetadataSheet` components.
 
 - **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
   home is now the Sessions tab. A header strip with a project switcher chip,
