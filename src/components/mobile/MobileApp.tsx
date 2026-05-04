@@ -63,6 +63,7 @@ import { toast } from "sonner";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useChannelContextOptional } from "@/contexts/ChannelContext";
+import { useTerminalWsUrl } from "@/hooks/useTerminalWsUrl";
 
 import { MobileShell } from "./MobileShell";
 import type { MobileTab } from "./BottomTabBar";
@@ -213,6 +214,10 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
 
   const sessionCtx = useSessionContext();
   const projectTree = useProjectTree();
+  // Shared resolver with SessionManager — without an explicit URL,
+  // MobileSessionView falls back to `ws://localhost:3001`, which is wrong
+  // on prod and on the standard 6002 dev port.
+  const wsUrl = useTerminalWsUrl();
 
   const activeSession = useMemo(() => {
     const id = sessionCtx.activeSessionId;
@@ -366,6 +371,7 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
           session={activeSession}
           projectName={projectName}
           activityStatus={sessionCtx.getAgentActivityStatus(activeSession.id)}
+          wsUrl={wsUrl}
           isRecording={false /* Phase 3 ships read-only; recording UI is Phase 6 */}
           hasRecordings={false}
           initialFontSize={initialFontSize}

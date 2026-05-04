@@ -52,6 +52,7 @@ import { cn } from "@/lib/utils";
 import type { TerminalWithKeyboardRef } from "@/components/terminal/TerminalWithKeyboard";
 import type { AgentActivityStatus } from "@/types/terminal-type";
 import { useAgentNotifications } from "@/hooks/useAgentNotifications";
+import { useTerminalWsUrl } from "@/hooks/useTerminalWsUrl";
 import { NotificationPanel } from "@/components/notifications/NotificationPanel";
 import { useNotificationContext, hydrateNotification } from "@/contexts/NotificationContext";
 import { dismissToastsForSession } from "@/lib/notification-toast";
@@ -218,19 +219,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const sessionsRef = useRef(sessions);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
 
-  // Compute WebSocket URL based on current location (supports cloudflared tunnels)
-  const wsUrl = useMemo(() => {
-    if (typeof window === "undefined") return "ws://localhost:3001";
-    const { protocol, hostname, port } = window.location;
-    const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
-    if (isLocalhost) {
-      // Local development: use terminal server port directly
-      return `ws://localhost:${process.env.NEXT_PUBLIC_TERMINAL_PORT || "3001"}`;
-    }
-    // Remote access via tunnel: use /ws path (cloudflared routes to terminal server)
-    const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
-    return `${wsProtocol}//${hostname}${port ? `:${port}` : ""}/ws`;
-  }, []);
+  // Terminal WebSocket URL (handles localhost dev + cloudflared tunnels).
+  // Shared with MobileApp via `useTerminalWsUrl`.
+  const wsUrl = useTerminalWsUrl();
 
   // Note: No longer need refs for keyboard handler - useEffectEvent handles this
 
