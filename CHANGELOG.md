@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Desktop terminal initial fontSize/fontFamily race**
+  (`remote-dev-3gtr`). The xterm.js terminal stayed at the default font size
+  (14px) on first mount when `PreferencesContext` resolved during the async
+  init window (xterm/addon imports + WebGL load). The font-update effect
+  re-fired with the new values but bailed because `xtermRef.current` was
+  still null, and no later effect re-applied them. Switching to another
+  session and back masked the bug because the second mount saw the loaded
+  preferences synchronously. Fixed by reconciling
+  `terminal.options.fontSize`/`fontFamily` against the synchronized refs
+  immediately after `xtermRef.current = terminal`, closing the race window.
 - **Phase 3 mobile session view: adversarial-review fixes** (PR #220). Replaced
   the saturated `text-green-400 bg-green-400/20` long-press indicator on
   `MobileInputBar` with the token-based `--color-signal-running` to honor the
