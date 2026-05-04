@@ -12,7 +12,7 @@
  * Profile remain placeholders for later phases.
  */
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { MobileShell } from "./MobileShell";
 import type { MobileTab } from "./BottomTabBar";
@@ -40,10 +40,31 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
   const channels = useChannelContextOptional();
   const channelsBadge = channels?.totalUnreadCount ?? 0;
 
+  // While a thread takeover is open inside the Channels tab the bottom tab
+  // bar would otherwise paint over the reply composer (both render at z-40
+  // before the takeover bumped to z-50). Force the bar hidden so the modal
+  // stack reads top-to-bottom: takeover > channel view > shell. We also
+  // dismiss the thread on tab change so it doesn't get stranded behind a
+  // sibling tab.
+  const openThreadId = channels?.openThreadId ?? null;
+  const closeThread = channels?.closeThread;
+  const tabBarForceHidden = activeTab === "channels" && openThreadId != null;
+
+  const handleTabChange = useCallback(
+    (tab: MobileTab) => {
+      if (tab !== activeTab && openThreadId && closeThread) {
+        closeThread();
+      }
+      setActiveTab(tab);
+    },
+    [activeTab, openThreadId, closeThread]
+  );
+
   return (
     <MobileShell
       activeTab={activeTab}
-      onTabChange={setActiveTab}
+      onTabChange={handleTabChange}
+      forceHidden={tabBarForceHidden}
       badges={channelsBadge > 0 ? { channels: channelsBadge } : undefined}
     >
       {activeTab === "sessions" ? (

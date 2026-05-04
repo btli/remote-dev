@@ -16,7 +16,7 @@
  * needed.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, MessageSquarePlus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,7 +25,6 @@ import { useChannelContext } from "@/contexts/ChannelContext";
 import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
-import type { Channel } from "@/types/channels";
 
 import { BottomSheet } from "../common/BottomSheet";
 
@@ -41,9 +40,14 @@ export function DmPickerSheet({ open, onOpenChange, onOpenDm }: DmPickerSheetPro
   const projectId = activeProject.folderId;
   const { peers } = usePeerChatContext();
   const { sessions, activeSessionId } = useSessionContext();
-  const { setActiveChannelId, addChannel } = useChannelContext();
+  const { setActiveChannelId, refreshChannels } = useChannelContext();
 
   const [pendingTargetId, setPendingTargetId] = useState<string | null>(null);
+  // Per-request AbortController so that closing the sheet mid-request
+  // cancels the in-flight POST. Without this, a stale resolution would
+  // call setActiveChannelId/onOpenDm AFTER the user dismissed the picker
+  // and yank them into a DM they no longer wanted to open.
+  const controllerRef = useRef<AbortController | null>(null);
 
   // Find the user's "from" session: prefer the active session if it's in this
   // project, otherwise the first session in the project.
@@ -62,9 +66,30 @@ export function DmPickerSheet({ open, onOpenChange, onOpenDm }: DmPickerSheetPro
     [peers, fromSessionId]
   );
 
+  // Cancel any in-flight DM POST when the sheet closes (or the component
+  // unmounts). The success/failure paths below also bail out when the
+  // signal is aborted to avoid mutating channel state after the user
+  // dismissed the picker.
+  useEffect(() => {
+    if (!open && controllerRef.current) {
+      controllerRef.current.abort();
+      controllerRef.current = null;
+    }
+  }, [open]);
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+    };
+  }, []);
+
   const handlePick = useCallback(
     async (targetSessionId: string) => {
       if (!projectId || !fromSessionId) return;
+      // Abort any earlier in-flight request (rapid double-tap).
+      controllerRef.current?.abort();
+      const controller = new AbortController();
+      controllerRef.current = controller;
       setPendingTargetId(targetSessionId);
       try {
         const resp = await fetch("/api/channels/dm", {
@@ -75,24 +100,42 @@ export function DmPickerSheet({ open, onOpenChange, onOpenDm }: DmPickerSheetPro
             targetSessionId,
             fromSessionId,
           }),
+          signal: controller.signal,
         });
+        if (controller.signal.aborted) return;
         if (!resp.ok) {
           const data = (await resp.json().catch(() => ({}))) as { error?: string };
           throw new Error(data.error ?? "Failed to open DM");
         }
-        const data = (await resp.json()) as { channel: Channel };
-        // Make the channel show up immediately in the list & become active.
-        addChannel(data.channel);
+        const data = (await resp.json()) as { channel: { id: string } };
+        if (controller.signal.aborted) return;
+        // Refresh the full channel list so the new DM lands in the right
+        // group with a normalized shape (unreadCount, folderId, etc.).
+        // The /api/channels/dm endpoint returns the raw DB row which is
+        // missing those fields — passing it directly into addChannel would
+        // produce a NaN totalUnreadCount and a "Channel unavailable" route
+        // when the Direct Messages group hasn't been hydrated yet.
+        await refreshChannels();
+        if (controller.signal.aborted) return;
         setActiveChannelId(data.channel.id);
         onOpenChange(false);
         onOpenDm(data.channel.id);
       } catch (err) {
+        if (
+          (err instanceof DOMException && err.name === "AbortError") ||
+          controller.signal.aborted
+        ) {
+          return;
+        }
         toast.error(err instanceof Error ? err.message : "Failed to open DM");
       } finally {
+        if (controllerRef.current === controller) {
+          controllerRef.current = null;
+        }
         setPendingTargetId(null);
       }
     },
-    [projectId, fromSessionId, addChannel, setActiveChannelId, onOpenChange, onOpenDm]
+    [projectId, fromSessionId, refreshChannels, setActiveChannelId, onOpenChange, onOpenDm]
   );
 
   const sheetTitle = "Direct message";

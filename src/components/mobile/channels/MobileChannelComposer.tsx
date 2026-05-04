@@ -33,6 +33,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Send } from "lucide-react";
+import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 
@@ -40,7 +41,13 @@ const LONG_PRESS_MS = 400;
 const PEEK_DURATION_MS = 600;
 
 export interface MobileChannelComposerProps {
-  /** Submit handler. Receives trimmed body. Returning a promise blocks input. */
+  /**
+   * Submit handler. Receives the trimmed body. The composer optimistically
+   * clears the textarea before awaiting the result, but if the returned
+   * promise REJECTS the draft is restored and an error toast is shown so
+   * the user can retry without retyping. Returning normally (or resolving
+   * a non-rejection) is treated as success.
+   */
   onSubmit: (text: string) => void | Promise<unknown>;
   disabled?: boolean;
   placeholder?: string;
@@ -88,11 +95,23 @@ export const MobileChannelComposer = forwardRef<
     if (disabled || busy) return;
     const trimmed = valueRef.current.trim();
     if (!trimmed) return;
+    // Optimistically clear the input so the keyboard/textarea reflects a
+    // clean send, but remember the draft so we can restore it if the
+    // submit rejects. Without restoration the user loses what they typed
+    // when the network or server fails.
+    const draft = valueRef.current;
     setValue("");
     resetHeight();
     void Promise.resolve(onSubmit(trimmed)).catch(() => {
-      // Caller surfaces errors; we don't restore the draft because the
-      // failure path normally produces a toast plus removed optimistic row.
+      setValue(draft);
+      // Resize back to the draft's content height on the next paint.
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.style.height = "auto";
+        ta.style.height = `${ta.scrollHeight}px`;
+      });
+      toast.error("Failed to send. Try again.");
     });
   }, [disabled, busy, onSubmit, resetHeight]);
 

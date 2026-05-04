@@ -19,7 +19,7 @@ const channelState = {
   activeChannelMessages: [] as ChannelMessage[],
   openThreadId: null as string | null,
   threadMessages: [] as ChannelMessage[],
-  sendMessage: vi.fn().mockResolvedValue(undefined),
+  sendMessage: vi.fn().mockResolvedValue({ ok: true }),
 };
 
 vi.mock("@/contexts/ChannelContext", () => ({
@@ -93,6 +93,80 @@ describe("MobileThreadTakeover", () => {
       "mobile-channel-composer-textarea"
     ) as HTMLTextAreaElement;
     expect(textarea.disabled).toBe(true);
+  });
+
+  it("does NOT auto-scroll when the user has scrolled up to read older replies", async () => {
+    channelState.openThreadId = "m1";
+    channelState.activeChannelMessages = [baseMessage({ id: "m1" })];
+    channelState.threadMessages = [baseMessage({ id: "r1" })];
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+
+    const { rerender } = render(
+      <MobileThreadTakeover open={true} onClose={() => {}} />
+    );
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    });
+    const initialCalls = scrollSpy.mock.calls.length;
+
+    // Simulate the user scrolling up. We dispatch onScroll with metrics
+    // putting us > 100px from the bottom, which flips isUserScrolledRef.
+    const takeover = screen.getByTestId("mobile-thread-takeover");
+    const scrollRegion = takeover.querySelector(
+      "div.flex-1.overflow-y-auto"
+    ) as HTMLDivElement;
+    expect(scrollRegion).toBeTruthy();
+    // happy-dom doesn't compute layout; stub the metrics so the handler
+    // sees us as 200px above the bottom.
+    Object.defineProperty(scrollRegion, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollRegion, "scrollTop", { value: 200, configurable: true });
+    Object.defineProperty(scrollRegion, "clientHeight", { value: 600, configurable: true });
+    fireEvent.scroll(scrollRegion);
+
+    // A new peer reply arrives — DESPITE the length increase, auto-scroll
+    // must stay off because the user is reading older replies.
+    channelState.threadMessages = [
+      baseMessage({ id: "r1" }),
+      baseMessage({ id: "r2", isUserMessage: false }),
+    ];
+    rerender(<MobileThreadTakeover open={true} onClose={() => {}} />);
+    expect(scrollSpy.mock.calls.length).toBe(initialCalls);
+
+    // The "Jump to latest" pill should appear now.
+    expect(screen.getByTestId("mobile-thread-jump-to-latest")).toBeTruthy();
+  });
+
+  it("auto-scrolls anyway when the new reply is the local user's optimistic message", async () => {
+    channelState.openThreadId = "m1";
+    channelState.activeChannelMessages = [baseMessage({ id: "m1" })];
+    channelState.threadMessages = [baseMessage({ id: "r1" })];
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+    const { rerender } = render(
+      <MobileThreadTakeover open={true} onClose={() => {}} />
+    );
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    });
+    const baseline = scrollSpy.mock.calls.length;
+
+    // Mark the user as scrolled up.
+    const takeover = screen.getByTestId("mobile-thread-takeover");
+    const scrollRegion = takeover.querySelector(
+      "div.flex-1.overflow-y-auto"
+    ) as HTMLDivElement;
+    Object.defineProperty(scrollRegion, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollRegion, "scrollTop", { value: 200, configurable: true });
+    Object.defineProperty(scrollRegion, "clientHeight", { value: 600, configurable: true });
+    fireEvent.scroll(scrollRegion);
+
+    // The user posts a reply (optimistic id starts with "opt-") — we DO
+    // scroll, because that's their explicit intent.
+    channelState.threadMessages = [
+      baseMessage({ id: "r1" }),
+      baseMessage({ id: "opt-pending", isUserMessage: true }),
+    ];
+    rerender(<MobileThreadTakeover open={true} onClose={() => {}} />);
+    expect(scrollSpy.mock.calls.length).toBeGreaterThan(baseline);
   });
 
   it("auto-scrolls only when threadMessages.length increases", async () => {

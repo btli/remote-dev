@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
 
 import type { ChannelMessage, ChannelGroup } from "@/types/channels";
 
@@ -17,7 +17,7 @@ const channelState = {
   groups: [] as ChannelGroup[],
   activeChannelId: null as string | null,
   activeChannelMessages: [] as ChannelMessage[],
-  sendMessage: vi.fn().mockResolvedValue(undefined),
+  sendMessage: vi.fn().mockResolvedValue({ ok: true }),
   markChannelRead: vi.fn().mockResolvedValue(undefined),
   openThread: vi.fn(),
 };
@@ -107,6 +107,32 @@ describe("MobileChannelView", () => {
     channelState.activeChannelMessages = [message({ id: "opt-pending" })];
     render(<MobileChannelView onBack={() => {}} onOpenThread={() => {}} />);
     expect(channelState.markChannelRead).not.toHaveBeenCalled();
+  });
+
+  it("opens an action sheet on long-press and routes 'Reply in thread' through openThread", () => {
+    vi.useFakeTimers();
+    channelState.activeChannelMessages = [message({ id: "m1", body: "hello" })];
+    const onOpenThread = vi.fn();
+    render(<MobileChannelView onBack={() => {}} onOpenThread={onOpenThread} />);
+    const wrap = screen.getByTestId("mobile-channel-message-wrap");
+    // Begin a press; useLongPress fires after ~450ms.
+    fireEvent.pointerDown(wrap, { clientX: 0, clientY: 0, button: 0 });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    fireEvent.pointerUp(wrap);
+    // Action sheet is rendered; its menu items live inside the portal.
+    const sheet = screen.getByTestId("mobile-bottom-sheet");
+    expect(sheet).toBeTruthy();
+    // Tap "Reply in thread" — should call openThread + onOpenThread.
+    const replyItem = sheet.querySelector(
+      '[data-action-id="reply"]'
+    ) as HTMLButtonElement;
+    expect(replyItem).toBeTruthy();
+    fireEvent.click(replyItem);
+    expect(channelState.openThread).toHaveBeenCalledWith("m1");
+    expect(onOpenThread).toHaveBeenCalledWith("m1");
+    vi.useRealTimers();
   });
 
   it("renders an empty channel as composer + header only (no greeter)", () => {

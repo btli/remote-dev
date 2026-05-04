@@ -6,10 +6,19 @@
  * keeps the draft in the textarea instead of submitting.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { render, screen, fireEvent, cleanup, act, waitFor } from "@testing-library/react";
+
+const toastError = vi.fn();
+vi.mock("sonner", () => ({
+  toast: { error: (msg: string) => toastError(msg) },
+}));
 
 import { MobileChannelComposer } from "../MobileChannelComposer";
+
+beforeEach(() => {
+  toastError.mockReset();
+});
 
 afterEach(() => {
   cleanup();
@@ -82,6 +91,24 @@ describe("MobileChannelComposer", () => {
     // Long-press swallowed the click — onSubmit NOT called, draft preserved.
     expect(onSubmit).not.toHaveBeenCalled();
     expect(textarea.value).toBe("draft prompt");
+  });
+
+  it("restores the draft and toasts when onSubmit rejects", async () => {
+    const onSubmit = vi.fn().mockRejectedValue(new Error("network down"));
+    render(<MobileChannelComposer onSubmit={onSubmit} />);
+    const textarea = screen.getByTestId(
+      "mobile-channel-composer-textarea"
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "important draft" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    // Draft cleared optimistically.
+    expect(textarea.value).toBe("");
+    // After the rejection settles, the draft is restored and an error
+    // toast is shown so the user can retry.
+    await waitFor(() => {
+      expect(textarea.value).toBe("important draft");
+      expect(toastError).toHaveBeenCalledWith("Failed to send. Try again.");
+    });
   });
 
   it("send button is disabled while textarea is empty", () => {

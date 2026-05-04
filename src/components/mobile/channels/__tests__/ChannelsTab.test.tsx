@@ -49,7 +49,7 @@ const channelState = {
   activeChannelMessages: [] as ChannelMessage[],
   totalUnreadCount: 0,
   loading: false,
-  sendMessage: vi.fn().mockResolvedValue(undefined),
+  sendMessage: vi.fn().mockResolvedValue({ ok: true }),
   markChannelRead: vi.fn().mockResolvedValue(undefined),
   openThread: vi.fn(),
   closeThread: vi.fn(() => {

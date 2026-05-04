@@ -20,15 +20,19 @@
  *    big illustrated empty state.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Hash, Lock } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, Copy, Hash, Lock, MessageSquare } from "lucide-react";
+import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { useChannelContext } from "@/contexts/ChannelContext";
 import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { ChannelMessageRow } from "@/components/channels/ChannelMessageRow";
+import type { ChannelMessage } from "@/types/channels";
 
 import { MobileChannelComposer } from "./MobileChannelComposer";
+import { ActionSheet } from "../common/ActionSheet";
+import { useLongPress } from "../sessions/useSwipeAction";
 
 const SCROLL_THRESHOLD_PX = 50;
 
@@ -53,6 +57,11 @@ export function MobileChannelView({ onBack, onOpenThread }: MobileChannelViewPro
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isUserScrolled, setIsUserScrolled] = useState(false);
+  // Long-press surfaces an ActionSheet ("Reply in thread", "Copy") since
+  // ChannelMessageRow's hover-only reply chip is unreachable on touch
+  // devices. We track the target message rather than just its id so the
+  // sheet can offer message-aware actions (Copy uses the body).
+  const [actionMessage, setActionMessage] = useState<ChannelMessage | null>(null);
 
   const activeChannel = useMemo(
     () =>
@@ -103,7 +112,13 @@ export function MobileChannelView({ onBack, onOpenThread }: MobileChannelViewPro
   const handleSend = useCallback(
     async (text: string) => {
       setIsUserScrolled(false);
-      await sendMessage(text);
+      const result = await sendMessage(text);
+      // Reject so the composer can restore the user's draft + toast.
+      if (!result.ok) {
+        throw result.error instanceof Error
+          ? result.error
+          : new Error("Failed to send");
+      }
     },
     [sendMessage]
   );
@@ -116,6 +131,29 @@ export function MobileChannelView({ onBack, onOpenThread }: MobileChannelViewPro
     },
     [openThread, onOpenThread]
   );
+
+  const handleLongPressMessage = useCallback((message: ChannelMessage) => {
+    setActionMessage(message);
+  }, []);
+
+  const handleCopyMessage = useCallback(async () => {
+    const body = actionMessage?.body;
+    if (!body) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(body);
+      }
+    } catch {
+      // Clipboard access can fail on insecure contexts; surface a toast
+      // rather than silently swallow.
+      toast.error("Couldn't copy to clipboard");
+    }
+  }, [actionMessage]);
+
+  const handleReplyFromAction = useCallback(() => {
+    if (!actionMessage) return;
+    handleReplyClick(actionMessage.id);
+  }, [actionMessage, handleReplyClick]);
 
   if (!activeChannel) {
     // Defensive: parent shouldn't render us without an active channel, but if
@@ -168,13 +206,18 @@ export function MobileChannelView({ onBack, onOpenThread }: MobileChannelViewPro
         data-testid="mobile-channel-view-stream"
       >
         {activeChannelMessages.map((msg) => (
-          <ChannelMessageRow
+          <LongPressMessage
             key={msg.id}
             message={msg}
-            peerNameMap={peerNameMap}
-            onReplyClick={handleReplyClick}
-            isThreadReply={false}
-          />
+            onLongPress={handleLongPressMessage}
+          >
+            <ChannelMessageRow
+              message={msg}
+              peerNameMap={peerNameMap}
+              onReplyClick={handleReplyClick}
+              isThreadReply={false}
+            />
+          </LongPressMessage>
         ))}
         <div ref={messagesEndRef} />
       </div>
@@ -202,6 +245,55 @@ export function MobileChannelView({ onBack, onOpenThread }: MobileChannelViewPro
           placeholder={`Message ${display}`}
         />
       </div>
+
+      <ActionSheet
+        open={actionMessage != null}
+        onOpenChange={(open) => {
+          if (!open) setActionMessage(null);
+        }}
+        title="Message actions"
+        items={[
+          {
+            id: "reply",
+            label: "Reply in thread",
+            icon: <MessageSquare className="h-4 w-4" />,
+            onSelect: handleReplyFromAction,
+          },
+          {
+            id: "copy",
+            label: "Copy message",
+            icon: <Copy className="h-4 w-4" />,
+            onSelect: handleCopyMessage,
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+/**
+ * Wrap a message row in a long-press surface so touch users can open the
+ * message-actions sheet without relying on the hover-only Reply chip baked
+ * into {@link ChannelMessageRow}. We use a <div> shell so the press doesn't
+ * interfere with markdown links / code blocks inside the row — those still
+ * receive their own click events.
+ */
+function LongPressMessage({
+  message,
+  onLongPress,
+  children,
+}: {
+  message: ChannelMessage;
+  onLongPress: (message: ChannelMessage) => void;
+  children: ReactNode;
+}) {
+  const longPress = useLongPress({
+    duration: 450,
+    onLongPress: () => onLongPress(message),
+  });
+  return (
+    <div data-testid="mobile-channel-message-wrap" {...longPress.bind}>
+      {children}
     </div>
   );
 }

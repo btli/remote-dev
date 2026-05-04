@@ -13,6 +13,7 @@ import { render, fireEvent, cleanup, waitFor, within } from "@testing-library/re
 const channelState = {
   setActiveChannelId: vi.fn(),
   addChannel: vi.fn(),
+  refreshChannels: vi.fn().mockResolvedValue(undefined),
 };
 
 const peerState = {
@@ -59,6 +60,8 @@ import { DmPickerSheet } from "../DmPickerSheet";
 beforeEach(() => {
   channelState.setActiveChannelId.mockReset();
   channelState.addChannel.mockReset();
+  channelState.refreshChannels.mockReset();
+  channelState.refreshChannels.mockResolvedValue(undefined);
   toastError.mockReset();
   peerState.peers = [];
   sessionState.sessions = [];
@@ -98,7 +101,7 @@ describe("DmPickerSheet", () => {
     expect(within(sheet).getByText("No peers online.")).toBeTruthy();
   });
 
-  it("opens a DM on tap: POSTs, calls addChannel + setActiveChannelId + onOpenDm", async () => {
+  it("opens a DM on tap: POSTs, refreshChannels + setActiveChannelId + onOpenDm", async () => {
     prefsState.activeProject.folderId = "p1";
     sessionState.sessions = [{ id: "s1", projectId: "p1", status: "active" }];
     sessionState.activeSessionId = "s1";
@@ -106,23 +109,21 @@ describe("DmPickerSheet", () => {
       { sessionId: "s2", name: "claude", peerSummary: null, agentProvider: "claude" },
     ];
 
-    const fakeChannel = {
+    // The /api/channels/dm endpoint returns the raw DB row — missing
+    // unreadCount + folderId. The picker must NOT pipe that into addChannel
+    // (which would render NaN unread totals); instead it refetches the
+    // normalized channel list via refreshChannels.
+    const dbRow = {
       id: "ch-dm-1",
-      folderId: "p1",
+      projectId: "p1",
       groupId: "dms",
       name: "claude",
       displayName: "claude",
       type: "dm",
-      topic: null,
-      isDefault: false,
-      lastMessageAt: null,
-      messageCount: 0,
-      unreadCount: 0,
-      createdAt: "2025-01-01T00:00:00Z",
     };
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ channel: fakeChannel }),
+      json: async () => ({ channel: dbRow }),
     } as Response);
     vi.stubGlobal("fetch", fetchSpy);
 
@@ -135,8 +136,10 @@ describe("DmPickerSheet", () => {
     fireEvent.click(row);
 
     await waitFor(() => {
-      expect(channelState.addChannel).toHaveBeenCalledWith(fakeChannel);
+      expect(channelState.refreshChannels).toHaveBeenCalledTimes(1);
     });
+    // addChannel must NOT be called with the unnormalized row.
+    expect(channelState.addChannel).not.toHaveBeenCalled();
     expect(channelState.setActiveChannelId).toHaveBeenCalledWith("ch-dm-1");
     expect(onOpenDm).toHaveBeenCalledWith("ch-dm-1");
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -144,6 +147,55 @@ describe("DmPickerSheet", () => {
       "/api/channels/dm",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("aborts the in-flight POST when the sheet closes mid-request", async () => {
+    prefsState.activeProject.folderId = "p1";
+    sessionState.sessions = [{ id: "s1", projectId: "p1", status: "active" }];
+    sessionState.activeSessionId = "s1";
+    peerState.peers = [
+      { sessionId: "s2", name: "claude", peerSummary: null, agentProvider: "claude" },
+    ];
+
+    let abortedSignal: AbortSignal | null = null;
+    // Resolve only after we observe an abort, so we exercise the cancel
+    // path without racing a fast resolution.
+    const fetchSpy = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      abortedSignal = init.signal ?? null;
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () =>
+          reject(
+            typeof DOMException !== "undefined"
+              ? new DOMException("Aborted", "AbortError")
+              : new Error("Aborted")
+          )
+        );
+      });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const onOpenChange = vi.fn();
+    const onOpenDm = vi.fn();
+    const { rerender } = render(
+      <DmPickerSheet open={true} onOpenChange={onOpenChange} onOpenDm={onOpenDm} />
+    );
+    const row = within(document.body).getByTestId("dm-picker-sheet-row");
+    fireEvent.click(row);
+    // Close the sheet before the fetch resolves.
+    rerender(
+      <DmPickerSheet open={false} onOpenChange={onOpenChange} onOpenDm={onOpenDm} />
+    );
+
+    await waitFor(() => {
+      expect(abortedSignal?.aborted).toBe(true);
+    });
+    // Even after the rejection settles, no channel state should have
+    // been mutated and onOpenDm should NOT fire.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(channelState.refreshChannels).not.toHaveBeenCalled();
+    expect(channelState.setActiveChannelId).not.toHaveBeenCalled();
+    expect(onOpenDm).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it("surfaces a toast.error when the POST fails (no crash)", async () => {

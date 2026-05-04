@@ -72,17 +72,8 @@ export function BottomSheet({
   // Only render the portal on the client to avoid SSR/CSR mismatches.
   const isClient = typeof document !== "undefined";
 
-  // ESC key support.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onOpenChange]);
-
   const onOverlayClick = useCallback(() => onOpenChange(false), [onOpenChange]);
+  const handleEscape = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   // Two-phase mount so the slide-up enter and slide-down exit animations
   // both play. `mounted` tracks DOM presence; `entered` tracks whether
@@ -109,9 +100,11 @@ export function BottomSheet({
     return () => window.clearTimeout(t);
   }, [open, mounted, reducedMotion]);
 
-  // Focus trap + body scroll lock — shared with MobileThreadTakeover so the
-  // refcount on `document.body.dataset.scrollLockCount` works across both.
-  useDialogPolish({ active: entered, panelRef });
+  // Focus trap + body scroll lock + ESC — shared with MobileThreadTakeover so
+  // the refcount on `document.body.dataset.scrollLockCount` works across
+  // both, and ESC only closes the topmost dialog (the sheet does not yank
+  // a thread takeover underneath it).
+  useDialogPolish({ active: entered, panelRef, onEscape: handleEscape });
 
   if (!isClient) return null;
   if (!mounted) return null;

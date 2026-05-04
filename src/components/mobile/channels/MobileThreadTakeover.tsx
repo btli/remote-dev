@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UIEvent } from "react";
 import { ChevronLeft, MessageSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -31,6 +32,10 @@ import { useThreadTakeoverSwipe } from "./useThreadTakeoverSwipe";
 
 const TAKEOVER_DURATION_MS = 240;
 const TAKEOVER_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
+// Match the channel-view threshold so the two surfaces feel identical: any
+// scroll more than ~100px from bottom counts as "the user is reading older
+// replies" and disables auto-scroll.
+const SCROLL_THRESHOLD_PX = 100;
 
 export interface MobileThreadTakeoverProps {
   /** Externally controlled. The takeover renders only while this is true. */
@@ -51,6 +56,8 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
 
   const containerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [isUserScrolled, setIsUserScrolled] = useState(false);
 
   // Two-phase mount so the slide-in/out transitions both play.
   const [mounted, setMounted] = useState(false);
@@ -73,20 +80,13 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
     return () => window.clearTimeout(t);
   }, [open, mounted, reducedMotion]);
 
-  // ESC closes — handy for desktop testing and for users with hardware keyboards.
-  useEffect(() => {
-    if (!entered) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [entered, onClose]);
-
-  // Focus trap + body scroll lock — WCAG / aria-modal compliance. Refcounts
-  // on `document.body.dataset.scrollLockCount` so concurrent BottomSheets
-  // and this takeover don't clobber each other's lock.
-  useDialogPolish({ active: entered, panelRef: containerRef });
+  // Focus trap + body scroll lock + ESC — WCAG / aria-modal compliance.
+  // Refcounts on `document.body.dataset.scrollLockCount` so concurrent
+  // BottomSheets and this takeover don't clobber each other's lock; ESC
+  // routes through the shared modal stack so a sheet rendered above the
+  // takeover (e.g. an action sheet) closes itself instead of dismissing
+  // both layers at once.
+  useDialogPolish({ active: entered, panelRef: containerRef, onEscape: onClose });
 
   // Resolve the parent message from the active channel.
   const parentMessage = useMemo(
@@ -97,10 +97,14 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
     [openThreadId, activeChannelMessages]
   );
 
-  // Auto-scroll to bottom only when a NEW reply arrives. Without the length
-  // gate, every unrelated context update (e.g. peer summary refresh) would
-  // produce a new `threadMessages` array reference and snap the user back
-  // to the bottom while they're reading earlier replies.
+  // Auto-scroll to bottom only when a NEW reply arrives AND the user hasn't
+  // scrolled up to read older replies. Without the length gate every
+  // unrelated context update (e.g. peer summary refresh) would produce a
+  // new `threadMessages` array reference and snap us to the bottom; without
+  // the user-scroll gate a peer reply mid-read would yank the viewport away
+  // from what the user was actually reading. We still auto-scroll for the
+  // local user's own replies (optimistic id starts with `opt-`) since that
+  // matches their explicit intent.
   const prevLengthRef = useRef(0);
   useEffect(() => {
     if (!entered) {
@@ -108,22 +112,44 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
       return;
     }
     if (threadMessages.length > prevLengthRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+      const newest = threadMessages[threadMessages.length - 1];
+      const isOwnOptimistic = newest?.id?.startsWith("opt-") ?? false;
+      if (!isUserScrolled || isOwnOptimistic) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+      }
     }
     prevLengthRef.current = threadMessages.length;
-  }, [entered, threadMessages]);
+  }, [entered, threadMessages, isUserScrolled]);
 
   // When the takeover targets a different parent message, treat it as a
-  // fresh thread and reset the length tracker so the first paint scrolls
-  // to bottom again.
+  // fresh thread and reset the length + scroll trackers so the first paint
+  // scrolls to bottom again.
   useEffect(() => {
     prevLengthRef.current = 0;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- thread switch resets the scroll guard so the new thread auto-scrolls to bottom
+    setIsUserScrolled(false);
   }, [openThreadId]);
+
+  const handleScroll = useCallback((e: UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setIsUserScrolled(distanceFromBottom > SCROLL_THRESHOLD_PX);
+  }, []);
+
+  const handleJumpToLatest = useCallback(() => {
+    setIsUserScrolled(false);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
   const handleSend = useCallback(
     async (text: string) => {
       if (!openThreadId) return;
-      await sendMessage(text, openThreadId);
+      const result = await sendMessage(text, openThreadId);
+      if (!result.ok) {
+        throw result.error instanceof Error
+          ? result.error
+          : new Error("Failed to send");
+      }
     },
     [openThreadId, sendMessage]
   );
@@ -154,8 +180,11 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
       data-testid="mobile-thread-takeover"
       data-state={entered ? "open" : "closed"}
       className={cn(
-        // Full-screen above the channel view but below the bottom tab bar.
-        "fixed inset-0 z-40 flex flex-col bg-background text-foreground",
+        // Full-screen, layered above both the channel view and the bottom tab
+        // bar (z-40). The host hides the tab bar via `forceHidden` while the
+        // takeover is open so global navigation can't paint over the reply
+        // composer; z-50 here is a defensive belt-and-suspenders.
+        "fixed inset-0 z-50 flex flex-col bg-background text-foreground",
         "pt-safe-top",
         "will-change-transform"
       )}
@@ -202,7 +231,11 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
       </header>
 
       {/* Scroll region: parent + divider + replies */}
-      <div className="flex-1 overflow-y-auto overscroll-contain">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto overscroll-contain"
+      >
         {parentMessage ? (
           <>
             <ChannelMessageRow
@@ -247,6 +280,21 @@ export function MobileThreadTakeover({ open, onClose }: MobileThreadTakeoverProp
 
         <div ref={messagesEndRef} />
       </div>
+
+      {isUserScrolled ? (
+        <button
+          type="button"
+          onClick={handleJumpToLatest}
+          data-testid="mobile-thread-jump-to-latest"
+          className={cn(
+            "mx-auto mb-1 inline-flex items-center justify-center rounded-full",
+            "border border-border bg-card px-3 py-1 text-xs text-muted-foreground",
+            "shadow-sm hover:text-foreground"
+          )}
+        >
+          Jump to latest
+        </button>
+      ) : null}
 
       {/* Reply composer */}
       <div className="pb-safe-bottom">
