@@ -17,7 +17,31 @@ import type { SessionStatusIndicator, SessionProgress } from "@/types/terminal-t
 
 export interface TerminalWithKeyboardRef {
   focus: () => void;
+  /**
+   * Send text input to the terminal via WebSocket. Forwarded to the
+   * underlying Terminal ref. Useful for callers that supply their own
+   * external chrome (e.g. mobile-redesign view) and need to dispatch
+   * smart-key sequences or text from a parent-owned input bar.
+   */
+  sendInput: (data: string) => void;
+  /** Request agent restart (only meaningful for terminalType='agent'). */
+  restartAgent: () => void;
+  /** Scroll the underlying xterm.js viewport to the bottom. */
+  scrollToBottom: () => void;
 }
+
+/**
+ * Controls whether `TerminalWithKeyboard` mounts its own mobile chrome
+ * (input bar, keyboard, scroll-to-bottom button) when running on a mobile
+ * viewport.
+ *
+ * - `"builtin"` (default): the wrapper owns the mobile UI. Existing call
+ *   sites (desktop session manager, terminal plugins) keep this behavior.
+ * - `"external"`: the wrapper renders only the terminal (and the agent
+ *   voice button + session-ended overlay) so a parent can supply its own
+ *   chrome around it. The parent uses the ref to forward input.
+ */
+export type MobileChromeMode = "builtin" | "external";
 
 interface TerminalWithKeyboardProps {
   sessionId: string;
@@ -37,12 +61,22 @@ interface TerminalWithKeyboardProps {
   isActive?: boolean;
   /** Environment variables to inject into new terminal sessions */
   environmentVars?: Record<string, string> | null;
+  /**
+   * Mobile chrome mode. Default `"builtin"` preserves existing call
+   * sites; pass `"external"` when the parent renders its own
+   * MobileInputBar / smart-key strip around this component.
+   */
+  mobileChrome?: MobileChromeMode;
   onStatusChange?: (status: ConnectionStatus) => void;
   onSessionExit?: (exitCode: number) => void;
   onOutput?: (data: string) => void;
   onDimensionsChange?: (cols: number, rows: number) => void;
   onSessionRestart?: () => Promise<void>;
   onSessionDelete?: (deleteWorktree?: boolean) => Promise<void>;
+  /** Called when an agent session exits (only for terminalType='agent') */
+  onAgentExited?: (exitCode: number | null, exitedAt: string) => void;
+  /** Called when an agent session restarts successfully */
+  onAgentRestarted?: () => void;
   /** Called when agent activity status changes (from Claude Code hooks) */
   onAgentActivityStatus?: (sessionId: string, status: string) => void;
   /** Called when beads issues are updated */
@@ -77,12 +111,15 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   isRecording,
   isActive,
   environmentVars,
+  mobileChrome = "builtin",
   onStatusChange,
   onSessionExit,
   onOutput,
   onDimensionsChange,
   onSessionRestart,
   onSessionDelete,
+  onAgentExited,
+  onAgentRestarted,
   onAgentActivityStatus,
   onBeadsIssuesUpdated,
   onSessionRenamed,
@@ -104,15 +141,30 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   const isMobile = useMobile();
   const modifiers = useMobileModifiers();
 
+  // External mobile chrome: parent owns the MobileInputBar / smart keys, so
+  // focusing the wrapper should NOT pull focus into the (un-mounted)
+  // built-in input. Forward to the xterm container instead — the parent's
+  // input bar is already focused as part of its own composition.
+  const useBuiltinMobileChrome = isMobile && mobileChrome === "builtin";
+
   useImperativeHandle(ref, () => ({
     focus: () => {
-      if (isMobile) {
+      if (useBuiltinMobileChrome) {
         mobileInputRef.current?.focus();
       } else {
         terminalRef.current?.focus();
       }
     },
-  }), [isMobile]);
+    sendInput: (data: string) => {
+      terminalRef.current?.sendInput(data);
+    },
+    restartAgent: () => {
+      terminalRef.current?.restartAgent();
+    },
+    scrollToBottom: () => {
+      terminalRef.current?.scrollToBottom();
+    },
+  }), [useBuiltinMobileChrome]);
 
   const handleWebSocketReady = useCallback((ws: WebSocket | null) => {
     wsRef.current = ws;
@@ -153,6 +205,10 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
   );
 
   // ── Shared terminal component ─────────────────────────────────────────
+  // mobileMode disables the xterm internal textarea so an external input
+  // can drive the terminal. We enable it in EITHER mobile-chrome mode:
+  // the built-in MobileInputBar AND a parent-supplied bar both need
+  // xterm to stop intercepting key events.
   const terminalElement = (
     <ErrorBoundary title="Terminal Error">
       <Terminal
@@ -175,6 +231,8 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
         onStatusChange={handleStatusChange}
         onWebSocketReady={handleWebSocketReady}
         onSessionExit={handleSessionExit}
+        onAgentExited={onAgentExited}
+        onAgentRestarted={onAgentRestarted}
         onOutput={onOutput}
         onDimensionsChange={onDimensionsChange}
         onAgentActivityStatus={onAgentActivityStatus}
@@ -201,8 +259,8 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     />
   );
 
-  // ── Mobile: xterm.js rendering + native input bar + special keys ──────
-  if (isMobile) {
+  // ── Mobile with built-in chrome: xterm + native input bar + special keys
+  if (useBuiltinMobileChrome) {
     return (
       <div className="flex flex-col h-full relative">
         <div className="flex-1 min-h-0 relative">
@@ -214,7 +272,7 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
           )}
         </div>
 
-        {/* Scroll to bottom indicator — mobile only */}
+        {/* Scroll to bottom indicator, mobile only. */}
         {isTerminalScrolledUp && (
           <button
             type="button"
@@ -254,7 +312,11 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     );
   }
 
-  // ── Desktop: xterm.js with built-in textarea ──────────────────────────
+  // ── External mobile chrome OR desktop ─────────────────────────────────
+  // No built-in MobileInputBar / MobileKeyboard / scroll-to-bottom button.
+  // The desktop path uses xterm's own textarea; the external-mobile path
+  // expects the parent to render its own input affordances and forward
+  // them via the ref's sendInput method.
   return (
     <div className="flex flex-col h-full relative">
       <div className="flex-1 min-h-0 relative">

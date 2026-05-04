@@ -4,10 +4,13 @@
  * MobileSessionView, Phase 3 mobile session view.
  *
  * Full-bleed single-session composition rendered when the user has selected
- * a session inside the mobile shell. Wraps xterm.js (via the shared `Terminal`
- * component) so TUIs like Claude Code, vim, and htop render correctly with
- * cursor moves, line clears, and screen redraws, instead of the previous
- * append-only HTML pre block which stacked redraws on top of each other.
+ * a session inside the mobile shell. Renders xterm.js via the shared
+ * `TerminalWithKeyboard` component (with `mobileChrome="external"`), so
+ * desktop and mobile share one renderer; this view only supplies its own
+ * chrome around it. TUIs like Claude Code, vim, and htop render correctly
+ * with cursor moves, line clears, and screen redraws, instead of the
+ * previous append-only HTML pre block which stacked redraws on top of
+ * each other.
  *
  * The chrome around the terminal stays the same: top SessionStatusBar,
  * banner row, the new SmartKeyStrip, and the existing MobileInputBar
@@ -34,7 +37,10 @@ import { cn } from "@/lib/utils";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { usePrefersReducedMotion } from "@/hooks/useMobile";
-import { Terminal, type TerminalRef } from "@/components/terminal/Terminal";
+import {
+  TerminalWithKeyboard,
+  type TerminalWithKeyboardRef,
+} from "@/components/terminal/TerminalWithKeyboard";
 import { MobileInputBar } from "@/components/terminal/MobileInputBar";
 import { AgentExitScreen } from "@/components/terminal/AgentExitScreen";
 import type { TerminalSession } from "@/types/session";
@@ -128,7 +134,7 @@ export function MobileSessionView({
   const liveRegionId = useId();
 
   // ── Refs ────────────────────────────────────────────────────────────────
-  const terminalRef = useRef<TerminalRef>(null);
+  const terminalRef = useRef<TerminalWithKeyboardRef>(null);
   const inputBarRef = useRef<HTMLTextAreaElement>(null);
 
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
@@ -280,9 +286,13 @@ export function MobileSessionView({
           isolated to the output area; chrome above and below stay
           tappable without false positives.
 
-          Terminal owns its own WebSocket, FitAddon, and resize handling,
-          so we don't compute cols/rows ourselves. AuthErrorOverlay is
-          rendered internally by Terminal as well. */}
+          TerminalWithKeyboard with `mobileChrome="external"` renders only
+          the xterm.js viewport (plus the agent voice button + session
+          ended overlay). The wrapper still owns the WebSocket, FitAddon,
+          and resize handling, so we don't compute cols/rows ourselves;
+          AuthErrorOverlay is rendered internally by Terminal as well.
+          We forward smart-keys / input bar text via the ref's
+          `sendInput`. */}
       <div
         ref={pinchRef}
         data-testid="mobile-session-output"
@@ -290,12 +300,13 @@ export function MobileSessionView({
         className="flex-1 min-h-0 relative"
         aria-describedby={liveRegionId}
       >
-        <Terminal
+        <TerminalWithKeyboard
           ref={terminalRef}
           sessionId={session.id}
           tmuxSessionName={session.tmuxSessionName}
           sessionName={session.name}
           projectPath={session.projectPath}
+          session={session}
           wsUrl={wsUrl}
           fontSize={fontSize}
           fontFamily={fontFamily}
@@ -303,8 +314,7 @@ export function MobileSessionView({
           notificationsEnabled={notificationsEnabled}
           isRecording={isRecording}
           environmentVars={environmentVars}
-          terminalType={session.terminalType ?? "shell"}
-          mobileMode
+          mobileChrome="external"
           onStatusChange={handleStatusChange}
           onAgentExited={handleAgentExited}
           onAgentRestarted={handleAgentRestarted}
