@@ -1,5 +1,7 @@
 "use client";
 
+import { toast } from "sonner";
+
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, CheckCheck, Trash2, X } from "lucide-react";
@@ -57,7 +59,17 @@ export function NotificationPanel({ open, onOpenChange, onJumpToSession }: Notif
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => deleteAllNotifications()}
+                onClick={() => {
+                  // deleteAllNotifications() rejects on server failure; without
+                  // a catch this becomes an unhandled rejection from a React
+                  // click handler. The context already re-fetches on failure
+                  // so the rows reappear; we just need to surface a toast.
+                  void deleteAllNotifications().catch(() => {
+                    toast.error("Failed to clear notifications", {
+                      id: "notif-clear-all-error",
+                    });
+                  });
+                }}
                 className="h-7 text-xs text-destructive/70 hover:text-destructive hover:bg-destructive/10"
               >
                 <Trash2 className="w-3 h-3 mr-1" />

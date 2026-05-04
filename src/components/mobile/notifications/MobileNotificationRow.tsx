@@ -22,7 +22,7 @@
  *     {@link useNotificationSwipe} which handles vertical-bias / threshold.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/useMobile";
@@ -78,11 +78,42 @@ export function MobileNotificationRow({
   // triggers `handleClick`, which on an unread row marks it read or toggles
   // body expansion — both of which can yank the action sheet's target row
   // out from under the user (especially in the Unread filter).
+  //
+  // We also time-bound the suppression: if the post-long-press synthetic
+  // click is intercepted by the ActionSheet's overlay (so it never reaches
+  // this row), the flag would otherwise stay true forever and swallow the
+  // next legitimate tap. 350ms covers the typical synthetic-click delay
+  // window after touchend; any genuine tap arriving after that resets the
+  // flag itself in `handleClick`.
   const longPressFiredRef = useRef(false);
+  const longPressResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const armLongPressReset = () => {
+    if (longPressResetTimerRef.current) {
+      clearTimeout(longPressResetTimerRef.current);
+    }
+    longPressResetTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = false;
+      longPressResetTimerRef.current = null;
+    }, 350);
+  };
+  // Clean up any pending reset timer on unmount so a row that long-pressed
+  // and unmounted (e.g. tab switch) doesn't fire setTimeout into a torn-down
+  // component.
+  useEffect(() => {
+    return () => {
+      if (longPressResetTimerRef.current) {
+        clearTimeout(longPressResetTimerRef.current);
+        longPressResetTimerRef.current = null;
+      }
+    };
+  }, []);
   const longPress = useLongPress({
     enabled: enableGestures,
     onLongPress: () => {
       longPressFiredRef.current = true;
+      armLongPressReset();
       onLongPress(notification);
     },
   });
@@ -106,6 +137,10 @@ export function MobileNotificationRow({
     // test runners). The next genuine tap clears the flag and runs.
     if (longPressFiredRef.current) {
       longPressFiredRef.current = false;
+      if (longPressResetTimerRef.current) {
+        clearTimeout(longPressResetTimerRef.current);
+        longPressResetTimerRef.current = null;
+      }
       return;
     }
     if (hasExpandableBody) {

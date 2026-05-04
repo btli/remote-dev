@@ -34,13 +34,14 @@
  * feature can land without further IA churn.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { useNotificationContext } from "@/contexts/NotificationContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { usePullToRefresh } from "@/hooks/usePullToRefresh";
+import { usePrefersReducedMotion } from "@/hooks/useMobile";
 import type { NotificationEvent } from "@/types/notification";
 
 import { ActionSheet, type ActionSheetItem } from "../common/ActionSheet";
@@ -85,6 +86,7 @@ function isMention(n: NotificationEvent): boolean {
 export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
   const notifCtx = useNotificationContext();
   const sessionCtx = useSessionContext();
+  const reducedMotion = usePrefersReducedMotion();
 
   const [filter, setFilter] = useState<NotificationFilter>("all");
   const [actionTargetId, setActionTargetId] = useState<string | null>(null);
@@ -209,12 +211,24 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
 
   // Action sheet items for the long-pressed notification. We look up the
   // target from the full notifications list (not `visible`) so a filter
-  // change or a deferred-delete that hides the row mid-flight doesn't
-  // suddenly null out our actionTarget while the sheet is still open.
+  // change doesn't suddenly null out our actionTarget while the sheet is
+  // still open. If the underlying notification disappears entirely (server
+  // refresh removed it, deferred-delete committed, etc.), the resolved
+  // target becomes null and the effect below auto-closes the sheet so we
+  // don't render an empty Cancel-only sheet.
   const actionTarget = useMemo(
     () => notifCtx.notifications.find((n) => n.id === actionTargetId) ?? null,
     [notifCtx.notifications, actionTargetId]
   );
+
+  // Auto-close the sheet when the active target is no longer in the list.
+  // Without this, deleting / removing a notification while the sheet is
+  // open leaves a titleless sheet with only Cancel visible.
+  useEffect(() => {
+    if (actionTargetId !== null && actionTarget === null) {
+      setActionTargetId(null);
+    }
+  }, [actionTargetId, actionTarget]);
 
   const actionItems = useMemo<ActionSheetItem[]>(() => {
     if (!actionTarget) return [];
@@ -295,11 +309,30 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
         ) : null}
       </header>
 
-      {/* Content: error banner + list + pull-to-refresh indicator. */}
+      {/* Content: error banner + list + pull-to-refresh indicator.
+          Two indicator variants:
+            - Animated stretch (default): scales/fades with pullDistance.
+            - Static text (reduced-motion): plain "Pull to refresh" while
+              the user is actively pulling. Without this, reduced-motion
+              users see no feedback at all because pullDistance is pinned
+              to 0 in that mode. */}
       <div className="relative flex flex-1 flex-col">
-        {pull.pullDistance > 0 || pull.isRefreshing ? (
+        {reducedMotion ? (
+          pull.isPulling || pull.isRefreshing ? (
+            <div
+              data-testid="mobile-notifications-refresh-indicator"
+              data-variant="static"
+              role="status"
+              aria-live="polite"
+              className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center py-2 text-xs text-muted-foreground"
+            >
+              {pull.isRefreshing ? "Refreshing…" : "Pull to refresh"}
+            </div>
+          ) : null
+        ) : pull.pullDistance > 0 || pull.isRefreshing ? (
           <div
             data-testid="mobile-notifications-refresh-indicator"
+            data-variant="animated"
             role="status"
             aria-live="polite"
             className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-center py-2 text-xs text-muted-foreground"
@@ -366,7 +399,10 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
       </div>
 
       <ActionSheet
-        open={actionTargetId !== null}
+        // Derive open from the *resolved* target so a vanished notification
+        // collapses the sheet on the same render rather than relying solely
+        // on the auto-close effect to flip actionTargetId next tick.
+        open={actionTarget !== null}
         onOpenChange={(open) => {
           if (!open) setActionTargetId(null);
         }}

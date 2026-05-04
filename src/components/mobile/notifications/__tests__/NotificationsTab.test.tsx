@@ -91,6 +91,13 @@ vi.mock("@/contexts/SessionContext", () => ({
   useSessionContext: () => sessionMockState,
 }));
 
+// Reduced-motion is read by both the tab and the row; we mock it so we can
+// flip it per-test for the indicator-variant assertions.
+const reducedMotionMock = vi.fn<() => boolean>(() => false);
+vi.mock("@/hooks/useMobile", () => ({
+  usePrefersReducedMotion: () => reducedMotionMock(),
+}));
+
 vi.mock("sonner", () => ({
   toast: Object.assign(vi.fn(), {
     error: vi.fn(),
@@ -133,6 +140,8 @@ beforeEach(() => {
   sessionMockState.setActiveSession = vi.fn();
   (toast as unknown as ReturnType<typeof vi.fn>).mockClear();
   (toast.error as unknown as ReturnType<typeof vi.fn>).mockClear();
+  reducedMotionMock.mockReset();
+  reducedMotionMock.mockImplementation(() => false);
 });
 
 afterEach(() => cleanup());
@@ -422,6 +431,80 @@ describe("NotificationsTab", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("auto-closes the ActionSheet when its target notification disappears from the list", async () => {
+    // Regression for Codex re-review P2-1: if the long-pressed notification
+    // is removed from `notifications` while the sheet is open (server
+    // refresh deleted it, deferred-delete committed, etc.), the sheet
+    // previously stayed open with no title and an empty item list — only
+    // Cancel was visible. The fix derives the open state from the
+    // *resolved* target so the sheet collapses on the same render.
+    const target = makeNotification({ id: "n1", title: "long-press-me" });
+    notifMockState.notifications = [target];
+    notifMockState.unreadCount = 1;
+    const { rerender } = render(<NotificationsTab />);
+
+    // Open the action sheet via long-press.
+    const row = screen.getByTestId("mobile-notification-row");
+    fireEvent.mouseDown(row, { clientX: 30, clientY: 30, button: 0 });
+    await waitFor(() => screen.getByTestId("mobile-action-sheet-items"), {
+      timeout: 1500,
+    });
+
+    // Now simulate the underlying notification disappearing — e.g. a
+    // server refresh removed it. Re-render with an empty list.
+    notifMockState.notifications = [];
+    rerender(<NotificationsTab />);
+
+    // The sheet must collapse rather than rendering an empty Cancel-only
+    // shell. The action items container is the load-bearing tell.
+    await waitFor(() => {
+      expect(screen.queryByTestId("mobile-action-sheet-items")).toBeNull();
+    });
+  });
+
+  it("renders the static reduced-motion refresh indicator while pulling", async () => {
+    // Regression for Codex re-review P2-3: under prefers-reduced-motion,
+    // `pullDistance` is pinned to 0, so the *animated* indicator never
+    // renders. Without a static fallback the user gets no feedback while
+    // pulling. The fix renders a plain text indicator (data-variant="static")
+    // when isPulling is true under reduced motion.
+    reducedMotionMock.mockImplementation(() => true);
+    notifMockState.notifications = [];
+    render(<NotificationsTab />);
+    const scroll = screen.getByTestId("mobile-notifications-scroll");
+    Object.defineProperty(scroll, "scrollTop", { value: 0, configurable: true });
+    fireEvent.touchStart(scroll, { touches: [{ clientY: 0 }] });
+    fireEvent.touchMove(scroll, { touches: [{ clientY: 200 }] });
+    await waitFor(() => {
+      const indicator = screen.getByTestId("mobile-notifications-refresh-indicator");
+      expect(indicator).toHaveAttribute("data-variant", "static");
+      expect(indicator).toHaveTextContent(/Pull to refresh/);
+    });
+    // Release: the static indicator goes away once the user stops pulling
+    // (and threshold wasn't met, so no refresh fires).
+    fireEvent.touchEnd(scroll);
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("mobile-notifications-refresh-indicator")
+      ).toBeNull();
+    });
+  });
+
+  it("renders the animated refresh indicator (not static) when motion is allowed", async () => {
+    reducedMotionMock.mockImplementation(() => false);
+    notifMockState.notifications = [];
+    render(<NotificationsTab />);
+    const scroll = screen.getByTestId("mobile-notifications-scroll");
+    Object.defineProperty(scroll, "scrollTop", { value: 0, configurable: true });
+    fireEvent.touchStart(scroll, { touches: [{ clientY: 0 }] });
+    fireEvent.touchMove(scroll, { touches: [{ clientY: 200 }] });
+    await waitFor(() => {
+      const indicator = screen.getByTestId("mobile-notifications-refresh-indicator");
+      expect(indicator).toHaveAttribute("data-variant", "animated");
+    });
+    fireEvent.touchEnd(scroll);
   });
 
   it("renders the error banner when refresh() rejects via pull-to-refresh", async () => {

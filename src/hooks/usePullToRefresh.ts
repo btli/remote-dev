@@ -29,10 +29,18 @@ export interface UsePullToRefreshOptions {
 }
 
 export interface UsePullToRefreshState {
-  /** Current downward pull distance in px. 0 when not pulling. Capped at 1.5*threshold. */
+  /** Current downward pull distance in px. 0 when not pulling. Capped at 1.5*threshold.
+   *  Pinned to 0 under prefers-reduced-motion so consumers don't render the visual stretch. */
   pullDistance: number;
   /** True from the moment `onRefresh` is invoked until its returned promise settles. */
   isRefreshing: boolean;
+  /**
+   * True while the user is actively pulling down past the top, regardless of motion mode.
+   * Reduced-motion consumers should use this (with `pullDistance === 0`) to render a
+   * static "Pull to refresh" text indicator — without it, reduced-motion users get no
+   * feedback at all because `pullDistance` is pinned to 0.
+   */
+  isPulling: boolean;
   /** Called by the consumer to attach listeners to the scroll container. */
   ref: (el: HTMLElement | null) => void;
 }
@@ -49,6 +57,11 @@ export function usePullToRefresh(options: UsePullToRefreshOptions): UsePullToRef
   // It's forced to 0 under `prefers-reduced-motion` so the hop disappears.
   const [pullDistance, setPullDistanceState] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // `isPulling` is true whenever the user is actively pulling past the top
+  // (raw distance > 0), regardless of motion preference. Reduced-motion
+  // users still get a static text affordance via this flag even though
+  // their `pullDistance` is pinned to 0.
+  const [isPulling, setIsPulling] = useState(false);
   // `rawPullDistanceRef` is the actual damped pull distance, regardless of
   // motion preference. The threshold check reads this so reduced-motion
   // users can still trigger the refresh by pulling past the threshold —
@@ -109,6 +122,7 @@ export function usePullToRefresh(options: UsePullToRefreshOptions): UsePullToRef
         // Upward / neutral pull — abandon and let scrolling resume.
         if (pulling) {
           pulling = false;
+          setIsPulling(false);
           setPullDistance(0, 0);
         }
         return;
@@ -116,6 +130,7 @@ export function usePullToRefresh(options: UsePullToRefreshOptions): UsePullToRef
       // Past the top, pull down with rubber-band resistance so it never
       // feels infinite. Cap pull at 1.5x threshold.
       pulling = true;
+      setIsPulling(true);
       const damped = Math.min(dy * PULL_RESISTANCE, threshold * 1.5);
       // Reduced-motion: don't visualize the stretch at all (visual = 0),
       // but still track the raw distance so the threshold check on
@@ -136,6 +151,7 @@ export function usePullToRefresh(options: UsePullToRefreshOptions): UsePullToRef
       if (pulling && releasedAtTop && distance >= threshold * PULL_RESISTANCE) {
         // Threshold met; fire the refresh.
         pulling = false;
+        setIsPulling(false);
         setPullDistance(0, 0);
         setIsRefreshing(true);
         Promise.resolve(onRefreshRef.current())
@@ -151,12 +167,14 @@ export function usePullToRefresh(options: UsePullToRefreshOptions): UsePullToRef
 
       // Otherwise reset.
       pulling = false;
+      setIsPulling(false);
       setPullDistance(0, 0);
     };
 
     const onTouchCancel = () => {
       startY = null;
       pulling = false;
+      setIsPulling(false);
       setPullDistance(0, 0);
     };
 
@@ -175,5 +193,5 @@ export function usePullToRefresh(options: UsePullToRefreshOptions): UsePullToRef
     // doesn't re-bind on every drag tick.
   }, [el, threshold, reducedMotion, setPullDistance]);
 
-  return { pullDistance, isRefreshing, ref };
+  return { pullDistance, isRefreshing, isPulling, ref };
 }

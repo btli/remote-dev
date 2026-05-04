@@ -272,6 +272,46 @@ describe("MobileNotificationRow", () => {
     expect(onTap).toHaveBeenCalledTimes(1);
   });
 
+  it("clears the long-press flag automatically if the synthetic click is intercepted", async () => {
+    // Regression for Codex re-review P2-2: longPressFiredRef is set true
+    // when long-press fires. It only resets *inside* handleClick — but the
+    // synthetic click that follows long-press release can be swallowed by
+    // the ActionSheet's overlay before it ever reaches the row, which
+    // would leave the flag stuck true and silently swallow the next
+    // legitimate tap. The fix arms a 350ms safety timer that clears the
+    // flag if no click arrives.
+    vi.useFakeTimers();
+    try {
+      const onTap = vi.fn();
+      const onLongPress = vi.fn();
+      render(
+        <MobileNotificationRow
+          notification={makeNotification({ body: "Long body" })}
+          onTap={onTap}
+          onLongPress={onLongPress}
+          onDelete={vi.fn()}
+          onToggleRead={vi.fn()}
+        />
+      );
+      const row = screen.getByTestId("mobile-notification-row");
+      fireEvent.mouseDown(row, { clientX: 30, clientY: 30, button: 0 });
+      // Fake-timer the 600ms long-press hold.
+      await vi.advanceTimersByTimeAsync(700);
+      expect(onLongPress).toHaveBeenCalledTimes(1);
+
+      // Simulate the post-long-press synthetic click being eaten by an
+      // overlay (so it never reaches the row). Before the fix, the flag
+      // would stay true forever; now a 350ms safety timer resets it.
+      await vi.advanceTimersByTimeAsync(400);
+
+      // A genuine tap arriving after the safety window should run normally.
+      fireEvent.click(row);
+      expect(onTap).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does NOT dispatch onToggleRead when swiped right on a read row", () => {
     const onToggleRead = vi.fn();
     render(

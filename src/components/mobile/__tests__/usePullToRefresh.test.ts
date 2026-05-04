@@ -117,6 +117,34 @@ describe("usePullToRefresh", () => {
     expect(result.current.isRefreshing).toBe(false);
   });
 
+  it("exposes isPulling=true while the user pulls and false otherwise (regardless of motion mode)", () => {
+    // Regression for Codex re-review P2-3: under prefers-reduced-motion,
+    // `pullDistance` is pinned to 0 — but consumers still need a way to
+    // render a static "Pull to refresh" affordance, otherwise reduced-
+    // motion users get no feedback at all. The hook now exposes
+    // `isPulling` (true while the user is actively pulling past the top,
+    // independent of motion preference).
+    reducedMotionMock.mockImplementation(() => true);
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() => usePullToRefresh({ onRefresh, threshold: 50 }));
+
+    act(() => result.current.ref(scrollEl));
+    expect(result.current.isPulling).toBe(false);
+
+    act(() => {
+      fireTouch(scrollEl, "touchstart", 100);
+      fireTouch(scrollEl, "touchmove", 200);
+    });
+    expect(result.current.isPulling).toBe(true);
+    // Visual stretch is still suppressed under reduced-motion.
+    expect(result.current.pullDistance).toBe(0);
+
+    act(() => {
+      fireTouch(scrollEl, "touchend", 200);
+    });
+    expect(result.current.isPulling).toBe(false);
+  });
+
   it("still fires onRefresh past the threshold when prefers-reduced-motion is set (visual=0, raw threshold check)", () => {
     // Regression for adversarial finding P2-D: under reduced-motion the
     // visual `pullDistance` is pinned to 0. The threshold check used to
