@@ -217,9 +217,7 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
   // double-fire on a stuttery tap.
   const performClearAll = useCallback(async () => {
     setClearAllInFlight(true);
-    const count = notifCtx.notifications.filter(
-      (n) => !pendingDeleteIds.has(n.id)
-    ).length;
+    const count = counts.all;
     try {
       await notifCtx.deleteAllNotifications();
       toast(count === 1 ? "Cleared 1 notification" : `Cleared ${count} notifications`, {
@@ -232,7 +230,7 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
       setClearAllInFlight(false);
       setClearAllOpen(false);
     }
-  }, [notifCtx, pendingDeleteIds]);
+  }, [notifCtx, counts.all]);
 
   const performMarkUnread = useCallback(() => {
     toast("Marked as unread is a local-only state.", {

@@ -67,6 +67,18 @@ export interface UseSwipeActionState {
 
 const DEFAULT_THRESHOLD = 72;
 
+/**
+ * Find the highest-index stage whose threshold the given absolute distance
+ * has cleared, or -1 if none. Stages are assumed ordered by ascending
+ * threshold (the hook's documented contract).
+ */
+function findActiveStageIndex(stages: SwipeStage[], distance: number): number {
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (distance >= stages[i].threshold) return i;
+  }
+  return -1;
+}
+
 export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionState {
   const { direction = "left", threshold = DEFAULT_THRESHOLD, onSwipe, enabled = true, stages } = options;
 
@@ -101,6 +113,16 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
     setOffset(0);
   }, [setOffset]);
 
+  // Abandon an in-progress drag without clearing the touch start coords —
+  // used when the gesture turns out to be vertical scrolling or wrong-way.
+  // Subsequent moves can still re-engage if the user corrects course.
+  const abortDrag = useCallback(() => {
+    if (dragging.current) {
+      dragging.current = false;
+      setOffset(0);
+    }
+  }, [setOffset]);
+
   const onTouchStart = useCallback(
     (e: React.TouchEvent<HTMLElement>) => {
       if (!enabled) return;
@@ -121,32 +143,16 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
       const dx = t.clientX - startX.current;
       const dy = t.clientY - startY.current;
       // Vertical-bias: if the user is mostly scrolling, abandon this gesture.
-      if (Math.abs(dy) > Math.abs(dx) * 0.6) {
-        if (dragging.current) {
-          dragging.current = false;
-          setOffset(0);
-        }
-        return;
-      }
       // Direction-bias: ignore swipes the wrong way.
-      if (direction === "left" && dx >= 0) {
-        if (dragging.current) {
-          dragging.current = false;
-          setOffset(0);
-        }
-        return;
-      }
-      if (direction === "right" && dx <= 0) {
-        if (dragging.current) {
-          dragging.current = false;
-          setOffset(0);
-        }
+      const wrongWay = direction === "left" ? dx >= 0 : dx <= 0;
+      if (Math.abs(dy) > Math.abs(dx) * 0.6 || wrongWay) {
+        abortDrag();
         return;
       }
       dragging.current = true;
       setOffset(dx);
     },
-    [enabled, direction]
+    [enabled, direction, abortDrag, setOffset]
   );
 
   const onTouchEnd = useCallback(() => {
@@ -154,43 +160,22 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
       reset();
       return;
     }
-    const current = offsetRef.current;
-    const distance = direction === "left" ? -current : current;
-    const armed = stagesRef.current;
-    // Walk from highest threshold downward and fire the first stage the
-    // release distance has cleared. No commit if it's below the lowest
-    // threshold.
-    let committed: SwipeStage | null = null;
-    for (let i = armed.length - 1; i >= 0; i--) {
-      const stage = armed[i];
-      if (!stage) continue;
-      if (distance >= stage.threshold) {
-        committed = stage;
-        break;
-      }
-    }
-    setOffset(0);
-    if (committed) committed.onCommit();
-    startX.current = null;
-    startY.current = null;
-    dragging.current = false;
-  }, [direction, reset, setOffset]);
+    const distance = direction === "left" ? -offsetRef.current : offsetRef.current;
+    const stages = stagesRef.current;
+    const committedIndex = findActiveStageIndex(stages, distance);
+    reset();
+    if (committedIndex >= 0) stages[committedIndex].onCommit();
+  }, [direction, reset]);
 
-  // Live stage index based on the current offset. Recomputed cheaply on
-  // every render — the offset changes during a drag are already triggering
-  // re-renders; this just lets consumers swap labels mid-drag.
-  let stageIndex = -1;
-  if (effectiveStages.length > 0) {
-    const distance = direction === "left" ? -offset : offset;
-    for (let i = effectiveStages.length - 1; i >= 0; i--) {
-      const stage = effectiveStages[i];
-      if (!stage) continue;
-      if (distance >= stage.threshold) {
-        stageIndex = i;
-        break;
-      }
-    }
-  }
+  // Live stage index based on the current offset, so consumers can swap
+  // labels mid-drag. Recomputed cheaply on every render — the offset
+  // changes during a drag already trigger re-renders.
+  const stageIndex = effectiveStages.length === 0
+    ? -1
+    : findActiveStageIndex(
+        effectiveStages,
+        direction === "left" ? -offset : offset
+      );
 
   return {
     offset,

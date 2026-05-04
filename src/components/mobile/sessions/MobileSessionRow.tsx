@@ -105,6 +105,18 @@ export function MobileSessionRow({
 
   const rowMinHeight = density === "dense" ? "min-h-[48px]" : "min-h-[56px]";
 
+  // Behind-layer label/tone for the swipe affordance. Active rows show
+  // "Close" (destructive) once stage 1 is crossed, otherwise "Suspend".
+  // Suspended rows always say "Close" and turn destructive at stage 0.
+  let swipeAffordance: { label: string; destructive: boolean };
+  if (session.status === "suspended") {
+    swipeAffordance = { label: "Close", destructive: swipe.stageIndex >= 0 };
+  } else if (swipe.stageIndex >= 1) {
+    swipeAffordance = { label: "Close", destructive: true };
+  } else {
+    swipeAffordance = { label: "Suspend", destructive: false };
+  }
+
   return (
     <div
       className={cn(
@@ -115,42 +127,24 @@ export function MobileSessionRow({
       )}
     >
       {/* Behind layer: swipe affordance label. The label and tone switch
-          mid-drag to telegraph which action will commit on release. For
-          active rows: stage 0 = Suspend (muted), stage 1 = Close
-          (destructive). For suspended rows there's only one stage: Close. */}
-      {swipeEnabled ? (() => {
-        // Decide what the row will commit if released right now.
-        let label = "Suspend";
-        let destructive = false;
-        if (session.status === "suspended") {
-          label = "Close";
-          // Single-stage close — tone the label as destructive whenever
-          // the user has crossed the threshold so they get the same
-          // visual tell as the active-row two-stage flow.
-          destructive = swipe.stageIndex >= 0;
-        } else if (session.status === "active") {
-          if (swipe.stageIndex >= 1) {
-            label = "Close";
-            destructive = true;
-          } else {
-            label = "Suspend";
-          }
-        }
-        return (
-          <div
-            aria-hidden="true"
-            data-testid="mobile-session-swipe-affordance"
-            data-stage={swipe.stageIndex}
-            className={cn(
-              "pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4",
-              "text-xs font-medium",
-              destructive ? "text-destructive" : "text-muted-foreground"
-            )}
-          >
-            {label}
-          </div>
-        );
-      })() : null}
+          mid-drag to telegraph which action will commit on release.
+          - Active rows: stage 0 = Suspend (muted), stage 1 = Close (destructive).
+          - Suspended rows: single-stage Close — destructive once the user has
+            crossed the threshold, matching the active-row visual tell. */}
+      {swipeEnabled ? (
+        <div
+          aria-hidden="true"
+          data-testid="mobile-session-swipe-affordance"
+          data-stage={swipe.stageIndex}
+          className={cn(
+            "pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4",
+            "text-xs font-medium",
+            swipeAffordance.destructive ? "text-destructive" : "text-muted-foreground"
+          )}
+        >
+          {swipeAffordance.label}
+        </div>
+      ) : null}
 
       {/* Row content. Swipe and long-press both want touch handlers — compose
           them rather than letting the spread order silently nuke one set.
