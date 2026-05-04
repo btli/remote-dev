@@ -585,6 +585,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       imageAddonRef.current = imageAddon;
       searchAddonRef.current = searchAddon;
 
+      // Post-init reconciliation: if PreferencesContext resolved during the
+      // async init window (xterm/addon imports + WebGL load), the font-update
+      // effect would have run with the latest fontSize/fontFamily but bailed
+      // because xtermRef.current was still null. The refs are kept in sync
+      // by the sync-ref effect, so re-apply them here to catch any drift.
+      // This is a no-op when the values match what was passed to `new XTerm`.
+      if (terminal.options.fontSize !== fontSizeRef.current) {
+        terminal.options.fontSize = fontSizeRef.current;
+      }
+      if (terminal.options.fontFamily !== fontFamilyRef.current) {
+        terminal.options.fontFamily = fontFamilyRef.current;
+      }
+
       async function connect() {
         if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
