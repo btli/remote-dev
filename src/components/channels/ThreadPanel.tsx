@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X, MessageSquare } from "lucide-react";
+import { toast } from "sonner";
 import { useChannelContext } from "@/contexts/ChannelContext";
 import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { ChannelMessageRow } from "./ChannelMessageRow";
@@ -48,10 +49,13 @@ export function ThreadPanel() {
   }, []);
 
   const handleSend = useCallback(
-    (text: string) => {
+    async (text: string) => {
       if (!openThreadId) return;
       setIsUserScrolled(false);
-      sendMessage(text, openThreadId);
+      const result = await sendMessage(text, openThreadId);
+      if (!result.ok) {
+        toast.error("Failed to send message");
+      }
     },
     [openThreadId, sendMessage]
   );

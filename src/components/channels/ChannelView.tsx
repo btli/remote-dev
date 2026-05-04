@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Hash, MessageSquare, Users } from "lucide-react";
+import { toast } from "sonner";
 import { useChannelContext } from "@/contexts/ChannelContext";
 import { usePeerChatContext } from "@/contexts/PeerChatContext";
 import { ChannelMessageRow } from "./ChannelMessageRow";
@@ -66,9 +67,12 @@ export function ChannelView({ folderId }: ChannelViewProps) {
   }, []);
 
   const handleSend = useCallback(
-    (text: string) => {
+    async (text: string) => {
       setIsUserScrolled(false);
-      sendMessage(text);
+      const result = await sendMessage(text);
+      if (!result.ok) {
+        toast.error("Failed to send message");
+      }
     },
     [sendMessage]
   );

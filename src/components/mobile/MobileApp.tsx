@@ -3,14 +3,14 @@
 /**
  * MobileApp — top-level mobile composition (Phase 2 → Phase 6).
  *
- * Phase 6 wires:
+ * Wires:
  *
  *   1. The Phase 1 {@link MobileShell} + {@link BottomTabBar}.
  *   2. The Phase 2 Sessions tab.
  *   3. The Phase 3 single-session full-bleed view ({@link MobileSessionView}).
  *   4. The Phase 4 Notifications tab ({@link NotificationsTab}).
- *   5. The Phase 6 Profile tab ({@link ProfileTab}).
- *   6. The Phase 6 lock + welcome auth flow.
+ *   5. The Phase 5 Channels tab ({@link ChannelsTab}) with thread takeover.
+ *   6. The Phase 6 Profile tab ({@link ProfileTab}) + lock + welcome auth flow.
  *
  * Phase 3 single-session view: when the Sessions tab is active AND the
  * user has selected a session, we render {@link MobileSessionView}
@@ -18,6 +18,12 @@
  * hiding the bottom tab bar. A swipe-up from the bottom edge re-shows
  * the bar briefly so the user can switch tabs without losing the
  * terminal.
+ *
+ * Phase 5 channels view: while a thread takeover is open inside the
+ * Channels tab, the bottom tab bar is forced hidden so it doesn't paint
+ * over the reply composer (both render at z-40 before the takeover bumps
+ * to z-50). We also dismiss any open thread on tab change so it doesn't
+ * get stranded behind a sibling tab.
  *
  * Auth model:
  *
@@ -56,10 +62,12 @@ import { toast } from "sonner";
 
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import { useSessionContext } from "@/contexts/SessionContext";
+import { useChannelContextOptional } from "@/contexts/ChannelContext";
 
 import { MobileShell } from "./MobileShell";
 import type { MobileTab } from "./BottomTabBar";
 import { SessionsTab } from "./sessions/SessionsTab";
+import { ChannelsTab } from "./channels/ChannelsTab";
 import { NotificationsTab } from "./notifications/NotificationsTab";
 import { MobileSessionView } from "./session/MobileSessionView";
 import { ProfileTab } from "./profile/ProfileTab";
@@ -83,13 +91,6 @@ export interface MobileAppProps {
    */
   initialUser: MobileAuthUser | null;
 }
-
-const PLACEHOLDER_COPY: Record<
-  Exclude<MobileTab, "sessions" | "notifications" | "profile">,
-  { title: string; phase: string }
-> = {
-  channels: { title: "Channels", phase: "Phase 5" },
-};
 
 const FONT_SIZE_STORAGE_KEY = "remote-dev:mobile:terminal-font-size";
 
@@ -163,6 +164,13 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
   const { data: clientSession, status: clientSessionStatus } = useSession();
   const firstRun = useFirstRun();
 
+  // Channels context is optional so MobileApp can still mount in test
+  // setups without ChannelProvider; production always wraps the tree.
+  const channels = useChannelContextOptional();
+  const channelsBadge = channels?.totalUnreadCount ?? 0;
+  const openThreadId = channels?.openThreadId ?? null;
+  const closeThread = channels?.closeThread;
+
   // Derived: prefer the server-passed user, fall back to the live client
   // session (only useful for in-app sign-in flows that don't full-reload).
   const resolvedUser = useMemo<MobileAuthUser | null>(() => {
@@ -218,6 +226,12 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
   const sessionOpen =
     activeTab === "sessions" && activeSession !== null && !tabBarRevealed;
 
+  // Phase 5: Force the tab bar hidden while a thread takeover is open in
+  // the Channels tab. Combined with sessionOpen so either condition can
+  // hide the bar.
+  const threadTakeover = activeTab === "channels" && openThreadId != null;
+  const tabBarForceHidden = sessionOpen || threadTakeover;
+
   // Project name lookup for the status bar. The compiler infers
   // `activeSession.projectId` as the only real dependency; `projectTree.getProject`
   // is read off the latest tree value at call time, so we let the compiler
@@ -265,12 +279,17 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
 
   const handleTabChange = useCallback(
     (tab: MobileTab) => {
+      // Phase 5: dismiss any open thread on the way out so it doesn't get
+      // stranded behind a sibling tab.
+      if (tab !== activeTab && openThreadId && closeThread) {
+        closeThread();
+      }
       // If user tapped a different tab, switch and clear reveal state so
       // the new tab's normal auto-hide-on-scroll behavior takes over.
       setRevealSeq(0);
       setActiveTab(tab);
     },
-    []
+    [activeTab, openThreadId, closeThread]
   );
 
   const handleConnectGitHub = useCallback(() => {
@@ -334,8 +353,9 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
     <MobileShell
       activeTab={activeTab}
       onTabChange={handleTabChange}
-      forceHidden={sessionOpen}
+      forceHidden={tabBarForceHidden}
       onRequestRevealTabBar={handleRequestRevealTabBar}
+      badges={channelsBadge > 0 ? { channels: channelsBadge } : undefined}
       // When a session is open, the view manages its own scroll regions,
       // remove the default bottom inset (which makes room for the tab bar)
       // so the smart-key strip + input bar can sit flush at the bottom.
@@ -356,6 +376,8 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
         />
       ) : activeTab === "sessions" ? (
         <SessionsTab isGitHubConnected={isGitHubConnected} />
+      ) : activeTab === "channels" ? (
+        <ChannelsTab />
       ) : activeTab === "notifications" ? (
         <NotificationsTab onSwitchTab={handleTabChange} />
       ) : activeTab === "profile" ? (
@@ -364,24 +386,7 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
           displayName={resolvedUser.name}
           isGitHubConnected={isGitHubConnected}
         />
-      ) : (
-        <EmptyTabPlaceholder
-          title={PLACEHOLDER_COPY[activeTab].title}
-          phase={PLACEHOLDER_COPY[activeTab].phase}
-        />
-      )}
+      ) : null}
     </MobileShell>
-  );
-}
-
-function EmptyTabPlaceholder({ title, phase }: { title: string; phase: string }) {
-  return (
-    <div
-      data-testid={`mobile-tab-placeholder-${title.toLowerCase()}`}
-      className="flex h-full flex-col items-center justify-center gap-1 px-6 py-12 text-center"
-    >
-      <p className="text-base font-medium text-foreground">{title}</p>
-      <p className="text-sm text-muted-foreground">Coming in {phase}.</p>
-    </div>
   );
 }

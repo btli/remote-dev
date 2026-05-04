@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
+
+const flushFrame = () =>
+  act(async () => {
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  });
 
 import { BottomSheet } from "@/components/mobile/common/BottomSheet";
 
@@ -79,6 +84,9 @@ describe("BottomSheet", () => {
       </BottomSheet>
     );
     await waitFor(() => screen.getByTestId("mobile-bottom-sheet"));
+    // The two-phase mount flips `entered` on the next animation frame;
+    // useDialogPolish's ESC + stack registration runs at that point.
+    await flushFrame();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
@@ -159,6 +167,7 @@ describe("BottomSheet", () => {
         </>
       );
       await waitFor(() => screen.getAllByTestId("mobile-bottom-sheet"));
+      await flushFrame();
       // Both sheets open → body locked.
       expect(document.body.style.overflow).toBe("hidden");
       // Close the first sheet — body should still be locked because the
@@ -186,6 +195,31 @@ describe("BottomSheet", () => {
         </>
       );
       await waitFor(() => expect(document.body.style.overflow).toBe(""));
+    });
+
+    it("ESC only closes the topmost dialog when sheets are stacked", async () => {
+      // Render two BottomSheets sequentially. The second one mounted is
+      // on top of the modal stack — pressing ESC must close ONLY it,
+      // leaving the underlying sheet open. Without the modal-stack
+      // sentinel both layers' window-level handlers would fire and the
+      // user would lose context of the underlying surface.
+      const onCloseA = vi.fn();
+      const onCloseB = vi.fn();
+      render(
+        <>
+          <BottomSheet open={true} onOpenChange={onCloseA} ariaLabel="A">
+            <div>a</div>
+          </BottomSheet>
+          <BottomSheet open={true} onOpenChange={onCloseB} ariaLabel="B">
+            <div>b</div>
+          </BottomSheet>
+        </>
+      );
+      await waitFor(() => screen.getAllByTestId("mobile-bottom-sheet"));
+      await flushFrame();
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(onCloseB).toHaveBeenCalledWith(false);
+      expect(onCloseA).not.toHaveBeenCalled();
     });
 
     it("restores focus to the previously-focused element on close", async () => {

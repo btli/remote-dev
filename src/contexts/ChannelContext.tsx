@@ -78,6 +78,17 @@ function incrementParentReplyCount(
   });
 }
 
+/** Discriminated result returned by `sendMessage` so call sites can react
+ * to delivery failures without losing the user's draft. The previous
+ * silent-swallow shape (`Promise<void>` that resolved on both paths)
+ * couldn't distinguish a removed-optimistic from a successful post, which
+ * meant the mobile composer cleared its textarea even when the network
+ * request failed. Existing desktop callers don't await the promise, so
+ * returning a result instead of throwing remains source-compatible. */
+export type SendMessageResult =
+  | { ok: true }
+  | { ok: false; error?: unknown };
+
 interface ChannelContextValue {
   groups: ChannelGroup[];
   activeChannelId: string | null;
@@ -85,7 +96,7 @@ interface ChannelContextValue {
   activeChannelMessages: ChannelMessage[];
   totalUnreadCount: number;
   loading: boolean;
-  sendMessage: (body: string, parentMessageId?: string) => Promise<void>;
+  sendMessage: (body: string, parentMessageId?: string) => Promise<SendMessageResult>;
   markChannelRead: (channelId: string, messageId: string) => Promise<void>;
   openThread: (messageId: string) => void;
   closeThread: () => void;
@@ -249,8 +260,10 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
   // ---------------------------------------------------------------------------
 
   const sendMessage = useCallback(
-    async (body: string, parentMessageId?: string) => {
-      if (!activeChannelId || !body.trim()) return;
+    async (body: string, parentMessageId?: string): Promise<SendMessageResult> => {
+      if (!activeChannelId || !body.trim()) {
+        return { ok: false, error: new Error("No active channel or empty body") };
+      }
 
       const trimmedBody = body.trim();
       const targetChannelId = activeChannelId;
@@ -294,11 +307,19 @@ export function ChannelProvider({ children }: ChannelProviderProps) {
           if (data.message) {
             reconcileOptimistic(setter, key, optimistic.id, data.message);
           }
-        } else {
-          removeOptimistic(setter, key, optimistic.id);
+          return { ok: true };
         }
-      } catch {
+        // Non-2xx — roll back the optimistic row and surface the failure
+        // so the caller can restore the user's draft.
         removeOptimistic(setter, key, optimistic.id);
+        const errBody = (await resp.json().catch(() => ({}))) as { error?: string };
+        return {
+          ok: false,
+          error: new Error(errBody.error ?? `Request failed (${resp.status})`),
+        };
+      } catch (err) {
+        removeOptimistic(setter, key, optimistic.id);
+        return { ok: false, error: err };
       }
     },
     [activeChannelId]

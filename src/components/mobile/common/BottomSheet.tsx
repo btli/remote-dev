@@ -30,6 +30,8 @@ import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/useMobile";
 
+import { useDialogPolish } from "./useDialogPolish";
+
 export interface BottomSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -70,39 +72,8 @@ export function BottomSheet({
   // Only render the portal on the client to avoid SSR/CSR mismatches.
   const isClient = typeof document !== "undefined";
 
-  // ESC key support.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onOpenChange]);
-
-  // Body scroll lock while open. Refcounted on a body data-attribute so
-  // multiple concurrent sheets don't leak a permanent locked state. Naive
-  // save/restore breaks under nested sheets: the second sheet would save
-  // `prev = "hidden"` (set by the first), and on its close would restore
-  // "hidden" — locking scroll forever. Only the first sheet actually
-  // applies the lock; only the last one to close releases it.
-  useEffect(() => {
-    if (!open || typeof document === "undefined") return;
-    const body = document.body;
-    const count = Number(body.dataset.scrollLockCount ?? "0") + 1;
-    body.dataset.scrollLockCount = String(count);
-    if (count === 1) body.style.overflow = "hidden";
-    return () => {
-      const next = Math.max(
-        0,
-        Number(body.dataset.scrollLockCount ?? "1") - 1
-      );
-      body.dataset.scrollLockCount = String(next);
-      if (next === 0) body.style.overflow = "";
-    };
-  }, [open]);
-
   const onOverlayClick = useCallback(() => onOpenChange(false), [onOpenChange]);
+  const handleEscape = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   // Two-phase mount so the slide-up enter and slide-down exit animations
   // both play. `mounted` tracks DOM presence; `entered` tracks whether
@@ -120,7 +91,6 @@ export function BottomSheet({
       return () => cancelAnimationFrame(id);
     }
     if (!mounted) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- two-phase mount/transition state machine
     setEntered(false);
     if (reducedMotion) {
       setMounted(false);
@@ -130,48 +100,11 @@ export function BottomSheet({
     return () => window.clearTimeout(t);
   }, [open, mounted, reducedMotion]);
 
-  // Focus trap: WCAG / aria-modal compliance. When the sheet enters, move
-  // focus to the first focusable child (or the panel itself when no
-  // focusable children exist), trap Tab/Shift+Tab inside, and restore
-  // focus to the previously-focused element when the sheet closes.
-  useEffect(() => {
-    if (!entered) return;
-    const panel = panelRef.current;
-    if (!panel) return;
-    const previouslyFocused =
-      typeof document !== "undefined"
-        ? (document.activeElement as HTMLElement | null)
-        : null;
-    const focusableSelector =
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-    const getFocusables = () =>
-      Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector));
-    const initial = getFocusables()[0] ?? panel;
-    initial.focus();
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const list = getFocusables();
-      if (list.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const first = list[0];
-      const last = list[list.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        last.focus();
-        e.preventDefault();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        first.focus();
-        e.preventDefault();
-      }
-    };
-    panel.addEventListener("keydown", onKey);
-    return () => {
-      panel.removeEventListener("keydown", onKey);
-      previouslyFocused?.focus?.();
-    };
-  }, [entered]);
+  // Focus trap + body scroll lock + ESC — shared with MobileThreadTakeover so
+  // the refcount on `document.body.dataset.scrollLockCount` works across
+  // both, and ESC only closes the topmost dialog (the sheet does not yank
+  // a thread takeover underneath it).
+  useDialogPolish({ active: entered, panelRef, onEscape: handleEscape });
 
   if (!isClient) return null;
   if (!mounted) return null;
