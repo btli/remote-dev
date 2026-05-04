@@ -102,10 +102,6 @@ export function BottomSheet({
     };
   }, [open]);
 
-  // Suppress lint: setEntered/setMounted are inside an effect (mount cycle).
-  // The pattern is the canonical "two-phase enter/exit transition" — we
-  // genuinely need the next-frame flip to drive the CSS transition.
-
   const onOverlayClick = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   // Two-phase mount so the slide-up enter and slide-down exit animations
@@ -181,12 +177,6 @@ export function BottomSheet({
   if (!mounted) return null;
 
   const heightCap = size === "tall" ? "max-h-[92dvh]" : "max-h-[75dvh]";
-
-  // Render-and-animate strategy: when `open` flips to true the panel mounts
-  // already at translate-y-full, then in the next frame transitions to 0.
-  // When closed we keep the wrapper mounted briefly so the exit transition
-  // can play. Simplest correct version: always-mounted with `aria-hidden`
-  // when closed, transition runs in either direction.
 
   return createPortal(
     <div
