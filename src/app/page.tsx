@@ -112,7 +112,13 @@ export default async function Home() {
                                   <NotificationProvider>
                                     <ChannelProvider>
                                     <PeerChatProvider>
-                                    <MobileViewportSwitch isGitHubConnected={isGitHubConnected}>
+                                    <MobileViewportSwitch
+                                      isGitHubConnected={isGitHubConnected}
+                                      initialUser={{
+                                        email: session.user.email ?? null,
+                                        name: session.user.name ?? null,
+                                      }}
+                                    >
                                       <div className="flex h-screen flex-col bg-background">
                                         {/* Header - hidden on mobile, shown in sidebar instead */}
                                         <Header

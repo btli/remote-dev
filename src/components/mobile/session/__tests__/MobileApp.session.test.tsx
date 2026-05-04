@@ -56,6 +56,22 @@ vi.mock("@/contexts/SessionContext", () => ({
 vi.mock("sonner", () => ({
   toast: Object.assign(vi.fn(), {
     error: vi.fn(),
+    success: vi.fn(),
+  }),
+}));
+
+// Phase 6 wired auth gating into MobileApp; the Phase 3 single-session
+// tests don't care about it, so stub useSession to "unauthenticated"
+// (we pass a real `initialUser` below to bypass the lock screen) and
+// stub useFirstRun to skip the welcome screen.
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({ data: null, status: "unauthenticated", update: vi.fn() }),
+}));
+vi.mock("@/components/mobile/auth/useFirstRun", () => ({
+  useFirstRun: () => ({
+    isFirstRun: false,
+    markSeen: vi.fn(),
+    reset: vi.fn(),
   }),
 }));
 
@@ -155,7 +171,10 @@ function makeProjectTree(): ProjectTreeContextValue {
 function renderApp() {
   return render(
     <ProjectTreeContext.Provider value={makeProjectTree()}>
-      <MobileApp isGitHubConnected={false} />
+      <MobileApp
+        isGitHubConnected={false}
+        initialUser={{ email: "test@example.com", name: "Test" }}
+      />
     </ProjectTreeContext.Provider>
   );
 }
@@ -323,7 +342,10 @@ describe("MobileApp single-session view (Phase 3)", () => {
     sessionMockState.activeSessionId = null;
     rerender(
       <ProjectTreeContext.Provider value={makeProjectTree()}>
-        <MobileApp isGitHubConnected={false} />
+        <MobileApp
+        isGitHubConnected={false}
+        initialUser={{ email: "test@example.com", name: "Test" }}
+      />
       </ProjectTreeContext.Provider>
     );
     expect(screen.queryByTestId("stub-mobile-session-view")).toBeNull();

@@ -3,7 +3,15 @@ import { jwtVerify, createRemoteJWKSet } from "jose";
 // Cloudflare Access configuration
 // Note: This module uses console.warn/error directly because it runs in Edge
 // runtime (via proxy.ts) where the structured logger is not available.
-const CF_ACCESS_TEAM = process.env.CF_ACCESS_TEAM || "joyfulhouse";
+//
+// `CF_ACCESS_TEAM` MUST NOT default to a hardcoded team name. Defaulting to
+// any real tenant would silently fetch JWKS from a foreign team's domain
+// during JWT verification — verification would then fail (different signing
+// keys) and, worse, the logout flow in `src/app/api/auth/signout/route.ts`
+// would redirect users to that foreign team's login wall. Both issues lead
+// to silent auth failures that are very hard to debug. We therefore require
+// the deployer to set `CF_ACCESS_TEAM` explicitly when CF Access is in use.
+const CF_ACCESS_TEAM = process.env.CF_ACCESS_TEAM;
 const CF_ACCESS_AUD = process.env.CF_ACCESS_AUD;
 
 // Cache the JWKS for performance
@@ -11,6 +19,11 @@ let jwksCache: ReturnType<typeof createRemoteJWKSet> | null = null;
 
 function getJWKS() {
   if (!jwksCache) {
+    if (!CF_ACCESS_TEAM) {
+      throw new Error(
+        "CF_ACCESS_TEAM is not configured; cannot build Cloudflare Access JWKS URL"
+      );
+    }
     jwksCache = createRemoteJWKSet(
       new URL(`https://${CF_ACCESS_TEAM}.cloudflareaccess.com/cdn-cgi/access/certs`)
     );
@@ -50,6 +63,13 @@ export async function validateAccessJWT(
     } catch {
       return null;
     }
+  }
+
+  if (!CF_ACCESS_TEAM) {
+    console.error(
+      "[CloudflareAccess] CF_ACCESS_AUD set but CF_ACCESS_TEAM missing; refusing to verify JWT"
+    );
+    return null;
   }
 
   try {

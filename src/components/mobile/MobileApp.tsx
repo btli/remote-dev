@@ -1,22 +1,57 @@
 "use client";
 
 /**
- * MobileApp, Phase 2 mobile redesign, extended in Phase 3.
+ * MobileApp — top-level mobile composition (Phase 2 → Phase 6).
  *
- * Top-level mobile composition rendered inside `MobileShell` when the
- * viewport is below 768px. Owns the active-tab state, dispatches tab
- * content, and shows simple "Coming in Phase N" placeholders for tabs
- * that ship later.
+ * Phase 6 wires:
  *
- * Phase 3 wires the single-session view: when the Sessions tab is active
- * AND the user has selected a session, we render {@link MobileSessionView}
+ *   1. The Phase 1 {@link MobileShell} + {@link BottomTabBar}.
+ *   2. The Phase 2 Sessions tab.
+ *   3. The Phase 3 single-session full-bleed view ({@link MobileSessionView}).
+ *   4. The Phase 4 Notifications tab ({@link NotificationsTab}).
+ *   5. The Phase 6 Profile tab ({@link ProfileTab}).
+ *   6. The Phase 6 lock + welcome auth flow.
+ *
+ * Phase 3 single-session view: when the Sessions tab is active AND the
+ * user has selected a session, we render {@link MobileSessionView}
  * full-bleed (status bar / terminal / smart-key strip / input bar),
  * hiding the bottom tab bar. A swipe-up from the bottom edge re-shows
  * the bar briefly so the user can switch tabs without losing the
  * terminal.
+ *
+ * Auth model:
+ *
+ *   This component runs *inside* an authenticated server render — the
+ *   parent page resolves the session via `getAuthSession()` (which
+ *   handles BOTH NextAuth credentials and Cloudflare Access JWT) and
+ *   redirects unauthenticated users before this component mounts. As a
+ *   result `initialUser` is the source of truth: when it's non-null the
+ *   user IS authenticated, regardless of what NextAuth's *client*
+ *   `useSession()` says.
+ *
+ *   `useSession()` is only consulted as a transient signal for the
+ *   *client-side* hydration state — for example, after a user signs in
+ *   to GitHub via the link flow on the same page. It must NEVER be used
+ *   to gate the lock screen on its own, because Cloudflare Access users
+ *   never have a NextAuth client session and would otherwise be
+ *   permanently stuck on the lock screen.
+ *
+ * Auth flow (mobile-only):
+ *
+ *   - If `initialUser` is null (a defensive fallback — middleware should
+ *     have redirected before we got here) → render
+ *     {@link MobileLockScreen}.
+ *   - If first run on this device → render {@link MobileWelcomeScreen}.
+ *   - Otherwise → render the tab shell with `activeTab` state.
+ *
+ * The GitHub OAuth callback redirects to `/?github=connected`. When that
+ * query param is present we surface a one-shot toast on the Sessions tab
+ * and strip the param from the URL so a refresh doesn't re-toast. This
+ * mirrors the desktop behavior without depending on it.
  */
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
@@ -27,14 +62,33 @@ import type { MobileTab } from "./BottomTabBar";
 import { SessionsTab } from "./sessions/SessionsTab";
 import { NotificationsTab } from "./notifications/NotificationsTab";
 import { MobileSessionView } from "./session/MobileSessionView";
+import { ProfileTab } from "./profile/ProfileTab";
+import { MobileLockScreen } from "./auth/MobileLockScreen";
+import { MobileWelcomeScreen } from "./auth/MobileWelcomeScreen";
+import { useFirstRun } from "./auth/useFirstRun";
+
+export interface MobileAuthUser {
+  email: string | null;
+  name: string | null;
+}
 
 export interface MobileAppProps {
   isGitHubConnected: boolean;
+  /**
+   * Server-resolved authenticated user from `getAuthSession()`. When
+   * non-null, the user is authenticated via NextAuth credentials OR
+   * Cloudflare Access JWT. This is the source of truth for mobile auth
+   * gating — `useSession()` cannot be trusted here because CF Access
+   * users have no NextAuth client session.
+   */
+  initialUser: MobileAuthUser | null;
 }
 
-const PLACEHOLDER_COPY: Record<Exclude<MobileTab, "sessions" | "notifications">, { title: string; phase: string }> = {
+const PLACEHOLDER_COPY: Record<
+  Exclude<MobileTab, "sessions" | "notifications" | "profile">,
+  { title: string; phase: string }
+> = {
   channels: { title: "Channels", phase: "Phase 5" },
-  profile: { title: "Profile", phase: "Phase 6" },
 };
 
 const FONT_SIZE_STORAGE_KEY = "remote-dev:mobile:terminal-font-size";
@@ -88,7 +142,7 @@ function usePersistedFontSize(): number | undefined {
   );
 }
 
-export function MobileApp({ isGitHubConnected }: MobileAppProps) {
+export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
   const [activeTab, setActiveTab] = useState<MobileTab>("sessions");
   // Use a monotonic counter rather than a boolean so that any repeated
   // call to handleRequestRevealTabBar re-arms the auto-collapse effect.
@@ -102,6 +156,39 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
   // SSR + first client render, then real value once useSyncExternalStore
   // resolves on the client).
   const persistedFontSize = usePersistedFontSize();
+
+  // `useSession` is consulted only for live updates after the initial
+  // server render (e.g. post-GitHub-link). It is NEVER the source of
+  // truth for "am I authenticated?" — see file-level docblock.
+  const { data: clientSession, status: clientSessionStatus } = useSession();
+  const firstRun = useFirstRun();
+
+  // Derived: prefer the server-passed user, fall back to the live client
+  // session (only useful for in-app sign-in flows that don't full-reload).
+  const resolvedUser = useMemo<MobileAuthUser | null>(() => {
+    if (initialUser) return initialUser;
+    if (clientSession?.user?.email) {
+      return {
+        email: clientSession.user.email ?? null,
+        name: clientSession.user.name ?? null,
+      };
+    }
+    return null;
+  }, [initialUser, clientSession]);
+
+  // Surface the GitHub OAuth callback toast once and strip the query
+  // param so a refresh won't replay it.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("github") !== "connected") return;
+    toast.success("GitHub connected", {
+      description: "Your account is linked.",
+    });
+    url.searchParams.delete("github");
+    const next = url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : "") + url.hash;
+    window.history.replaceState({}, "", next);
+  }, []);
 
   // When the bottom tab bar is revealed via the bottom-edge swipe, auto-
   // collapse it after a short delay so the session view goes back to
@@ -186,7 +273,62 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
     []
   );
 
+  const handleConnectGitHub = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.location.href = "/api/auth/github/link";
+    }
+  }, []);
+
+  const handleSkipWelcome = useCallback(() => {
+    firstRun.markSeen();
+    setActiveTab("sessions");
+  }, [firstRun]);
+
   const initialFontSize = persistedFontSize;
+
+  // Defensive: middleware should redirect unauthenticated users before
+  // this component renders. If `initialUser` is null AND the client
+  // session also hasn't filled in, treat this as "not yet authenticated"
+  // and keep the lock screen up rather than flashing the tab shell.
+  //
+  // Copy split:
+  //   - While the NextAuth client session is still resolving (`loading`),
+  //     show a generic "Loading" — we genuinely don't know yet whether
+  //     this is a credentials user, a CF Access user, or unauthenticated.
+  //     Showing the CF Access copy here would mislead local-dev users.
+  //   - Once the client session resolves to `unauthenticated` AND we
+  //     still have no `initialUser`, then we are confident the user is
+  //     not signed in; show the CF-branded copy because in production
+  //     the only way back in is via the CF Access challenge (the
+  //     middleware will have already issued the redirect).
+  if (!resolvedUser) {
+    if (clientSessionStatus === "loading") {
+      return <MobileLockScreen message="Loading" detail="Just a second." />;
+    }
+    return (
+      <MobileLockScreen
+        message="Authenticating via Cloudflare Access"
+        detail="Redirecting to sign in."
+      />
+    );
+  }
+
+  // First run: gated by the localStorage flag, only shown once we know
+  // it's not been seen. `firstRun.isFirstRun === null` means we haven't
+  // yet read storage; show the lock briefly to avoid a welcome flash.
+  if (firstRun.isFirstRun === null) {
+    return <MobileLockScreen message="Loading" detail="Just a second." />;
+  }
+  if (firstRun.isFirstRun) {
+    return (
+      <MobileWelcomeScreen
+        email={resolvedUser.email}
+        isGitHubConnected={isGitHubConnected}
+        onConnectGitHub={handleConnectGitHub}
+        onSkip={handleSkipWelcome}
+      />
+    );
+  }
 
   return (
     <MobileShell
@@ -216,6 +358,12 @@ export function MobileApp({ isGitHubConnected }: MobileAppProps) {
         <SessionsTab isGitHubConnected={isGitHubConnected} />
       ) : activeTab === "notifications" ? (
         <NotificationsTab onSwitchTab={handleTabChange} />
+      ) : activeTab === "profile" ? (
+        <ProfileTab
+          email={resolvedUser.email}
+          displayName={resolvedUser.name}
+          isGitHubConnected={isGitHubConnected}
+        />
       ) : (
         <EmptyTabPlaceholder
           title={PLACEHOLDER_COPY[activeTab].title}
