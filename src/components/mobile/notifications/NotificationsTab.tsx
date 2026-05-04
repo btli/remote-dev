@@ -129,8 +129,8 @@ export function NotificationsTab({ onSwitchTab }: NotificationsTabProps) {
     setErrorMessage(null);
     try {
       await notifCtx.refresh();
-    } catch (err) {
-      setErrorMessage(`Couldn't load notifications. Pull to retry. (${String(err)})`);
+    } catch {
+      setErrorMessage("Couldn't load notifications. Pull to retry.");
     }
   }, [notifCtx]);
 
