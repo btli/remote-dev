@@ -407,6 +407,7 @@
   --radius-4xl: calc(var(--radius) + 16px);
   --color-signal-attention: var(--signal-attention);
   --color-signal-attention-solid: var(--signal-attention-solid);
+  --color-signal-running: var(--signal-running);
 }
 
 :root {
@@ -421,9 +422,14 @@
    * same hue at full alpha, used for solid fills (e.g., unread dots) where
    * blending against bg-card would otherwise wash the color out — most
    * obvious in light mode.
+   *
+   * `--signal-running` is the active-execution signal — used as the pip
+   * color when an agent session is actively running. Same value across
+   * themes (running is a state signal that should read consistently).
    */
   --signal-attention: oklch(0.6 0.2 250 / 0.8);
   --signal-attention-solid: oklch(0.6 0.2 250);
+  --signal-running: oklch(0.65 0.17 152);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -461,6 +467,7 @@
   /* Signal accent stays the same across themes — see :root for rationale. */
   --signal-attention: oklch(0.6 0.2 250 / 0.8);
   --signal-attention-solid: oklch(0.6 0.2 250);
+  --signal-running: oklch(0.65 0.17 152);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

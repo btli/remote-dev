@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
+  home is now the Sessions tab. A header strip with a project switcher chip,
+  a `+ New` pill, and a recent-projects rail sits above a session list with
+  a 6px state pip per row, weight-driven hierarchy on the title, and a
+  foreground line-segment indicator for the active row (no colored side
+  stripes). Long-press opens an action sheet (Suspend / Resume / Rename /
+  Move / View recordings / Close session). Swipe-left dispatches suspend
+  with a 5s undo toast. Pull-to-refresh, attention-blue halo for waiting
+  sessions, and reduced-motion respect everywhere. New `BottomSheet` and
+  `ActionSheet` primitives, `usePullToRefresh` hook, and a project-tree
+  bottom sheet with search complete the surface. Built on top of the Phase 1
+  shell from remote-dev-3ozu.
+
 ## [0.3.7] - 2026-04-30
 
 Pre-mobile-redesign baseline. Captures all changes since v0.3.6 as a rollback
