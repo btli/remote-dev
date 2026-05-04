@@ -30,6 +30,7 @@ import AnsiToHtml from "ansi-to-html";
 import { cn } from "@/lib/utils";
 import { AnsiStripper } from "@/lib/terminal/ansi-stripper";
 import { useTerminalTheme } from "@/contexts/AppearanceContext";
+import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useSessionContext } from "@/contexts/SessionContext";
 import { useTerminalWebSocket } from "@/hooks/useTerminalWebSocket";
 import { usePrefersReducedMotion } from "@/hooks/useMobile";
@@ -48,14 +49,14 @@ import {
 import { SmartKeyStrip } from "./SmartKeyStrip";
 import { useModifierLatch } from "./useModifierLatch";
 import { usePinchZoom } from "./usePinchZoom";
+import { useViewportDimensions } from "./useViewportDimensions";
 import { SessionMetadataSheet } from "./SessionMetadataSheet";
 
 const MAX_OUTPUT_ENTRIES = 2000;
-const MOBILE_COLS = 120;
-const MOBILE_ROWS = 24;
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 22;
 const DEFAULT_FONT_SIZE = 12;
+const DEFAULT_FONT_FAMILY = "'JetBrainsMono Nerd Font Mono', monospace";
 
 interface OutputEntry {
   id: number;
@@ -115,7 +116,11 @@ export interface MobileSessionViewProps {
   isRecording?: boolean;
   hasRecordings?: boolean;
   environmentVars?: Record<string, string> | null;
-  /** Initial mono font size in px; persists between mounts when supplied. */
+  /**
+   * Initial mono font size in px; persists between mounts when supplied.
+   * When `undefined` (e.g. localStorage unset on first load) the view
+   * seeds from `usePreferencesContext().currentPreferences.fontSize`.
+   */
   initialFontSize?: number;
   /** Called after a pinch gesture commits a new size. */
   onPersistFontSize?: (size: number) => void;
@@ -141,7 +146,7 @@ export function MobileSessionView({
   isRecording = false,
   hasRecordings = false,
   environmentVars,
-  initialFontSize = DEFAULT_FONT_SIZE,
+  initialFontSize,
   onPersistFontSize,
   onBack,
   onSuspend,
@@ -152,6 +157,8 @@ export function MobileSessionView({
   const reducedMotion = usePrefersReducedMotion();
   const theme = useTerminalTheme();
   const sessionCtx = useSessionContext();
+  const { currentPreferences } = usePreferencesContext();
+  const fontFamily = currentPreferences.fontFamily || DEFAULT_FONT_FAMILY;
 
   const liveRegionId = useId();
 
@@ -172,9 +179,19 @@ export function MobileSessionView({
   const [isRestarting, setIsRestarting] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
 
-  // Font-size (pinch zoom). Clamp incoming initial value.
+  // Font-size (pinch zoom). Source priority on first mount:
+  //   1. `initialFontSize` prop (localStorage-backed via MobileApp)
+  //   2. user-level preference `fontSize`
+  //   3. DEFAULT_FONT_SIZE
+  // Subsequent updates come exclusively from pinch-to-zoom; we do NOT
+  // re-seed from prefs (preventing a desktop preference change from
+  // surprising a mobile user mid-session).
   const [fontSize, setFontSize] = useState<number>(() => {
-    return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, initialFontSize));
+    const seed =
+      initialFontSize ??
+      currentPreferences.fontSize ??
+      DEFAULT_FONT_SIZE;
+    return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, seed));
   });
   const fontSizeBaselineRef = useRef<number>(fontSize);
 
@@ -185,6 +202,16 @@ export function MobileSessionView({
   useEffect(() => {
     converterRef.current = createAnsiConverter(theme);
   }, [theme]);
+
+  // ── Viewport-driven cols/rows ───────────────────────────────────────────
+  // PTY/tmux dimensions are recomputed from the rendered viewport's pixel
+  // size and the current mono font. Updates on viewport resize (soft
+  // keyboard, rotation), font-family change (preferences), and font-size
+  // change (pinch zoom). Sent to the server via `sendResize` below.
+  const { ref: viewportRef, dimensions } = useViewportDimensions({
+    fontFamily,
+    fontSize,
+  });
 
   // ── Modifier latch ──────────────────────────────────────────────────────
   const latch = useModifierLatch();
@@ -238,11 +265,20 @@ export function MobileSessionView({
   }, [theme]);
 
   // ── WebSocket connection ────────────────────────────────────────────────
+  // Snapshot the *initial* dimensions for the WebSocket URL params. The
+  // hook re-establishes the connection when these change, which we don't
+  // want — runtime resizes are sent via `sendResize` instead. We freeze
+  // the values at first mount via lazy `useState` initializers (read-
+  // during-render ref values trip the react-hooks/refs rule).
+  const [initialCols] = useState(() => dimensions.cols);
+  const [initialRows] = useState(() => dimensions.rows);
+
   const {
     wsRef,
     status,
     authError,
     sendInput,
+    sendResize,
     sendRestartAgent,
   } = useTerminalWebSocket({
     sessionId: session.id,
@@ -252,8 +288,8 @@ export function MobileSessionView({
     terminalType: session.terminalType ?? "shell",
     tmuxHistoryLimit,
     environmentVars,
-    initialCols: MOBILE_COLS,
-    initialRows: MOBILE_ROWS,
+    initialCols,
+    initialRows,
     notificationsEnabled,
     sessionName: session.name,
     onOutput: handleOutput,
@@ -261,6 +297,24 @@ export function MobileSessionView({
     onAgentRestarted: handleAgentRestarted,
     onStatusMessage: handleStatusMessage,
   });
+
+  // Send a `resize` message to the server whenever the computed cols/rows
+  // change. The first emission (matching initialCols/initialRows) is
+  // skipped — the server already has those from the URL — but we send on
+  // any subsequent change once the socket is connected.
+  const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null);
+  useEffect(() => {
+    if (status !== "connected") return;
+    if (lastSentDimsRef.current === null) {
+      // First connection — server already has the URL-param dims. Mark
+      // the baseline so subsequent diffs only fire on real changes.
+      lastSentDimsRef.current = { cols: initialCols, rows: initialRows };
+    }
+    const last = lastSentDimsRef.current;
+    if (last.cols === dimensions.cols && last.rows === dimensions.rows) return;
+    sendResize(dimensions.cols, dimensions.rows);
+    lastSentDimsRef.current = { cols: dimensions.cols, rows: dimensions.rows };
+  }, [status, dimensions.cols, dimensions.rows, sendResize, initialCols, initialRows]);
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────
   const scrollToBottom = useCallback(() => {
@@ -415,10 +469,13 @@ export function MobileSessionView({
         ref={(node) => {
           scrollRef.current = node;
           pinch.ref(node);
+          viewportRef(node);
         }}
         onScroll={handleScroll}
         data-testid="mobile-session-output"
         data-font-size={fontSize}
+        data-cols={dimensions.cols}
+        data-rows={dimensions.rows}
         className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
         style={{
           backgroundColor: outputBg,
@@ -430,7 +487,7 @@ export function MobileSessionView({
         <pre
           className="p-2 leading-relaxed font-mono whitespace-pre-wrap break-words min-h-full"
           style={{
-            fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
+            fontFamily,
             fontSize: `${fontSize}px`,
           }}
         >
