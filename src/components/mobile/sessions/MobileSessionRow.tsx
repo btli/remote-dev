@@ -111,15 +111,13 @@ export function MobileSessionRow({
           longPress.bind.onTouchStart(e);
         }}
         onTouchMove={swipe.bind.onTouchMove}
-        onTouchEnd={(e) => {
+        onTouchEnd={() => {
           swipe.bind.onTouchEnd();
           longPress.bind.onMouseUp();
-          void e;
         }}
-        onTouchCancel={(e) => {
+        onTouchCancel={() => {
           swipe.bind.onTouchCancel();
           longPress.bind.onMouseUp();
-          void e;
         }}
         onPointerDown={longPress.bind.onPointerDown}
         onPointerMove={longPress.bind.onPointerMove}
