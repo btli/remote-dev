@@ -54,6 +54,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       xterm v6) rather than the fragile inner canvas.
     - Tap on an active selection clears the selection without firing a click
       or scroll, matching standard text-selection UX.
+- **Multi-client tmux resize stuck after switching windows**
+  (`remote-dev-nlfm`). The terminal server now elects the primary connection
+  (the one allowed to call `tmux resize-window`) by most-recently-focused
+  client instead of newest connection. The browser sends `client_focus` /
+  `client_blur` on `visibilitychange`, `window.focus`, and `window.blur`; a
+  1-second per-session cooldown prevents ping-pong between two side-by-side
+  windows. When the primary disconnects the server picks the most recently
+  focused remaining (visible) client and re-applies its size to tmux. A small
+  "Another window is in control · click to claim" pill appears on
+  non-primary clients and force-promotes when clicked. Clients that don't
+  send focus signals continue to work via the existing newest-on-connect
+  rule.
 - **Desktop terminal initial fontSize/fontFamily race**
   (`remote-dev-3gtr`). The xterm.js terminal stayed at the default font size
   (14px) on first mount when `PreferencesContext` resolved during the async

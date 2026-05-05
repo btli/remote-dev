@@ -143,6 +143,8 @@ interface TerminalProps {
   onDimensionsChange?: (cols: number, rows: number) => void;
   /** Called when terminal scroll position changes between scrolled-up and at-bottom */
   onScrollStateChange?: (isScrolledUp: boolean) => void;
+  /** Called when the server changes which connection controls tmux resize */
+  onPrimaryChange?: (isPrimary: boolean) => void;
 }
 
 export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal({
@@ -179,6 +181,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   onOutput,
   onDimensionsChange,
   onScrollStateChange,
+  onPrimaryChange,
 }, ref) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermContainerRef = useRef<HTMLDivElement>(null);
@@ -193,6 +196,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  // Primary = this connection controls tmux sizing. Defaults to true so the
+  // single-client flow shows nothing until/unless the server demotes us.
+  const [isPrimary, setIsPrimary] = useState(true);
   const isScrolledUpRef = useRef(false);
   const isUnmountingRef = useRef(false);
   // IDisposables registered against the terminal that need explicit cleanup
@@ -246,6 +252,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const onOutputRef = useRef(onOutput);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const onScrollStateChangeRef = useRef(onScrollStateChange);
+  const onPrimaryChangeRef = useRef(onPrimaryChange);
   const recordActivityRef = useRef(recordActivity);
 
   // FIX: Use refs for font and scrollback to avoid recreating terminal on changes.
@@ -289,6 +296,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     onOutputRef.current = onOutput;
     onDimensionsChangeRef.current = onDimensionsChange;
     onScrollStateChangeRef.current = onScrollStateChange;
+    onPrimaryChangeRef.current = onPrimaryChange;
     recordActivityRef.current = recordActivity;
     // Keep font refs in sync for pending terminal initialization
     fontSizeRef.current = fontSize;
@@ -301,7 +309,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     environmentVarsRef.current = environmentVars;
     // Keep theme ref in sync for pending terminal initialization
     terminalThemeRef.current = terminalTheme;
-  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onBeadsIssuesUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onChannelMessageCreated, onThreadReplyCreated, onChannelCreated, onOutput, onDimensionsChange, onScrollStateChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
+  }, [onStatusChange, onWebSocketReady, onSessionExit, onAgentExited, onAgentRestarted, onAgentActivityStatus, onBeadsIssuesUpdated, onSessionRenamed, onNotification, onSessionStatus, onSessionProgress, onPeerMessageCreated, onChannelMessageCreated, onThreadReplyCreated, onChannelCreated, onOutput, onDimensionsChange, onScrollStateChange, onPrimaryChange, recordActivity, fontSize, fontFamily, scrollback, tmuxHistoryLimit, mobileMode, environmentVars, terminalTheme]);
 
   // Expose focus method to parent components
   useImperativeHandle(ref, () => ({
@@ -794,6 +802,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
                   );
                 }
                 break;
+              case "primary_changed": {
+                const next = Boolean(msg.isPrimary);
+                setIsPrimary(next);
+                onPrimaryChangeRef.current?.(next);
+                break;
+              }
               case "voice_ready":
                 console.log(`[Voice] Ready for session ${msg.sessionId}`);
                 break;
@@ -940,10 +954,29 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         });
       };
 
+      // Track last focus signal sent to the server to avoid redundant WS chatter
+      // (focus/blur fire frequently — alt-tab, devtools, etc.). The server-side
+      // 1s cooldown handles thrash, but skipping no-op sends is still cheap.
+      let lastSentFocusState: "focus" | "blur" | null = null;
+      const sendFocusSignal = (next: "focus" | "blur") => {
+        if (lastSentFocusState === next) return;
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        try {
+          ws.send(JSON.stringify({ type: next === "focus" ? "client_focus" : "client_blur" }));
+          lastSentFocusState = next;
+        } catch {
+          // Ignore send errors — connection might be tearing down
+        }
+      };
+
       // Re-fit when page becomes visible again (returning from background)
       let visibilityTimeout: ReturnType<typeof setTimeout> | null = null;
       const handleVisibilityChange = () => {
         if (!document.hidden) {
+          // Send focus signal immediately so the server can promote in time for
+          // the resize message that follows from settleAndFit.
+          sendFocusSignal("focus");
           // Clear any pending timeout to avoid duplicate calls
           if (visibilityTimeout) {
             clearTimeout(visibilityTimeout);
@@ -955,11 +988,26 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             // Focus terminal when page becomes visible
             terminal.focus();
           }, 100);
+        } else {
+          sendFocusSignal("blur");
         }
+      };
+
+      const handleWindowFocus = () => {
+        sendFocusSignal("focus");
+        // Container size may have shifted while unfocused (desktop window
+        // resize, etc.) — settleAndFit on the next frame.
+        requestAnimationFrame(handleResize);
+      };
+
+      const handleWindowBlur = () => {
+        sendFocusSignal("blur");
       };
 
       window.addEventListener("resize", handleResize);
       document.addEventListener("visibilitychange", handleVisibilityChange);
+      window.addEventListener("focus", handleWindowFocus);
+      window.addEventListener("blur", handleWindowBlur);
 
       // Use ResizeObserver to detect when terminal container becomes visible
       // This handles the case when switching tabs (hidden -> visible)
@@ -998,6 +1046,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
         window.removeEventListener("resize", handleResize);
         document.removeEventListener("visibilitychange", handleVisibilityChange);
+        window.removeEventListener("focus", handleWindowFocus);
+        window.removeEventListener("blur", handleWindowBlur);
         terminalRef.current?.removeEventListener("contextmenu", preventContextMenu);
         resizeObserver.disconnect();
         if (resizeTimeout) clearTimeout(resizeTimeout);
@@ -1534,6 +1584,24 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
             Drop image to paste
           </div>
         </div>
+      )}
+
+      {/* Non-primary indicator: another window/tab currently controls tmux sizing */}
+      {!isPrimary && (
+        <button
+          type="button"
+          onClick={() => {
+            const ws = wsRef.current;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "client_focus", force: true }));
+            }
+          }}
+          title="Click to take over tmux sizing for this session"
+          className="absolute top-2 left-1/2 z-20 -translate-x-1/2 flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-2.5 py-1 text-[10px] font-medium text-white/85 shadow-lg backdrop-blur-sm hover:bg-black/75"
+        >
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+          Another window is in control · click to claim
+        </button>
       )}
 
       {/* Auth error overlay */}
