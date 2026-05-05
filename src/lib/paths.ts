@@ -220,6 +220,16 @@ export function getAnalyticsDir(): string {
 }
 
 /**
+ * Get the SSH connections directory path.
+ * Each saved SSH connection gets its own subdirectory containing the
+ * private key (`id`), public key (`id.pub`), and per-connection
+ * `known_hosts` file.
+ */
+export function getSshConnectionsDir(): string {
+  return join(getDataDir(), "ssh");
+}
+
+/**
  * Get the analytics database file path.
  * Stored separately from the main application database (high-volume writes).
  */
@@ -249,6 +259,7 @@ export function ensureDataDirectories(): void {
     getBuildsDir(),
     getLiteLLMDir(),
     getAnalyticsDir(),
+    getSshConnectionsDir(),
   ];
 
   for (const dir of dirs) {
@@ -328,6 +339,9 @@ export const AppPaths = {
   },
   get analyticsDatabasePath() {
     return getAnalyticsDatabasePath();
+  },
+  get sshConnectionsDir() {
+    return getSshConnectionsDir();
   },
   ensureDirectories: ensureDataDirectories,
 } as const;

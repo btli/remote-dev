@@ -466,13 +466,29 @@ export async function createSessionWithDedupFlag(
   // Fetch folder environment variables for the session
   const folderEnv = await getEnvironmentForSession(userId, input.projectId);
 
-  // Determine if this is an agent session early — needed for env var injection
-  // Check both explicit agent flags AND terminalType (profiles set terminalType
-  // but may not send agentProvider/autoLaunchAgent separately)
-  const isAgentSession =
+  // Determine session role early — drives env-var injection and the
+  // tmux pane-exited hook below.
+  //
+  // `isAgentRuntime` — narrow flag: true ONLY when the tmux pane is actually
+  //   running an AI coding agent (Claude/Codex/Gemini/OpenCode). Gates the
+  //   agent-specific side effects: API key creation, sox shim, RDV env vars,
+  //   `ensureAgentConfig` settings.json injection, proxy env, claude defaults.
+  //
+  // `isAgentSession` — wider flag: true when the plugin opts into the agent-
+  //   style exit-screen / restart UX via `emitsExitEvents`. Currently agent /
+  //   loop / ssh. Used solely to (a) initialize `agentExitState = "running"`
+  //   on the DB row and (b) install the tmux `pane-exited` hook so the
+  //   client can render an exit screen with a Restart button.
+  //
+  // Splitting the two flags prevents agent-only side effects (like writing
+  // hooks into `~/.claude/settings.json`) from leaking into SSH sessions.
+  const emitsExitEvents =
+    TerminalTypeServerRegistry.get(terminalType)?.emitsExitEvents ?? false;
+  const isAgentRuntime =
     (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) ||
     input.terminalType === "agent" ||
     input.terminalType === "loop";
+  const isAgentSession = isAgentRuntime || emitsExitEvents;
   const effectiveAgentProvider = input.agentProvider && input.agentProvider !== "none"
     ? input.agentProvider
     : "claude"; // Default matches DB default on line ~350
@@ -480,10 +496,19 @@ export async function createSessionWithDedupFlag(
   // RDV env vars for agent hook callbacks (session ID + terminal server address)
   // Socket mode (prod): uses TERMINAL_SOCKET; Port mode (dev): uses TERMINAL_PORT
   const terminalSocket = process.env.TERMINAL_SOCKET;
-  log.debug("Session creation details", { sessionId, isAgentSession: !!isAgentSession, provider: effectiveAgentProvider, terminalType: input.terminalType });
-  // Auto-create API key for agent sessions so they can make authenticated API calls
+  log.debug("Session creation details", {
+    sessionId,
+    isAgentRuntime: !!isAgentRuntime,
+    isAgentSession: !!isAgentSession,
+    provider: effectiveAgentProvider,
+    terminalType: input.terminalType,
+  });
+  // Auto-create API key for agent runtimes so they can make authenticated API
+  // calls back to the API server (e.g. /internal/peers/*, /internal/tasks/*).
+  // Gated on isAgentRuntime — SSH sessions don't run agent hook scripts and
+  // would never use the key.
   let agentApiKey: string | undefined;
-  if (isAgentSession) {
+  if (isAgentRuntime) {
     try {
       const keyName = `agent-session-${sessionId}`;
       // Delete any stale keys for this session before creating a new one
@@ -498,9 +523,10 @@ export async function createSessionWithDedupFlag(
 
   // Install sox shim for voice mode support in agent sessions.
   // Must happen before tmux session creation so the shim PATH is in the
-  // initial environment when the agent process starts.
+  // initial environment when the agent process starts. Gated on
+  // isAgentRuntime — SSH sessions don't use the local voice mode shim.
   let voiceShimDir: string | undefined;
-  if (isAgentSession) {
+  if (isAgentRuntime) {
     try {
       voiceShimDir = ensureSoxShim();
     } catch (error) {
@@ -508,7 +534,10 @@ export async function createSessionWithDedupFlag(
     }
   }
 
-  const rdvEnv: Record<string, string> = isAgentSession
+  // RDV_* env vars only matter to local agent hook scripts that call back
+  // into the terminal/API server. SSH sessions don't run those hooks (the
+  // remote shell wouldn't see the vars anyway), so skip injecting them.
+  const rdvEnv: Record<string, string> = isAgentRuntime
     ? {
         RDV_SESSION_ID: sessionId,
         ...(terminalSocket
@@ -525,8 +554,11 @@ export async function createSessionWithDedupFlag(
     : {};
 
   // Install agent hooks and MCP config BEFORE tmux session creation so the
-  // agent picks them up at startup (Claude Code reads settings once on launch)
-  if (isAgentSession) {
+  // agent picks them up at startup (Claude Code reads settings once on launch).
+  // Gated on isAgentRuntime — only AI agent sessions read these settings;
+  // SSH/loop-without-provider sessions would otherwise pollute settings.json
+  // with hooks that never fire.
+  if (isAgentRuntime) {
     const configDir = profile?.configDir ?? process.env.HOME;
     if (configDir) {
       const configDirs = await resolveAgentConfigDirs(configDir, startupCommand, sessionId);
@@ -562,7 +594,10 @@ export async function createSessionWithDedupFlag(
     log.error("Failed to resolve GitHub account env", { sessionId, error: String(error) });
   }
 
-  const proxyEnv = isAgentSession
+  // LiteLLM proxy env is only relevant when the tmux pane is running an AI
+  // agent CLI — SSH sessions should not have ANTHROPIC_BASE_URL etc. forced
+  // into their remote shell environment.
+  const proxyEnv = isAgentRuntime
     ? await resolveProxyEnv(effectiveAgentProvider, userId)
     : {};
 
@@ -574,8 +609,10 @@ export async function createSessionWithDedupFlag(
     const gitCredentialEnv = await resolveGitCredentialEnv(sessionId, !!profile);
     const folderGitIdentityEnv = await resolveFolderGitIdentityEnv(userId, input.projectId);
 
-    // Claude Code agent defaults (lowest precedence — overridable via profile/folder env)
-    const claudeAgentDefaults: Record<string, string> = isAgentSession && effectiveAgentProvider === "claude" && terminalType !== "loop"
+    // Claude Code agent defaults (lowest precedence — overridable via profile/folder env).
+    // Gated on isAgentRuntime so SSH sessions don't get CLAUDE_CODE_* env vars they
+    // don't need.
+    const claudeAgentDefaults: Record<string, string> = isAgentRuntime && effectiveAgentProvider === "claude" && terminalType !== "loop"
       ? { CLAUDE_CODE_NO_FLICKER: "1" }
       : {};
 
@@ -679,8 +716,10 @@ export async function createSessionWithDedupFlag(
         typeMetadata,
         scopeKey: input.scopeKey ?? null,
         agentProvider: input.agentProvider ?? "claude",
-        // Set agent state for agent/loop terminal types
-        agentExitState: (terminalType === "agent" || terminalType === "loop") ? "running" : null,
+        // Initialize the agent-style exit-state machine for any plugin that
+        // opts into the exit-screen / restart UX (agent / loop / ssh today).
+        // Driven by the plugin registry capability flag, not hardcoded types.
+        agentExitState: emitsExitEvents ? "running" : null,
         agentExitCode: null,
         agentExitedAt: null,
         agentRestartCount: 0,

@@ -140,6 +140,7 @@ Sessions have a `terminalType` field that determines their behavior. The plugin 
 | `agent` | AI agent as shell process | Claude Code, Codex, Gemini sessions |
 | `file` | File viewer/editor (no terminal) | Editing CLAUDE.md configs |
 | `browser` | Headless browser automation | Web scraping, testing, screenshots |
+| `ssh` | Remote shell over SSH (tmux-backed) | Connecting to remote hosts with saved credentials |
 
 **Plugin Architecture:**
 ```
@@ -337,6 +338,7 @@ src/
 | `channel_groups` | Channel group containers (e.g., "Channels", "Direct Messages") |
 | `channels` | Individual channels within groups |
 | `channel_read_state` | Per-user/channel unread tracking |
+| `ssh_connection` | User-scoped SSH connection definitions (host, port, user, auth type, encrypted password, optional project pin) |
 
 ### Service Layer
 
@@ -368,6 +370,7 @@ Located in `src/services/`:
 | `PeerService` | Project-scoped inter-agent peer discovery and messaging |
 | `BrowserService` | Headless browser automation (navigate, click, type, screenshot) |
 | `ChannelService` | Channel/group lifecycle, unread tracking, migration support |
+| `SshConnectionService` | SSH connection CRUD, key file management (0o700/0o600), ed25519 keypair generation, password encryption, extra-options allowlist |
 
 **Security**: All shell commands use `execFile` with array arguments (no shell interpolation).
 
@@ -721,6 +724,15 @@ React Contexts in `src/contexts/`:
 - `GET /api/channels/:channelId/messages/:messageId/thread` - Get thread replies
 - `POST /api/channels/:channelId/read` - Mark channel as read
 - `POST /api/channels/dm` - Find or create DM channel
+
+### SSH Connections
+- `GET /api/ssh-connections` - List connections (optional `?projectId=` for project-pinned, `?projectId=null` for unbound only)
+- `POST /api/ssh-connections` - Create connection (paste/upload private key, generate ed25519 keypair, or password/agent/system auth)
+- `GET /api/ssh-connections/:id` - Get connection metadata (passwordEnc never exposed)
+- `PATCH /api/ssh-connections/:id` - Update connection
+- `DELETE /api/ssh-connections/:id` - Delete connection (also removes `~/.remote-dev/ssh/{id}/`)
+- `POST /api/ssh-connections/:id/test` - Connectivity probe (rate-limited 1/5s per connection, minimal env)
+- `GET /api/ssh-connections/:id/public-key` - Read generated/uploaded public key for copy-paste to remote `authorized_keys`
 
 ## Quick Setup
 

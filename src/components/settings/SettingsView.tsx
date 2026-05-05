@@ -38,6 +38,11 @@ const ProxySection = lazy(() =>
 const ProfilesSection = lazy(() =>
   import("./sections/ProfilesSection").then((m) => ({ default: m.ProfilesSection }))
 );
+const SshConnectionsSection = lazy(() =>
+  import("./sections/SshConnectionsSection").then((m) => ({
+    default: m.SshConnectionsSection,
+  }))
+);
 const SecretsSection = lazy(() =>
   import("./sections/SecretsSection").then((m) => ({ default: m.SecretsSection }))
 );
@@ -61,6 +66,7 @@ export type SettingsSection =
   | "agents"
   | "proxy"
   | "profiles"
+  | "ssh"
   | "secrets"
   | "beads"
   | "system"
@@ -81,6 +87,7 @@ const NAV_ITEMS: (NavItem | "divider")[] = [
   { id: "proxy", label: "Proxy", icon: Network },
   "divider",
   { id: "profiles", label: "Profiles", icon: Fingerprint },
+  { id: "ssh", label: "SSH", icon: Server },
   { id: "secrets", label: "Secrets", icon: KeyRound },
   { id: "beads", label: "Beads", icon: Circle },
   "divider",
@@ -148,6 +155,8 @@ export function SettingsView({
         return <ProxySection />;
       case "profiles":
         return <ProfilesSection />;
+      case "ssh":
+        return <SshConnectionsSection />;
       case "secrets":
         return <SecretsSection />;
       case "system":

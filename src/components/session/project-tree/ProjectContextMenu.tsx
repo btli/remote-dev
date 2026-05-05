@@ -13,6 +13,7 @@ import {
 import {
   Terminal,
   Sparkles,
+  Server,
   History,
   Settings,
   GitBranch,
@@ -29,6 +30,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import type { ProjectNode } from "@/contexts/ProjectTreeContext";
+import { ContextNewSshSubmenu } from "../NewSshSubmenu";
 
 interface GroupOption {
   id: string;
@@ -45,6 +47,10 @@ interface ContentProps {
   moveTargetGroups?: GroupOption[];
   onNewTerminal: () => void;
   onNewAgent: () => void;
+  /** Create a new SSH session under this project for the chosen connection. */
+  onNewSshSession: (connectionId: string) => void;
+  /** Open Settings → SSH so the user can manage saved connections. */
+  onOpenSshSettings: () => void;
   onResume: () => void;
   onAdvanced: () => void;
   onNewWorktree: () => void;
@@ -79,6 +85,8 @@ export function ProjectContextMenuContent({
   moveTargetGroups,
   onNewTerminal,
   onNewAgent,
+  onNewSshSession,
+  onOpenSshSettings,
   onResume,
   onAdvanced,
   onNewWorktree,
@@ -94,6 +102,10 @@ export function ProjectContextMenuContent({
   onMoveToGroup,
   onDelete,
 }: ContentProps) {
+  // Plain-button variant: we don't render a hover-expanded submenu of saved
+  // connections (no Radix sub-menu primitive available), so we expose two
+  // flat affordances tagged with `data-testid` so unit tests can target
+  // them directly.
   return (
     <div role="menu">
       <button role="menuitem" onClick={onNewTerminal}>
@@ -101,6 +113,20 @@ export function ProjectContextMenuContent({
       </button>
       <button role="menuitem" onClick={onNewAgent}>
         <Sparkles className="mr-2 h-4 w-4" /> New Agent
+      </button>
+      <button
+        role="menuitem"
+        data-testid="project-new-ssh"
+        onClick={() => onNewSshSession("")}
+      >
+        <Server className="mr-2 h-4 w-4" /> New SSH
+      </button>
+      <button
+        role="menuitem"
+        data-testid="project-manage-ssh"
+        onClick={onOpenSshSettings}
+      >
+        <Server className="mr-2 h-4 w-4" /> Manage SSH Connections…
       </button>
       <button role="menuitem" onClick={onResume}>
         <History className="mr-2 h-4 w-4" /> Resume
@@ -234,6 +260,8 @@ export function ProjectContextMenu({
   moveTargetGroups,
   onNewTerminal,
   onNewAgent,
+  onNewSshSession,
+  onOpenSshSettings,
   onResume,
   onAdvanced,
   onNewWorktree,
@@ -260,6 +288,10 @@ export function ProjectContextMenu({
         <ContextMenuItem onSelect={onNewAgent}>
           <Sparkles className="mr-2 h-4 w-4" /> New Agent
         </ContextMenuItem>
+        <ContextNewSshSubmenu
+          onSelect={onNewSshSession}
+          onManage={onOpenSshSettings}
+        />
         <ContextMenuItem onSelect={onResume}>
           <History className="mr-2 h-4 w-4" /> Resume
         </ContextMenuItem>

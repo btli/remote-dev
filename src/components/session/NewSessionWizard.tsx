@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle, Briefcase } from "lucide-react";
+import { Folder, Github, Terminal, ChevronRight, Loader2, Sparkles, GitBranch, FileBox, Clock, Fingerprint, MessageCircle, Briefcase, Server } from "lucide-react";
 import { PathInput } from "@/components/common";
 import { ProfileSelector } from "@/components/profiles/ProfileSelector";
 import { ProjectPickerCombobox } from "./ProjectPickerCombobox";
@@ -48,7 +48,7 @@ interface NewSessionWizardProps {
     baseBranch?: string;
     profileId?: string;
     // Terminal type for plugin-based rendering
-    terminalType?: "shell" | "agent" | "file" | "loop";
+    terminalType?: "shell" | "agent" | "ssh" | "file" | "loop";
     // Agent-aware session fields
     agentProvider?: "claude" | "codex" | "gemini" | "opencode" | "none";
     autoLaunchAgent?: boolean;
@@ -56,6 +56,8 @@ interface NewSessionWizardProps {
     worktreeType?: WorktreeType;
     // Loop agent session fields
     loopConfig?: import("@/types/loop-agent").LoopConfig;
+    // SSH session fields
+    sshConnectionId?: string;
   }) => Promise<void>;
   isGitHubConnected: boolean;
 }
@@ -70,8 +72,9 @@ type WizardStep =
   | "feature-confirm"
   | "template-list"
   | "save-template"
-  | "loop-form";
-type SessionType = "simple" | "github" | "folder" | "feature" | "template" | "loop";
+  | "loop-form"
+  | "ssh-form";
+type SessionType = "simple" | "github" | "folder" | "feature" | "template" | "loop" | "ssh";
 
 export function NewSessionWizard({
   open,
@@ -125,6 +128,20 @@ export function NewSessionWizard({
   const [featureBaseBranch, setFeatureBaseBranch] = useState("main");
   const [isGitRepoValid, setIsGitRepoValid] = useState<boolean | null>(null);
   const [availableBranches, setAvailableBranches] = useState<string[]>([]);
+
+  // SSH session state
+  const [sshConnectionId, setSshConnectionId] = useState<string>("");
+  const [sshNameValue, setSshNameValue] = useState("");
+  type SshConnSummary = {
+    id: string;
+    name: string;
+    host: string;
+    port: number;
+    username: string;
+    authType: "key" | "agent" | "password" | "system";
+  };
+  const [sshConnections, setSshConnections] = useState<SshConnSummary[] | null>(null);
+  const [sshLoading, setSshLoading] = useState(false);
 
   // Loop session state
   const [loopName, setLoopName] = useState("");
@@ -212,6 +229,9 @@ export function NewSessionWizard({
     setLoopAgent("claude");
     setLoopIntervalMinutes(5);
     setLoopPromptTemplate("");
+    // SSH session reset
+    setSshConnectionId("");
+    setSshNameValue("");
   };
 
   const handleClose = () => {
@@ -229,8 +249,52 @@ export function NewSessionWizard({
       setStep("loop-form");
     } else if (type === "template") {
       setStep("template-list");
+    } else if (type === "ssh") {
+      setStep("ssh-form");
+      // Lazy-load connection list when entering the SSH step.
+      if (sshConnections === null && !sshLoading) {
+        setSshLoading(true);
+        fetch("/api/ssh-connections")
+          .then((r) => (r.ok ? r.json() : { connections: [] }))
+          .then((data) => {
+            setSshConnections(
+              (data.connections ?? []).map((c: SshConnSummary) => ({
+                id: c.id,
+                name: c.name,
+                host: c.host,
+                port: c.port,
+                username: c.username,
+                authType: c.authType,
+              }))
+            );
+          })
+          .catch(() => setSshConnections([]))
+          .finally(() => setSshLoading(false));
+      }
     } else {
       setStep("github-repo");
+    }
+  };
+
+  const handleSshCreate = async () => {
+    if (!sshConnectionId) {
+      setError("Please select an SSH connection");
+      return;
+    }
+    setIsCreating(true);
+    setError(null);
+    try {
+      await onCreate({
+        name: sshNameValue || "SSH",
+        terminalType: "ssh",
+        sshConnectionId,
+        projectId: selectedProjectId || undefined,
+      });
+      handleClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create SSH session");
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -425,6 +489,7 @@ export function NewSessionWizard({
             {step === "github-confirm" && "Review and create your session"}
             {step === "feature-form" && "Configure your feature session"}
             {step === "loop-form" && "Configure your loop agent session"}
+            {step === "ssh-form" && "Choose a saved SSH connection"}
             {step === "feature-confirm" && "Review and create your session"}
             {step === "template-list" && "Select a saved template to use"}
           </DialogDescription>
@@ -465,6 +530,12 @@ export function NewSessionWizard({
                 title="Loop Agent"
                 description="Chat-first agent session with loop scheduling"
                 onClick={() => handleTypeSelect("loop")}
+              />
+              <SessionTypeCard
+                icon={<Server className="w-5 h-5" />}
+                title="SSH"
+                description="Connect to a remote host using a saved SSH connection"
+                onClick={() => handleTypeSelect("ssh")}
               />
               {templates.length > 0 && (
                 <SessionTypeCard
@@ -1142,6 +1213,98 @@ export function NewSessionWizard({
                   ) : (
                     "Create Loop Session"
                   )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* SSH Form */}
+          {step === "ssh-form" && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-sm text-foreground">SSH Connection</Label>
+                {sshLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading saved connections…
+                  </div>
+                ) : sshConnections && sshConnections.length > 0 ? (
+                  <Select
+                    value={sshConnectionId}
+                    onValueChange={(v) => {
+                      setSshConnectionId(v);
+                      const conn = sshConnections.find((c) => c.id === v);
+                      if (conn && !sshNameValue) {
+                        setSshNameValue(conn.name);
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a saved SSH connection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sshConnections.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          <span className="font-medium">{c.name}</span>
+                          <span className="text-xs text-muted-foreground ml-2">
+                            {c.username}@{c.host}:{c.port}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">
+                    No saved SSH connections yet. Add one in{" "}
+                    <span className="font-medium text-foreground">Settings → SSH</span>.
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ssh-session-name" className="text-sm text-foreground">
+                  Session Name
+                </Label>
+                <Input
+                  id="ssh-session-name"
+                  value={sshNameValue}
+                  onChange={(e) => setSshNameValue(e.target.value)}
+                  placeholder="SSH"
+                  className="bg-card/50 border-border focus:border-primary"
+                />
+              </div>
+
+              {projectTree.projects.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-foreground flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-primary" />
+                    Project
+                  </Label>
+                  <ProjectPickerCombobox
+                    value={selectedProjectId}
+                    onChange={setSelectedProjectId}
+                    placeholder="Select a project (optional)"
+                  />
+                </div>
+              )}
+
+              {error && <p className="text-sm text-destructive">{error}</p>}
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setStep("choose-type")}
+                  className="flex-1"
+                  disabled={isCreating}
+                >
+                  Back
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={handleSshCreate}
+                  disabled={isCreating || !sshConnectionId}
+                >
+                  {isCreating && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
+                  Connect
                 </Button>
               </div>
             </div>

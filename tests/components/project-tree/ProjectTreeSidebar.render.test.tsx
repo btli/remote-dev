@@ -61,6 +61,8 @@ const requiredHandlerProps = {
   onProjectResumeClaudeSession: vi.fn(),
   onProjectAdvancedSession: vi.fn(),
   onProjectNewWorktree: vi.fn(),
+  onProjectNewSshSession: vi.fn(),
+  onProjectOpenSshSettings: vi.fn(),
   onProjectOpenSecrets: vi.fn(),
   onProjectOpenRepository: vi.fn(),
   onProjectOpenFolderInOS: vi.fn(),
@@ -255,6 +257,8 @@ describe("delete confirmation gate", () => {
           hasWorkingDirectory={false}
           onNewTerminal={() => {}}
           onNewAgent={() => {}}
+          onNewSshSession={() => {}}
+          onOpenSshSettings={() => {}}
           onResume={() => {}}
           onAdvanced={() => {}}
           onNewWorktree={() => {}}
@@ -283,6 +287,8 @@ describe("delete confirmation gate", () => {
           hasWorkingDirectory={false}
           onNewTerminal={() => {}}
           onNewAgent={() => {}}
+          onNewSshSession={() => {}}
+          onOpenSshSettings={() => {}}
           onResume={() => {}}
           onAdvanced={() => {}}
           onNewWorktree={() => {}}

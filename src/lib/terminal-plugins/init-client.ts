@@ -10,6 +10,7 @@
 import { TerminalTypeClientRegistry } from "./client";
 import { ShellClientPlugin } from "./plugins/shell-plugin-client";
 import { AgentClientPlugin } from "./plugins/agent-plugin-client";
+import { SshClientPlugin } from "./plugins/ssh-plugin-client";
 import { FileViewerClientPlugin } from "./plugins/file-viewer-plugin-client";
 import { BrowserClientPlugin } from "./plugins/browser-plugin-client";
 import { LoopAgentClientPlugin } from "./plugins/loop-agent-plugin-client";
@@ -50,6 +51,7 @@ export function initializeClientPlugins(): void {
 
   TerminalTypeClientRegistry.register(ShellClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(AgentClientPlugin, { builtIn: true });
+  TerminalTypeClientRegistry.register(SshClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(FileViewerClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(BrowserClientPlugin, { builtIn: true });
   TerminalTypeClientRegistry.register(LoopAgentClientPlugin, { builtIn: true });
