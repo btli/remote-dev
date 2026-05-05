@@ -56,6 +56,7 @@ import {
   type SshConnectionDTO,
   type SshKnownHostsPolicy,
 } from "@/contexts/SshConnectionContext";
+import { invalidateSshConnections } from "@/components/session/NewSshSubmenu";
 
 export function SshConnectionsSection() {
   return (
@@ -78,6 +79,7 @@ function SshConnectionsSectionInner() {
     setDeleting(true);
     try {
       await remove(deleteConfirm.id);
+      invalidateSshConnections();
       setDeleteConfirm(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Delete failed");
@@ -101,6 +103,7 @@ function SshConnectionsSectionInner() {
           existing={editing === "new" ? null : editing}
           onDone={() => {
             setEditing(null);
+            invalidateSshConnections();
             void refresh();
           }}
         />
