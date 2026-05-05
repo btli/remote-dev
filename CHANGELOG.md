@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile smart-key strip a11y** (`remote-dev-1jym`). Aligned accessible
+  names with visible text on smart-key strip and mobile keyboard mode toggle
+  buttons to satisfy Lighthouse `label-content-name-mismatch` (WCAG 2.5.3):
+  text-label keys (Esc, Tab, punctuation) now use their visible text as the
+  accessible name; modifier latches (Ctrl/Alt/Shift) and the NAV/KEYS toggle
+  prefix the visible text in `aria-label` before the contextual suffix.
 - **Mobile redesign Phase 7 audit + polish** (`remote-dev-0hx8`). Surgical
   pass against the DESIGN.md bar:
   - **A11y** — Mobile session rows now announce status to screen readers
