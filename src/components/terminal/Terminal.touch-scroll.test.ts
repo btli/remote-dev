@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTouchScrollHandlers, TOUCH_SCROLL_ACTIVATION_PX } from "./touch-scroll";
+import { createTouchModeRef } from "./useTouchInteractions";
 
 const CELL_HEIGHT = 16;
 const ROWS = 24;
@@ -246,6 +247,73 @@ describe("touch-scroll: edge cases", () => {
     h.feedTouchSequence([500, 480, 460, 440, 420, 400]);
     expect(h.scrollLinesCalls).toEqual([]);
     expect(h.inputBytes).toEqual([]);
+  });
+
+  it("skips scroll activation when the shared modeRef is in 'selection' (long-press drag in progress)", () => {
+    // Directly drive a TouchScroll instance with a shared modeRef preset to
+    // "selection". Even a long swipe that would otherwise emit must produce
+    // no scroll/input.
+    const container = document.createElement("div");
+    const scrollEl = document.createElement("div");
+    scrollEl.className = "xterm-scrollable-element";
+    Object.defineProperty(scrollEl, "clientHeight", { value: CELL_HEIGHT * ROWS, configurable: true });
+    container.appendChild(scrollEl);
+    document.body.appendChild(container);
+
+    const scrollLinesCalls: number[] = [];
+    const inputBytes: string[] = [];
+    const xterm = {
+      rows: ROWS,
+      scrollLines: (n: number) => scrollLinesCalls.push(n),
+      buffer: { active: { type: "normal" as const } },
+      modes: { applicationCursorKeysMode: false, mouseTrackingMode: "none" as const },
+    };
+    const modeRef = createTouchModeRef();
+    modeRef.current = "selection";
+
+    const handlers = createTouchScrollHandlers({
+      container,
+      getXterm: () => xterm,
+      sendInput: (data: string) => inputBytes.push(data),
+      modeRef,
+      raf: () => 0,
+      cancelRaf: () => {},
+      now: () => 0,
+    });
+
+    const fire = (type: "touchstart" | "touchmove" | "touchend", y: number) => {
+      const touches: Touch[] =
+        type === "touchend"
+          ? []
+          : ([{ clientY: y, clientX: 0, identifier: 0, target: container } as unknown as Touch]);
+      const event = new Event(type, { bubbles: true, cancelable: true }) as unknown as TouchEvent;
+      Object.defineProperty(event, "touches", { value: touches, configurable: true });
+      let preventDefaultCalled = false;
+      Object.defineProperty(event, "preventDefault", {
+        value: () => {
+          preventDefaultCalled = true;
+        },
+        configurable: true,
+      });
+      if (type === "touchstart") handlers.handleTouchStart(event);
+      else if (type === "touchmove") handlers.handleTouchMove(event);
+      else handlers.handleTouchEnd();
+      return preventDefaultCalled;
+    };
+
+    fire("touchstart", 500);
+    // Series of moves that, without the bail, would emit several scrollLines.
+    const pdMid = fire("touchmove", 460);
+    fire("touchmove", 420);
+    fire("touchmove", 380);
+    fire("touchend", 0);
+
+    expect(scrollLinesCalls).toEqual([]);
+    expect(inputBytes).toEqual([]);
+    // We must NOT preventDefault on touchmove during selection — that's the
+    // interactions handler's job (it owns the gesture). The scroll handler
+    // is purely a no-op while selection is active.
+    expect(pdMid).toBe(false);
   });
 
   it("ignores multi-touch gestures so pinch-zoom still works", () => {

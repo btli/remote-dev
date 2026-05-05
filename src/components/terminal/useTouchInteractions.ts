@@ -14,22 +14,27 @@
 //     one for the long-press fire (DEFAULT_LONG_PRESS_MS), and an implicit
 //     one via touchend which decides between "tap" vs "scroll"/"selection".
 //   - During touchmove: if the gesture is in the selection mode (long-press
-//     fired), we update `terminal.select(col, row, length)`. Otherwise, if the
-//     finger has moved further than MOVEMENT_CANCEL_PX, we cancel the pending
+//     fired), we update `terminal.select(col, row, length)` AND call
+//     `e.preventDefault()` so the parallel touch-scroll handler doesn't
+//     scroll the viewport from under the selection. Otherwise, if the finger
+//     has moved further than MOVEMENT_CANCEL_PX, we cancel the pending
 //     long-press timer and let the touch-scroll handler take over.
 //   - On touchend: if we're in selection mode, copy `terminal.getSelection()`
 //     to the clipboard and keep the selection visible. Otherwise, if the
 //     gesture lasted < TAP_MAX_MS and total movement was < TAP_MAX_PX, we
-//     synthesize a `mousedown`+`mouseup` pair on the xterm element. xterm
-//     forwards these to the application when mouse mode is on; if it is off,
-//     we clear any selection and call `terminal.scrollToBottom()` so the
-//     "tap to jump to latest" behavior works at a shell prompt.
+//     either clear an existing selection (tap-to-deselect) OR synthesize a
+//     `mousedown`+`mouseup` pair on the xterm screen and scroll to the
+//     bottom. We always scroll to the bottom on tap regardless of mouse mode
+//     because that matches user expectation. When mouse mode is on, xterm
+//     also forwards the synthetic click to the running app.
 //   - On a second finger (pinch handoff) we cancel the pending long-press and
 //     bail out — `usePinchZoom` claims the gesture from there.
 //
-// We do NOT call `e.preventDefault()` on the touch events here. The touch-
-// scroll handler already does so when needed (touchmove past activation), and
-// `touch-action: none` on .xterm.terminal blocks the browser side.
+// Coordination with `touch-scroll.ts`: shared via a `TouchModeRef`. The scroll
+// handler skips activation when our mode is `"selection"`, so a long-press
+// drag never accidentally scrolls. We also `preventDefault` on touchmove
+// during selection as a belt-and-suspenders measure (requires the listener be
+// registered with `{ passive: false }`).
 //
 // xterm internals: cell dimensions live on `terminal._core._renderService`.
 // xterm's public TS surface doesn't expose this, so we cast through `unknown`
@@ -51,7 +56,24 @@ export const LONG_PRESS_MS = 500;
 // the gesture and we cleanly suppress both long-press and tap synthesis.
 export const MOVEMENT_CANCEL_PX = 5;
 
-type Mode = "idle" | "pending" | "selection" | "scroll";
+export type TouchInteractionMode = "idle" | "pending" | "selection" | "scroll";
+
+/**
+ * Mutable mode reference shared between `createTouchInteractions` and
+ * `createTouchScrollHandlers`. Lets the scroll handler skip activation while
+ * a selection drag is in progress, and lets the interactions handler keep
+ * its mode in sync with what the scroll handler observes. The host owns the
+ * single object instance and passes it to both factories.
+ */
+export interface TouchModeRef {
+  current: TouchInteractionMode;
+}
+
+export function createTouchModeRef(): TouchModeRef {
+  return { current: "idle" };
+}
+
+type Mode = TouchInteractionMode;
 
 interface XTermDims {
   /** Cell width in CSS px (not device px). */
@@ -165,6 +187,12 @@ export function selectionLength(
 export interface UseTouchInteractionsDeps {
   /** Live xterm.js Terminal instance. Returns null before mount. */
   getTerminal: () => XTermType | null;
+  /**
+   * Shared mode reference. Required for coordinating with `touch-scroll.ts`
+   * (the scroll handler reads this to bail when we're mid-selection). If
+   * omitted, a private one is created — useful for unit tests.
+   */
+  modeRef?: TouchModeRef;
   /** Test seam — defaults to performance.now(). */
   now?: () => number;
   /** Test seam — defaults to setTimeout. */
@@ -213,8 +241,14 @@ export function createTouchInteractions(
     ((target: HTMLElement, event: MouseEvent) => {
       target.dispatchEvent(event);
     });
+  // The host shares one `modeRef` across this hook + touch-scroll. When
+  // omitted (unit tests), we use a private one so the handler still works.
+  const modeRef: TouchModeRef = deps.modeRef ?? createTouchModeRef();
+  const setMode = (m: Mode) => {
+    modeRef.current = m;
+  };
+  const getCurrentMode = (): Mode => modeRef.current;
 
-  let mode: Mode = "idle";
   let startX = 0;
   let startY = 0;
   let startT = 0;
@@ -233,7 +267,7 @@ export function createTouchInteractions(
 
   const reset = () => {
     cancelLongPress();
-    mode = "idle";
+    setMode("idle");
     selectionStart = null;
   };
 
@@ -246,7 +280,7 @@ export function createTouchInteractions(
     if (!dims) return;
     const cell = pointToCell(dims, startX, startY);
     selectionStart = cell;
-    mode = "selection";
+    setMode("selection");
     // Initial 1-cell selection so the user sees feedback immediately even if
     // they don't move yet.
     terminal.clearSelection();
@@ -300,15 +334,27 @@ export function createTouchInteractions(
   const synthesizeTap = (clientX: number, clientY: number) => {
     const terminal = getTerminal();
     if (!terminal || !terminal.element) return;
-    // xterm v6 attaches its mouse listeners to the canvas inside .xterm-screen
-    // (where the WebGL/canvas renderer paints), NOT to the outer host div.
-    // Dispatched events do not propagate downward into children, so a
-    // mousedown on `terminal.element` is silently ignored. Walk into the
-    // screen → canvas, with the host div as a last-resort fallback.
+
+    // Tap-to-deselect: if there's an active selection, clear it and bail.
+    // Don't fire a click and don't scroll — the user's intent on this tap
+    // was clearly "dismiss the selection." Their next tap will go through
+    // the normal click + scrollToBottom path.
+    if (terminal.hasSelection()) {
+      terminal.clearSelection();
+      return;
+    }
+
+    // xterm v6 attaches its mouse listeners on the .xterm-screen element via
+    // `addDisposableListener`. We dispatch there — it is the stable target
+    // regardless of which renderer (WebGL canvas, DOM, multiple canvases)
+    // happens to be active. We previously aimed at the inner canvas, but
+    // that's brittle: WebGL builds paint into multiple canvases (text,
+    // selection, link, link-tooltip layers) and the listener isn't on any of
+    // them. Falling back to the host div is also fine; xterm wires a few
+    // listeners there as well.
     const host = terminal.element;
     const screen = host.querySelector(".xterm-screen") as HTMLElement | null;
-    const canvas = screen?.querySelector("canvas") as HTMLElement | null;
-    const target: HTMLElement = canvas ?? screen ?? host;
+    const target: HTMLElement = screen ?? host;
     const baseInit: MouseEventInit = {
       bubbles: true,
       cancelable: true,
@@ -318,24 +364,17 @@ export function createTouchInteractions(
       button: 0,
       buttons: 1,
     };
-    const md = new MouseEvent("mousedown", baseInit);
-    dispatchMouse(target, md);
-    const mu = new MouseEvent("mouseup", { ...baseInit, buttons: 0 });
-    dispatchMouse(target, mu);
+    dispatchMouse(target, new MouseEvent("mousedown", baseInit));
+    dispatchMouse(target, new MouseEvent("mouseup", { ...baseInit, buttons: 0 }));
 
-    // If app mouse mode is OFF, the tap should also re-anchor the viewport at
-    // the bottom — matches the user's expectation that tapping clears scroll-
-    // back state and "jumps back to the prompt." When mouse mode IS on, the
-    // app got the click; we leave the viewport position alone since the user
-    // may be intentionally scrolled up reading history.
-    const mouseMode = (terminal as unknown as {
-      modes?: { mouseTrackingMode?: string };
-    }).modes?.mouseTrackingMode;
-    const appOwnsMouse =
-      mouseMode === "vt200" || mouseMode === "drag" || mouseMode === "any";
-    if (!appOwnsMouse) {
-      terminal.scrollToBottom();
-    }
+    // Always scroll to bottom on tap, regardless of mouse mode. Most users
+    // expect tapping the terminal to "jump back to the latest output" — a
+    // ubiquitous mobile pattern. When app mouse mode is on, xterm forwards
+    // the synthetic click to the running app for free; the scroll is a no-op
+    // there since the alt buffer doesn't have scrollback. When mouse mode is
+    // off, the synthetic click is a harmless no-op (xterm's selection logic
+    // would handle it but our taps don't drag) and the scroll does its job.
+    terminal.scrollToBottom();
   };
 
   const handleTouchStart = (e: TouchEvent) => {
@@ -350,7 +389,7 @@ export function createTouchInteractions(
     lastX = startX;
     lastY = startY;
     startT = now();
-    mode = "pending";
+    setMode("pending");
     cancelLongPress();
     longPressTimer = setTimer(() => {
       longPressTimer = null;
@@ -358,24 +397,33 @@ export function createTouchInteractions(
       // the finger moved past MOVEMENT_CANCEL_PX or a second finger landed,
       // we already cancelled it. So at this point the gesture is a held
       // single finger.
-      if (mode !== "pending") return;
+      if (getCurrentMode() !== "pending") return;
       beginSelection();
     }, LONG_PRESS_MS);
   };
 
   const handleTouchMove = (e: TouchEvent) => {
-    if (mode === "idle") return;
+    const cur = getCurrentMode();
+    if (cur === "idle") return;
     if (e.touches.length !== 1) {
       // Pinch handoff: cancel long-press but don't dispatch tap on end.
       cancelLongPress();
-      mode = "scroll"; // any non-tap state cleanly suppresses tap synthesis
+      setMode("scroll"); // any non-tap state cleanly suppresses tap synthesis
       return;
     }
     const t = e.touches[0];
     lastX = t.clientX;
     lastY = t.clientY;
 
-    if (mode === "selection") {
+    if (cur === "selection") {
+      // Suppress the parallel touch-scroll handler. Without preventDefault
+      // the host's scroll listener would also process this touchmove and
+      // scroll the viewport while the user is dragging to extend the
+      // selection. We also share the modeRef so the scroll handler bails
+      // on its own (defense in depth — preventDefault here covers the
+      // cases where listener order or third-party hooks bypass that).
+      // Requires the listener be registered with `{ passive: false }`.
+      if (e.cancelable) e.preventDefault();
       updateSelection(lastX, lastY);
       return;
     }
@@ -385,22 +433,23 @@ export function createTouchInteractions(
     const dy = lastY - startY;
     if (Math.hypot(dx, dy) > MOVEMENT_CANCEL_PX) {
       cancelLongPress();
-      mode = "scroll"; // touch-scroll handler will own the rest of this gesture
+      setMode("scroll"); // touch-scroll handler will own the rest of this gesture
     }
   };
 
   const handleTouchEnd = (e: TouchEvent) => {
     cancelLongPress();
-    if (mode === "selection") {
+    const cur = getCurrentMode();
+    if (cur === "selection") {
       // Use the last known position from touchmove rather than touchend.touches
       // (which is empty by spec on the last finger lift).
       updateSelection(lastX, lastY);
       finishSelection();
-      mode = "idle";
+      setMode("idle");
       return;
     }
 
-    if (mode === "pending") {
+    if (cur === "pending") {
       const elapsed = now() - startT;
       const dx = lastX - startX;
       const dy = lastY - startY;
@@ -411,7 +460,7 @@ export function createTouchInteractions(
     }
 
     // Scroll / cancelled — nothing to do beyond resetting state.
-    mode = "idle";
+    setMode("idle");
     selectionStart = null;
     void e; // suppress unused-arg lint without removing the param shape
   };
@@ -427,7 +476,7 @@ export function createTouchInteractions(
     handleTouchEnd,
     handleTouchCancel,
     destroy: reset,
-    getMode: () => mode,
+    getMode: () => modeRef.current,
   };
 }
 
@@ -435,12 +484,14 @@ export interface UseTouchInteractionsOptions {
   /** Element to attach listeners to (typically the xterm container). */
   element: HTMLElement | null;
   getTerminal: () => XTermType | null;
+  /** Optional shared mode ref for coordinating with `touch-scroll.ts`. */
+  modeRef?: TouchModeRef;
   enabled?: boolean;
 }
 
 /** React hook that wires `createTouchInteractions` onto an element. */
 export function useTouchInteractions(opts: UseTouchInteractionsOptions): void {
-  const { element, getTerminal, enabled = true } = opts;
+  const { element, getTerminal, modeRef, enabled = true } = opts;
   // Stable refs so the listeners don't re-bind on every render.
   const getTerminalRef = useRef(getTerminal);
   useEffect(() => {
@@ -451,12 +502,14 @@ export function useTouchInteractions(opts: UseTouchInteractionsOptions): void {
     if (!element || !enabled) return;
     const handlers = createTouchInteractions({
       getTerminal: () => getTerminalRef.current(),
+      modeRef,
     });
-    // Passive listeners — we never preventDefault here. The touch-scroll
-    // handler in Terminal.tsx already calls preventDefault on touchmove past
-    // its activation threshold; double-handling would be wasteful.
+    // touchmove is `{ passive: false }` because we call preventDefault while
+    // in selection mode (so the host's touch-scroll listener doesn't scroll
+    // the viewport from under the dragged selection). The other events stay
+    // passive — we don't preventDefault on them.
     element.addEventListener("touchstart", handlers.handleTouchStart, { passive: true });
-    element.addEventListener("touchmove", handlers.handleTouchMove, { passive: true });
+    element.addEventListener("touchmove", handlers.handleTouchMove, { passive: false });
     element.addEventListener("touchend", handlers.handleTouchEnd, { passive: true });
     element.addEventListener("touchcancel", handlers.handleTouchCancel, { passive: true });
     return () => {
@@ -466,5 +519,5 @@ export function useTouchInteractions(opts: UseTouchInteractionsOptions): void {
       element.removeEventListener("touchend", handlers.handleTouchEnd);
       element.removeEventListener("touchcancel", handlers.handleTouchCancel);
     };
-  }, [element, enabled]);
+  }, [element, enabled, modeRef]);
 }
