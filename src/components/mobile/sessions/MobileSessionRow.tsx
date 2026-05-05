@@ -107,7 +107,9 @@ export function MobileSessionRow({
 
   // Status announcement for screen readers. The pip carries state visually;
   // SR users read this prefix so colour-only signal isn't the only channel.
-  const statusAnnouncement = (() => {
+  // Idle returns null so the default-state row announces just the session
+  // name — avoids verbose "idle" repetition on every row in long lists.
+  const statusAnnouncement = ((): string | null => {
     switch (presentation.pip) {
       case "attention":
         return "waiting for input";
@@ -119,7 +121,7 @@ export function MobileSessionRow({
         return "suspended";
       case "idle":
       default:
-        return "idle";
+        return null;
     }
   })();
 
@@ -199,7 +201,11 @@ export function MobileSessionRow({
         onMouseLeave={longPress.bind.onMouseLeave}
         role="button"
         tabIndex={0}
-        aria-label={`Open session ${session.name}, ${statusAnnouncement}`}
+        aria-label={
+          statusAnnouncement
+            ? `Open session ${session.name}, ${statusAnnouncement}`
+            : `Open session ${session.name}`
+        }
         aria-current={active ? "true" : undefined}
         onClick={() => onTap(session.id)}
         onKeyDown={(e) => {

@@ -145,7 +145,7 @@ export function BottomTabBar({
                 aria-current={active ? "page" : undefined}
                 aria-label={
                   badge > 0
-                    ? `${label}, ${badge > 99 ? "99 or more" : badge} unread`
+                    ? `${label}, ${badge > 99 ? "99+" : badge} unread`
                     : label
                 }
                 data-tab={id}

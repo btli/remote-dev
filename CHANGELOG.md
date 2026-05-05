@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     peer tab bar pips) now gates on `prefers-reduced-motion` consistently
     with `.notification-ring`; the pulsing-opacity animation is suppressed
     rather than running through the user's preference.
+  - Adversarial-review polish: pin `.agent-breathing` opacity in
+    reduced-motion; quiet idle-state SR announcement on mobile session
+    rows; match visual `99+` in tab-bar SR label; sr-only comma between
+    notification metadata fields.
 - **Mobile terminal touch interactions: adversarial-review bugs**
   (`remote-dev-ub9k`). Four bugs in the touch-selection state machine fixed:
     - Selection rows now use buffer-absolute coordinates (`viewportRow +

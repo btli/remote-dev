@@ -289,6 +289,7 @@ export function MobileNotificationRow({
             {notification.sessionName ? (
               <>
                 <span>{notification.sessionName}</span>
+                <span className="sr-only">,</span>
                 <span aria-hidden="true">·</span>
               </>
             ) : null}

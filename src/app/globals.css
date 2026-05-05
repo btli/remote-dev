@@ -732,6 +732,7 @@
   }
   .agent-breathing {
     animation: none;
+    opacity: 1;
   }
 }
 
