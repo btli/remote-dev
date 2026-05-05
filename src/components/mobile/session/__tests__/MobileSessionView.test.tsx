@@ -395,6 +395,75 @@ describe("MobileSessionView, fontSize hydration reconciliation", () => {
     ).toBe("18");
   });
 
+  it("a pinch commit before prefs settle latches: later prefs do NOT override the pinched value", () => {
+    // Cold start: prefs still loading, no persisted value → seeds default 12.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+      loading: true,
+    });
+
+    const { rerender } = render(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={undefined}
+      />
+    );
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("12");
+
+    // User pinches up to 14 (12 * 14/12) and commits BEFORE prefs land.
+    act(() => {
+      capturedPinchOpts?.onScale?.(14 / 12);
+      capturedPinchOpts?.onScaleCommit?.(14 / 12);
+    });
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("14");
+
+    // Now prefs finally settle with a different value (20).
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 20 },
+      loading: false,
+    });
+    rerender(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={undefined}
+      />
+    );
+
+    // Pinch wins: the commit latched seededFromUpstreamRef, so the
+    // reconciliation effect is a no-op when prefs arrive.
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("14");
+  });
+
+  it("rejects a NaN initialFontSize and falls through to preferences", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 16 },
+      loading: false,
+    });
+
+    renderView({ initialFontSize: Number.NaN });
+
+    // NaN must be rejected by Number.isFinite — we should land on 16
+    // (from settled prefs), NOT 12 (default fallback) and NOT NaN.
+    const fontSizeAttr = screen
+      .getByTestId("stub-terminal-with-keyboard")
+      .getAttribute("data-font-size");
+    expect(fontSizeAttr).toBe("16");
+  });
+
   it("locks the latch: a later prefs change does not override a user pinch", () => {
     setMockPrefs({
       currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },

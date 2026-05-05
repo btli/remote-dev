@@ -170,11 +170,17 @@ export function MobileSessionView({
   //   - Else use `currentPreferences.fontSize` only if prefs are settled.
   //   - Else fall through to DEFAULT_FONT_SIZE; the reconciliation effect
   //     will fix it once an upstream source settles.
+  // We use `Number.isFinite` (not `typeof === "number"`) because
+  // `typeof NaN === "number"` is true. A NaN slipping through (corrupt
+  // localStorage, freak prefs payload) would make `Math.max/min(NaN)`
+  // return NaN, latch the seed forever, and stick the terminal at NaN
+  // px. `Number.isFinite` rejects NaN and ±Infinity while accepting
+  // every real number.
   const [fontSize, setFontSize] = useState<number>(() => {
     let seed: number = DEFAULT_FONT_SIZE;
-    if (typeof initialFontSize === "number") {
-      seed = initialFontSize;
-    } else if (!preferencesLoading && typeof currentPreferences.fontSize === "number") {
+    if (Number.isFinite(initialFontSize)) {
+      seed = initialFontSize as number;
+    } else if (!preferencesLoading && Number.isFinite(currentPreferences.fontSize)) {
       seed = currentPreferences.fontSize;
     }
     return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, seed));
@@ -186,8 +192,8 @@ export function MobileSessionView({
   // We pre-latch in the lazy initializer when an upstream value was
   // already available — the effect then has nothing to do.
   const seededFromUpstreamRef = useRef<boolean>(
-    typeof initialFontSize === "number" ||
-      (!preferencesLoading && typeof currentPreferences.fontSize === "number")
+    Number.isFinite(initialFontSize) ||
+      (!preferencesLoading && Number.isFinite(currentPreferences.fontSize))
   );
 
   // ── Modifier latch ──────────────────────────────────────────────────────
@@ -234,6 +240,13 @@ export function MobileSessionView({
         Math.min(FONT_SIZE_MAX, Math.round(fontSizeBaselineRef.current * factor))
       );
       fontSizeBaselineRef.current = next;
+      // The user's first deliberate size choice IS a real upstream value
+      // — latch so a later async upstream (slow /api/preferences fetch
+      // or late-hydrating localStorage) cannot overwrite the pinch.
+      // Done here in commit, NOT in onScale, since onScale fires every
+      // drag frame and latching there would be wasteful + semantically
+      // wrong (mid-gesture isn't a final user choice).
+      seededFromUpstreamRef.current = true;
       onPersistFontSize?.(next);
     },
   });
@@ -257,13 +270,14 @@ export function MobileSessionView({
     if (seededFromUpstreamRef.current) return;
 
     // We need to know the upstream is "real":
-    //   - If `initialFontSize` is a number, persistence has hydrated.
+    //   - If `initialFontSize` is a finite number, persistence has hydrated.
     //   - Otherwise, wait for PreferencesContext to finish loading
-    //     before trusting `currentPreferences.fontSize`.
+    //     before trusting `currentPreferences.fontSize` — and only
+    //     accept a finite number there too (NaN guard).
     let resolved: number | undefined;
-    if (typeof initialFontSize === "number") {
-      resolved = initialFontSize;
-    } else if (!preferencesLoading) {
+    if (Number.isFinite(initialFontSize)) {
+      resolved = initialFontSize as number;
+    } else if (!preferencesLoading && Number.isFinite(currentPreferences.fontSize)) {
       resolved = currentPreferences.fontSize;
     }
     if (resolved === undefined) return;
