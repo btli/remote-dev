@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile terminal touch interactions: adversarial-review bugs**
+  (`remote-dev-ub9k`). Four bugs in the touch-selection state machine fixed:
+    - Selection rows now use buffer-absolute coordinates (`viewportRow +
+      terminal.buffer.active.viewportY`) so a long-press in scrolled-back
+      history highlights the cell under the finger instead of a row at the
+      top of the buffer.
+    - `reset()` (touchcancel, destroy, multi-touch handoff) now calls
+      `terminal.clearSelection()` when a selection was active, so a stale
+      highlight no longer lingers after the gesture is forcibly cleared.
+    - `handleTouchEnd` now gates the full state reset on
+      `e.touches.length === 0`. When one finger lifts but another remains,
+      we abandon any active selection but stay out of `idle`, so the
+      remaining finger isn't blocked from continuing the gesture.
+    - Replaced a false-positive multi-touch test in
+      `Terminal.touch-scroll.test.ts` that constructed an event but never
+      invoked the handler — it now actually drives `handleTouchMove` and
+      asserts the bail-out contract.
 - **Mobile terminal touch interactions follow-ups** (`remote-dev-zigy`).
   Three regressions from PR #227's tap-to-click + long-press-to-select layer
   are now resolved:
