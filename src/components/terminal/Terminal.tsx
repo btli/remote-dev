@@ -13,7 +13,7 @@ import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
 import { createTouchScrollHandlers } from "./touch-scroll";
-import { createTouchInteractions } from "./useTouchInteractions";
+import { createTouchInteractions, createTouchModeRef } from "./useTouchInteractions";
 
 const SETTLE_MIN_WIDTH = 100;
 const SETTLE_MIN_HEIGHT = 80;
@@ -1381,6 +1381,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     const container = terminalRef.current;
     if (!container) return;
 
+    // Shared mode object: lets the scroll handler bail when the interactions
+    // handler is mid-selection, and lets the interactions handler keep its
+    // mode visible to the scroll handler. One object, two readers.
+    const modeRef = createTouchModeRef();
+
     const handlers = createTouchScrollHandlers({
       container,
       getXterm: () => xtermRef.current,
@@ -1390,15 +1395,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           ws.send(JSON.stringify({ type: "input", data }));
         }
       },
+      modeRef,
     });
 
     // Tap-to-click + long-press-to-select. Composed alongside the scroll
-    // handler: shared touch events, but mine never preventDefault. Order
-    // doesn't matter because the two handlers are state-isolated — any
-    // movement past 5 px puts mine into "scroll" mode (suppresses tap +
-    // long-press) which is exactly when the scroll handler activates.
+    // handler. The interactions handler's touchmove uses passive: false so
+    // it can preventDefault during selection — a belt-and-suspenders pair
+    // with the modeRef check on the scroll side.
     const interactions = createTouchInteractions({
       getTerminal: () => xtermRef.current,
+      modeRef,
     });
 
     container.addEventListener("touchstart", handlers.handleTouchStart, { passive: true });
@@ -1407,7 +1413,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     container.addEventListener("touchcancel", handlers.handleTouchCancel, { passive: true });
 
     container.addEventListener("touchstart", interactions.handleTouchStart, { passive: true });
-    container.addEventListener("touchmove", interactions.handleTouchMove, { passive: true });
+    container.addEventListener("touchmove", interactions.handleTouchMove, { passive: false });
     container.addEventListener("touchend", interactions.handleTouchEnd, { passive: true });
     container.addEventListener("touchcancel", interactions.handleTouchCancel, { passive: true });
 

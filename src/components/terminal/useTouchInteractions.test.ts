@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   createTouchInteractions,
+  createTouchModeRef,
   pointToCell,
   selectionLength,
   TAP_MAX_MS,
@@ -29,6 +30,7 @@ interface FakeXTerm {
   select: ReturnType<typeof vi.fn>;
   clearSelection: ReturnType<typeof vi.fn>;
   getSelection: ReturnType<typeof vi.fn>;
+  hasSelection: ReturnType<typeof vi.fn>;
   // _core mock returns the cell width/height we configure
   _core: {
     _renderService: {
@@ -49,13 +51,15 @@ interface Harness {
   fireTouch: (
     type: "touchstart" | "touchmove" | "touchend" | "touchcancel",
     touches: Array<{ x: number; y: number }>
-  ) => void;
+  ) => boolean;
   advanceTime: (ms: number) => void;
   flushTimers: () => void;
   mouseEvents: Array<{ type: string; clientX: number; clientY: number; target: EventTarget | null }>;
   copies: string[];
   getMode: () => string;
   destroy: () => void;
+  /** Direct access to the modeRef shared with the scroll handler in prod. */
+  modeRef: { current: string };
   /** How many times `getBoundingClientRect` has been called on the screen. */
   bcrCalls: () => number;
   /** Shift the cached screen rect by `dy` px to simulate keyboard slide-up. */
@@ -105,6 +109,9 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
     select: vi.fn(),
     clearSelection: vi.fn(),
     getSelection: vi.fn(() => "selected text"),
+    // No active selection by default. Tests for tap-to-deselect override
+    // this to return true.
+    hasSelection: vi.fn(() => false),
     _core: {
       _renderService: {
         dimensions: { css: { cell: { width: CELL_W, height: CELL_H } } },
@@ -120,8 +127,13 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
   const mouseEvents: Array<{ type: string; clientX: number; clientY: number; target: EventTarget | null }> = [];
   const copies: string[] = [];
 
+  // Production wires this between createTouchInteractions and
+  // createTouchScrollHandlers so the scroll handler sees `selection` and bails.
+  const modeRef = createTouchModeRef();
+
   const handlers = createTouchInteractions({
     getTerminal: () => xterm as unknown as Parameters<typeof createTouchInteractions>[0]["getTerminal"] extends () => infer R ? R : never,
+    modeRef,
     now: () => nowValue,
     setTimer: ((cb: TimerFn, ms: number) => {
       const id = nextTimerId++;
@@ -148,7 +160,7 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
   const fireTouch = (
     type: "touchstart" | "touchmove" | "touchend" | "touchcancel",
     touches: Array<{ x: number; y: number }>
-  ) => {
+  ): boolean => {
     const touchObjs = touches.map(
       (t, i) => ({ clientX: t.x, clientY: t.y, identifier: i, target: element }) as unknown as Touch
     );
@@ -158,6 +170,7 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
     else if (type === "touchmove") handlers.handleTouchMove(ev);
     else if (type === "touchend") handlers.handleTouchEnd(ev);
     else handlers.handleTouchCancel(ev);
+    return (ev as unknown as Event).defaultPrevented;
   };
 
   const advanceTime = (ms: number) => {
@@ -185,6 +198,7 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
     copies,
     getMode: handlers.getMode,
     destroy: handlers.destroy,
+    modeRef,
     bcrCalls: () => bcrCount,
     shiftScreenY: (dy) => {
       originY += dy;
@@ -251,14 +265,17 @@ describe("tap-to-click", () => {
     expect(h.xterm.scrollToBottom).toHaveBeenCalledTimes(1);
   });
 
-  it("does NOT call scrollToBottom when application mouse mode is ON", () => {
+  it("ALSO calls scrollToBottom when application mouse mode is ON (universal jump-to-bottom UX)", () => {
     for (const mode of ["vt200", "drag", "any"] as const) {
       const h = makeHarness({ mouseMode: mode });
       h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
       h.advanceTime(50);
       h.fireTouch("touchend", []);
-      expect(h.xterm.scrollToBottom).not.toHaveBeenCalled();
-      // mouse events are still sent — that's the whole point.
+      // Tap dispatches the synthetic mouse pair AND scrolls to bottom. The
+      // app handles its own scroll via the synthesized click; xterm's
+      // scrollToBottom is a no-op on the alt buffer where TUIs typically
+      // run, so this is safe everywhere.
+      expect(h.xterm.scrollToBottom).toHaveBeenCalledTimes(1);
       expect(h.mouseEvents).toHaveLength(2);
     }
   });
@@ -435,21 +452,12 @@ describe("synthesizeTap dispatch target", () => {
     document.body.innerHTML = "";
   });
 
-  it("dispatches mousedown+mouseup on the .xterm-screen canvas (xterm wires its mouse listeners there)", () => {
+  it("dispatches mousedown+mouseup on the .xterm-screen element (xterm wires its mouse listeners there)", () => {
+    // We deliberately target .xterm-screen (the stable mouse-listener host
+    // in xterm v6) rather than an inner canvas. WebGL builds paint into
+    // multiple canvases and the listener isn't on any of them; the screen
+    // div is the consistent mouse-input surface.
     const h = makeHarness();
-    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
-    h.advanceTime(50);
-    h.fireTouch("touchend", []);
-    expect(h.mouseEvents).toHaveLength(2);
-    for (const e of h.mouseEvents) {
-      expect(e.target).toBe(h.canvas);
-    }
-  });
-
-  it("falls back to .xterm-screen when no canvas is present", () => {
-    const h = makeHarness();
-    // Remove the canvas to simulate a renderer that didn't paint one.
-    h.canvas.remove();
     h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
     h.advanceTime(50);
     h.fireTouch("touchend", []);
@@ -459,7 +467,7 @@ describe("synthesizeTap dispatch target", () => {
     }
   });
 
-  it("falls back to terminal.element when neither .xterm-screen nor canvas is present", () => {
+  it("falls back to terminal.element when .xterm-screen is missing", () => {
     const h = makeHarness();
     h.screen.remove();
     h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
@@ -508,6 +516,96 @@ describe("selection drag re-reads grid origin per touchmove", () => {
     h.fireTouch("touchmove", [{ x: 200 + CELL_W, y: 100 }]);
     // Linear: from (12,3) to (13,5) over cols=80 → idx 252 to idx 413, length 162.
     expect(h.xterm.select).toHaveBeenLastCalledWith(12, 3, 162);
+  });
+});
+
+describe("tap-to-deselect", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("clears the active selection on tap and does NOT synthesize click or scroll", () => {
+    const h = makeHarness();
+    // Pretend xterm already has a selection (from a previous long-press).
+    h.xterm.hasSelection = vi.fn(() => true);
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    // Tap on an active selection: clear and bail.
+    expect(h.xterm.clearSelection).toHaveBeenCalledTimes(1);
+    expect(h.mouseEvents).toEqual([]);
+    expect(h.xterm.scrollToBottom).not.toHaveBeenCalled();
+  });
+
+  it("after the deselect tap, the next tap synthesizes a click and scrolls (selection now cleared)", () => {
+    const h = makeHarness();
+    // First tap: had a selection. After clearSelection runs we flip the
+    // mock back to "no selection" so the next tap takes the normal path.
+    let hasSel = true;
+    h.xterm.hasSelection = vi.fn(() => hasSel);
+    h.xterm.clearSelection = vi.fn(() => {
+      hasSel = false;
+    });
+
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    expect(h.xterm.clearSelection).toHaveBeenCalledTimes(1);
+    expect(h.mouseEvents).toEqual([]);
+    expect(h.xterm.scrollToBottom).not.toHaveBeenCalled();
+
+    // Second tap.
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    expect(h.mouseEvents).toHaveLength(2);
+    expect(h.xterm.scrollToBottom).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("selection drag suppresses scroll", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("calls preventDefault on touchmove during selection mode", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.getMode()).toBe("selection");
+    // Now drag — the move should set defaultPrevented so the host's
+    // touch-scroll listener (which doesn't bail synchronously without a
+    // shared mode) sees a preventDefault'd event.
+    const prevented = h.fireTouch("touchmove", [{ x: 200 + 2 * CELL_W, y: 100 }]);
+    expect(prevented).toBe(true);
+  });
+
+  it("does NOT call preventDefault on touchmove in pending or scroll mode", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    // Move within the cancel threshold: still pending, must NOT preventDefault
+    // (would block the touch-scroll handler from doing its thing).
+    const prevented1 = h.fireTouch("touchmove", [{ x: 201, y: 101 }]);
+    expect(prevented1).toBe(false);
+    // Move past threshold: scroll mode. Still must NOT preventDefault.
+    const prevented2 = h.fireTouch("touchmove", [{ x: 220, y: 100 }]);
+    expect(prevented2).toBe(false);
+    expect(h.getMode()).toBe("scroll");
+  });
+
+  it("exposes selection mode via the shared modeRef so the scroll handler can bail", () => {
+    const h = makeHarness();
+    expect(h.modeRef.current).toBe("idle");
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    expect(h.modeRef.current).toBe("pending");
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.modeRef.current).toBe("selection");
+    h.fireTouch("touchmove", [{ x: 200 + CELL_W, y: 100 }]);
+    expect(h.modeRef.current).toBe("selection");
+    h.fireTouch("touchend", []);
+    expect(h.modeRef.current).toBe("idle");
   });
 });
 

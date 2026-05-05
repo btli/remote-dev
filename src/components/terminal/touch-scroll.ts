@@ -29,6 +29,8 @@
 // flush so DECSET 1049 / mouse-mode / vim mode toggles mid-swipe behave
 // correctly.
 
+import type { TouchModeRef } from "./useTouchInteractions";
+
 // Pixel slop a single-touch swipe must exceed before we treat it as a scroll
 // gesture rather than a tap.
 export const TOUCH_SCROLL_ACTIVATION_PX = 5;
@@ -60,6 +62,13 @@ export interface TouchScrollDeps {
    * path. Same channel the on-screen keyboard already uses.
    */
   sendInput: (data: string) => void;
+  /**
+   * Optional mode ref shared with `createTouchInteractions`. When the
+   * interactions handler is in `"selection"` mode (long-press drag), this
+   * scroll handler skips activation so the viewport doesn't scroll from
+   * under the user's selection drag.
+   */
+  modeRef?: TouchModeRef;
   /** Test seam — defaults to performance.now(). */
   now?: () => number;
   /** Test seam — defaults to requestAnimationFrame. */
@@ -78,10 +87,11 @@ export interface TouchScrollHandlers {
 }
 
 export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHandlers {
-  const { container, getXterm, sendInput } = deps;
+  const { container, getXterm, sendInput, modeRef } = deps;
   const now = deps.now ?? (() => performance.now());
   const raf = deps.raf ?? ((cb) => requestAnimationFrame(cb));
   const cancelRaf = deps.cancelRaf ?? ((id) => cancelAnimationFrame(id));
+  const isSelecting = (): boolean => modeRef?.current === "selection";
 
   let touchStartY = 0;
   let lastTouchY = 0;
@@ -181,6 +191,16 @@ export function createTouchScrollHandlers(deps: TouchScrollDeps): TouchScrollHan
   };
 
   const handleTouchMove = (e: TouchEvent) => {
+    // Selection drag in progress (interactions handler owns the gesture):
+    // skip scroll handling entirely so the viewport stays put under the
+    // user's selection. The interactions handler also calls preventDefault
+    // on its own — between the two we're fully covered regardless of
+    // listener invocation order.
+    if (isSelecting()) {
+      isScrolling = false;
+      return;
+    }
+
     if (e.touches.length !== 1) {
       isScrolling = false;
       return;

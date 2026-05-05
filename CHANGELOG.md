@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile terminal touch interactions follow-ups** (`remote-dev-zigy`).
+  Three regressions from PR #227's tap-to-click + long-press-to-select layer
+  are now resolved:
+    - Selection drag no longer fights the scroll handler. Both
+      `useTouchInteractions` and `touch-scroll` now share a `TouchModeRef`,
+      and the scroll handler skips activation while the interactions handler
+      is in `selection` mode. Belt-and-suspenders: the interactions touchmove
+      listener is now `passive: false` and calls `preventDefault()` on
+      touchmove during selection so even handler-order quirks can't scroll
+      the viewport from under the user's selection.
+    - Tap now reliably triggers `terminal.scrollToBottom()` regardless of
+      mouse mode (matches the universal "tap to jump to latest" mobile
+      pattern), and dispatches the synthetic mouse pair on the
+      `.xterm-screen` element directly (the stable mouse-listener host in
+      xterm v6) rather than the fragile inner canvas.
+    - Tap on an active selection clears the selection without firing a click
+      or scroll, matching standard text-selection UX.
 - **Desktop terminal initial fontSize/fontFamily race**
   (`remote-dev-3gtr`). The xterm.js terminal stayed at the default font size
   (14px) on first mount when `PreferencesContext` resolved during the async
