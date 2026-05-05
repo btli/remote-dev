@@ -37,6 +37,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile redesign Phase 7 audit + polish** (`remote-dev-0hx8`). Surgical
+  pass against the DESIGN.md bar:
+  - **A11y** — Mobile session rows now announce status to screen readers
+    (`Open session foo, waiting for input` etc.) so the colour-only pip
+    isn't the only signal channel. The bottom tab bar's unread badge is
+    folded into the tab's `aria-label` (e.g. `Channels, 3 unread`); the
+    visual badge stays `aria-hidden` so SRs hear it once, not twice.
+  - **Contrast** — `MobileNotificationRow` metadata (sessionName +
+    timestamp) moved off `text-muted-foreground/60` and `/40` (failed AA at
+    10px) onto solid `text-muted-foreground` with a middle-dot separator.
+    `ProjectTreeSheet`'s `auto` chip moved off `/70` for the same reason.
+  - **Reduced motion** — `.agent-breathing` (used on desktop sidebar +
+    peer tab bar pips) now gates on `prefers-reduced-motion` consistently
+    with `.notification-ring`; the pulsing-opacity animation is suppressed
+    rather than running through the user's preference.
 - **Mobile terminal touch interactions: adversarial-review bugs**
   (`remote-dev-ub9k`). Four bugs in the touch-selection state machine fixed:
     - Selection rows now use buffer-absolute coordinates (`viewportRow +
