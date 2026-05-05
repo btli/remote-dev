@@ -320,7 +320,7 @@ export function ProjectTreeSheet({
               >
                 <span className="truncate">{row.name}</span>
                 {row.isAutoCreated ? (
-                  <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                  <span className="ml-2 text-[10px] uppercase tracking-wide text-muted-foreground">
                     auto
                   </span>
                 ) : null}

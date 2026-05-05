@@ -143,7 +143,11 @@ export function BottomTabBar({
                 role="tab"
                 aria-selected={active}
                 aria-current={active ? "page" : undefined}
-                aria-label={label}
+                aria-label={
+                  badge > 0
+                    ? `${label}, ${badge > 99 ? "99+" : badge} unread`
+                    : label
+                }
                 data-tab={id}
                 onClick={() => handleTabPress(id)}
                 // 44pt minimum target; the parent <li> stretches to 56pt so

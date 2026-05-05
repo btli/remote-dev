@@ -285,15 +285,15 @@ export function MobileNotificationRow({
               {notification.body}
             </p>
           ) : null}
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
             {notification.sessionName ? (
-              <span className="text-[10px] text-muted-foreground/60">
-                {notification.sessionName}
-              </span>
+              <>
+                <span>{notification.sessionName}</span>
+                <span className="sr-only">,</span>
+                <span aria-hidden="true">·</span>
+              </>
             ) : null}
-            <span className="text-[10px] text-muted-foreground/40">
-              {relativeTime}
-            </span>
+            <span>{relativeTime}</span>
           </div>
         </div>
       </div>

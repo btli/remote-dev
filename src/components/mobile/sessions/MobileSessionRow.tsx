@@ -105,6 +105,26 @@ export function MobileSessionRow({
 
   const rowMinHeight = density === "dense" ? "min-h-[48px]" : "min-h-[56px]";
 
+  // Status announcement for screen readers. The pip carries state visually;
+  // SR users read this prefix so colour-only signal isn't the only channel.
+  // Idle returns null so the default-state row announces just the session
+  // name — avoids verbose "idle" repetition on every row in long lists.
+  const statusAnnouncement = ((): string | null => {
+    switch (presentation.pip) {
+      case "attention":
+        return "waiting for input";
+      case "running":
+        return "running";
+      case "error":
+        return "error";
+      case "suspended":
+        return "suspended";
+      case "idle":
+      default:
+        return null;
+    }
+  })();
+
   // Behind-layer label/tone for the swipe affordance. Active rows show
   // "Close" (destructive) once stage 1 is crossed, otherwise "Suspend".
   // Suspended rows always say "Close" and turn destructive at stage 0.
@@ -181,7 +201,11 @@ export function MobileSessionRow({
         onMouseLeave={longPress.bind.onMouseLeave}
         role="button"
         tabIndex={0}
-        aria-label={`Open session ${session.name}`}
+        aria-label={
+          statusAnnouncement
+            ? `Open session ${session.name}, ${statusAnnouncement}`
+            : `Open session ${session.name}`
+        }
         aria-current={active ? "true" : undefined}
         onClick={() => onTap(session.id)}
         onKeyDown={(e) => {
