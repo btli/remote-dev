@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminal WebGL glyph corruption** (`remote-dev-ljnc`). Long-running sessions
+  could show torn/duplicated glyphs that only cleared when the window was
+  resized. `Terminal.tsx` now clears the WebGL texture atlas on
+  `visibilitychange` (tab restored from background) and device-pixel-ratio
+  changes (window moved between displays), and recovers from a single WebGL
+  context loss by reloading the addon instead of permanently falling back to
+  the DOM renderer.
 - **Mobile redesign Phase 7 audit + polish** (`remote-dev-0hx8`). Surgical
   pass against the DESIGN.md bar:
   - **A11y** — Mobile session rows now announce status to screen readers

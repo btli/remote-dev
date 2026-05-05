@@ -448,13 +448,45 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Load WebGL renderer for better performance (falls back to DOM renderer)
       try {
         const { WebglAddon } = await import("@xterm/addon-webgl");
-        const webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          webglAddon.dispose();
-          webglAddonRef.current = null;
+        let contextLossRecoveryAttempted = false;
+        const loadWebgl = () => {
+          const webglAddon = new WebglAddon();
+          webglAddon.onContextLoss(() => {
+            webglAddon.dispose();
+            webglAddonRef.current = null;
+            // Attempt one fresh addon load so we don't silently fall back to
+            // the DOM renderer for the rest of the session.
+            if (!contextLossRecoveryAttempted) {
+              contextLossRecoveryAttempted = true;
+              try {
+                loadWebgl();
+              } catch {
+                // Recovery failed — DOM renderer remains.
+              }
+            }
+          });
+          terminal.loadAddon(webglAddon);
+          webglAddonRef.current = webglAddon;
+        };
+        loadWebgl();
+
+        // Stale glyphs from the WebGL texture atlas appear after the tab is
+        // backgrounded or the window moves between displays with different DPR.
+        // Force-clear the atlas on these events so a single resize isn't required.
+        const handleVisibilityChange = () => {
+          if (!document.hidden) webglAddonRef.current?.clearTextureAtlas();
+        };
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        terminalDisposablesRef.current.push({
+          dispose: () => document.removeEventListener("visibilitychange", handleVisibilityChange),
         });
-        terminal.loadAddon(webglAddon);
-        webglAddonRef.current = webglAddon;
+
+        const dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+        const handleDprChange = () => webglAddonRef.current?.clearTextureAtlas();
+        dprMedia.addEventListener("change", handleDprChange);
+        terminalDisposablesRef.current.push({
+          dispose: () => dprMedia.removeEventListener("change", handleDprChange),
+        });
       } catch {
         // WebGL not supported — DOM renderer is used automatically
       }
