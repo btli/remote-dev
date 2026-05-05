@@ -83,12 +83,18 @@ interface ModifierKeyDef {
 
 type StripKey = RegularKey | ModifierKeyDef;
 
+// WCAG 2.5.3 / Lighthouse `label-content-name-mismatch`: when a button has
+// visible text, its accessible name must contain that visible text. For text
+// labels we omit `ariaLabel` and let the visible label become the accessible
+// name. For icon-only buttons (arrows, ctrl-c) we provide an `ariaLabel`
+// since there is no visible text to conflict with. For modifiers the
+// `ariaLabel` starts with the visible text and adds context after.
 const SMART_KEYS: readonly StripKey[] = [
-  { kind: "key", id: "esc", label: "Esc", sequence: "\x1b", wide: true, ariaLabel: "Escape" },
-  { kind: "key", id: "tab", label: "Tab", sequence: "\t", wide: true, ariaLabel: "Tab" },
-  { kind: "modifier", id: "ctrl", label: "Ctrl", ariaLabel: "Control modifier latch" },
-  { kind: "modifier", id: "alt", label: "Alt", ariaLabel: "Alt modifier latch" },
-  { kind: "modifier", id: "shift", label: "Shift", ariaLabel: "Shift modifier latch" },
+  { kind: "key", id: "esc", label: "Esc", sequence: "\x1b", wide: true },
+  { kind: "key", id: "tab", label: "Tab", sequence: "\t", wide: true },
+  { kind: "modifier", id: "ctrl", label: "Ctrl", ariaLabel: "Ctrl, modifier latch" },
+  { kind: "modifier", id: "alt", label: "Alt", ariaLabel: "Alt, modifier latch" },
+  { kind: "modifier", id: "shift", label: "Shift", ariaLabel: "Shift, modifier latch" },
   {
     kind: "key",
     id: "up",
@@ -121,17 +127,17 @@ const SMART_KEYS: readonly StripKey[] = [
     repeatable: true,
     ariaLabel: "Right arrow",
   },
-  { kind: "key", id: "pipe", label: "|", sequence: "|", ariaLabel: "Pipe" },
-  { kind: "key", id: "slash", label: "/", sequence: "/", ariaLabel: "Slash" },
-  { kind: "key", id: "tilde", label: "~", sequence: "~", ariaLabel: "Tilde" },
-  { kind: "key", id: "minus", label: "-", sequence: "-", ariaLabel: "Minus" },
-  { kind: "key", id: "underscore", label: "_", sequence: "_", ariaLabel: "Underscore" },
-  { kind: "key", id: "dollar", label: "$", sequence: "$", ariaLabel: "Dollar" },
-  { kind: "key", id: "lbrace", label: "{", sequence: "{", ariaLabel: "Open brace" },
-  { kind: "key", id: "rbrace", label: "}", sequence: "}", ariaLabel: "Close brace" },
-  { kind: "key", id: "lbracket", label: "[", sequence: "[", ariaLabel: "Open bracket" },
-  { kind: "key", id: "rbracket", label: "]", sequence: "]", ariaLabel: "Close bracket" },
-  { kind: "key", id: "backslash", label: "\\", sequence: "\\", ariaLabel: "Backslash" },
+  { kind: "key", id: "pipe", label: "|", sequence: "|" },
+  { kind: "key", id: "slash", label: "/", sequence: "/" },
+  { kind: "key", id: "tilde", label: "~", sequence: "~" },
+  { kind: "key", id: "minus", label: "-", sequence: "-" },
+  { kind: "key", id: "underscore", label: "_", sequence: "_" },
+  { kind: "key", id: "dollar", label: "$", sequence: "$" },
+  { kind: "key", id: "lbrace", label: "{", sequence: "{" },
+  { kind: "key", id: "rbrace", label: "}", sequence: "}" },
+  { kind: "key", id: "lbracket", label: "[", sequence: "[" },
+  { kind: "key", id: "rbracket", label: "]", sequence: "]" },
+  { kind: "key", id: "backslash", label: "\\", sequence: "\\" },
   {
     kind: "key",
     id: "ctrl-c",
@@ -307,7 +313,7 @@ export function SmartKeyStrip({
             type="button"
             data-testid={`mobile-smart-key-${k.id}`}
             data-key={k.id}
-            aria-label={k.ariaLabel ?? k.id}
+            aria-label={k.ariaLabel}
             disabled={disabled}
             onPointerDown={(e) => {
               e.preventDefault();
