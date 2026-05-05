@@ -89,6 +89,13 @@ interface XTermDims {
   rows: number;
 }
 
+// Module-scope flag so we warn at most once per page load when the xterm
+// private cell-dimensions API is missing. The warning is for developers (so a
+// silent break of long-press selection on an xterm version bump is visible),
+// not users; every gesture would otherwise rediscover the same failure and
+// flood the console.
+let warnedAboutMissingDims = false;
+
 /**
  * Resolve cell dimensions and the grid origin for a live terminal. Returns
  * `null` when xterm hasn't laid out yet or when the internal API shape we
@@ -113,7 +120,20 @@ function readDims(terminal: XTermType): XTermDims | null {
   const cell = core?._renderService?.dimensions?.css?.cell;
   const cellWidth = Number.isFinite(cell?.width) && (cell?.width ?? 0) > 0 ? (cell!.width as number) : 0;
   const cellHeight = Number.isFinite(cell?.height) && (cell?.height ?? 0) > 0 ? (cell!.height as number) : 0;
-  if (cellWidth === 0 || cellHeight === 0) return null;
+  if (cellWidth === 0 || cellHeight === 0) {
+    // The private path (`_core._renderService.dimensions.css.cell`) is the
+    // only way xterm exposes cell metrics today. If it disappears on a minor
+    // version bump, long-press selection silently no-ops with no signal, so
+    // emit a one-time developer warning so the regression is visible. Per
+    // CLAUDE.md, client-side code may use console.* directly.
+    if (!warnedAboutMissingDims && typeof console !== "undefined") {
+      warnedAboutMissingDims = true;
+      console.warn(
+        "[touch-interactions] xterm private cell-dimensions API is unavailable; long-press selection disabled. Update xterm version or report a bug."
+      );
+    }
+    return null;
+  }
 
   // The xterm screen element (.xterm-screen) is the grid origin. Its bounding
   // rect's top-left maps to (col=0, row=0). The outer `.terminal.xterm` may
@@ -305,14 +325,27 @@ export function createTouchInteractions(
     // instead of where the user's finger is.
     const viewportY = terminal.buffer.active.viewportY;
     const cell = { col: viewportCell.col, row: viewportCell.row + viewportY };
+    // selectionStart is the buffer-absolute cell the user's finger landed on
+    // AT FIRE TIME. We deliberately do NOT recompute it later (e.g. when the
+    // soft keyboard slides up and shifts the terminal's screen position),
+    // because the user's anchor intent is "the cell I pressed"; the cell's
+    // position in the buffer doesn't move when the keyboard pops. Note: if
+    // new output is emitted between fire and a subsequent move, viewportY
+    // may shift but the buffer index of the anchored cell is stable, so the
+    // anchor remains semantically correct.
     selectionStart = cell;
     setMode("selection");
     // Initial 1-cell selection so the user sees feedback immediately even if
     // they don't move yet.
     terminal.clearSelection();
     terminal.select(cell.col, cell.row, 1);
-    // Haptic cue on supporting browsers (iOS Safari ignores `vibrate`; that's
-    // fine — it's purely additive).
+    // Haptic cue on supporting browsers. Caveats we accept silently:
+    //   - iOS Safari ignores `vibrate` entirely (no Vibration API support).
+    //   - Some Android Chrome versions suppress `vibrate` when called outside
+    //     a synchronous user-gesture frame; the long-press fires from a
+    //     setTimeout callback, which is NOT such a frame, so the call may be
+    //     a no-op. The try/catch absorbs any thrown errors as well.
+    // The haptic is purely additive; the selection still works without it.
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       try {
         navigator.vibrate(10);
@@ -385,12 +418,20 @@ export function createTouchInteractions(
     const host = terminal.element;
     const screen = host.querySelector(".xterm-screen") as HTMLElement | null;
     const target: HTMLElement = screen ?? host;
+    // Real browser-synthesized mouse-from-touch events include screenX /
+    // screenY. xterm itself doesn't read those for cell math (it uses
+    // clientX/Y plus its own bounding-rect origin), but other consumers in
+    // the dispatch chain might assert on them. We mirror clientX/Y here;
+    // the values aren't load-bearing for terminal coords; we just want the
+    // event shape to match what a real mouse would carry.
     const baseInit: MouseEventInit = {
       bubbles: true,
       cancelable: true,
       view: typeof window !== "undefined" ? window : undefined,
       clientX,
       clientY,
+      screenX: clientX,
+      screenY: clientY,
       button: 0,
       buttons: 1,
     };
@@ -459,9 +500,16 @@ export function createTouchInteractions(
     }
 
     // Pending: see if movement disqualifies a tap / long-press.
+    // We use axis-aligned thresholds (max of |dx|, |dy|) rather than
+    // Euclidean distance to match `touch-scroll.ts`, which activates scroll
+    // at `Math.abs(currentY - touchStartY) > TOUCH_SCROLL_ACTIVATION_PX`.
+    // Using `Math.hypot(dx, dy)` here would create a small dead-motion
+    // window for diagonal swipes (e.g. dx=4, dy=4 → hypot ~5.66 cancels
+    // long-press, but |dy|=4 doesn't activate scroll), where neither
+    // gesture is active. Aligning the metric closes that gap.
     const dx = lastX - startX;
     const dy = lastY - startY;
-    if (Math.hypot(dx, dy) > MOVEMENT_CANCEL_PX) {
+    if (Math.abs(dx) > MOVEMENT_CANCEL_PX || Math.abs(dy) > MOVEMENT_CANCEL_PX) {
       cancelLongPress();
       setMode("scroll"); // touch-scroll handler will own the rest of this gesture
     }
