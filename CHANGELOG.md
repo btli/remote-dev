@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile two-stage swipe to close sessions** (`remote-dev-7o72`). Swipe-left
+  on an active session row now reveals "Suspend" (stage 0, 72px) and switches
+  to "Close" with a destructive label (stage 1, 180px), matching iOS Mail.
+  Suspended rows get a single-stage swipe that commits Close. The behind-layer
+  affordance label and tone update mid-drag so the user sees which action will
+  fire on release. Closed/trashed rows remain non-swipable.
+- **Clear all notifications** (`remote-dev-7o72`). The mobile Notifications
+  tab gains a "Clear all" header button that opens an `AlertDialog`
+  confirmation; on confirm it calls `deleteAllNotifications` and shows a
+  toast with the count. The button is hidden when the list is empty and is
+  disabled while the request is in flight.
+
 ### Security
 
 - **Sign-out hardening**: `/api/auth/signout` no longer exports a GET handler

@@ -222,7 +222,17 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
 
   const deleteNotification = useCallback(
     async (id: string) => {
-      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      // Snapshot the row being removed so the optimistic update can be
+      // reverted in place on failure. `refresh()` is best-effort but not a
+      // recovery primitive — it can hang or itself fail (offline, slow
+      // server), leaving the user staring at an empty list with no path
+      // forward. Restoring the snapshot first guarantees the row reappears
+      // immediately; the subsequent refresh just converges with the server.
+      let snapshot: NotificationEvent | null = null;
+      setNotifications((prev) => {
+        snapshot = prev.find((n) => n.id === id) ?? null;
+        return prev.filter((n) => n.id !== id);
+      });
       try {
         const response = await fetch("/api/notifications", {
           method: "DELETE",
@@ -232,8 +242,16 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
         if (!response.ok) throw new Error("Failed to delete notification");
       } catch (err) {
         console.error("Error deleting notification:", err);
-        // Re-fetch so the row reappears on failure, then propagate so the
-        // caller can surface a toast / banner.
+        // Restore the snapshot first so the row reappears regardless of
+        // whether refresh succeeds. Skip restore if snapshot is null
+        // (notification wasn't in state to begin with — nothing to revert).
+        if (snapshot) {
+          const restored: NotificationEvent = snapshot;
+          setNotifications((prev) =>
+            prev.some((n) => n.id === restored.id) ? prev : [restored, ...prev]
+          );
+        }
+        // Best-effort converge; failures here are logged inside refresh().
         await refresh().catch(() => {
           /* already logged */
         });
@@ -244,7 +262,14 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   );
 
   const deleteAllNotifications = useCallback(async () => {
-    setNotifications([]);
+    // Snapshot the full list so a failed bulk delete can roll back to the
+    // pre-clear state immediately. Without this the user sees an empty
+    // inbox until refresh() lands (or never, if the network is gone).
+    let snapshot: NotificationEvent[] = [];
+    setNotifications((prev) => {
+      snapshot = prev;
+      return [];
+    });
     try {
       const response = await fetch("/api/notifications", {
         method: "DELETE",
@@ -254,6 +279,9 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
       if (!response.ok) throw new Error("Failed to delete all notifications");
     } catch (err) {
       console.error("Error deleting all notifications:", err);
+      // Restore the snapshot first so the user sees their list again
+      // immediately, then converge with the server in the background.
+      setNotifications(snapshot);
       await refresh().catch(() => {
         /* already logged */
       });

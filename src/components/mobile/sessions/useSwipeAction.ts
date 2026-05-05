@@ -13,11 +13,35 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * scroll container priority when the user is mostly scrolling.
  */
 
+/**
+ * A "stage" gates an additional commit threshold beyond the primary one.
+ * Used for two-stage swipes (iOS Mail style): release before stage 0 → no
+ * action, between stage 0 and stage 1 → primary commit, past stage 1 →
+ * secondary commit. Stages must be ordered by ascending `threshold`.
+ *
+ * When `stages` is provided it takes precedence over the legacy
+ * `threshold` + `onSwipe` pair.
+ */
+export interface SwipeStage {
+  /** Distance (px, absolute value) at which this stage becomes active. */
+  threshold: number;
+  /** Fires when the user releases past this stage's threshold but not past
+   *  the next stage's threshold. */
+  onCommit: () => void;
+}
+
 export interface UseSwipeActionOptions {
   direction?: "left" | "right";
   threshold?: number;
   enabled?: boolean;
-  onSwipe: () => void;
+  /** Single-stage commit handler. Ignored when `stages` is provided. */
+  onSwipe?: () => void;
+  /**
+   * Optional staged commits. Index 0 fires when release distance is in
+   * [stages[0].threshold, stages[1].threshold), index 1 fires when past
+   * stages[1].threshold, etc. Two stages is the supported case today.
+   */
+  stages?: SwipeStage[];
 }
 
 export interface UseSwipeActionState {
@@ -26,6 +50,12 @@ export interface UseSwipeActionState {
    * for right. 0 when not dragging or after a successful swipe fires.
    */
   offset: number;
+  /**
+   * Index of the currently-armed stage based on live offset, or -1 when
+   * the offset hasn't crossed the first stage. -1 also when stages were
+   * not configured (single-stage callers can ignore this).
+   */
+  stageIndex: number;
   /** Touch handlers to spread onto the row's outer element. */
   bind: {
     onTouchStart: (e: React.TouchEvent<HTMLElement>) => void;
@@ -37,8 +67,27 @@ export interface UseSwipeActionState {
 
 const DEFAULT_THRESHOLD = 72;
 
+/**
+ * Find the highest-index stage whose threshold the given absolute distance
+ * has cleared, or -1 if none. Stages are assumed ordered by ascending
+ * threshold (the hook's documented contract).
+ */
+function findActiveStageIndex(stages: SwipeStage[], distance: number): number {
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (distance >= stages[i].threshold) return i;
+  }
+  return -1;
+}
+
 export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionState {
-  const { direction = "left", threshold = DEFAULT_THRESHOLD, onSwipe, enabled = true } = options;
+  const { direction = "left", threshold = DEFAULT_THRESHOLD, onSwipe, enabled = true, stages } = options;
+
+  // Build a stable stage array: prefer explicit `stages`; otherwise derive
+  // a single-stage shape from `threshold` + `onSwipe` so the rest of the
+  // hook only deals with one model.
+  const effectiveStages: SwipeStage[] = stages && stages.length > 0
+    ? stages
+    : (onSwipe ? [{ threshold, onCommit: onSwipe }] : []);
 
   const [offset, setOffsetState] = useState(0);
   const offsetRef = useRef(0);
@@ -50,10 +99,12 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
   const startY = useRef<number | null>(null);
   const dragging = useRef(false);
 
-  const onSwipeRef = useRef(onSwipe);
+  // Keep the latest stage callbacks in a ref so consumers can pass fresh
+  // closures without re-arming the touch handlers each render.
+  const stagesRef = useRef(effectiveStages);
   useEffect(() => {
-    onSwipeRef.current = onSwipe;
-  }, [onSwipe]);
+    stagesRef.current = effectiveStages;
+  });
 
   const reset = useCallback(() => {
     startX.current = null;
@@ -62,9 +113,26 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
     setOffset(0);
   }, [setOffset]);
 
+  // Abandon an in-progress drag without clearing the touch start coords —
+  // used when the gesture turns out to be vertical scrolling or wrong-way.
+  // Subsequent moves can still re-engage if the user corrects course.
+  const abortDrag = useCallback(() => {
+    if (dragging.current) {
+      dragging.current = false;
+      setOffset(0);
+    }
+  }, [setOffset]);
+
   const onTouchStart = useCallback(
     (e: React.TouchEvent<HTMLElement>) => {
       if (!enabled) return;
+      // Multi-touch guard: if a gesture is already in progress (the user
+      // already had a finger down — startX is non-null), ignore the
+      // additional touch. Without this, a second finger landing mid-drag
+      // would reset the gesture origin to the new finger's position and
+      // either snap the row back or commit a partial swipe on release of
+      // the original finger.
+      if (startX.current !== null) return;
       const t = e.touches[0];
       if (!t) return;
       startX.current = t.clientX;
@@ -82,32 +150,16 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
       const dx = t.clientX - startX.current;
       const dy = t.clientY - startY.current;
       // Vertical-bias: if the user is mostly scrolling, abandon this gesture.
-      if (Math.abs(dy) > Math.abs(dx) * 0.6) {
-        if (dragging.current) {
-          dragging.current = false;
-          setOffset(0);
-        }
-        return;
-      }
       // Direction-bias: ignore swipes the wrong way.
-      if (direction === "left" && dx >= 0) {
-        if (dragging.current) {
-          dragging.current = false;
-          setOffset(0);
-        }
-        return;
-      }
-      if (direction === "right" && dx <= 0) {
-        if (dragging.current) {
-          dragging.current = false;
-          setOffset(0);
-        }
+      const wrongWay = direction === "left" ? dx >= 0 : dx <= 0;
+      if (Math.abs(dy) > Math.abs(dx) * 0.6 || wrongWay) {
+        abortDrag();
         return;
       }
       dragging.current = true;
       setOffset(dx);
     },
-    [enabled, direction]
+    [enabled, direction, abortDrag, setOffset]
   );
 
   const onTouchEnd = useCallback(() => {
@@ -115,23 +167,26 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
       reset();
       return;
     }
-    const current = offsetRef.current;
-    const triggered =
-      direction === "left" ? current <= -threshold : current >= threshold;
-    if (triggered) {
-      // Snap back visually first; consumer can show a toast.
-      setOffset(0);
-      onSwipeRef.current();
-    } else {
-      setOffset(0);
-    }
-    startX.current = null;
-    startY.current = null;
-    dragging.current = false;
-  }, [direction, threshold, reset, setOffset]);
+    const distance = direction === "left" ? -offsetRef.current : offsetRef.current;
+    const stages = stagesRef.current;
+    const committedIndex = findActiveStageIndex(stages, distance);
+    reset();
+    if (committedIndex >= 0) stages[committedIndex].onCommit();
+  }, [direction, reset]);
+
+  // Live stage index based on the current offset, so consumers can swap
+  // labels mid-drag. Recomputed cheaply on every render — the offset
+  // changes during a drag already trigger re-renders.
+  const stageIndex = effectiveStages.length === 0
+    ? -1
+    : findActiveStageIndex(
+        effectiveStages,
+        direction === "left" ? -offset : offset
+      );
 
   return {
     offset,
+    stageIndex,
     bind: {
       onTouchStart,
       onTouchMove,
