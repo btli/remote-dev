@@ -140,10 +140,21 @@ vi.mock("@/components/terminal/AgentExitScreen", () => ({
   AgentExitScreen: () => <div data-testid="stub-agent-exit-screen" />,
 }));
 
+// Mutable prefs state so tests can simulate the async settle of
+// PreferencesContext (loading=true → loading=false with a real value).
+type MockPrefs = {
+  currentPreferences: { fontFamily: string; fontSize: number };
+  loading: boolean;
+};
+let mockPrefs: MockPrefs = {
+  currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+  loading: false,
+};
+function setMockPrefs(next: MockPrefs) {
+  mockPrefs = next;
+}
 vi.mock("@/contexts/PreferencesContext", () => ({
-  usePreferencesContext: () => ({
-    currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
-  }),
+  usePreferencesContext: () => mockPrefs,
 }));
 
 vi.mock("@/contexts/SessionContext", () => ({
@@ -184,6 +195,10 @@ beforeEach(() => {
   capturedSmartKeyOnKeyPress = null;
   capturedInputBarOnSubmit = null;
   capturedPinchOpts = null;
+  setMockPrefs({
+    currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+    loading: false,
+  });
 });
 
 afterEach(() => cleanup());
@@ -272,5 +287,157 @@ describe("MobileSessionView, renderer wiring", () => {
     });
     // 14 * 0.5 = 7, clamped to FONT_SIZE_MIN = 9.
     expect(onPersistFontSize).toHaveBeenCalledWith(9);
+  });
+});
+
+describe("MobileSessionView, fontSize hydration reconciliation", () => {
+  it("reconciles fontSize once when PreferencesContext settles after first render", () => {
+    // Cold start: persisted size unset (initialFontSize undefined) and
+    // prefs still loading. The lazy initializer falls through to
+    // DEFAULT_FONT_SIZE (12) because we cannot trust prefs while loading.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+      loading: true,
+    });
+
+    const { rerender } = render(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={undefined}
+      />
+    );
+
+    // First paint: nothing real to seed from; we expect the default (12).
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("12");
+
+    // Prefs resolve with the user's actual fontSize.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 16 },
+      loading: false,
+    });
+    rerender(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={undefined}
+      />
+    );
+
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("16");
+  });
+
+  it("reconciles fontSize once when persisted localStorage value hydrates after first render", () => {
+    // Cold start: persisted size not yet hydrated (undefined) and prefs
+    // already settled at the default (14). Lazy initializer seeds 14.
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+      loading: false,
+    });
+
+    const { rerender } = render(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={undefined}
+      />
+    );
+
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("14");
+
+    // localStorage-backed value arrives after hydration. With prefs already
+    // settled, the lazy initializer's "preferences" branch had already
+    // latched the upstream — but this test still proves we never
+    // *unsettle* a latched value (i.e. don't drift downward) when the
+    // persisted value differs.
+    rerender(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={18}
+      />
+    );
+
+    // Latch already happened on prior render with prefs settled → the
+    // persisted value should NOT override (latched at 14). This is the
+    // intended "don't surprise mid-session" behavior.
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("14");
+  });
+
+  it("uses the persisted value when it is available at first render (warm start)", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+      loading: false,
+    });
+    renderView({ initialFontSize: 18 });
+    // Lazy initializer prefers `initialFontSize` over preferences, so
+    // first paint already shows the warm value.
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("18");
+  });
+
+  it("locks the latch: a later prefs change does not override a user pinch", () => {
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 14 },
+      loading: false,
+    });
+
+    const { rerender } = render(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={14}
+      />
+    );
+
+    // User pinches down to 12 and commits.
+    act(() => {
+      capturedPinchOpts?.onScale?.(12 / 14);
+      capturedPinchOpts?.onScaleCommit?.(12 / 14);
+    });
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("12");
+
+    // Now prefs change to 20 (e.g. the user updated them on desktop).
+    setMockPrefs({
+      currentPreferences: { fontFamily: "MockMono, monospace", fontSize: 20 },
+      loading: false,
+    });
+    rerender(
+      <MobileSessionView
+        session={baseSession}
+        activityStatus="idle"
+        initialFontSize={14}
+      />
+    );
+
+    // The latch holds: pinch wins, prefs ignored.
+    expect(
+      screen
+        .getByTestId("stub-terminal-with-keyboard")
+        .getAttribute("data-font-size")
+    ).toBe("12");
   });
 });

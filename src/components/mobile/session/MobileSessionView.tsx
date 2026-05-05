@@ -128,7 +128,11 @@ export function MobileSessionView({
 }: MobileSessionViewProps) {
   const reducedMotion = usePrefersReducedMotion();
   const sessionCtx = useSessionContext();
-  const { currentPreferences } = usePreferencesContext();
+  const prefs = usePreferencesContext();
+  const { currentPreferences } = prefs;
+  // `loading` may be undefined in older test fixtures that mock this
+  // context — treat undefined as "settled" so tests don't need updating.
+  const preferencesLoading = prefs.loading ?? false;
   const fontFamily = currentPreferences.fontFamily || DEFAULT_FONT_FAMILY;
 
   const liveRegionId = useId();
@@ -149,17 +153,42 @@ export function MobileSessionView({
   //   1. `initialFontSize` prop (localStorage-backed via MobileApp)
   //   2. user-level preference `fontSize`
   //   3. DEFAULT_FONT_SIZE
-  // Subsequent updates come exclusively from pinch-to-zoom; we do NOT
+  //
+  // Both upstream sources are async on first render:
+  //   - `initialFontSize` arrives via `useSyncExternalStore` (undefined on
+  //     SSR + first client paint, a number after hydration).
+  //   - `currentPreferences.fontSize` starts at the in-memory default
+  //     until `/api/preferences` resolves.
+  // The lazy `useState` initializer therefore often seeds with stale data,
+  // so a one-shot effect (below) reconciles to the real upstream value as
+  // soon as it becomes available. Once that reconciliation latches, all
+  // further updates come exclusively from pinch-to-zoom — we do NOT
   // re-seed from prefs (preventing a desktop preference change from
   // surprising a mobile user mid-session).
+  // Initial seed:
+  //   - Prefer `initialFontSize` if persistence has already hydrated.
+  //   - Else use `currentPreferences.fontSize` only if prefs are settled.
+  //   - Else fall through to DEFAULT_FONT_SIZE; the reconciliation effect
+  //     will fix it once an upstream source settles.
   const [fontSize, setFontSize] = useState<number>(() => {
-    const seed =
-      initialFontSize ??
-      currentPreferences.fontSize ??
-      DEFAULT_FONT_SIZE;
+    let seed: number = DEFAULT_FONT_SIZE;
+    if (typeof initialFontSize === "number") {
+      seed = initialFontSize;
+    } else if (!preferencesLoading && typeof currentPreferences.fontSize === "number") {
+      seed = currentPreferences.fontSize;
+    }
     return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, seed));
   });
   const fontSizeBaselineRef = useRef<number>(fontSize);
+  // Latches once we've reconciled to a real upstream value. After this
+  // flips to true, the reconciliation effect is a no-op forever, so a
+  // user pinching to N px won't be reverted by a later prefs change.
+  // We pre-latch in the lazy initializer when an upstream value was
+  // already available — the effect then has nothing to do.
+  const seededFromUpstreamRef = useRef<boolean>(
+    typeof initialFontSize === "number" ||
+      (!preferencesLoading && typeof currentPreferences.fontSize === "number")
+  );
 
   // ── Modifier latch ──────────────────────────────────────────────────────
   const latch = useModifierLatch();
@@ -209,9 +238,54 @@ export function MobileSessionView({
     },
   });
 
-  // Keep the baseline in sync when initialFontSize changes (e.g. after the
-  // persistence layer hydrates from preferences).
+  // One-shot post-hydration reconciliation of `fontSize`.
+  //
+  // The lazy `useState` initializer above runs once with whatever
+  // upstream values are available at first render. On a cold start that
+  // is `initialFontSize === undefined` plus the default `fontSize` from
+  // `currentPreferences`, and we end up seeded with the default (12px)
+  // even when the user has a real preference of 16+ and a persisted
+  // pinch size of 18+. This effect waits until at least one upstream
+  // source has settled and reconciles `fontSize` exactly once.
+  //
+  // After this latches:
+  //   - Pinch-to-zoom owns `fontSize` exclusively.
+  //   - A later prefs change does NOT re-seed.
+  //   - The persisted (localStorage) value, once it arrives, also does
+  //     not surprise the user mid-session beyond this single sync.
   useEffect(() => {
+    if (seededFromUpstreamRef.current) return;
+
+    // We need to know the upstream is "real":
+    //   - If `initialFontSize` is a number, persistence has hydrated.
+    //   - Otherwise, wait for PreferencesContext to finish loading
+    //     before trusting `currentPreferences.fontSize`.
+    let resolved: number | undefined;
+    if (typeof initialFontSize === "number") {
+      resolved = initialFontSize;
+    } else if (!preferencesLoading) {
+      resolved = currentPreferences.fontSize;
+    }
+    if (resolved === undefined) return;
+
+    const clamped = Math.max(
+      FONT_SIZE_MIN,
+      Math.min(FONT_SIZE_MAX, resolved)
+    );
+    seededFromUpstreamRef.current = true;
+    fontSizeBaselineRef.current = clamped;
+    if (clamped !== fontSize) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration from async upstream (localStorage / preferences fetch)
+      setFontSize(clamped);
+    }
+  }, [initialFontSize, currentPreferences.fontSize, preferencesLoading, fontSize]);
+
+  // Keep the baseline in sync after a pinch commit (which calls
+  // setFontSize). The reconciliation effect above already updates the
+  // baseline when it latches, so once latched this effect just mirrors
+  // user-driven font-size changes back into the pinch baseline.
+  useEffect(() => {
+    if (!seededFromUpstreamRef.current) return;
     fontSizeBaselineRef.current = fontSize;
   }, [fontSize]);
 
