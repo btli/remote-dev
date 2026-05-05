@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SSH terminal type** (`remote-dev-i13k`). New `ssh` terminal type opens a
+  tmux-backed pane that runs `ssh` (or `sshpass ssh` for password auth) as
+  the shell process; when SSH disconnects, the agent-style exit screen
+  surfaces with a Reconnect button. Saved connections live in a new
+  user-level `ssh_connection` table with optional project pinning and
+  support four auth methods: `key` (paste / upload / generate ed25519),
+  `agent` (forwarding via `-A`), `password` (encrypted at rest, requires
+  `sshpass`), and `system` (defers to `~/.ssh/config`). Per-connection
+  assets (private key 0600, public key 0644, `known_hosts`) are stored in
+  `~/.remote-dev/ssh/{id}/` with a 0700 directory mode. Passphrases are
+  intentionally never stored — OpenSSH prompts in the terminal at connect
+  time. Configure connections in **Settings → SSH** and pick one from the
+  New Session wizard's **SSH** card.
 - **Mobile two-stage swipe to close sessions** (`remote-dev-7o72`). Swipe-left
   on an active session row now reveals "Suspend" (stage 0, 72px) and switches
   to "Close" with a destructive label (stage 1, 180px), matching iOS Mail.

@@ -116,6 +116,8 @@ export interface CreateSessionInput {
   worktreeType?: WorktreeType;  // Branch prefix type (feature, fix, etc.)
   // Loop agent session fields
   loopConfig?: import("./loop-agent").LoopConfig;
+  // SSH session fields — the connection record holds host/credentials/options
+  sshConnectionId?: string;
 }
 
 /**

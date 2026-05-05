@@ -8,6 +8,7 @@ import {
   Fingerprint, Network,
   FolderPlus, Briefcase,
 } from "lucide-react";
+import { DropdownNewSshSubmenu } from "./NewSshSubmenu";
 import { cn } from "@/lib/utils";
 import type { TerminalSession } from "@/types/session";
 import type { PinnedFile } from "@/types/pinned-files";
@@ -100,6 +101,13 @@ interface SidebarProps {
   onQuickNewSession: () => void;
   onNewAgent: () => void;
   /**
+   * Create a new SSH session for the given saved connection. Project
+   * scope is resolved from the active project.
+   */
+  onNewSshSession: (connectionId: string) => void;
+  /** Open Settings → SSH so the user can manage saved connections. */
+  onOpenSshSettings: () => void;
+  /**
    * Project-level handlers forwarded to ProjectTreeSidebar. Each receives
    * the project's `id`.
    */
@@ -109,6 +117,13 @@ interface SidebarProps {
   onProjectResumeClaudeSession: (projectId: string) => void;
   onProjectAdvancedSession: (projectId: string) => void;
   onProjectNewWorktree: (projectId: string) => void;
+  /**
+   * Project-scoped SSH variants. The project context menu lists saved
+   * connections in a hover-expanded submenu; clicking a row creates the
+   * session under that project.
+   */
+  onProjectNewSshSession: (projectId: string, connectionId: string) => void;
+  onProjectOpenSshSettings: () => void;
   /**
    * Open the per-project Secrets configuration as a terminal-type tab.
    * Supplies both the project id (used as the session's scope key) and
@@ -157,12 +172,16 @@ export function Sidebar({
   onNewSession,
   onQuickNewSession,
   onNewAgent,
+  onNewSshSession,
+  onOpenSshSettings,
   onProjectSettings,
   onProjectNewSession,
   onProjectNewAgent,
   onProjectResumeClaudeSession,
   onProjectAdvancedSession,
   onProjectNewWorktree,
+  onProjectNewSshSession,
+  onProjectOpenSshSettings,
   onProjectOpenSecrets,
   trashCount,
   onTrashOpen,
@@ -401,6 +420,10 @@ export function Sidebar({
                     <Sparkles className="w-3.5 h-3.5 mr-2" />
                     New Agent
                   </DropdownMenuItem>
+                  <DropdownNewSshSubmenu
+                    onSelect={onNewSshSession}
+                    onManage={onOpenSshSettings}
+                  />
                   <DropdownMenuItem
                     onClick={() => {
                       if (activeProjectId && projectHasRepo(activeProjectId)) {
@@ -456,6 +479,10 @@ export function Sidebar({
                       <Sparkles className="w-3.5 h-3.5 mr-2" />
                       New Agent
                     </DropdownMenuItem>
+                    <DropdownNewSshSubmenu
+                      onSelect={onNewSshSession}
+                      onManage={onOpenSshSettings}
+                    />
                     <DropdownMenuItem
                       onClick={() => {
                         if (activeProjectId && projectHasRepo(activeProjectId)) {
@@ -588,6 +615,8 @@ export function Sidebar({
               onProjectResumeClaudeSession={onProjectResumeClaudeSession}
               onProjectAdvancedSession={onProjectAdvancedSession}
               onProjectNewWorktree={onProjectNewWorktree}
+              onProjectNewSshSession={onProjectNewSshSession}
+              onProjectOpenSshSettings={onProjectOpenSshSettings}
               onProjectOpenSecrets={onProjectOpenSecrets}
               onProjectOpenRepository={(fid, name) =>
                 onProjectSettings(fid, name, "repository")

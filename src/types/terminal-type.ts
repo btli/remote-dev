@@ -16,12 +16,12 @@ import type { AgentProviderType, TerminalSession, CreateSessionInput } from "./s
  * - file: Read/edit file without terminal (CLAUDE.md editor)
  * - Custom types can be added via plugin registration
  */
-export type TerminalType = "shell" | "agent" | "file" | "browser" | "settings" | "recordings" | "issues" | "prs" | "profiles" | "port-manager" | "trash" | "project-prefs" | "github-maintenance" | "secrets" | "group-prefs" | string;
+export type TerminalType = "shell" | "agent" | "ssh" | "file" | "browser" | "settings" | "recordings" | "issues" | "prs" | "profiles" | "port-manager" | "trash" | "project-prefs" | "github-maintenance" | "secrets" | "group-prefs" | string;
 
 /**
  * Built-in terminal types (cannot be unregistered)
  */
-export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "file", "browser", "loop", "settings", "recordings", "issues", "prs", "profiles", "port-manager", "trash", "project-prefs", "github-maintenance", "secrets", "group-prefs"];
+export const BUILT_IN_TERMINAL_TYPES: TerminalType[] = ["shell", "agent", "ssh", "file", "browser", "loop", "settings", "recordings", "issues", "prs", "profiles", "port-manager", "trash", "project-prefs", "github-maintenance", "secrets", "group-prefs"];
 
 /**
  * Terminal types that render as user-global singletons in the sidebar,
@@ -69,6 +69,7 @@ export const TMUX_BACKED_TERMINAL_TYPES: readonly TerminalType[] = [
   "shell",
   "agent",
   "loop",
+  "ssh",
 ] as const;
 
 /**
@@ -141,7 +142,7 @@ export interface SessionConfig {
    */
   useTmux: boolean;
   /** Additional metadata stored with session */
-  metadata?: AgentSessionMetadata | FileViewerMetadata | BrowserSessionMetadata | import("./loop-agent").LoopAgentMetadata | Record<string, unknown>;
+  metadata?: AgentSessionMetadata | FileViewerMetadata | BrowserSessionMetadata | SshSessionMetadata | import("./loop-agent").LoopAgentMetadata | Record<string, unknown>;
 }
 
 /**
@@ -457,6 +458,28 @@ export interface BrowserSessionMetadata {
   viewportWidth: number;
   viewportHeight: number;
   lastScreenshotAt: Date | null;
+}
+
+/**
+ * SSH session metadata stored with the session.
+ *
+ * The SSH connection record is the source of truth for credentials and
+ * options; this metadata is a denormalized snapshot used to render the
+ * exit screen / tab title without re-querying the connection.
+ */
+export interface SshSessionMetadata {
+  /** Foreign key into the `ssh_connection` table. */
+  connectionId: string;
+  host: string;
+  user: string;
+  port: number;
+  authType: "key" | "agent" | "password" | "system";
+  /** Mirrors the agent plugin's exit/restart tracking. */
+  exitState: AgentExitState;
+  exitCode: number | null;
+  exitedAt: Date | null;
+  restartCount: number;
+  lastStartedAt: Date;
 }
 
 /** Custom status text reported by an agent, shown in sidebar */

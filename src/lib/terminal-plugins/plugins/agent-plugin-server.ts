@@ -52,6 +52,7 @@ export function createAgentServerPlugin(
     priority: 90,
     builtIn: true,
     useTmux: true,
+    emitsExitEvents: true,
 
     createSession(input: CreateSessionInput): SessionConfig {
       const providerId =
