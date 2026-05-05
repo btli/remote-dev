@@ -26,6 +26,9 @@ interface FakeXTerm {
   rows: number;
   element: HTMLElement;
   modes: { mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any" };
+  // Production reads `terminal.buffer.active.viewportY` to convert viewport
+  // rows → buffer-absolute rows. Mock surface — defaults to 0.
+  buffer: { active: { viewportY: number } };
   scrollToBottom: ReturnType<typeof vi.fn>;
   select: ReturnType<typeof vi.fn>;
   clearSelection: ReturnType<typeof vi.fn>;
@@ -105,6 +108,7 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
     rows: ROWS,
     element,
     modes: { mouseTrackingMode: opts.mouseMode ?? "none" },
+    buffer: { active: { viewportY: 0 } },
     scrollToBottom: vi.fn(),
     select: vi.fn(),
     clearSelection: vi.fn(),
@@ -618,6 +622,154 @@ describe("handleTouchCancel signature", () => {
     // fireTouch dispatches handleTouchCancel with a real Event — just assert
     // it doesn't throw and resets state.
     expect(() => h.fireTouch("touchcancel", [])).not.toThrow();
+    expect(h.getMode()).toBe("idle");
+  });
+});
+
+// ── Adversarial-review fixes (remote-dev-ub9k) ──────────────────────────
+
+describe("selection uses buffer-absolute rows (viewportY shift)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("adds buffer.active.viewportY to the viewport row when scrolled into scrollback", () => {
+    const h = makeHarness();
+    // Simulate the user having scrolled up — top of viewport corresponds
+    // to buffer line 50.
+    h.xterm.buffer.active.viewportY = 50;
+    // Long-press at viewport (200, 100). Screen origin (100, 50), cell 8×16.
+    // Viewport row = (100-50)/16 = 3 → buffer row = 3 + 50 = 53.
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.xterm.select).toHaveBeenLastCalledWith(12, 53, 1);
+  });
+
+  it("uses viewportY for both the start anchor and drag endpoints", () => {
+    const h = makeHarness();
+    h.xterm.buffer.active.viewportY = 50;
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]); // viewport (12, 3) → buffer (12, 53)
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.xterm.select).toHaveBeenLastCalledWith(12, 53, 1);
+
+    // Drag right by 4 cells, same row.
+    h.fireTouch("touchmove", [{ x: 200 + 4 * CELL_W, y: 100 }]);
+    // Endpoint is buffer (16, 53); span length 5.
+    expect(h.xterm.select).toHaveBeenLastCalledWith(12, 53, 5);
+  });
+
+  it("falls back to raw viewport row when viewportY is 0 (not scrolled)", () => {
+    // Sanity check the existing happy path didn't regress.
+    const h = makeHarness();
+    h.xterm.buffer.active.viewportY = 0;
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.xterm.select).toHaveBeenLastCalledWith(12, 3, 1);
+  });
+});
+
+describe("reset clears xterm selection when one was painted", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("clears xterm's painted selection on touchcancel mid-selection", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.getMode()).toBe("selection");
+    // beginSelection itself calls clearSelection once. Reset the spy so we
+    // observe ONLY the clearSelection that fires from reset()'s new branch.
+    h.xterm.clearSelection = vi.fn();
+
+    h.fireTouch("touchcancel", []);
+
+    expect(h.xterm.clearSelection).toHaveBeenCalledTimes(1);
+    expect(h.getMode()).toBe("idle");
+  });
+
+  it("clears xterm's painted selection on destroy() while in selection mode", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    h.xterm.clearSelection = vi.fn();
+
+    h.destroy();
+
+    expect(h.xterm.clearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT call clearSelection on reset when there was no selection", () => {
+    const h = makeHarness();
+    // Pending only — never reached selection.
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.xterm.clearSelection = vi.fn();
+    h.fireTouch("touchcancel", []);
+    expect(h.xterm.clearSelection).not.toHaveBeenCalled();
+  });
+});
+
+describe("touchend with remaining fingers down does not block the gesture", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("does NOT reset to idle when one finger lifts but another remains", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    // Long-press hasn't fired; we're in pending. A second finger landed
+    // (would have been seen as multi-touch on the previous move) and now
+    // lifts. The OTHER finger is still on the screen.
+    h.fireTouch("touchend", [{ x: 250, y: 150 }]);
+    expect(h.getMode()).not.toBe("idle");
+  });
+
+  it("subsequent touchmove on the remaining finger still works", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.getMode()).toBe("selection");
+    // A second finger touched and now lifts; one finger remains.
+    h.fireTouch("touchend", [{ x: 250, y: 150 }]);
+    // Selection was abandoned (clearSelection called) but state did NOT
+    // reset to idle — the remaining finger should be free to scroll.
+    expect(h.getMode()).not.toBe("idle");
+    // The move handler should still process events for the remaining
+    // finger (it ignores touchmove when mode is "idle"). Drive a single-
+    // touch move and ensure it doesn't no-op due to a stale idle.
+    const beforeCalls = h.xterm.clearSelection.mock.calls.length;
+    h.fireTouch("touchmove", [{ x: 250, y: 150 }]);
+    // Not asserting anything about scroll directly here — the move handler
+    // for non-selection states only filters tap/long-press, but the key
+    // invariant is that it doesn't *throw* and the mode hasn't been
+    // forcibly reset to idle. clearSelection should not have been called
+    // again from this move.
+    expect(h.xterm.clearSelection.mock.calls.length).toBe(beforeCalls);
+  });
+
+  it("clears active selection when one finger lifts during selection", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    h.xterm.clearSelection = vi.fn();
+    // Second finger lifts; one remains.
+    h.fireTouch("touchend", [{ x: 250, y: 150 }]);
+    expect(h.xterm.clearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it("performs the full reset only when all fingers are up", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(50);
+    // Final touchend (touches.length === 0) — normal tap path.
+    h.fireTouch("touchend", []);
     expect(h.getMode()).toBe("idle");
   });
 });

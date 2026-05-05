@@ -267,8 +267,26 @@ export function createTouchInteractions(
 
   const reset = () => {
     cancelLongPress();
+    // If a selection drag was in progress (or one is otherwise still
+    // visible — e.g. touchcancel mid-drag from an iOS system gesture, or a
+    // second finger landing during selection), clear xterm's painted
+    // selection too. Without this the selection lingers on screen even
+    // though our state has flipped to idle, and the touch-scroll handler
+    // (which only bails while modeRef is "selection") will happily scroll
+    // the viewport with the stale selection still painted.
+    const wasSelecting = modeRef.current === "selection";
     setMode("idle");
     selectionStart = null;
+    if (wasSelecting) {
+      const terminal = getTerminal();
+      if (terminal) {
+        try {
+          terminal.clearSelection();
+        } catch {
+          // xterm may throw if disposed during teardown; safe to ignore.
+        }
+      }
+    }
   };
 
   const beginSelection = () => {
@@ -278,7 +296,15 @@ export function createTouchInteractions(
     // for why (soft keyboard animations shift the viewport mid-gesture).
     const dims = readDims(terminal);
     if (!dims) return;
-    const cell = pointToCell(dims, startX, startY);
+    const viewportCell = pointToCell(dims, startX, startY);
+    // pointToCell returns a row in viewport coordinates (0..rows-1) but
+    // `terminal.select(col, row, length)` expects a buffer-absolute row
+    // (an index into `buffer.active`). When the user has scrolled the
+    // scrollback, viewportY is non-zero and the two diverge — without this
+    // shift the selection would land at the top of the buffer history
+    // instead of where the user's finger is.
+    const viewportY = terminal.buffer.active.viewportY;
+    const cell = { col: viewportCell.col, row: viewportCell.row + viewportY };
     selectionStart = cell;
     setMode("selection");
     // Initial 1-cell selection so the user sees feedback immediately even if
@@ -308,7 +334,11 @@ export function createTouchInteractions(
     // them, although pinch cancels selection mode anyway.
     const dims = readDims(terminal);
     if (!dims) return;
-    const end = pointToCell(dims, clientX, clientY);
+    const viewportEnd = pointToCell(dims, clientX, clientY);
+    // Same buffer-absolute conversion as in beginSelection. selectionStart
+    // is already stored in buffer-absolute coords; the endpoint must match.
+    const viewportY = terminal.buffer.active.viewportY;
+    const end = { col: viewportEnd.col, row: viewportEnd.row + viewportY };
     const span = selectionLength(
       selectionStart.col,
       selectionStart.row,
@@ -438,6 +468,35 @@ export function createTouchInteractions(
   };
 
   const handleTouchEnd = (e: TouchEvent) => {
+    // touchend fires for the SPECIFIC finger that lifted. If others remain
+    // (e.touches.length > 0), the gesture isn't actually over — resetting
+    // mode to "idle" here would short-circuit the move handler for the
+    // finger still on the screen. Treat this as "one finger lifted, gesture
+    // continues with whatever's left." Abandon any active selection so we
+    // don't leave a stale highlight, but don't mark the gesture finished.
+    if (e.touches.length > 0) {
+      const cur = getCurrentMode();
+      if (cur === "selection") {
+        const terminal = getTerminal();
+        if (terminal) {
+          try {
+            terminal.clearSelection();
+          } catch {
+            // ignore — terminal may be disposed
+          }
+        }
+        cancelLongPress();
+        selectionStart = null;
+        // Park in "scroll" — any non-tap, non-selection state cleanly
+        // suppresses tap synthesis on the eventual final touchend and lets
+        // the touch-scroll handler take over for the remaining finger.
+        setMode("scroll");
+      }
+      // For pending/scroll/idle we leave state as-is; the remaining finger
+      // continues whatever it was doing.
+      return;
+    }
+
     cancelLongPress();
     const cur = getCurrentMode();
     if (cur === "selection") {
@@ -462,7 +521,6 @@ export function createTouchInteractions(
     // Scroll / cancelled — nothing to do beyond resetting state.
     setMode("idle");
     selectionStart = null;
-    void e; // suppress unused-arg lint without removing the param shape
   };
 
   const handleTouchCancel = (e: TouchEvent) => {

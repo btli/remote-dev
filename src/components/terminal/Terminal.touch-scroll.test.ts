@@ -317,17 +317,48 @@ describe("touch-scroll: edge cases", () => {
   });
 
   it("ignores multi-touch gestures so pinch-zoom still works", () => {
-    const h = makeHarness({ bufferType: "alternate" });
-    // Single-touch portion exceeds the threshold and emits.
-    h.feedTouchSequence([500, 480]);
-    const baselineEmits = h.inputBytes.length;
+    // Build a fresh handlers instance directly so we can drive
+    // handleTouchMove with a multi-touch event and observe its return.
+    const container = document.createElement("div");
+    const scrollEl = document.createElement("div");
+    scrollEl.className = "xterm-scrollable-element";
+    Object.defineProperty(scrollEl, "clientHeight", { value: CELL_HEIGHT * ROWS, configurable: true });
+    container.appendChild(scrollEl);
+    document.body.appendChild(container);
 
-    // A subsequent multi-touch move event should bail without preventDefault.
+    const inputBytes: string[] = [];
+    const scrollLinesCalls: number[] = [];
+    const xterm = {
+      rows: ROWS,
+      scrollLines: (n: number) => scrollLinesCalls.push(n),
+      buffer: { active: { type: "alternate" as const } },
+      modes: { applicationCursorKeysMode: false, mouseTrackingMode: "none" as const },
+    };
+    const handlers = createTouchScrollHandlers({
+      container,
+      getXterm: () => xterm,
+      sendInput: (data: string) => inputBytes.push(data),
+      raf: () => 0,
+      cancelRaf: () => {},
+      now: () => 0,
+    });
+
+    // Prime the gesture: single-finger touchstart so internal state is
+    // armed. We don't drive a single-touch move here because we want to
+    // assert the multi-touch bail in isolation.
+    const startEvent = new Event("touchstart", { bubbles: true, cancelable: true }) as unknown as TouchEvent;
+    Object.defineProperty(startEvent, "touches", {
+      value: [{ clientY: 500, clientX: 0, identifier: 0, target: container } as unknown as Touch],
+      configurable: true,
+    });
+    handlers.handleTouchStart(startEvent);
+
+    // Construct the multi-touch move and actually invoke handleTouchMove.
     const event = new Event("touchmove", { bubbles: true, cancelable: true }) as unknown as TouchEvent;
     Object.defineProperty(event, "touches", {
       value: [
-        { clientY: 460, clientX: 0, identifier: 0, target: h.container } as unknown as Touch,
-        { clientY: 460, clientX: 50, identifier: 1, target: h.container } as unknown as Touch,
+        { clientY: 460, clientX: 0, identifier: 0, target: container } as unknown as Touch,
+        { clientY: 460, clientX: 50, identifier: 1, target: container } as unknown as Touch,
       ],
       configurable: true,
     });
@@ -338,12 +369,13 @@ describe("touch-scroll: edge cases", () => {
       },
       configurable: true,
     });
-    // Re-run via the public handler (we didn't expose handlers from harness, so
-    // recreate one via a direct factory call sharing the same xterm/sendInput).
-    // The harness emits via its internal handlers; for this assertion, reuse
-    // the bailout contract: a multi-touch move should produce no input bytes
-    // beyond the baseline.
-    expect(h.inputBytes.length).toBe(baselineEmits);
+
+    handlers.handleTouchMove(event);
+
+    // Bail-out contract: no input bytes, no scrollback movement, and we
+    // must NOT preventDefault — pinch-zoom needs the browser default.
+    expect(inputBytes).toEqual([]);
+    expect(scrollLinesCalls).toEqual([]);
     expect(preventDefaultCalled).toBe(false);
   });
 });
