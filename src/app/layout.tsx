@@ -36,8 +36,11 @@ export const viewport: Viewport = {
   themeColor: "#1a1b26",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  // WCAG 1.4.4 (Resize Text): users must be able to zoom up to 200%.
+  // Lighthouse a11y flags `maximum-scale=1` and `user-scalable=no`.
+  // Allow up to 5x and keep pinch-zoom on.
+  maximumScale: 5,
+  userScalable: true,
   viewportFit: "cover",
 };
 
