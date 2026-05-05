@@ -111,6 +111,9 @@ interface TerminalConnection {
   terminalType: "shell" | "agent" | "file" | string;
   // User ID for session service calls
   userId: string;
+  // Last-focus bookkeeping for primary-connection election (focus-based promotion).
+  lastFocusAt: number;
+  isVisible: boolean;
   // Voice mode state
   voiceFifoPath: string | null;
   voiceFifoFd: number | null;
@@ -125,8 +128,13 @@ const connections = new Map<string, TerminalConnection>();
 // Session -> connection IDs for multi-client support
 const sessionConnections = new Map<string, Set<string>>();
 
-// Which connection controls tmux resize per session (newest wins)
+// Which connection controls tmux resize per session (most-recently-focused wins)
 const sessionPrimaryConnection = new Map<string, string>();
+
+// Last time the primary changed for a session — used as a 1s cooldown to prevent
+// ping-pong between two side-by-side windows.
+const sessionLastPromotionAt = new Map<string, number>();
+const PROMOTION_COOLDOWN_MS = 1000;
 
 /** Get all active connections for a session */
 function getConnectionsForSession(sessionId: string): TerminalConnection[] {
@@ -274,6 +282,79 @@ function broadcastToSession(sessionId: string, data: Record<string, unknown>): v
   }
 }
 
+/** Run `tmux resize-window` for the given session asynchronously. */
+function runTmuxResize(tmuxSessionName: string, cols: number, rows: number): void {
+  execFile(
+    "tmux",
+    ["resize-window", "-t", tmuxSessionName, "-x", String(cols), "-y", String(rows)],
+    (err) => {
+      if (err) {
+        log.warn("tmux resize-window failed", { error: String(err), tmuxSessionName, cols, rows });
+      }
+    },
+  );
+}
+
+/** Notify each connection in the session whether it is the current primary. */
+function broadcastPrimaryChanged(sessionId: string): void {
+  const primaryId = sessionPrimaryConnection.get(sessionId);
+  for (const conn of getConnectionsForSession(sessionId)) {
+    if (conn.ws.readyState !== WebSocket.OPEN) continue;
+    try {
+      conn.ws.send(JSON.stringify({
+        type: "primary_changed",
+        isPrimary: conn.connectionId === primaryId,
+      }));
+    } catch (err) {
+      log.warn("Failed to send primary_changed", { error: String(err), connectionId: conn.connectionId });
+    }
+  }
+}
+
+/**
+ * Promote `connectionId` to be the session's primary (tmux-resize controller).
+ * Honors a per-session cooldown unless `force` is true.
+ */
+function tryPromoteToPrimary(sessionId: string, connectionId: string, force: boolean): void {
+  const currentPrimary = sessionPrimaryConnection.get(sessionId);
+  if (currentPrimary === connectionId) return;
+
+  const now = Date.now();
+  const lastPromo = sessionLastPromotionAt.get(sessionId) ?? 0;
+  const msSincePrev = now - lastPromo;
+  if (!force && msSincePrev < PROMOTION_COOLDOWN_MS) {
+    log.debug("promotion denied (cooldown)", { connectionId, sessionId, msSincePrev });
+    return;
+  }
+
+  sessionPrimaryConnection.set(sessionId, connectionId);
+  sessionLastPromotionAt.set(sessionId, now);
+
+  const conn = connections.get(connectionId);
+  if (conn?.lastCols && conn?.lastRows) {
+    runTmuxResize(conn.tmuxSessionName, conn.lastCols, conn.lastRows);
+  }
+
+  log.debug("promoted connection to primary", { connectionId, sessionId, force });
+  broadcastPrimaryChanged(sessionId);
+}
+
+/**
+ * Select the best replacement primary from a session's remaining connections:
+ * prefer visible connections, break ties by most recent `lastFocusAt`.
+ */
+function pickNextPrimary(sessionId: string): string | null {
+  const conns = getConnectionsForSession(sessionId);
+  if (conns.length === 0) return null;
+  const visible = conns.filter((c) => c.isVisible);
+  const pool = visible.length > 0 ? visible : conns;
+  let best = pool[0];
+  for (const c of pool) {
+    if (c.lastFocusAt > best.lastFocusAt) best = c;
+  }
+  return best.connectionId;
+}
+
 /**
  * Destroy a PTY and release its file descriptors.
  * Uses the runtime's destroy() method which closes the socket/FDs,
@@ -317,6 +398,7 @@ function cleanupConnection(connectionId: string): void {
     // Last connection closed — clean up all session-level state
     sessionConnections.delete(conn.sessionId);
     sessionPrimaryConnection.delete(conn.sessionId);
+    sessionLastPromotionAt.delete(conn.sessionId);
     sessionStatusIndicators.delete(conn.sessionId);
     sessionProgressBars.delete(conn.sessionId);
     for (const [claudeId, rdvId] of claudeSessionMap) {
@@ -333,10 +415,18 @@ function cleanupConnection(connectionId: string): void {
       }
     }).catch(() => {});
   } else if (sessionPrimaryConnection.get(conn.sessionId) === connectionId) {
-    // Promote another connection to primary for resize control
-    const nextPrimary = connSet.values().next().value;
+    // Primary disconnected — pick the most-recently-focused (preferring visible)
+    // remaining connection and apply its size to tmux.
+    const nextPrimary = pickNextPrimary(conn.sessionId);
     if (nextPrimary) {
       sessionPrimaryConnection.set(conn.sessionId, nextPrimary);
+      sessionLastPromotionAt.set(conn.sessionId, Date.now());
+      const nextConn = connections.get(nextPrimary);
+      if (nextConn?.lastCols && nextConn?.lastRows) {
+        runTmuxResize(nextConn.tmuxSessionName, nextConn.lastCols, nextConn.lastRows);
+      }
+      log.debug("primary handoff on disconnect", { from: connectionId, to: nextPrimary, sessionId: conn.sessionId });
+      broadcastPrimaryChanged(conn.sessionId);
     }
   }
 
@@ -1899,6 +1989,8 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       resizeTimeout: null,
       terminalType,
       userId,
+      lastFocusAt: Date.now(),
+      isVisible: true,
       voiceFifoPath: null,
       voiceFifoFd: null,
       voiceAudioBuffer: [],
@@ -1912,8 +2004,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       sessionConnections.set(sessionId, new Set());
     }
     sessionConnections.get(sessionId)!.add(connectionId);
-    // Newest connection is primary for resize
-    sessionPrimaryConnection.set(sessionId, connectionId);
+    // Seed initial primary only if no connection currently holds it for this
+    // session. This prevents a reconnect within the cooldown window from
+    // stealing primary away from an active connection. Subsequent focus signals
+    // (subject to the promotion cooldown) can re-promote later.
+    if (!sessionPrimaryConnection.has(sessionId)) {
+      sessionPrimaryConnection.set(sessionId, connectionId);
+      sessionLastPromotionAt.set(sessionId, Date.now());
+    }
 
     log.debug("Terminal connection started", { connectionId, sessionId, cols, rows, tmuxSessionName });
 
@@ -2018,21 +2116,22 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
               // Only resize the tmux window if this is the primary connection
               if (sessionPrimaryConnection.get(sessionId) === connectionId) {
-                execFile(
-                  "tmux",
-                  [
-                    "resize-window",
-                    "-t",
-                    tmuxSessionName,
-                    "-x",
-                    String(pending.cols),
-                    "-y",
-                    String(pending.rows),
-                  ],
-                  () => {}
-                );
+                runTmuxResize(tmuxSessionName, pending.cols, pending.rows);
               }
             }, 50);
+            break;
+          }
+          case "client_focus": {
+            connection.lastFocusAt = Date.now();
+            connection.isVisible = true;
+            const force = msg.force === true;
+            log.debug("client_focus received", { connectionId, sessionId, force });
+            tryPromoteToPrimary(sessionId, connectionId, force);
+            break;
+          }
+          case "client_blur": {
+            connection.isVisible = false;
+            // Bookkeeping only — do not change primary on blur.
             break;
           }
           case "detach":
@@ -2229,6 +2328,9 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
 
     // Send ready signal
     ws.send(JSON.stringify({ type: "ready", sessionId, tmuxSessionName }));
+    // Inform every session client of the new primary set (this connection became
+    // primary on connect; previously-primary clients will flip to secondary).
+    broadcastPrimaryChanged(sessionId);
   });
 
   return wss;
@@ -2246,6 +2348,7 @@ function cleanup() {
   connections.clear();
   sessionConnections.clear();
   sessionPrimaryConnection.clear();
+  sessionLastPromotionAt.clear();
   process.exit(0);
 }
 

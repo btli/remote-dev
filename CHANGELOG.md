@@ -144,6 +144,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bottom sheet with search complete the surface. Built on top of the Phase 1
   shell from remote-dev-3ozu.
 
+### Security
+
+- **Sign-out hardening**: `/api/auth/signout` no longer exports a GET handler
+  (removed CSRF logout vector — third-party `<img src>` could trigger
+  sign-out). The POST handler additionally rejects cross-origin requests via
+  an Origin/Referer same-origin check. Removed the `joyfulhouse` placeholder
+  default for `CF_ACCESS_TEAM` from both the signout route and
+  `src/lib/cloudflare-access.ts`: an unset team no longer silently redirects
+  users to a foreign Cloudflare tenant or attempts JWKS fetches against one.
+  `MobileLockScreen` now shows generic "Loading" copy while the NextAuth
+  client session is resolving, and only switches to "Authenticating via
+  Cloudflare Access" once the session is confirmed unauthenticated, so
+  credentials/localhost users no longer see misleading CF copy.
+
+### Fixed
+
+- **Mobile terminal touch interactions follow-ups** (`remote-dev-zigy`).
+  Three regressions from PR #227's tap-to-click + long-press-to-select layer
+  are now resolved:
+    - Selection drag no longer fights the scroll handler. Both
+      `useTouchInteractions` and `touch-scroll` now share a `TouchModeRef`,
+      and the scroll handler skips activation while the interactions handler
+      is in `selection` mode. Belt-and-suspenders: the interactions touchmove
+      listener is now `passive: false` and calls `preventDefault()` on
+      touchmove during selection so even handler-order quirks can't scroll
+      the viewport from under the user's selection.
+    - Tap now reliably triggers `terminal.scrollToBottom()` regardless of
+      mouse mode (matches the universal "tap to jump to latest" mobile
+      pattern), and dispatches the synthetic mouse pair on the
+      `.xterm-screen` element directly (the stable mouse-listener host in
+      xterm v6) rather than the fragile inner canvas.
+    - Tap on an active selection clears the selection without firing a click
+      or scroll, matching standard text-selection UX.
+- **Multi-client tmux resize stuck after switching windows**
+  (`remote-dev-nlfm`). The terminal server now elects the primary connection
+  (the one allowed to call `tmux resize-window`) by most-recently-focused
+  client instead of newest connection. The browser sends `client_focus` /
+  `client_blur` on `visibilitychange`, `window.focus`, and `window.blur`; a
+  1-second per-session cooldown prevents ping-pong between two side-by-side
+  windows. When the primary disconnects the server picks the most recently
+  focused remaining (visible) client and re-applies its size to tmux. A small
+  "Another window is in control · click to claim" pill appears on
+  non-primary clients and force-promotes when clicked. Clients that don't
+  send focus signals continue to work via the existing newest-on-connect
+  rule.
+- **Desktop terminal initial fontSize/fontFamily race**
+  (`remote-dev-3gtr`). The xterm.js terminal stayed at the default font size
+  (14px) on first mount when `PreferencesContext` resolved during the async
+  init window (xterm/addon imports + WebGL load). The font-update effect
+  re-fired with the new values but bailed because `xtermRef.current` was
+  still null, and no later effect re-applied them. Switching to another
+  session and back masked the bug because the second mount saw the loaded
+  preferences synchronously. Fixed by reconciling
+  `terminal.options.fontSize`/`fontFamily` against the synchronized refs
+  immediately after `xtermRef.current = terminal`, closing the race window.
+- **Phase 3 mobile session view: adversarial-review fixes** (PR #220). Replaced
+  the saturated `text-green-400 bg-green-400/20` long-press indicator on
+  `MobileInputBar` with the token-based `--color-signal-running` to honor the
+  DESIGN.md achromatic-default rule. The bottom tab bar now auto-collapses
+  3.5s after a swipe-up reveal so the session view returns to full-bleed
+  without the user having to dismiss it manually. The terminal viewport
+  declares `touch-action: pan-y` to suppress iOS Safari's native pinch-to-zoom
+  while preserving vertical scroll, eliminating the double-zoom on font
+  resize. Persisted font size is now read via `useSyncExternalStore` to
+  prevent a hydration mismatch under React 19 / Next.js 16. Extracted the
+  shared `AnsiStripper` to `src/lib/terminal/ansi-stripper.ts` so
+  `MobileTerminalView` and the new `MobileSessionView` can't drift apart.
+
 ## [0.3.7] - 2026-04-30
 
 Pre-mobile-redesign baseline. Captures all changes since v0.3.6 as a rollback
