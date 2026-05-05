@@ -65,7 +65,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       createWorktree?: boolean;
       baseBranch?: string;
       worktreeType?: string;
-      terminalType?: "shell" | "agent" | "file" | "browser" | "loop";
+      terminalType?: "shell" | "agent" | "ssh" | "file" | "browser" | "loop";
       filePath?: string;
       profileId?: string;
       agentProvider?: string;
@@ -75,6 +75,7 @@ export const POST = withApiAuth(async (request, { userId }) => {
       loopConfig?: { loopType?: string; intervalSeconds?: number; promptTemplate?: string; maxIterations?: number; autoRestart?: boolean };
       scopeKey?: string | null;
       typeMetadata?: Record<string, unknown>;
+      sshConnectionId?: string;
     }>(request);
     if ("error" in result) return result.error;
     const body = result.data;
@@ -133,6 +134,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
       // Plugin-level dedup + generic metadata passthrough
       scopeKey: body.scopeKey ?? null,
       typeMetadata: body.typeMetadata,
+      // SSH session
+      sshConnectionId: body.sshConnectionId,
     };
 
     const { session: newSession, reused } =

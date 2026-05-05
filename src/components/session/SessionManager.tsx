@@ -580,6 +580,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
+      // Plugin-specific opt-in fields — passed through verbatim to the API.
+      terminalType?: "shell" | "agent" | "ssh" | "file" | "loop";
+      sshConnectionId?: string;
     }) => {
       // Determine target folder with priority:
       // 1. Explicit folderId from wizard

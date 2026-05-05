@@ -27,6 +27,7 @@ export type {
   AgentSessionMetadata,
   FileViewerMetadata,
   BrowserSessionMetadata,
+  SshSessionMetadata,
   AgentExitState,
   AgentActivityStatus,
 } from "./terminal-type";
