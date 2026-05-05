@@ -72,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text-label keys (Esc, Tab, punctuation) now use their visible text as the
   accessible name; modifier latches (Ctrl/Alt/Shift) and the NAV/KEYS toggle
   prefix the visible text in `aria-label` before the contextual suffix.
+- **Channels list returns empty (200) for stale active-node id**
+  (`remote-dev-d6jk`). `GET /api/channels?projectId=` previously returned 404
+  when the id referenced a deleted/inaccessible project, and the route had
+  silently dropped support for the legacy `?folderId=` alias used by older
+  clients — both surfaced as a persistent error toast in `ChannelContext` when
+  the persisted active-node id went stale (e.g. after a project delete).
+  The route now treats unknown ids (projectId, legacy folderId, or nodeId) as
+  empty result sets and returns `{ groups: [] }` with a 200, matching how
+  list-scoped-to-X endpoints typically handle a missing X. Validation errors
+  (e.g. malformed `nodeType`) still return 400 with a typed `INVALID_NODE_TYPE`
+  code so genuine client bugs aren't masked.
 - **Mobile redesign Phase 7 audit + polish** (`remote-dev-0hx8`). Surgical
   pass against the DESIGN.md bar:
   - **A11y** — Mobile session rows now announce status to screen readers
