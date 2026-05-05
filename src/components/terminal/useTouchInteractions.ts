@@ -184,7 +184,13 @@ export interface TouchInteractionsHandlers {
   handleTouchStart: (e: TouchEvent) => void;
   handleTouchMove: (e: TouchEvent) => void;
   handleTouchEnd: (e: TouchEvent) => void;
-  handleTouchCancel: () => void;
+  handleTouchCancel: (e: TouchEvent) => void;
+  /**
+   * Cancel any pending long-press timer and reset all state to idle. Must be
+   * called from the host effect's cleanup so a long-press timer started just
+   * before unmount doesn't fire on a disposed xterm. Idempotent.
+   */
+  destroy: () => void;
   /** Current internal mode — exposed for tests. */
   getMode: () => Mode;
 }
@@ -217,9 +223,6 @@ export function createTouchInteractions(
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   // Cell coords captured when the long-press fires.
   let selectionStart: { col: number; row: number } | null = null;
-  // Stored dims from the moment the long-press fires; we trust the layout
-  // didn't shift mid-gesture.
-  let selectionDims: XTermDims | null = null;
 
   const cancelLongPress = () => {
     if (longPressTimer !== null) {
@@ -232,17 +235,17 @@ export function createTouchInteractions(
     cancelLongPress();
     mode = "idle";
     selectionStart = null;
-    selectionDims = null;
   };
 
   const beginSelection = () => {
     const terminal = getTerminal();
     if (!terminal) return;
+    // Re-read dims at fire time. We do NOT cache origin — see updateSelection
+    // for why (soft keyboard animations shift the viewport mid-gesture).
     const dims = readDims(terminal);
     if (!dims) return;
     const cell = pointToCell(dims, startX, startY);
     selectionStart = cell;
-    selectionDims = dims;
     mode = "selection";
     // Initial 1-cell selection so the user sees feedback immediately even if
     // they don't move yet.
@@ -261,14 +264,23 @@ export function createTouchInteractions(
 
   const updateSelection = (clientX: number, clientY: number) => {
     const terminal = getTerminal();
-    if (!terminal || !selectionStart || !selectionDims) return;
-    const end = pointToCell(selectionDims, clientX, clientY);
+    if (!terminal || !selectionStart) return;
+    // Re-read dims every move. The iOS soft keyboard animates up after the
+    // user starts a gesture (focus shifts to the input bar, etc.), shifting
+    // the terminal upward by the keyboard height. A cached `originY` from
+    // long-press-fire would put every subsequent row off by that delta. The
+    // call is cheap (a getBoundingClientRect plus an internal property read).
+    // Cell width/height also re-read for parity, since pinch-zoom can change
+    // them, although pinch cancels selection mode anyway.
+    const dims = readDims(terminal);
+    if (!dims) return;
+    const end = pointToCell(dims, clientX, clientY);
     const span = selectionLength(
       selectionStart.col,
       selectionStart.row,
       end.col,
       end.row,
-      selectionDims.cols
+      dims.cols
     );
     terminal.select(span.col, span.row, span.length);
   };
@@ -288,11 +300,15 @@ export function createTouchInteractions(
   const synthesizeTap = (clientX: number, clientY: number) => {
     const terminal = getTerminal();
     if (!terminal || !terminal.element) return;
-    const target = terminal.element;
-    // Mouse events fired on the xterm host element are picked up by xterm's
-    // own listeners. When DECSET 1000/1002/1006 is active xterm forwards them
-    // to the PTY; when not, xterm's selection logic clears any prior
-    // selection (which is what we want before we explicitly scroll).
+    // xterm v6 attaches its mouse listeners to the canvas inside .xterm-screen
+    // (where the WebGL/canvas renderer paints), NOT to the outer host div.
+    // Dispatched events do not propagate downward into children, so a
+    // mousedown on `terminal.element` is silently ignored. Walk into the
+    // screen → canvas, with the host div as a last-resort fallback.
+    const host = terminal.element;
+    const screen = host.querySelector(".xterm-screen") as HTMLElement | null;
+    const canvas = screen?.querySelector("canvas") as HTMLElement | null;
+    const target: HTMLElement = canvas ?? screen ?? host;
     const baseInit: MouseEventInit = {
       bubbles: true,
       cancelable: true,
@@ -397,11 +413,11 @@ export function createTouchInteractions(
     // Scroll / cancelled — nothing to do beyond resetting state.
     mode = "idle";
     selectionStart = null;
-    selectionDims = null;
     void e; // suppress unused-arg lint without removing the param shape
   };
 
-  const handleTouchCancel = () => {
+  const handleTouchCancel = (e: TouchEvent) => {
+    void e; // ignored; matches DOM EventListener signature
     reset();
   };
 
@@ -410,6 +426,7 @@ export function createTouchInteractions(
     handleTouchMove,
     handleTouchEnd,
     handleTouchCancel,
+    destroy: reset,
     getMode: () => mode,
   };
 }
@@ -443,6 +460,7 @@ export function useTouchInteractions(opts: UseTouchInteractionsOptions): void {
     element.addEventListener("touchend", handlers.handleTouchEnd, { passive: true });
     element.addEventListener("touchcancel", handlers.handleTouchCancel, { passive: true });
     return () => {
+      handlers.destroy();
       element.removeEventListener("touchstart", handlers.handleTouchStart);
       element.removeEventListener("touchmove", handlers.handleTouchMove);
       element.removeEventListener("touchend", handlers.handleTouchEnd);

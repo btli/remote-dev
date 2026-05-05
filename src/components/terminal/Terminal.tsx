@@ -1413,6 +1413,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
     return () => {
       handlers.cancelMomentum();
+      // Cancel any pending long-press timer so it can't fire on a disposed
+      // xterm. Without this, a user who long-presses then closes the tab
+      // within 500 ms hits `terminal.select()` on a torn-down instance.
+      interactions.destroy();
       container.removeEventListener("touchstart", handlers.handleTouchStart);
       container.removeEventListener("touchmove", handlers.handleTouchMove);
       container.removeEventListener("touchend", handlers.handleTouchEnd);

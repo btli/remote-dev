@@ -45,34 +45,51 @@ const ROWS = 24;
 interface Harness {
   xterm: FakeXTerm;
   screen: HTMLElement;
+  canvas: HTMLElement;
   fireTouch: (
     type: "touchstart" | "touchmove" | "touchend" | "touchcancel",
     touches: Array<{ x: number; y: number }>
   ) => void;
   advanceTime: (ms: number) => void;
   flushTimers: () => void;
-  mouseEvents: Array<{ type: string; clientX: number; clientY: number }>;
+  mouseEvents: Array<{ type: string; clientX: number; clientY: number; target: EventTarget | null }>;
   copies: string[];
   getMode: () => string;
+  destroy: () => void;
+  /** How many times `getBoundingClientRect` has been called on the screen. */
+  bcrCalls: () => number;
+  /** Shift the cached screen rect by `dy` px to simulate keyboard slide-up. */
+  shiftScreenY: (dy: number) => void;
 }
 
 function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"] } = {}): Harness {
   const screen = document.createElement("div");
   screen.className = "xterm-screen";
+  // xterm v6 paints into a canvas inside .xterm-screen. The tap handler
+  // dispatches there; we add one so we can assert the dispatch target.
+  const canvas = document.createElement("canvas");
+  screen.appendChild(canvas);
   // Position the screen at viewport (100, 50) — non-zero origin shakes out
-  // any bugs that assume (0,0).
+  // any bugs that assume (0,0). Origin is mutable via shiftScreenY so we can
+  // simulate the iOS soft keyboard sliding up mid-gesture.
+  const originX = 100;
+  let originY = 50;
+  let bcrCount = 0;
   Object.defineProperty(screen, "getBoundingClientRect", {
-    value: () => ({
-      left: 100,
-      top: 50,
-      right: 100 + COLS * CELL_W,
-      bottom: 50 + ROWS * CELL_H,
-      width: COLS * CELL_W,
-      height: ROWS * CELL_H,
-      x: 100,
-      y: 50,
-      toJSON: () => "",
-    }),
+    value: () => {
+      bcrCount++;
+      return {
+        left: originX,
+        top: originY,
+        right: originX + COLS * CELL_W,
+        bottom: originY + ROWS * CELL_H,
+        width: COLS * CELL_W,
+        height: ROWS * CELL_H,
+        x: originX,
+        y: originY,
+        toJSON: () => "",
+      };
+    },
     configurable: true,
   });
   const element = document.createElement("div");
@@ -100,7 +117,7 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
   const pendingTimers: Array<{ id: number; cb: TimerFn; fireAt: number }> = [];
   let nextTimerId = 1;
 
-  const mouseEvents: Array<{ type: string; clientX: number; clientY: number }> = [];
+  const mouseEvents: Array<{ type: string; clientX: number; clientY: number; target: EventTarget | null }> = [];
   const copies: string[] = [];
 
   const handlers = createTouchInteractions({
@@ -115,8 +132,13 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
       const idx = pendingTimers.findIndex((t) => t.id === id);
       if (idx >= 0) pendingTimers.splice(idx, 1);
     }) as unknown as (id: ReturnType<typeof setTimeout>) => void,
-    dispatchMouse: (_target, ev) => {
-      mouseEvents.push({ type: ev.type, clientX: ev.clientX, clientY: ev.clientY });
+    dispatchMouse: (target, ev) => {
+      mouseEvents.push({
+        type: ev.type,
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+        target,
+      });
     },
     copyToClipboard: async (text) => {
       copies.push(text);
@@ -135,7 +157,7 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
     if (type === "touchstart") handlers.handleTouchStart(ev);
     else if (type === "touchmove") handlers.handleTouchMove(ev);
     else if (type === "touchend") handlers.handleTouchEnd(ev);
-    else handlers.handleTouchCancel();
+    else handlers.handleTouchCancel(ev);
   };
 
   const advanceTime = (ms: number) => {
@@ -155,12 +177,18 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
   return {
     xterm,
     screen,
+    canvas,
     fireTouch,
     advanceTime,
     flushTimers,
     mouseEvents,
     copies,
     getMode: handlers.getMode,
+    destroy: handlers.destroy,
+    bcrCalls: () => bcrCount,
+    shiftScreenY: (dy) => {
+      originY += dy;
+    },
   };
 }
 
@@ -209,7 +237,7 @@ describe("tap-to-click", () => {
     h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
     h.advanceTime(TAP_MAX_MS - 50);
     h.fireTouch("touchend", []);
-    expect(h.mouseEvents).toEqual([
+    expect(h.mouseEvents.map(({ type, clientX, clientY }) => ({ type, clientX, clientY }))).toEqual([
       { type: "mousedown", clientX: 200, clientY: 100 },
       { type: "mouseup", clientX: 200, clientY: 100 },
     ]);
@@ -370,5 +398,128 @@ describe("threshold guards", () => {
   it("TAP_MAX_PX matches the touch-scroll activation threshold (5 px) so scroll vs tap is unambiguous", () => {
     expect(TAP_MAX_PX).toBe(5);
     expect(MOVEMENT_CANCEL_PX).toBe(5);
+  });
+});
+
+// ── Pre-merge review fixes ────────────────────────────────────────────
+
+describe("destroy() — unmount safety", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("cancels a pending long-press timer so it cannot fire after unmount", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    // Simulate effect cleanup before the 500 ms timer fires.
+    h.destroy();
+    // Even after time passes and timers flush, no selection should occur.
+    h.advanceTime(LONG_PRESS_MS + 100);
+    h.flushTimers();
+    expect(h.xterm.select).not.toHaveBeenCalled();
+    expect(h.xterm.clearSelection).not.toHaveBeenCalled();
+    expect(h.getMode()).toBe("idle");
+  });
+
+  it("destroy() is idempotent", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.destroy();
+    expect(() => h.destroy()).not.toThrow();
+    expect(h.getMode()).toBe("idle");
+  });
+});
+
+describe("synthesizeTap dispatch target", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("dispatches mousedown+mouseup on the .xterm-screen canvas (xterm wires its mouse listeners there)", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    expect(h.mouseEvents).toHaveLength(2);
+    for (const e of h.mouseEvents) {
+      expect(e.target).toBe(h.canvas);
+    }
+  });
+
+  it("falls back to .xterm-screen when no canvas is present", () => {
+    const h = makeHarness();
+    // Remove the canvas to simulate a renderer that didn't paint one.
+    h.canvas.remove();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    expect(h.mouseEvents).toHaveLength(2);
+    for (const e of h.mouseEvents) {
+      expect(e.target).toBe(h.screen);
+    }
+  });
+
+  it("falls back to terminal.element when neither .xterm-screen nor canvas is present", () => {
+    const h = makeHarness();
+    h.screen.remove();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    expect(h.mouseEvents).toHaveLength(2);
+    for (const e of h.mouseEvents) {
+      expect(e.target).toBe(h.xterm.element);
+    }
+  });
+});
+
+describe("selection drag re-reads grid origin per touchmove", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("calls getBoundingClientRect more than once during a selection drag", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    const baseline = h.bcrCalls();
+    expect(baseline).toBeGreaterThanOrEqual(1); // initial readDims at long-press fire
+    h.fireTouch("touchmove", [{ x: 200 + 2 * CELL_W, y: 100 }]);
+    h.fireTouch("touchmove", [{ x: 200 + 4 * CELL_W, y: 100 }]);
+    // Each move should have re-read the rect.
+    expect(h.bcrCalls()).toBeGreaterThan(baseline + 1);
+  });
+
+  it("tracks the soft-keyboard slide-up: rows shift correctly when origin moves mid-drag", () => {
+    const h = makeHarness();
+    // Start at viewport (200, 100). Screen origin starts at (100, 50).
+    // (200-100)/8 = col 12, (100-50)/16 = row 3. Long-press at cell (12, 3).
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.xterm.select).toHaveBeenLastCalledWith(12, 3, 1);
+
+    // Soft keyboard slides up by 32 px (i.e. screen origin top moves from 50
+    // to 18). Without re-reading, a touch at viewport (200, 100) would still
+    // resolve to row 3 — but now (200, 100) lives at (100-18)/16 = row 5.
+    h.shiftScreenY(-32);
+    // Drag 1 cell to the right (no vertical move) — endpoint should be
+    // (col 13, row 5), not (col 13, row 3).
+    h.fireTouch("touchmove", [{ x: 200 + CELL_W, y: 100 }]);
+    // Linear: from (12,3) to (13,5) over cols=80 → idx 252 to idx 413, length 162.
+    expect(h.xterm.select).toHaveBeenLastCalledWith(12, 3, 162);
+  });
+});
+
+describe("handleTouchCancel signature", () => {
+  it("accepts a TouchEvent argument (DOM EventListener compatibility)", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    // fireTouch dispatches handleTouchCancel with a real Event — just assert
+    // it doesn't throw and resets state.
+    expect(() => h.fireTouch("touchcancel", [])).not.toThrow();
+    expect(h.getMode()).toBe("idle");
   });
 });
