@@ -2004,10 +2004,14 @@ export function createTerminalServer(options: ServerOptions = { port: 6002 }) {
       sessionConnections.set(sessionId, new Set());
     }
     sessionConnections.get(sessionId)!.add(connectionId);
-    // New connection becomes primary for resize (back-compat with clients that
-    // never send client_focus). Subsequent focus signals can re-promote.
-    sessionPrimaryConnection.set(sessionId, connectionId);
-    sessionLastPromotionAt.set(sessionId, Date.now());
+    // Seed initial primary only if no connection currently holds it for this
+    // session. This prevents a reconnect within the cooldown window from
+    // stealing primary away from an active connection. Subsequent focus signals
+    // (subject to the promotion cooldown) can re-promote later.
+    if (!sessionPrimaryConnection.has(sessionId)) {
+      sessionPrimaryConnection.set(sessionId, connectionId);
+      sessionLastPromotionAt.set(sessionId, Date.now());
+    }
 
     log.debug("Terminal connection started", { connectionId, sessionId, cols, rows, tmuxSessionName });
 

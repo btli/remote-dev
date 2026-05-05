@@ -191,6 +191,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const searchAddonRef = useRef<SearchAddonType | null>(null);
   const webglAddonRef = useRef<WebglAddonType | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  // Last focus signal sent to the server, tracked across reconnects so that a
+  // fresh socket starts with a clean baseline (the server's debounce state
+  // resets per-connection on its side too).
+  const lastSentFocusStateRef = useRef<"focus" | "blur" | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -665,6 +669,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
           updateStatus("connected");
           reconnectAttemptsRef.current = 0;
+          // Reset focus-send debounce baseline so the first signal on this fresh
+          // socket is always sent (the previous socket's state is irrelevant).
+          lastSentFocusStateRef.current = null;
           onWebSocketReadyRef.current?.(ws);
 
           // Send resize immediately after connection to sync dimensions
@@ -840,6 +847,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
           updateStatus("disconnected");
           onWebSocketReadyRef.current?.(null);
+          // Reset to optimistic primary so the "click to claim" pill doesn't
+          // hang around during reconnect (a click would no-op while the WS is
+          // closed). The server will broadcast `primary_changed` after the
+          // reconnect completes with the authoritative value.
+          setIsPrimary(true);
 
           // Don't reconnect if this was an intentional exit (user typed "exit" or Ctrl+D)
           if (intentionalExitRef.current) {
@@ -957,14 +969,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       // Track last focus signal sent to the server to avoid redundant WS chatter
       // (focus/blur fire frequently — alt-tab, devtools, etc.). The server-side
       // 1s cooldown handles thrash, but skipping no-op sends is still cheap.
-      let lastSentFocusState: "focus" | "blur" | null = null;
+      // Stored in a ref (declared at component scope) so the baseline survives
+      // initTerminal() but resets when a new socket opens — a closure-local
+      // `let` would persist across reconnects and cause the first focus/blur on
+      // the new socket to be silently dropped if it matched the prior socket's
+      // last-sent value.
       const sendFocusSignal = (next: "focus" | "blur") => {
-        if (lastSentFocusState === next) return;
+        if (lastSentFocusStateRef.current === next) return;
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
         try {
           ws.send(JSON.stringify({ type: next === "focus" ? "client_focus" : "client_blur" }));
-          lastSentFocusState = next;
+          lastSentFocusStateRef.current = next;
         } catch {
           // Ignore send errors — connection might be tearing down
         }

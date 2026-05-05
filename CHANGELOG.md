@@ -20,6 +20,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   confirmation; on confirm it calls `deleteAllNotifications` and shows a
   toast with the count. The button is hidden when the list is empty and is
   disabled while the request is in flight.
+- **Mobile redesign Phase 6: Auth flow + Profile tab** (remote-dev-lud6).
+  Polishes the post-Cloudflare-Access landing into a calm, two-step flow:
+  a `MobileLockScreen` interstitial ("Authenticating via Cloudflare Access")
+  while the session resolves, then a one-time `MobileWelcomeScreen` with a
+  signed-in-as line, an optional Connect-GitHub CTA, and a Skip-for-now
+  button. First-run state is persisted via a localStorage flag
+  (`remote-dev:mobile:welcome-seen:v1`) so subsequent visits jump straight
+  to Sessions. The GitHub OAuth callback's `?github=connected` query param
+  now surfaces a one-shot success toast on the Sessions tab and is stripped
+  from the URL on read. The Profile tab ships as a pushed-row stack
+  (Account, GitHub accounts, Projects, Agent profiles, Secrets, Ports,
+  Trash, Settings, About, Sign out) with a tab-local navigation stack —
+  no modals for routine settings, every row pushes a sub-screen, and Sign
+  out confirms via an `ActionSheet` (not a dialog). Sub-screens beyond
+  About are intentionally stubbed in this build with a TODO note pointing
+  at the desktop component to port; the navigation chrome and primary
+  flows are real.
+- **Mobile redesign Phase 4: Notifications tab** (remote-dev-qvpf). The
+  mobile Notifications tab preserves the existing notification model and
+  the canonical attention-blue halo end-to-end. Filter chips (All / Unread
+  / Mentions) sticky to top, count pills on Unread / Mentions. Each row
+  uses a leading 12px (6px-radius) dot in `--color-signal-attention-solid`
+  for unread state instead of a colored side-stripe (DESIGN.md "No
+  Side-Stripe Rule"); the `notification-ring-pulse` halo renders on
+  `agent_waiting` rows and is suppressed under `prefers-reduced-motion`.
+  Swipe-left = delete with 5s undo toast (sonner); swipe-right = toggle
+  read; long-press opens an ActionSheet with Jump to session, Mark
+  read/unread, Mute project, and Dismiss. Tapping a row inline-expands the
+  body (no push navigation) and marks unread items read. Pull-to-refresh
+  uses the canonical absolutely-positioned indicator pattern. Empty state
+  copy is "Inbox zero" for the All filter; filter-specific empties for
+  Unread and Mentions. New files under
+  `src/components/mobile/notifications/` (`NotificationsTab`,
+  `MobileNotificationRow`, `NotificationFilterChips`,
+  `useNotificationSwipe`). Wired into `MobileApp.tsx`.
+- **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
+  home is now the Sessions tab. A header strip with a project switcher chip,
+  a `+ New` pill, and a recent-projects rail sits above a session list with
+  a 6px state pip per row, weight-driven hierarchy on the title, and a
+  foreground line-segment indicator for the active row (no colored side
+  stripes). Long-press opens an action sheet (Suspend / Resume / Rename /
+  Move / View recordings / Close session). Swipe-left dispatches suspend
+  with a 5s undo toast. Pull-to-refresh, attention-blue halo for waiting
+  sessions, and reduced-motion respect everywhere. New `BottomSheet` and
+  `ActionSheet` primitives, `usePullToRefresh` hook, and a project-tree
+  bottom sheet with search complete the surface. Built on top of the Phase 1
+  shell from remote-dev-3ozu.
 
 ### Security
 
@@ -88,56 +135,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prevent a hydration mismatch under React 19 / Next.js 16. Extracted the
   shared `AnsiStripper` to `src/lib/terminal/ansi-stripper.ts` so
   `MobileTerminalView` and the new `MobileSessionView` can't drift apart.
-
-### Added
-
-- **Mobile redesign Phase 6: Auth flow + Profile tab** (remote-dev-lud6).
-  Polishes the post-Cloudflare-Access landing into a calm, two-step flow:
-  a `MobileLockScreen` interstitial ("Authenticating via Cloudflare Access")
-  while the session resolves, then a one-time `MobileWelcomeScreen` with a
-  signed-in-as line, an optional Connect-GitHub CTA, and a Skip-for-now
-  button. First-run state is persisted via a localStorage flag
-  (`remote-dev:mobile:welcome-seen:v1`) so subsequent visits jump straight
-  to Sessions. The GitHub OAuth callback's `?github=connected` query param
-  now surfaces a one-shot success toast on the Sessions tab and is stripped
-  from the URL on read. The Profile tab ships as a pushed-row stack
-  (Account, GitHub accounts, Projects, Agent profiles, Secrets, Ports,
-  Trash, Settings, About, Sign out) with a tab-local navigation stack —
-  no modals for routine settings, every row pushes a sub-screen, and Sign
-  out confirms via an `ActionSheet` (not a dialog). Sub-screens beyond
-  About are intentionally stubbed in this build with a TODO note pointing
-  at the desktop component to port; the navigation chrome and primary
-  flows are real.
-- **Mobile redesign Phase 4: Notifications tab** (remote-dev-qvpf). The
-  mobile Notifications tab preserves the existing notification model and
-  the canonical attention-blue halo end-to-end. Filter chips (All / Unread
-  / Mentions) sticky to top, count pills on Unread / Mentions. Each row
-  uses a leading 12px (6px-radius) dot in `--color-signal-attention-solid`
-  for unread state instead of a colored side-stripe (DESIGN.md "No
-  Side-Stripe Rule"); the `notification-ring-pulse` halo renders on
-  `agent_waiting` rows and is suppressed under `prefers-reduced-motion`.
-  Swipe-left = delete with 5s undo toast (sonner); swipe-right = toggle
-  read; long-press opens an ActionSheet with Jump to session, Mark
-  read/unread, Mute project, and Dismiss. Tapping a row inline-expands the
-  body (no push navigation) and marks unread items read. Pull-to-refresh
-  uses the canonical absolutely-positioned indicator pattern. Empty state
-  copy is "Inbox zero" for the All filter; filter-specific empties for
-  Unread and Mentions. New files under
-  `src/components/mobile/notifications/` (`NotificationsTab`,
-  `MobileNotificationRow`, `NotificationFilterChips`,
-  `useNotificationSwipe`). Wired into `MobileApp.tsx`.
-- **Mobile redesign Phase 2: Sessions tab** (remote-dev-l9qg). The mobile
-  home is now the Sessions tab. A header strip with a project switcher chip,
-  a `+ New` pill, and a recent-projects rail sits above a session list with
-  a 6px state pip per row, weight-driven hierarchy on the title, and a
-  foreground line-segment indicator for the active row (no colored side
-  stripes). Long-press opens an action sheet (Suspend / Resume / Rename /
-  Move / View recordings / Close session). Swipe-left dispatches suspend
-  with a 5s undo toast. Pull-to-refresh, attention-blue halo for waiting
-  sessions, and reduced-motion respect everywhere. New `BottomSheet` and
-  `ActionSheet` primitives, `usePullToRefresh` hook, and a project-tree
-  bottom sheet with search complete the surface. Built on top of the Phase 1
-  shell from remote-dev-3ozu.
 
 ## [0.3.7] - 2026-04-30
 
