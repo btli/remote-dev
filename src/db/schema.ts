@@ -1860,3 +1860,62 @@ export const projectRepositories = sqliteTable(
     index("project_repo_user_idx").on(table.userId),
   ]
 );
+
+// =============================================================================
+// SSH Connections — saved SSH targets for the `ssh` terminal type
+// =============================================================================
+
+/**
+ * SSH connection definitions. User-level table with optional project pin.
+ *
+ * Auth methods:
+ *   - `key`     — uses a private key in `~/.remote-dev/ssh/{id}/id` (`-i` flag)
+ *   - `agent`   — uses ssh-agent forwarding (`-A` and SSH_AUTH_SOCK)
+ *   - `password` — uses sshpass with the encrypted `password_enc` value
+ *   - `system`  — no flags; relies on the user's `~/.ssh/config`
+ *
+ * Passphrases are intentionally NOT stored — `has_passphrase` is a UI hint
+ * only. If a key is passphrase-protected, OpenSSH will prompt the user in
+ * the terminal at connect time.
+ */
+export const sshConnections = sqliteTable(
+  "ssh_connection",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    name: text("name").notNull(),
+    host: text("host").notNull(),
+    port: integer("port").notNull().default(22),
+    username: text("username").notNull(),
+    authType: text("auth_type", {
+      enum: ["key", "agent", "password", "system"],
+    }).notNull(),
+    hasPassphrase: integer("has_passphrase", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    passwordEnc: text("password_enc"),
+    knownHostsPolicy: text("known_hosts_policy", {
+      enum: ["strict", "accept-new", "no"],
+    })
+      .notNull()
+      .default("accept-new"),
+    extraOptions: text("extra_options", { mode: "json" }).$type<string[]>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    index("ssh_connection_user_project_idx").on(t.userId, t.projectId),
+  ]
+);

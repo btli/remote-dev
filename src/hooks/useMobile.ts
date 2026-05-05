@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 /**
  * Detects whether the device is mobile based on user-agent and touch capability.
@@ -48,31 +48,46 @@ export const MOBILE_BREAKPOINT_PX = 768;
  * Returns true when the window is narrower than the Tailwind `md` breakpoint
  * (768px). Unlike {@link useMobile}, this responds to live resize, so a desktop
  * window resized below 768px (or a tablet rotated to portrait) flips into the
- * mobile composition. SSR-safe: returns false during server render.
+ * mobile composition.
+ *
+ * Hydration model: implemented via {@link useSyncExternalStore}. The server
+ * snapshot is always `false` (we render desktop on the server — the only safe
+ * default), and the client snapshot reads `matchMedia` synchronously on the
+ * first render. React 19 treats the server/client mismatch from
+ * `useSyncExternalStore` as expected and does NOT emit a hydration warning,
+ * unlike the previous `useState(false)` + `useEffect` flip pattern, which
+ * could surface dev-mode hydration warnings via descendant subtrees that mount
+ * differently between the two compositions.
  */
+const MOBILE_VIEWPORT_QUERY = `(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`;
+
+function mobileViewportSubscribe(callback: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const mql = window.matchMedia(MOBILE_VIEWPORT_QUERY);
+  if (typeof mql.addEventListener === "function") {
+    mql.addEventListener("change", callback);
+    return () => mql.removeEventListener("change", callback);
+  }
+  // Older Safari fallback.
+  mql.addListener(callback);
+  return () => mql.removeListener(callback);
+}
+
+function mobileViewportGetSnapshot(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia(MOBILE_VIEWPORT_QUERY).matches;
+}
+
+function mobileViewportGetServerSnapshot(): boolean {
+  return false;
+}
+
 export function useIsMobileViewport(): boolean {
-  // Always start `false` on both server and first client render so the
-  // markup hashes line up — otherwise React 19 throws a hydration mismatch
-  // the first time a real mobile user lands on the page. The effect below
-  // calls `update()` synchronously on mount, flipping us to the correct
-  // value within a single frame, so the visible behavior is unchanged.
-  const [isMobile, setIsMobile] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT_PX - 1}px)`);
-    const update = () => setIsMobile(mql.matches);
-    update();
-    // Older Safari uses addListener; modern browsers expose addEventListener.
-    if (typeof mql.addEventListener === "function") {
-      mql.addEventListener("change", update);
-      return () => mql.removeEventListener("change", update);
-    }
-    mql.addListener(update);
-    return () => mql.removeListener(update);
-  }, []);
-
-  return isMobile;
+  return useSyncExternalStore(
+    mobileViewportSubscribe,
+    mobileViewportGetSnapshot,
+    mobileViewportGetServerSnapshot
+  );
 }
 
 /**

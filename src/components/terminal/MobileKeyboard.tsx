@@ -186,7 +186,7 @@ export function MobileKeyboard({
         "transition-colors duration-100",
         "border border-border/50"
       )}
-      aria-label={mode === "keys" ? "Switch to navigation keys" : "Switch to control keys"}
+      aria-label={mode === "keys" ? "NAV, switch to navigation keys" : "KEYS, switch to control keys"}
     >
       {mode === "keys" ? "NAV" : "KEYS"}
     </button>

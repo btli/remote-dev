@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SSH terminal type** (`remote-dev-i13k`). New `ssh` terminal type opens a
+  tmux-backed pane that runs `ssh` (or `sshpass ssh` for password auth) as
+  the shell process; when SSH disconnects, the agent-style exit screen
+  surfaces with a Reconnect button. Saved connections live in a new
+  user-level `ssh_connection` table with optional project pinning and
+  support four auth methods: `key` (paste / upload / generate ed25519),
+  `agent` (forwarding via `-A`), `password` (encrypted at rest, requires
+  `sshpass`), and `system` (defers to `~/.ssh/config`). Per-connection
+  assets (private key 0600, public key 0644, `known_hosts`) are stored in
+  `~/.remote-dev/ssh/{id}/` with a 0700 directory mode. Passphrases are
+  intentionally never stored — OpenSSH prompts in the terminal at connect
+  time. Configure connections in **Settings → SSH** and pick one from the
+  New Session wizard's **SSH** card.
 - **Mobile two-stage swipe to close sessions** (`remote-dev-7o72`). Swipe-left
   on an active session row now reveals "Suspend" (stage 0, 72px) and switches
   to "Close" with a destructive label (stage 1, 180px), matching iOS Mail.
@@ -37,6 +50,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminal WebGL glyph corruption** (`remote-dev-ljnc`). Long-running sessions
+  could show torn/duplicated glyphs that only cleared when the window was
+  resized. `Terminal.tsx` now clears the WebGL texture atlas on
+  `visibilitychange` (tab restored from background) and device-pixel-ratio
+  changes (window moved between displays), and recovers from a single WebGL
+  context loss by reloading the addon instead of permanently falling back to
+  the DOM renderer.
+- **Mobile `MobileViewportSwitch` hydration mismatch warning**
+  (`remote-dev-m2lg`). Reimplemented `useIsMobileViewport()` on top of
+  `useSyncExternalStore` (matching the existing `useMobile` and
+  `usePrefersReducedMotion` pattern in the same file) so the server snapshot
+  is always `false` (desktop) while the first client render returns the live
+  `matchMedia` result. React 19 treats this controlled mismatch from
+  `useSyncExternalStore` as expected and no longer emits a dev-mode hydration
+  warning at the switch — and as a bonus, mobile users now see the mobile
+  composition on the very first paint with no flash of desktop layout.
+- **Mobile smart-key strip a11y** (`remote-dev-1jym`). Aligned accessible
+  names with visible text on smart-key strip and mobile keyboard mode toggle
+  buttons to satisfy Lighthouse `label-content-name-mismatch` (WCAG 2.5.3):
+  text-label keys (Esc, Tab, punctuation) now use their visible text as the
+  accessible name; modifier latches (Ctrl/Alt/Shift) and the NAV/KEYS toggle
+  prefix the visible text in `aria-label` before the contextual suffix.
 - **Channels list returns empty (200) for stale active-node id**
   (`remote-dev-d6jk`). `GET /api/channels?projectId=` previously returned 404
   when the id referenced a deleted/inaccessible project, and the route had
