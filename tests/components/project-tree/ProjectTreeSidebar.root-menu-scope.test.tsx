@@ -79,6 +79,8 @@ const requiredHandlerProps = {
   onProjectResumeClaudeSession: vi.fn(),
   onProjectAdvancedSession: vi.fn(),
   onProjectNewWorktree: vi.fn(),
+  onProjectNewSshSession: vi.fn(),
+  onProjectOpenSshSettings: vi.fn(),
   onProjectOpenSecrets: vi.fn(),
   onProjectOpenRepository: vi.fn(),
   onProjectOpenFolderInOS: vi.fn(),

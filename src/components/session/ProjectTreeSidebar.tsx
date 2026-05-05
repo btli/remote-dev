@@ -53,6 +53,14 @@ interface Props {
   onProjectResumeClaudeSession: (projectId: string) => void;
   onProjectAdvancedSession: (projectId: string) => void;
   onProjectNewWorktree: (projectId: string) => void;
+  /**
+   * Project-scoped SSH handlers. The project context menu lists saved
+   * connections in a hover-expanded submenu; the first callback fires when
+   * the user picks one (creates a session under the project) and the
+   * second opens Settings → SSH for connection management.
+   */
+  onProjectNewSshSession: (projectId: string, connectionId: string) => void;
+  onProjectOpenSshSettings: () => void;
   onProjectOpenSecrets: (projectId: string, projectName: string) => void;
   onProjectOpenRepository: (projectId: string, name: string) => void;
   onProjectOpenFolderInOS: (projectId: string) => void;
@@ -687,6 +695,10 @@ export const ProjectTreeSidebar = forwardRef<
         }
         onNewTerminal={() => props.onProjectNewSession(p.id)}
         onNewAgent={() => props.onProjectNewAgent(p.id)}
+        onNewSshSession={(connectionId) =>
+          props.onProjectNewSshSession(p.id, connectionId)
+        }
+        onOpenSshSettings={() => props.onProjectOpenSshSettings()}
         onResume={() => props.onProjectResumeClaudeSession(p.id)}
         onAdvanced={() => props.onProjectAdvancedSession(p.id)}
         onNewWorktree={() => props.onProjectNewWorktree(p.id)}

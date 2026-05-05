@@ -580,6 +580,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
+      // Plugin-specific opt-in fields — passed through verbatim to the API.
+      terminalType?: "shell" | "agent" | "ssh" | "file" | "loop";
+      sshConnectionId?: string;
     }) => {
       // Determine target folder with priority:
       // 1. Explicit folderId from wizard
@@ -1234,6 +1237,61 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       setActiveFolder,
       logSessionError,
     ]
+  );
+
+  // Sidebar `+` menu → New SSH → choose connection. Mirrors handleQuickNewSession.
+  const handleNewSshSession = useCallback(
+    async (connectionId: string) => {
+      const folderId = activeProject.folderId || undefined;
+      if (!folderId) {
+        logSessionError(
+          "create ssh session",
+          new Error("Cannot create SSH session: no project is active"),
+        );
+        return;
+      }
+      const name = generateSessionName(folderId);
+      try {
+        await createSession({
+          name,
+          projectId: folderId,
+          terminalType: "ssh",
+          sshConnectionId: connectionId,
+        });
+        maybeAutoFollowFolder(folderId ?? null);
+      } catch (error) {
+        logSessionError("create ssh session", error);
+      }
+    },
+    [
+      createSession,
+      generateSessionName,
+      activeProject.folderId,
+      logSessionError,
+      maybeAutoFollowFolder,
+    ],
+  );
+
+  // Project context menu → New SSH → choose connection. Scoped to the
+  // project the user right-clicked on (no fallback to active project).
+  const handleFolderNewSshSession = useCallback(
+    async (folderId: string, connectionId: string) => {
+      const name = generateSessionName(folderId);
+      try {
+        const newSession = await createSession({
+          name,
+          projectId: folderId,
+          terminalType: "ssh",
+          sshConnectionId: connectionId,
+        });
+        if (newSession) {
+          setActiveFolder(folderId);
+        }
+      } catch (error) {
+        logSessionError("create ssh session", error);
+      }
+    },
+    [createSession, generateSessionName, setActiveFolder, logSessionError],
   );
 
   // Handler to open the Resume Claude Session modal for a folder
@@ -1968,12 +2026,24 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onNewSession={handleOpenWizard}
             onQuickNewSession={handleQuickNewSession}
             onNewAgent={handleNewAgent}
+            onNewSshSession={(connectionId) => {
+              void handleNewSshSession(connectionId);
+            }}
+            onOpenSshSettings={() => {
+              void openSettingsSession("ssh");
+            }}
             onProjectSettings={handleFolderSettings}
             onProjectNewSession={handleFolderNewSession}
             onProjectNewAgent={handleFolderNewAgent}
             onProjectResumeClaudeSession={handleFolderResumeClaudeSession}
             onProjectAdvancedSession={handleFolderAdvancedSession}
             onProjectNewWorktree={handleFolderNewWorktree}
+            onProjectNewSshSession={(projectId, connectionId) => {
+              void handleFolderNewSshSession(projectId, connectionId);
+            }}
+            onProjectOpenSshSettings={() => {
+              void openSettingsSession("ssh");
+            }}
             onProjectOpenSecrets={(projectId, projectName) => {
               void openSecretsSession(projectId, projectName);
             }}

@@ -10,6 +10,7 @@
 import { TerminalTypeServerRegistry } from "./server";
 import { ShellServerPlugin } from "./plugins/shell-plugin-server";
 import { AgentServerPlugin } from "./plugins/agent-plugin-server";
+import { SshServerPlugin } from "./plugins/ssh-plugin-server";
 import { FileViewerServerPlugin } from "./plugins/file-viewer-plugin-server";
 import { BrowserServerPlugin } from "./plugins/browser-plugin-server";
 import { LoopAgentServerPlugin } from "./plugins/loop-agent-plugin-server";
@@ -44,6 +45,7 @@ export function initializeServerPlugins(): void {
 
   TerminalTypeServerRegistry.register(ShellServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(AgentServerPlugin, { builtIn: true });
+  TerminalTypeServerRegistry.register(SshServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(FileViewerServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(BrowserServerPlugin, { builtIn: true });
   TerminalTypeServerRegistry.register(LoopAgentServerPlugin, { builtIn: true });
