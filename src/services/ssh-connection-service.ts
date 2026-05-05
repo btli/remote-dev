@@ -343,16 +343,12 @@ export async function update(
     throw new SshConnectionServiceError("Connection not found", "NOT_FOUND");
   }
 
-  const merged: UpdateSshConnectionInput & { authType?: SshAuthType } = {
-    ...patch,
-  };
-
   if (patch.extraOptions !== undefined) {
     validateExtraOptions(patch.extraOptions);
   }
 
   // Validate authType change against sshpass when switching to password.
-  const nextAuthType = merged.authType ?? existing.authType;
+  const nextAuthType = patch.authType ?? existing.authType;
   if (nextAuthType === "password") {
     const incomingPwd = patch.password ?? null;
     const hasExistingPwd = !!existing.passwordEnc;

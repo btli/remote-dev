@@ -482,8 +482,8 @@ export async function createSessionWithDedupFlag(
   //
   // Splitting the two flags prevents agent-only side effects (like writing
   // hooks into `~/.claude/settings.json`) from leaking into SSH sessions.
-  const exitEventPlugin = TerminalTypeServerRegistry.get(terminalType);
-  const emitsExitEvents = exitEventPlugin?.emitsExitEvents ?? false;
+  const emitsExitEvents =
+    TerminalTypeServerRegistry.get(terminalType)?.emitsExitEvents ?? false;
   const isAgentRuntime =
     (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) ||
     input.terminalType === "agent" ||

@@ -10,7 +10,7 @@ import type {
   SshKnownHostsPolicy,
 } from "@/services/ssh-connection-service";
 import { createLogger } from "@/lib/logger";
-import { serializeConnection } from "../_shared";
+import { serializeConnection, serviceErrorResponse } from "../_shared";
 
 const log = createLogger("api/ssh-connections/[id]");
 
@@ -91,15 +91,8 @@ export const PATCH = withApiAuth(async (request, { userId, params }) => {
       publicKey,
     });
   } catch (error) {
-    if (error instanceof SshConnectionService.SshConnectionServiceError) {
-      const statusByCode: Record<string, number> = {
-        NOT_FOUND: 404,
-        SSHPASS_MISSING: 422,
-        INVALID_INPUT: 400,
-      };
-      const status = statusByCode[error.code] ?? 400;
-      return errorResponse(error.message, status, error.code);
-    }
+    const mapped = serviceErrorResponse(error);
+    if (mapped) return mapped;
     log.error("Error updating SSH connection", { error: String(error), id });
     return errorResponse("Failed to update SSH connection", 500);
   }
@@ -113,15 +106,8 @@ export const DELETE = withApiAuth(async (_request, { userId, params }) => {
     await SshConnectionService.remove(id, userId);
     return NextResponse.json({ success: true });
   } catch (error) {
-    if (error instanceof SshConnectionService.SshConnectionServiceError) {
-      const statusByCode: Record<string, number> = {
-        NOT_FOUND: 404,
-        SSHPASS_MISSING: 422,
-        INVALID_INPUT: 400,
-      };
-      const status = statusByCode[error.code] ?? 400;
-      return errorResponse(error.message, status, error.code);
-    }
+    const mapped = serviceErrorResponse(error);
+    if (mapped) return mapped;
     log.error("Error deleting SSH connection", { error: String(error), id });
     return errorResponse("Failed to delete SSH connection", 500);
   }

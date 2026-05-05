@@ -104,15 +104,13 @@ function buildExitMessage(exitCode: number | null): string {
   return `SSH session exited with code ${exitCode}`;
 }
 
-interface BuildResult {
+interface ShellInvocation {
   shellCommand: string;
   shellArgs: string[];
   environment: Record<string, string>;
 }
 
-function buildShellInvocation(
-  connection: SshConnection
-): BuildResult {
+function buildShellInvocation(connection: SshConnection): ShellInvocation {
   const sshArgs = buildSshArgs(connection);
 
   if (connection.authType === "password") {

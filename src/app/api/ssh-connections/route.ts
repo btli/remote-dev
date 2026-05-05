@@ -16,7 +16,7 @@ import type {
   SshKnownHostsPolicy,
 } from "@/services/ssh-connection-service";
 import { createLogger } from "@/lib/logger";
-import { serializeConnection } from "./_shared";
+import { serializeConnection, serviceErrorResponse } from "./_shared";
 
 const log = createLogger("api/ssh-connections");
 
@@ -125,15 +125,8 @@ export const POST = withApiAuth(async (request, { userId }) => {
       { status: 201 }
     );
   } catch (error) {
-    if (error instanceof SshConnectionService.SshConnectionServiceError) {
-      const statusByCode: Record<string, number> = {
-        NOT_FOUND: 404,
-        SSHPASS_MISSING: 422,
-        INVALID_INPUT: 400,
-      };
-      const status = statusByCode[error.code] ?? 400;
-      return errorResponse(error.message, status, error.code);
-    }
+    const mapped = serviceErrorResponse(error);
+    if (mapped) return mapped;
     log.error("Error creating SSH connection", { error: String(error) });
     return errorResponse("Failed to create SSH connection", 500);
   }
