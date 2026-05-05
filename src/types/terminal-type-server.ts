@@ -67,6 +67,24 @@ export interface TerminalTypeServerPlugin {
   readonly useTmux: boolean;
 
   /**
+   * Whether sessions of this type should trigger the agent-style
+   * exit-screen / restart flow when the tmux pane process exits.
+   *
+   * When true, SessionService:
+   *   - registers a tmux `pane-exited` hook that POSTs to /internal/agent-exit
+   *   - initializes `agentExitState = "running"` on the DB row
+   *   - on exit, the client renders this plugin's exit screen and offers
+   *     a Restart action
+   *
+   * Defaults to false. Plugins set this to true when their tmux pane
+   * process is the "main task" (agent, loop, ssh) — i.e. when its exit
+   * should surface a deliberate exit screen rather than silently letting
+   * the user's shell hang. Only meaningful for tmux-backed plugins; safely
+   * ignored on plugins where {@link useTmux} is false.
+   */
+  readonly emitsExitEvents?: boolean;
+
+  /**
    * Called when creating a session of this type.
    * Returns configuration for how the session should be set up.
    *

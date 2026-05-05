@@ -159,6 +159,7 @@ export function createSshServerPlugin(): TerminalTypeServerPlugin {
     priority: 80,
     builtIn: true,
     useTmux: true,
+    emitsExitEvents: true,
 
     async createSession(
       input: CreateSessionInput,

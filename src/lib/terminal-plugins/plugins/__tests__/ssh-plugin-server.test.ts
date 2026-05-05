@@ -303,3 +303,16 @@ describe("SshServerPlugin.canHandle", () => {
     ).toBe(false);
   });
 });
+
+describe("SshServerPlugin capability flags", () => {
+  it("opts into the agent-style exit-screen / restart UX", () => {
+    // SessionService reads this flag to decide whether to install the tmux
+    // pane-exited hook and seed agentExitState='running' on the DB row.
+    // SSH must opt in so a dropped connection surfaces a Reconnect button.
+    expect(SshServerPlugin.emitsExitEvents).toBe(true);
+  });
+
+  it("declares useTmux: true (SSH always runs in a tmux pane)", () => {
+    expect(SshServerPlugin.useTmux).toBe(true);
+  });
+});
