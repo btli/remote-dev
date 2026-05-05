@@ -13,6 +13,7 @@ import { useTerminalTheme } from "@/contexts/AppearanceContext";
 import { sendImageToTerminal } from "@/lib/image-upload";
 import { AuthErrorOverlay } from "./AuthErrorOverlay";
 import { createTouchScrollHandlers } from "./touch-scroll";
+import { createTouchInteractions } from "./useTouchInteractions";
 
 const SETTLE_MIN_WIDTH = 100;
 const SETTLE_MIN_HEIGHT = 80;
@@ -1391,17 +1392,40 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       },
     });
 
+    // Tap-to-click + long-press-to-select. Composed alongside the scroll
+    // handler: shared touch events, but mine never preventDefault. Order
+    // doesn't matter because the two handlers are state-isolated — any
+    // movement past 5 px puts mine into "scroll" mode (suppresses tap +
+    // long-press) which is exactly when the scroll handler activates.
+    const interactions = createTouchInteractions({
+      getTerminal: () => xtermRef.current,
+    });
+
     container.addEventListener("touchstart", handlers.handleTouchStart, { passive: true });
     container.addEventListener("touchmove", handlers.handleTouchMove, { passive: false });
     container.addEventListener("touchend", handlers.handleTouchEnd, { passive: true });
     container.addEventListener("touchcancel", handlers.handleTouchCancel, { passive: true });
 
+    container.addEventListener("touchstart", interactions.handleTouchStart, { passive: true });
+    container.addEventListener("touchmove", interactions.handleTouchMove, { passive: true });
+    container.addEventListener("touchend", interactions.handleTouchEnd, { passive: true });
+    container.addEventListener("touchcancel", interactions.handleTouchCancel, { passive: true });
+
     return () => {
       handlers.cancelMomentum();
+      // Cancel any pending long-press timer so it can't fire on a disposed
+      // xterm. Without this, a user who long-presses then closes the tab
+      // within 500 ms hits `terminal.select()` on a torn-down instance.
+      interactions.destroy();
       container.removeEventListener("touchstart", handlers.handleTouchStart);
       container.removeEventListener("touchmove", handlers.handleTouchMove);
       container.removeEventListener("touchend", handlers.handleTouchEnd);
       container.removeEventListener("touchcancel", handlers.handleTouchCancel);
+
+      container.removeEventListener("touchstart", interactions.handleTouchStart);
+      container.removeEventListener("touchmove", interactions.handleTouchMove);
+      container.removeEventListener("touchend", interactions.handleTouchEnd);
+      container.removeEventListener("touchcancel", interactions.handleTouchCancel);
     };
   }, []);
 
