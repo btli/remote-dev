@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile `MobileViewportSwitch` hydration mismatch warning**
+  (`remote-dev-m2lg`). Reimplemented `useIsMobileViewport()` on top of
+  `useSyncExternalStore` (matching the existing `useMobile` and
+  `usePrefersReducedMotion` pattern in the same file) so the server snapshot
+  is always `false` (desktop) while the first client render returns the live
+  `matchMedia` result. React 19 treats this controlled mismatch from
+  `useSyncExternalStore` as expected and no longer emits a dev-mode hydration
+  warning at the switch — and as a bonus, mobile users now see the mobile
+  composition on the very first paint with no flash of desktop layout.
 - **Mobile redesign Phase 7 audit + polish** (`remote-dev-0hx8`). Surgical
   pass against the DESIGN.md bar:
   - **A11y** — Mobile session rows now announce status to screen readers

@@ -7,10 +7,12 @@
  * breakpoint (768px) and the desktop `children` (typically `SessionManager`)
  * at and above it.
  *
- * IMPORTANT: First render is forced to desktop on both server and client to
- * keep markup hashes aligned with `useIsMobileViewport()`'s SSR-safe default.
- * The first `useEffect` flip happens within a single frame, so the visible
- * behavior on a real phone is unchanged.
+ * Hydration: `useIsMobileViewport()` is implemented with
+ * `useSyncExternalStore`, which lets the server render desktop while the
+ * client's first render returns the real viewport value — React 19 treats
+ * this controlled mismatch as expected and does NOT emit a hydration warning
+ * for either branch of this switch. On a real phone the user sees the mobile
+ * composition on the very first paint with no flash of desktop layout.
  */
 
 import type { ReactNode } from "react";
