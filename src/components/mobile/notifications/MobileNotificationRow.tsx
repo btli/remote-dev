@@ -199,11 +199,14 @@ export function MobileNotificationRow({
         onTouchMove={swipe.bind.onTouchMove}
         onTouchEnd={() => {
           swipe.bind.onTouchEnd();
-          longPress.bind.onMouseUp();
+          // Cancel the long-press timer explicitly rather than aliasing
+          // through `bind.onMouseUp` — clearer intent and decouples touch
+          // lifecycle from mouse-event handler names.
+          longPress.cancel();
         }}
         onTouchCancel={() => {
           swipe.bind.onTouchCancel();
-          longPress.bind.onMouseUp();
+          longPress.cancel();
         }}
         onPointerDown={longPress.bind.onPointerDown}
         onPointerMove={longPress.bind.onPointerMove}

@@ -161,11 +161,15 @@ export function MobileSessionRow({
         onTouchMove={swipe.bind.onTouchMove}
         onTouchEnd={() => {
           swipe.bind.onTouchEnd();
-          longPress.bind.onMouseUp();
+          // Cancel the long-press timer explicitly. Previously this routed
+          // through `bind.onMouseUp` (which also calls `cancel()`); using
+          // the explicit method makes the intent obvious and decouples
+          // touch lifecycle from the mouse-event aliases.
+          longPress.cancel();
         }}
         onTouchCancel={() => {
           swipe.bind.onTouchCancel();
-          longPress.bind.onMouseUp();
+          longPress.cancel();
         }}
         onPointerDown={longPress.bind.onPointerDown}
         onPointerMove={longPress.bind.onPointerMove}

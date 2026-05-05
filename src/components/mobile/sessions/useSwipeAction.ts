@@ -126,6 +126,13 @@ export function useSwipeAction(options: UseSwipeActionOptions): UseSwipeActionSt
   const onTouchStart = useCallback(
     (e: React.TouchEvent<HTMLElement>) => {
       if (!enabled) return;
+      // Multi-touch guard: if a gesture is already in progress (the user
+      // already had a finger down — startX is non-null), ignore the
+      // additional touch. Without this, a second finger landing mid-drag
+      // would reset the gesture origin to the new finger's position and
+      // either snap the row back or commit a partial swipe on release of
+      // the original finger.
+      if (startX.current !== null) return;
       const t = e.touches[0];
       if (!t) return;
       startX.current = t.clientX;

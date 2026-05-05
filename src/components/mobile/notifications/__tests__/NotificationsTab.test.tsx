@@ -564,6 +564,45 @@ describe("NotificationsTab", () => {
     expect(notifMockState.deleteAllNotifications).not.toHaveBeenCalled();
   });
 
+  it("'Clear all' surfaces an error toast and re-enables the button when deleteAllNotifications rejects", async () => {
+    const user = userEvent.setup();
+    notifMockState.deleteAllNotifications = vi
+      .fn()
+      .mockRejectedValue(new Error("network down"));
+    notifMockState.notifications = [makeNotification()];
+    notifMockState.unreadCount = 1;
+    render(<NotificationsTab />);
+
+    const button = screen.getByTestId("mobile-notifications-clear-all");
+    await user.click(button);
+    const confirm = await screen.findByTestId(
+      "mobile-notifications-clear-all-confirm"
+    );
+    await user.click(confirm);
+
+    // Error toast lands with the stable id.
+    const errorToast = toast.error as unknown as ReturnType<typeof vi.fn>;
+    await waitFor(() => {
+      expect(errorToast).toHaveBeenCalledWith(
+        "Couldn't clear notifications.",
+        expect.objectContaining({ id: "notif-clear-all-error" })
+      );
+    });
+
+    // Dialog closes after the rejection settles.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("mobile-notifications-clear-all-confirm")
+      ).toBeNull();
+    });
+
+    // Button re-enabled (not stuck in the in-flight disabled state) — the
+    // user can retry.
+    expect(
+      screen.getByTestId("mobile-notifications-clear-all")
+    ).not.toBeDisabled();
+  });
+
   it("renders the error banner when refresh() rejects via pull-to-refresh", async () => {
     // Regression for adversarial finding P2-E: the tab has an error
     // banner UI but the old `refresh()` swallowed errors. With the new
