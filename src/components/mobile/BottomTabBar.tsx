@@ -132,12 +132,16 @@ export function BottomTabBar({
         transitionTimingFunction: reducedMotion ? "linear" : TAB_BAR_EASING,
       }}
     >
-      <ul className="flex h-14 items-stretch">
+      {/* role="tablist" on the <ul> so the role="tab" buttons satisfy
+          aria-required-parent (Lighthouse a11y). The <li> wrappers exist for
+          layout only and are marked presentation so they don't break the
+          tab/tablist hierarchy. */}
+      <ul role="tablist" className="flex h-14 items-stretch">
         {TABS.map(({ id, label, Icon }) => {
           const active = id === activeTab;
           const badge = badges?.[id] ?? 0;
           return (
-            <li key={id} className="flex-1">
+            <li key={id} role="presentation" className="flex-1">
               <button
                 type="button"
                 role="tab"
