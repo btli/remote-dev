@@ -57,7 +57,14 @@ interface Harness {
   ) => boolean;
   advanceTime: (ms: number) => void;
   flushTimers: () => void;
-  mouseEvents: Array<{ type: string; clientX: number; clientY: number; target: EventTarget | null }>;
+  mouseEvents: Array<{
+    type: string;
+    clientX: number;
+    clientY: number;
+    screenX: number;
+    screenY: number;
+    target: EventTarget | null;
+  }>;
   copies: string[];
   getMode: () => string;
   destroy: () => void;
@@ -128,7 +135,14 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
   const pendingTimers: Array<{ id: number; cb: TimerFn; fireAt: number }> = [];
   let nextTimerId = 1;
 
-  const mouseEvents: Array<{ type: string; clientX: number; clientY: number; target: EventTarget | null }> = [];
+  const mouseEvents: Array<{
+    type: string;
+    clientX: number;
+    clientY: number;
+    screenX: number;
+    screenY: number;
+    target: EventTarget | null;
+  }> = [];
   const copies: string[] = [];
 
   // Production wires this between createTouchInteractions and
@@ -153,6 +167,8 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
         type: ev.type,
         clientX: ev.clientX,
         clientY: ev.clientY,
+        screenX: ev.screenX,
+        screenY: ev.screenY,
         target,
       });
     },
@@ -771,5 +787,72 @@ describe("touchend with remaining fingers down does not block the gesture", () =
     // Final touchend (touches.length === 0) — normal tap path.
     h.fireTouch("touchend", []);
     expect(h.getMode()).toBe("idle");
+  });
+});
+
+// ── Adversarial-review fixes (remote-dev-kw6d) ──────────────────────────
+
+describe("axis-aligned cancel threshold matches touch-scroll activation", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  // Diagonal swipe with dx=4, dy=4. Under the old `Math.hypot(dx,dy)` cancel
+  // (~5.66 > 5) the long-press would be cancelled, but touch-scroll's
+  // `Math.abs(currentY - touchStartY) > 5` would NOT activate (4 not > 5),
+  // creating a dead-motion window where neither gesture is active.
+  // We now use `Math.abs(dx) > 5 || Math.abs(dy) > 5`, so dx=4, dy=4
+  // does NOT cancel: long-press is preserved at the same threshold the
+  // scroll handler uses to decide whether to take over.
+  it("does NOT cancel long-press at dx=4, dy=4 (just below the 5 px axis threshold)", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    // Move diagonally to dx=4, dy=4. Hypot ~= 5.66, but neither axis crosses 5.
+    h.fireTouch("touchmove", [{ x: 204, y: 104 }]);
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    // Long-press still fires.
+    expect(h.getMode()).toBe("selection");
+    expect(h.xterm.select).toHaveBeenCalled();
+  });
+
+  it("cancels long-press as soon as |dx| crosses 5", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.fireTouch("touchmove", [{ x: 200 + 6, y: 100 }]); // dx=6, dy=0
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.getMode()).toBe("scroll");
+    expect(h.xterm.select).not.toHaveBeenCalled();
+  });
+
+  it("cancels long-press as soon as |dy| crosses 5 (matches touch-scroll's activation)", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
+    h.fireTouch("touchmove", [{ x: 200, y: 100 + 6 }]); // dx=0, dy=6
+    h.advanceTime(LONG_PRESS_MS);
+    h.flushTimers();
+    expect(h.getMode()).toBe("scroll");
+    expect(h.xterm.select).not.toHaveBeenCalled();
+  });
+});
+
+describe("synthesized MouseEvent carries screenX/screenY", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("mirrors clientX/Y onto screenX/Y so consumers asserting on screen coords see real values", () => {
+    const h = makeHarness();
+    h.fireTouch("touchstart", [{ x: 213, y: 117 }]);
+    h.advanceTime(50);
+    h.fireTouch("touchend", []);
+    expect(h.mouseEvents).toHaveLength(2);
+    for (const ev of h.mouseEvents) {
+      expect(ev.screenX).toBe(ev.clientX);
+      expect(ev.screenY).toBe(ev.clientY);
+      expect(ev.screenX).toBe(213);
+      expect(ev.screenY).toBe(117);
+    }
   });
 });
