@@ -52,13 +52,14 @@ describe("useIsMobileViewport", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns false on initial render even when window.innerWidth is mobile-sized", () => {
-    // SSR/CSR parity: lazy initializers MUST NOT inspect window during the
-    // first render or React 19 throws a hydration mismatch the first time a
-    // real mobile user visits.
+  it("returns the live viewport match on initial render at mobile widths", () => {
+    // The hook is implemented via useSyncExternalStore, so the first CLIENT
+    // render returns the real matchMedia result immediately. SSR safety is
+    // provided by the separate getServerSnapshot path (always false) — React
+    // 19 treats the controlled server/client mismatch as expected and does
+    // NOT emit a hydration warning. See useMobile.ts for details.
     installMatchMedia(420);
 
-    // Capture state during the FIRST render before effects flush.
     let firstRenderValue: boolean | null = null;
     const { result } = renderHook(() => {
       const v = useIsMobileViewport();
@@ -66,8 +67,7 @@ describe("useIsMobileViewport", () => {
       return v;
     });
 
-    expect(firstRenderValue).toBe(false);
-    // After effects flush we should have the real value.
+    expect(firstRenderValue).toBe(true);
     expect(result.current).toBe(true);
   });
 
