@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes (window moved between displays), and recovers from a single WebGL
   context loss by reloading the addon instead of permanently falling back to
   the DOM renderer.
+- **Terminal WebGL glyph corruption — scroll/volume triggers**
+  (`remote-dev-ofqf`). The earlier `visibilitychange`/DPR fix didn't help users
+  whose tab stays foregrounded for hours: the texture atlas still overflows
+  once a session accumulates enough distinct glyphs/colors, and artifacts
+  appear when scrolling back through history. `Terminal.tsx` now also clears
+  the atlas while the user is scrolled up in the buffer (throttled to once
+  every 2 s) and after every 5,000 line feeds, so corruption clears itself
+  without requiring a window resize.
 - **Mobile `MobileViewportSwitch` hydration mismatch warning**
   (`remote-dev-m2lg`). Reimplemented `useIsMobileViewport()` on top of
   `useSyncExternalStore` (matching the existing `useMobile` and
