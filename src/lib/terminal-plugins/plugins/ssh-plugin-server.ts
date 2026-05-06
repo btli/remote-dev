@@ -1,16 +1,23 @@
 /**
  * SshPlugin (server half) — lifecycle for SSH terminal sessions.
  *
- * The `ssh` command (or `sshpass ssh ...` for password auth) runs as the
- * tmux shell process. When the SSH process exits — either because the
- * remote shell closed or the connection dropped — the tmux session exits
- * too and the client surfaces the exit screen with a Reconnect button,
- * mirroring the agent plugin's UX.
+ * The `ssh` command (or `sshpass -e ssh ...` for password auth) runs as
+ * the tmux shell process. When the SSH process exits — either because
+ * the remote shell closed or the connection dropped — the tmux session
+ * exits too and the client surfaces the exit screen with a Reconnect
+ * button, mirroring the agent plugin's UX.
  *
  * Connection details (host, user, port, auth method, options) come from
  * the `ssh_connection` DB table. The plugin loads the row by
  * `input.sshConnectionId` at create time and bakes the resolved settings
  * into `SessionConfig`.
+ *
+ * IMPORTANT: SessionService treats `SessionConfig.shellCommand` as the
+ * full command line that tmux sends to its shell (see
+ * `effectiveStartupCommand` in session-service.ts) — `shellArgs` is
+ * NOT appended. We therefore build a shell-quoted single-string command
+ * line here and leave `shellArgs: []`, mirroring the agent plugin
+ * convention.
  *
  * @see ./ssh-plugin-client.tsx for rendering.
  * @see src/services/ssh-connection-service.ts
@@ -104,14 +111,26 @@ function buildExitMessage(exitCode: number | null): string {
   return `SSH session exited with code ${exitCode}`;
 }
 
-interface ShellInvocation {
-  shellCommand: string;
-  shellArgs: string[];
-  environment: Record<string, string>;
+/**
+ * POSIX-shell-safe single quoting: wraps arg in single quotes, escaping
+ * any embedded `'` as `'\''`. Empty string → `''` so it occupies a token.
+ * Exported for unit tests; treat as private elsewhere.
+ */
+export function shellQuote(arg: string): string {
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildShellInvocation(connection: SshConnection): ShellInvocation {
+/**
+ * Build the full shell command line + environment for an SSH connection.
+ * `shellCommand` is a single shell-quoted line that SessionService passes
+ * through verbatim to tmux (see `effectiveStartupCommand`).
+ */
+export function buildSshCommandLine(connection: SshConnection): {
+  shellCommand: string;
+  environment: Record<string, string>;
+} {
   const sshArgs = buildSshArgs(connection);
+  const quotedArgs = sshArgs.map(shellQuote).join(" ");
 
   if (connection.authType === "password") {
     const password = SshConnectionService.getDecryptedPassword(connection);
@@ -121,8 +140,7 @@ function buildShellInvocation(connection: SshConnection): ShellInvocation {
       );
     }
     return {
-      shellCommand: "sshpass",
-      shellArgs: ["-e", "ssh", ...sshArgs],
+      shellCommand: `sshpass -e ssh ${quotedArgs}`,
       environment: {
         SSHPASS: password,
         TERM: "xterm-256color",
@@ -131,8 +149,7 @@ function buildShellInvocation(connection: SshConnection): ShellInvocation {
   }
 
   return {
-    shellCommand: "ssh",
-    shellArgs: sshArgs,
+    shellCommand: `ssh ${quotedArgs}`,
     environment: {
       TERM: "xterm-256color",
     },
@@ -171,7 +188,7 @@ export function createSshServerPlugin(): TerminalTypeServerPlugin {
       }
 
       const connection = await loadConnection(input.sshConnectionId, session.userId);
-      const { shellCommand, shellArgs, environment } = buildShellInvocation(connection);
+      const { shellCommand, environment } = buildSshCommandLine(connection);
 
       const metadata: SshSessionMetadata = {
         connectionId: connection.id,
@@ -194,9 +211,11 @@ export function createSshServerPlugin(): TerminalTypeServerPlugin {
         });
       });
 
+      // shellArgs is empty: full ssh command line is baked into shellCommand
+      // (see file header).
       return {
         shellCommand,
-        shellArgs,
+        shellArgs: [],
         environment,
         cwd: input.projectPath,
         useTmux: true,
@@ -223,10 +242,10 @@ export function createSshServerPlugin(): TerminalTypeServerPlugin {
         return null;
       }
       const connection = await loadConnection(connectionId, session.userId);
-      const { shellCommand, shellArgs, environment } = buildShellInvocation(connection);
+      const { shellCommand, environment } = buildSshCommandLine(connection);
       return {
         shellCommand,
-        shellArgs,
+        shellArgs: [],
         environment,
         cwd: session.projectPath ?? undefined,
         useTmux: true,

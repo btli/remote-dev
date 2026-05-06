@@ -26,6 +26,8 @@ const mockGetDecryptedPassword = SshService.getDecryptedPassword as unknown as R
 import {
   SshServerPlugin,
   buildSshArgs,
+  buildSshCommandLine,
+  shellQuote,
 } from "../ssh-plugin-server";
 import type {
   SshAuthType,
@@ -136,11 +138,17 @@ describe("SshServerPlugin.createSession", () => {
   };
   const stub: Partial<TerminalSession> = { userId: "user-1" };
 
-  it("uses ssh as the shell command for key auth", async () => {
+  it("returns a single ssh command line + empty shellArgs for key auth", async () => {
     mockGet.mockResolvedValue(makeConnection({ authType: "key" }));
     const config = await SshServerPlugin.createSession(baseInput, stub);
-    expect(config.shellCommand).toBe("ssh");
-    expect(config.shellArgs[0]).toBe("-p");
+    // The fix: shellCommand carries the full quoted command line and
+    // shellArgs is unused (SessionService consumes only shellCommand).
+    expect(config.shellCommand).not.toBeNull();
+    expect(config.shellCommand?.startsWith("ssh ")).toBe(true);
+    expect(config.shellCommand).toContain("'-p'");
+    expect(config.shellCommand).toContain("'2222'");
+    expect(config.shellCommand?.endsWith("'alice@example.com'")).toBe(true);
+    expect(config.shellArgs).toEqual([]);
     expect(config.environment.TERM).toBe("xterm-256color");
     expect(config.useTmux).toBe(true);
     expect(config.metadata).toMatchObject({
@@ -153,14 +161,14 @@ describe("SshServerPlugin.createSession", () => {
     });
   });
 
-  it("wraps with sshpass and injects SSHPASS for password auth", async () => {
+  it("wraps with sshpass -e ssh and injects SSHPASS for password auth", async () => {
     mockGet.mockResolvedValue(makeConnection({ authType: "password", passwordEnc: "ENCRYPTED" }));
     mockGetDecryptedPassword.mockReturnValue("hunter2");
     const config = await SshServerPlugin.createSession(baseInput, stub);
-    expect(config.shellCommand).toBe("sshpass");
-    expect(config.shellArgs[0]).toBe("-e");
-    expect(config.shellArgs[1]).toBe("ssh");
+    expect(config.shellCommand?.startsWith("sshpass -e ssh ")).toBe(true);
+    expect(config.shellArgs).toEqual([]);
     expect(config.environment.SSHPASS).toBe("hunter2");
+    expect(config.environment.TERM).toBe("xterm-256color");
   });
 
   it("throws when password auth has no stored password", async () => {
@@ -279,7 +287,9 @@ describe("SshServerPlugin lifecycle hooks", () => {
     };
     const config = await SshServerPlugin.onSessionRestart?.(session);
     expect(config).not.toBeNull();
-    expect(config?.shellCommand).toBe("ssh");
+    expect(config?.shellCommand).not.toBeNull();
+    expect(config?.shellCommand?.startsWith("ssh ")).toBe(true);
+    expect(config?.shellArgs).toEqual([]);
   });
 
   it("onSessionRestart returns null when typeMetadata is missing connectionId", async () => {
@@ -314,5 +324,107 @@ describe("SshServerPlugin capability flags", () => {
 
   it("declares useTmux: true (SSH always runs in a tmux pane)", () => {
     expect(SshServerPlugin.useTmux).toBe(true);
+  });
+});
+
+describe("shellQuote", () => {
+  it("wraps simple alphanumeric input in single quotes", () => {
+    expect(shellQuote("foo")).toBe("'foo'");
+    expect(shellQuote("alice123")).toBe("'alice123'");
+  });
+
+  it("wraps strings with spaces so they survive split-by-whitespace", () => {
+    expect(shellQuote("hello world")).toBe("'hello world'");
+  });
+
+  it("escapes embedded single quotes via close/escape/reopen", () => {
+    // The classic POSIX trick: ' → '\''
+    expect(shellQuote("it's")).toBe(`'it'\\''s'`);
+    expect(shellQuote("'leading")).toBe(`''\\''leading'`);
+    expect(shellQuote("trailing'")).toBe(`'trailing'\\'''`);
+  });
+
+  it("returns '' (empty single-quoted token) for the empty string", () => {
+    // Empty string still needs to be a real argv slot, not nothing.
+    expect(shellQuote("")).toBe("''");
+  });
+
+  it("leaves shell metacharacters inert inside single quotes", () => {
+    // Inside single quotes, $, `, \, *, etc. are literal — that's the
+    // whole point of using single quotes here.
+    expect(shellQuote("$HOME")).toBe("'$HOME'");
+    expect(shellQuote("a;b|c&d")).toBe("'a;b|c&d'");
+    expect(shellQuote("`pwd`")).toBe("'`pwd`'");
+  });
+});
+
+describe("buildSshCommandLine", () => {
+  it("starts with 'ssh ' and ends with the quoted user@host for non-password auth", () => {
+    const conn = makeConnection({ authType: "key" });
+    const { shellCommand, environment } = buildSshCommandLine(conn);
+    expect(shellCommand.startsWith("ssh ")).toBe(true);
+    expect(shellCommand.endsWith("'alice@example.com'")).toBe(true);
+    expect(environment).toEqual({ TERM: "xterm-256color" });
+  });
+
+  it("preserves the known-hosts and key flags in argv order", () => {
+    const conn = makeConnection({ authType: "key" });
+    const { shellCommand } = buildSshCommandLine(conn);
+    // Each canonical flag/value lands in the line, single-quoted.
+    expect(shellCommand).toContain("'-p' '2222'");
+    expect(shellCommand).toContain("'-o' 'ConnectTimeout=10'");
+    expect(shellCommand).toContain("'StrictHostKeyChecking=accept-new'");
+    expect(shellCommand).toContain(
+      `'UserKnownHostsFile=/tmp/rdv-test-ssh/${conn.id}/known_hosts'`
+    );
+    expect(shellCommand).toContain("'-i'");
+    expect(shellCommand).toContain(`'/tmp/rdv-test-ssh/${conn.id}/id'`);
+    expect(shellCommand).toContain("'IdentitiesOnly=yes'");
+    // Order: -p ... -o ConnectTimeout=10 ... StrictHostKeyChecking ... -i ...
+    const pIdx = shellCommand.indexOf("'-p'");
+    const ctIdx = shellCommand.indexOf("'ConnectTimeout=10'");
+    const skIdx = shellCommand.indexOf("'StrictHostKeyChecking=accept-new'");
+    const iIdx = shellCommand.indexOf("'-i'");
+    const userHostIdx = shellCommand.indexOf("'alice@example.com'");
+    expect(pIdx).toBeLessThan(ctIdx);
+    expect(ctIdx).toBeLessThan(skIdx);
+    expect(skIdx).toBeLessThan(iIdx);
+    expect(iIdx).toBeLessThan(userHostIdx);
+  });
+
+  it("prefixes 'sshpass -e ssh ' and exports SSHPASS for password auth", () => {
+    const conn = makeConnection({ authType: "password", passwordEnc: "ENC" });
+    mockGetDecryptedPassword.mockReturnValue("hunter2");
+    const { shellCommand, environment } = buildSshCommandLine(conn);
+    expect(shellCommand.startsWith("sshpass -e ssh ")).toBe(true);
+    expect(shellCommand.endsWith("'alice@example.com'")).toBe(true);
+    expect(environment.SSHPASS).toBe("hunter2");
+    expect(environment.TERM).toBe("xterm-256color");
+  });
+
+  it("throws when password auth has no decryptable password", () => {
+    const conn = makeConnection({ authType: "password", passwordEnc: null });
+    mockGetDecryptedPassword.mockReturnValue(null);
+    expect(() => buildSshCommandLine(conn)).toThrow(/password auth/);
+  });
+
+  it("safely quotes hosts and usernames containing shell metacharacters", () => {
+    // Defensive: even though usernames/hosts are normally vanilla, the
+    // command line must not let them break out of their token.
+    const conn = makeConnection({
+      username: "weird;name",
+      host: "h o s t",
+    });
+    const { shellCommand } = buildSshCommandLine(conn);
+    expect(shellCommand).toContain("'weird;name@h o s t'");
+  });
+
+  it("safely quotes a username containing an embedded single quote", () => {
+    const conn = makeConnection({
+      username: "o'brien",
+      host: "example.com",
+    });
+    const { shellCommand } = buildSshCommandLine(conn);
+    expect(shellCommand).toContain("'o'\\''brien@example.com'");
   });
 });
