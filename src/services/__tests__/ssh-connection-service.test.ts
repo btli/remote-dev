@@ -10,7 +10,20 @@
 import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+
+const execFileAsync = promisify(execFile);
+
+async function hasSshKeygen(): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("which", ["ssh-keygen"]);
+    return stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
 
 // Pin the SSH dir into a tmp location so the suite never touches the
 // user's real ~/.remote-dev. Must be set before importing the service.
@@ -88,6 +101,45 @@ describe("SshConnectionService — filesystem helpers", () => {
     expect(algoLen).toBe(11);
     const algoStr = decoded.subarray(4, 4 + algoLen).toString("utf8");
     expect(algoStr).toBe("ssh-ed25519");
+  });
+
+  it("generateKeypair writes a private key in OpenSSH PEM format", async () => {
+    const mod = await import("../ssh-connection-service");
+    const id = "gen-openssh-format-test";
+    await mod.generateKeypair(id);
+
+    const privContents = await readFile(mod.getPrivateKeyPath(id), "utf8");
+    expect(privContents.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----\n")).toBe(true);
+    expect(privContents.endsWith("-----END OPENSSH PRIVATE KEY-----\n")).toBe(true);
+    // Body should NOT be PKCS#8 — that's the bug we're fixing.
+    expect(privContents).not.toContain("BEGIN PRIVATE KEY");
+
+    // Decoded body must start with the OpenSSH magic bytes.
+    const body = privContents
+      .replace("-----BEGIN OPENSSH PRIVATE KEY-----\n", "")
+      .replace("-----END OPENSSH PRIVATE KEY-----\n", "")
+      .replace(/\n/g, "");
+    const decoded = Buffer.from(body, "base64");
+    expect(decoded.subarray(0, 15).toString("utf8")).toBe("openssh-key-v1\0");
+  });
+
+  it("generateKeypair private key is loadable by ssh-keygen", async () => {
+    if (!(await hasSshKeygen())) {
+      // Skip on systems without OpenSSH installed (some minimal CI images).
+      return;
+    }
+    const mod = await import("../ssh-connection-service");
+    const id = "gen-ssh-keygen-test";
+    await mod.generateKeypair(id);
+    const privPath = mod.getPrivateKeyPath(id);
+
+    const { stdout, stderr } = await execFileAsync("ssh-keygen", [
+      "-y",
+      "-f",
+      privPath,
+    ]);
+    expect(stderr).not.toMatch(/invalid format/i);
+    expect(stdout.trim().startsWith("ssh-ed25519 ")).toBe(true);
   });
 
   it("hasPrivateKey reflects on-disk state", async () => {
@@ -276,5 +328,134 @@ describe("SshConnectionService — password encryption round-trip", () => {
       lastUsedAt: null,
     };
     expect(mod.getDecryptedPassword(conn)).toBeNull();
+  });
+});
+
+describe("SshConnectionService — OpenSSH wire-format encoders", () => {
+  it("encodeOpensshEd25519PublicKey emits the expected wire format for a known input", async () => {
+    const mod = await import("../ssh-connection-service");
+    // 32-byte all-zero public key: deterministic output we can hand-check.
+    const rawPub = Buffer.alloc(32, 0);
+    const line = mod.encodeOpensshEd25519PublicKey(rawPub);
+    expect(line.startsWith("ssh-ed25519 ")).toBe(true);
+
+    const b64 = line.split(" ")[1];
+    const decoded = Buffer.from(b64, "base64");
+    // uint32(11) || "ssh-ed25519" || uint32(32) || 32 zero bytes
+    expect(decoded.length).toBe(4 + 11 + 4 + 32);
+    expect(decoded.readUInt32BE(0)).toBe(11);
+    expect(decoded.subarray(4, 15).toString("utf8")).toBe("ssh-ed25519");
+    expect(decoded.readUInt32BE(15)).toBe(32);
+    expect(decoded.subarray(19, 51).equals(Buffer.alloc(32, 0))).toBe(true);
+  });
+
+  it("encodeOpensshEd25519PublicKey rejects keys that are not 32 bytes", async () => {
+    const mod = await import("../ssh-connection-service");
+    expect(() => mod.encodeOpensshEd25519PublicKey(Buffer.alloc(31, 0))).toThrow();
+    expect(() => mod.encodeOpensshEd25519PublicKey(Buffer.alloc(64, 0))).toThrow();
+  });
+
+  it("encodeOpensshEd25519PrivateKey produces a wrapped PEM with the OpenSSH magic", async () => {
+    const mod = await import("../ssh-connection-service");
+    const rawPriv = Buffer.alloc(32, 1);
+    const rawPub = Buffer.alloc(32, 2);
+    const pem = mod.encodeOpensshEd25519PrivateKey(rawPriv, rawPub, "test");
+
+    expect(pem.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----\n")).toBe(true);
+    expect(pem.endsWith("-----END OPENSSH PRIVATE KEY-----\n")).toBe(true);
+
+    const lines = pem.split("\n");
+    // First line is the BEGIN marker, last two are END marker + empty trailing.
+    const bodyLines = lines.slice(1, -2);
+    expect(bodyLines.length).toBeGreaterThan(0);
+    for (const line of bodyLines) {
+      // ssh-keygen wraps at 70 columns; final line may be shorter.
+      expect(line.length).toBeLessThanOrEqual(70);
+    }
+
+    const body = bodyLines.join("");
+    const decoded = Buffer.from(body, "base64");
+    expect(decoded.subarray(0, 15).toString("utf8")).toBe("openssh-key-v1\0");
+
+    // Walk the wire format and verify checkints match + the private blob
+    // round-trips.
+    let off = 15;
+    const readString = (): Buffer => {
+      const len = decoded.readUInt32BE(off);
+      off += 4;
+      const b = decoded.subarray(off, off + len);
+      off += len;
+      return b;
+    };
+    expect(readString().toString("utf8")).toBe("none"); // ciphername
+    expect(readString().toString("utf8")).toBe("none"); // kdfname
+    expect(readString().length).toBe(0); // kdfoptions
+    const numKeys = decoded.readUInt32BE(off);
+    off += 4;
+    expect(numKeys).toBe(1);
+
+    const pubBlob = readString();
+    let inner = 0;
+    expect(pubBlob.readUInt32BE(inner)).toBe(11);
+    inner += 4;
+    expect(pubBlob.subarray(inner, inner + 11).toString("utf8")).toBe(
+      "ssh-ed25519"
+    );
+    inner += 11;
+    expect(pubBlob.readUInt32BE(inner)).toBe(32);
+    inner += 4;
+    expect(pubBlob.subarray(inner, inner + 32).equals(rawPub)).toBe(true);
+
+    const privBlob = readString();
+    // checkint repeated.
+    expect(privBlob.subarray(0, 4).equals(privBlob.subarray(4, 8))).toBe(true);
+    let pi = 8;
+    // type
+    expect(privBlob.readUInt32BE(pi)).toBe(11);
+    pi += 4;
+    expect(privBlob.subarray(pi, pi + 11).toString("utf8")).toBe("ssh-ed25519");
+    pi += 11;
+    // public
+    expect(privBlob.readUInt32BE(pi)).toBe(32);
+    pi += 4;
+    expect(privBlob.subarray(pi, pi + 32).equals(rawPub)).toBe(true);
+    pi += 32;
+    // priv+pub seed (64)
+    expect(privBlob.readUInt32BE(pi)).toBe(64);
+    pi += 4;
+    expect(privBlob.subarray(pi, pi + 32).equals(rawPriv)).toBe(true);
+    expect(privBlob.subarray(pi + 32, pi + 64).equals(rawPub)).toBe(true);
+    pi += 64;
+    // comment
+    const commentLen = privBlob.readUInt32BE(pi);
+    pi += 4;
+    expect(privBlob.subarray(pi, pi + commentLen).toString("utf8")).toBe("test");
+    pi += commentLen;
+    // padding to multiple of 8 with incrementing bytes
+    let pad = 1;
+    while (pi < privBlob.length) {
+      expect(privBlob[pi]).toBe(pad);
+      pi += 1;
+      pad += 1;
+    }
+    expect(privBlob.length % 8).toBe(0);
+  });
+
+  it("encodeOpensshEd25519PrivateKey rejects malformed inputs", async () => {
+    const mod = await import("../ssh-connection-service");
+    expect(() =>
+      mod.encodeOpensshEd25519PrivateKey(
+        Buffer.alloc(31, 0),
+        Buffer.alloc(32, 0),
+        "x"
+      )
+    ).toThrow();
+    expect(() =>
+      mod.encodeOpensshEd25519PrivateKey(
+        Buffer.alloc(32, 0),
+        Buffer.alloc(33, 0),
+        "x"
+      )
+    ).toThrow();
   });
 });
