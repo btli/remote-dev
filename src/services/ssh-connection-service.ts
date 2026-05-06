@@ -15,7 +15,7 @@
  */
 
 import { mkdir, writeFile, readFile, rm, access, chmod } from "node:fs/promises";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { join, resolve, sep } from "node:path";
 import { db } from "@/db";
 import { sshConnections } from "@/db/schema";
@@ -457,56 +457,140 @@ export async function writeKey(
 /**
  * Generate a new ed25519 keypair, write both halves to disk, and return
  * the public key for display in the UI.
+ *
+ * The private key is emitted in the native OpenSSH private-key format
+ * (`-----BEGIN OPENSSH PRIVATE KEY-----`). PKCS#8 PEM is *not* loadable by
+ * `ssh-keygen`/`ssh` for ed25519 keys despite the OpenSSL key APIs
+ * supporting it — OpenSSH refuses anything that isn't its own wire format.
  */
 export async function generateKeypair(connectionId: string): Promise<{
   publicKey: string;
 }> {
   await ensureConnectionDir(connectionId);
 
-  // node:crypto cannot emit OpenSSH-format private keys directly until
-  // Node 19+. We render the private key as PKCS#8 PEM (which OpenSSH reads
-  // fine for ed25519) and the public key in OpenSSH single-line format.
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    publicKeyEncoding: { type: "spki", format: "pem" },
-  });
+  // Use the KeyObject form so we can JWK-export to grab the raw 32-byte
+  // private seed and 32-byte public key. node:crypto has no built-in
+  // OpenSSH-format private-key encoder, so we hand-pack the bytes below.
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 
-  // Convert SPKI public key to OpenSSH "ssh-ed25519 BASE64 comment" format.
-  const opensshPub = spkiPemToOpensshEd25519(publicKey as string);
+  const privJwk = privateKey.export({ format: "jwk" }) as {
+    d?: string;
+    x?: string;
+  };
+  const pubJwk = publicKey.export({ format: "jwk" }) as { x?: string };
+  if (!privJwk.d || !privJwk.x || !pubJwk.x) {
+    throw new Error("Unexpected ed25519 JWK shape (missing d/x)");
+  }
+  const rawPriv = Buffer.from(privJwk.d, "base64url");
+  const rawPub = Buffer.from(pubJwk.x, "base64url");
+  if (rawPriv.length !== 32 || rawPub.length !== 32) {
+    throw new Error(
+      `Invalid ed25519 raw key lengths: priv=${rawPriv.length} pub=${rawPub.length}`
+    );
+  }
+
   const comment = `rdv-${connectionId.slice(0, 8)}`;
-  const opensshPubLine = `${opensshPub} ${comment}`;
+  const opensshPubLine = `${encodeOpensshEd25519PublicKey(rawPub)} ${comment}`;
+  const opensshPriv = encodeOpensshEd25519PrivateKey(rawPriv, rawPub, comment);
 
-  await writeKey(connectionId, privateKey as string, opensshPubLine);
+  await writeKey(connectionId, opensshPriv, opensshPubLine);
   return { publicKey: opensshPubLine };
 }
 
-/**
- * Convert an SPKI-PEM ed25519 public key to OpenSSH single-line format
- * (`ssh-ed25519 BASE64`).
- *
- * The SPKI ed25519 wrapping is a fixed-length 44-byte structure where the
- * last 32 bytes are the raw public key. We extract those bytes and wrap
- * them in the OpenSSH wire format: 4-byte length-prefixed strings.
- */
-function spkiPemToOpensshEd25519(pem: string): string {
-  const b64 = pem
-    .replace(/-----BEGIN PUBLIC KEY-----/g, "")
-    .replace(/-----END PUBLIC KEY-----/g, "")
-    .replace(/\s+/g, "");
-  const der = Buffer.from(b64, "base64");
-  // SPKI for ed25519 is exactly 44 bytes; the raw key is the last 32.
-  if (der.length < 32) {
-    throw new Error("Invalid SPKI ed25519 public key");
-  }
-  const raw = der.subarray(der.length - 32);
+// ---------------------------------------------------------------------------
+// OpenSSH wire-format encoders for ed25519 keys.
+//
+// Reference: PROTOCOL.key in the OpenSSH source tree.
+// All integers are big-endian; `string` is `uint32 length || bytes`.
+// ---------------------------------------------------------------------------
 
-  const algo = Buffer.from("ssh-ed25519", "utf8");
-  const algoLen = Buffer.alloc(4);
-  algoLen.writeUInt32BE(algo.length, 0);
-  const keyLen = Buffer.alloc(4);
-  keyLen.writeUInt32BE(raw.length, 0);
-  const wire = Buffer.concat([algoLen, algo, keyLen, raw]);
+function packUint32(n: number): Buffer {
+  const buf = Buffer.alloc(4);
+  buf.writeUInt32BE(n >>> 0, 0);
+  return buf;
+}
+
+function packString(buf: Buffer): Buffer {
+  return Buffer.concat([packUint32(buf.length), buf]);
+}
+
+/**
+ * Encode a raw 32-byte ed25519 public key as the OpenSSH single-line
+ * `ssh-ed25519 BASE64` representation (no trailing comment).
+ */
+export function encodeOpensshEd25519PublicKey(rawPub: Buffer): string {
+  if (rawPub.length !== 32) {
+    throw new Error(`ed25519 public key must be 32 bytes, got ${rawPub.length}`);
+  }
+  const wire = Buffer.concat([
+    packString(Buffer.from("ssh-ed25519", "utf8")),
+    packString(rawPub),
+  ]);
   return `ssh-ed25519 ${wire.toString("base64")}`;
+}
+
+/**
+ * Encode a raw ed25519 private + public seed pair as the OpenSSH
+ * native private-key PEM (`-----BEGIN OPENSSH PRIVATE KEY-----`).
+ *
+ * Cipher and KDF are `none` (no passphrase). The base64 body is wrapped
+ * at 70 columns to match `ssh-keygen` output. Result ends with a newline.
+ */
+export function encodeOpensshEd25519PrivateKey(
+  rawPriv: Buffer,
+  rawPub: Buffer,
+  comment: string
+): string {
+  if (rawPriv.length !== 32) {
+    throw new Error(`ed25519 private seed must be 32 bytes, got ${rawPriv.length}`);
+  }
+  if (rawPub.length !== 32) {
+    throw new Error(`ed25519 public key must be 32 bytes, got ${rawPub.length}`);
+  }
+
+  // Public key blob (length-prefixed, then packed as a string at the outer
+  // layer when assembled into the file).
+  const pubBlob = Buffer.concat([
+    packString(Buffer.from("ssh-ed25519", "utf8")),
+    packString(rawPub),
+  ]);
+
+  // Private key blob (cleartext because cipher=none): two equal checkints,
+  // then key type, public key, concatenated private+public seed, comment,
+  // and incrementing padding to a multiple of 8.
+  const checkint = randomBytes(4);
+  const privSeed = Buffer.concat([rawPriv, rawPub]); // 64 bytes
+  const commentBuf = Buffer.from(comment, "utf8");
+  const inner = Buffer.concat([
+    checkint,
+    checkint,
+    packString(Buffer.from("ssh-ed25519", "utf8")),
+    packString(rawPub),
+    packString(privSeed),
+    packString(commentBuf),
+  ]);
+  const padLen = (8 - (inner.length % 8)) % 8;
+  const padding = Buffer.alloc(padLen);
+  for (let i = 0; i < padLen; i++) padding[i] = i + 1; // 1, 2, 3, ...
+  const paddedPriv = Buffer.concat([inner, padding]);
+
+  // Outer file: magic, ciphername, kdfname, kdfoptions, numkeys, pubkey,
+  // padded privatekey.
+  const magic = Buffer.from("openssh-key-v1\0", "utf8"); // 15 bytes incl. NUL
+  const file = Buffer.concat([
+    magic,
+    packString(Buffer.from("none", "utf8")), // ciphername
+    packString(Buffer.from("none", "utf8")), // kdfname
+    packString(Buffer.alloc(0)), // kdfoptions (empty string)
+    packUint32(1), // numkeys
+    packString(pubBlob),
+    packString(paddedPriv),
+  ]);
+
+  const b64 = file.toString("base64");
+  // ssh-keygen wraps the body at 70 columns.
+  const wrapped = b64.match(/.{1,70}/g)?.join("\n") ?? b64;
+  return `-----BEGIN OPENSSH PRIVATE KEY-----\n${wrapped}\n-----END OPENSSH PRIVATE KEY-----\n`;
 }
 
 /** Read a connection's public key, if present. */
