@@ -418,4 +418,13 @@ describe("buildSshCommandLine", () => {
     const { shellCommand } = buildSshCommandLine(conn);
     expect(shellCommand).toContain("'weird;name@h o s t'");
   });
+
+  it("safely quotes a username containing an embedded single quote", () => {
+    const conn = makeConnection({
+      username: "o'brien",
+      host: "example.com",
+    });
+    const { shellCommand } = buildSshCommandLine(conn);
+    expect(shellCommand).toContain("'o'\\''brien@example.com'");
+  });
 });

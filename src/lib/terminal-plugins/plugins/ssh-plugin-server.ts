@@ -112,13 +112,9 @@ function buildExitMessage(exitCode: number | null): string {
 }
 
 /**
- * POSIX-shell-safe single quoting. Wraps the arg in single quotes and
- * escapes any embedded single quote by closing, escaping, and reopening
- * (`'` → `'\''`). Always returns a quoted form so concatenation with a
- * space is unambiguous (including the empty-string case → `''`).
- *
- * Exported only so the unit test suite can exercise the quoting rules
- * directly; treat as a private helper from any other module.
+ * POSIX-shell-safe single quoting: wraps arg in single quotes, escaping
+ * any embedded `'` as `'\''`. Empty string → `''` so it occupies a token.
+ * Exported for unit tests; treat as private elsewhere.
  */
 export function shellQuote(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`;
@@ -126,10 +122,8 @@ export function shellQuote(arg: string): string {
 
 /**
  * Build the full shell command line + environment for an SSH connection.
- *
- * The returned `shellCommand` is a single, shell-quoted command line
- * that tmux can execute as its shell process. SessionService passes it
- * through verbatim (see `effectiveStartupCommand` in session-service).
+ * `shellCommand` is a single shell-quoted line that SessionService passes
+ * through verbatim to tmux (see `effectiveStartupCommand`).
  */
 export function buildSshCommandLine(connection: SshConnection): {
   shellCommand: string;
@@ -217,10 +211,10 @@ export function createSshServerPlugin(): TerminalTypeServerPlugin {
         });
       });
 
+      // shellArgs is empty: full ssh command line is baked into shellCommand
+      // (see file header).
       return {
         shellCommand,
-        // SessionService only consumes shellCommand for the tmux shell; the
-        // full ssh command line (binary + flags) is baked into shellCommand.
         shellArgs: [],
         environment,
         cwd: input.projectPath,
