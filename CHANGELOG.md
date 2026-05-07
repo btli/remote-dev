@@ -69,6 +69,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile critical path: code-split `MobileViewportSwitch` branches**
+  (`remote-dev-gj45`). Both `MobileApp` and `DesktopApp` now load via
+  `next/dynamic`, so a mobile viewport never downloads the desktop
+  `SessionManager` dependency graph (xterm, codemirror, sidebars, modals)
+  and a desktop viewport never downloads the mobile shell. `app/page.tsx`
+  does a server-side UA sniff and forwards an `initialIsMobile` hint so
+  the chosen branch is SSR-rendered with no skeleton flash; the
+  `useSyncExternalStore`-backed `useIsMobileViewport()` hook still
+  corrects any UA miss or window resize on the client. The desktop tree
+  was extracted into `src/components/desktop/DesktopApp.tsx` so it can
+  be the dynamic target. Lighthouse home `/`: mobile perf 72-73 → 84-87
+  (LCP 6.6–7.2 s → 4.2–4.5 s), desktop perf 64 → 92, mobile
+  `unused-javascript` savings 366 KB → 99 KB (well below the 100 KB
+  acceptance threshold), CLS unchanged on mobile (0 → 0). Mobile target
+  of ≥90 not yet hit because the simulated LCP is now bottlenecked on
+  the `~1.18 MB` of provider/context bundle that wraps the page (16
+  nested context providers, plus mobile's own xterm-backed
+  `MobileSessionView`); follow-up work will need to defer those
+  providers, not the viewport switch itself. Reports under
+  `docs/reports/2026-05-07-lighthouse-mobile-gj45/`.
 - **Terminal WebGL glyph corruption** (`remote-dev-ljnc`). Long-running sessions
   could show torn/duplicated glyphs that only cleared when the window was
   resized. `Terminal.tsx` now clears the WebGL texture atlas on

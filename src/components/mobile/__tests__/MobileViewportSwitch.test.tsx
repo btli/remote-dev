@@ -19,10 +19,25 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { MobileViewportSwitch } from "@/components/mobile/MobileViewportSwitch";
 import { MOBILE_BREAKPOINT_PX } from "@/hooks/useMobile";
 
-// Stub MobileApp so the test doesn't pull in the real context tree.
+// Stub MobileApp + DesktopApp so the test doesn't pull in the real
+// context trees. Both branches are dynamic-imported by the switch
+// (see Phase 7 / gj45 — code-split off the mobile critical path), so
+// we mock the dynamic targets directly.
 vi.mock("@/components/mobile/MobileApp", () => ({
   MobileApp: () => <div data-testid="mobile-app">mobile</div>,
 }));
+
+vi.mock("@/components/desktop/DesktopApp", () => ({
+  __esModule: true,
+  default: () => <div data-testid="desktop-app">desktop</div>,
+}));
+
+// `next/dynamic` returns a Suspense-wrapped component in tests; the
+// underlying loader is async, but happy-dom + vitest will resolve the
+// imported module synchronously when it's already in the module
+// graph (the `vi.mock`s above register synchronous factories), so
+// the dynamic component renders its real content on first commit. No
+// extra waitFor is needed for the assertions below.
 
 interface MqlListeners {
   change: Set<(e: { matches: boolean }) => void>;
@@ -69,30 +84,40 @@ describe("MobileViewportSwitch", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the desktop children at desktop widths", () => {
+  it("renders the desktop children at desktop widths", async () => {
     installMatchMedia(1280);
 
     render(
-      <MobileViewportSwitch isGitHubConnected={false} initialUser={null}>
-        <div data-testid="desktop">desktop</div>
-      </MobileViewportSwitch>
+      <MobileViewportSwitch
+        initialIsMobile={false}
+        isGitHubConnected={false}
+        initialUser={null}
+        userEmail=""
+        onSignOut={() => {}}
+      />
     );
 
-    expect(screen.getByTestId("desktop")).toBeTruthy();
+    // `next/dynamic` resolves asynchronously even when the underlying
+    // module is in the graph — wait for the real component to commit.
+    expect(await screen.findByTestId("desktop-app")).toBeTruthy();
     expect(screen.queryByTestId("mobile-app")).toBeNull();
   });
 
-  it("renders MobileApp at mobile widths", () => {
+  it("renders MobileApp at mobile widths", async () => {
     installMatchMedia(420);
 
     render(
-      <MobileViewportSwitch isGitHubConnected={false} initialUser={null}>
-        <div data-testid="desktop">desktop</div>
-      </MobileViewportSwitch>
+      <MobileViewportSwitch
+        initialIsMobile={false}
+        isGitHubConnected={false}
+        initialUser={null}
+        userEmail=""
+        onSignOut={() => {}}
+      />
     );
 
-    expect(screen.getByTestId("mobile-app")).toBeTruthy();
-    expect(screen.queryByTestId("desktop")).toBeNull();
+    expect(await screen.findByTestId("mobile-app")).toBeTruthy();
+    expect(screen.queryByTestId("desktop-app")).toBeNull();
   });
 
   describe("hydration safety", () => {
@@ -106,9 +131,13 @@ describe("MobileViewportSwitch", () => {
       installMatchMedia(420);
 
       render(
-        <MobileViewportSwitch isGitHubConnected={false} initialUser={null}>
-          <div data-testid="desktop">desktop</div>
-        </MobileViewportSwitch>
+        <MobileViewportSwitch
+          initialIsMobile={false}
+          isGitHubConnected={false}
+          initialUser={null}
+          userEmail=""
+          onSignOut={() => {}}
+        />
       );
 
       const hydrationCalls = errorSpy.mock.calls.filter((call: unknown[]) => {
