@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scripts/worktree-warm.sh`** (`remote-dev-unpj`). Bootstraps a fresh agent
+  worktree by cloning the main checkout's `node_modules/` into the worktree
+  using APFS `cp -cR` (copy-on-write clonefile), with rsync and `bun install`
+  fallbacks. Resolves the Turbopack 16 build failure caused by symlinking
+  `node_modules` outside the worktree filesystem root, and replaces the 9+
+  minute cold `bun install`. End-to-end cold start to a successful `bun run
+  build`: ~45 seconds. Documented in CLAUDE.md under "Worktree Setup".
 - **SSH terminal type** (`remote-dev-i13k`). New `ssh` terminal type opens a
   tmux-backed pane that runs `ssh` (or `sshpass ssh` for password auth) as
   the shell process; when SSH disconnects, the agent-style exit screen

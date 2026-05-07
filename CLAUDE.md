@@ -818,6 +818,23 @@ Update the changelog when making changes that are:
 5. Push tag: `git push origin vX.Y.Z`
 6. Add new `[Unreleased]` section at top for future changes
 
+## Worktree Setup
+
+Agent worktrees start with no `node_modules`. Three pitfalls to avoid:
+
+1. **Do not symlink** `node_modules` to the main checkout. Turbopack 16 rejects symlinks that point outside the worktree's filesystem root with `Symlink node_modules is invalid, it points out of the filesystem root`, breaking `bun run build` and `bun run dev`.
+2. **Do not run a cold `bun install` if you can avoid it.** It can take 5–10 minutes on this codebase.
+3. **Do not edit source files in the main checkout** to work around the above — that violates the worktree-isolation rule above.
+
+Instead, **clone `node_modules` into the worktree** with the helper script:
+
+```bash
+./scripts/worktree-warm.sh
+```
+
+It uses APFS `cp -cR` (copy-on-write clonefile) to materialize a real `node_modules/` directory inside the worktree in ~30 seconds. Internal symlinks in bun's isolated layout are relative, so they stay valid post-clone and Turbopack accepts the tree. Total cold-start to a successful `bun run build`: under a minute.
+
+The script falls back to `rsync --links` on non-APFS filesystems and to `bun install` if neither path is available.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Development Workflow
