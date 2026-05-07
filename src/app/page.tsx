@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { signOut } from "@/auth";
 import { getAuthSession } from "@/lib/auth-utils";
@@ -25,10 +26,17 @@ import { GitHubAccountProvider } from "@/contexts/GitHubAccountContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { PeerChatProvider } from "@/contexts/PeerChatContext";
 import { ChannelProvider } from "@/contexts/ChannelContext";
-import { SessionManager } from "@/components/session/SessionManager";
-import { Header } from "@/components/header/Header";
 import { MobileViewportSwitch } from "@/components/mobile/MobileViewportSwitch";
 import type { TerminalSession } from "@/types/session";
+
+// Quick UA-based mobile hint for SSR. Used as the *initial* branch
+// pick for `MobileViewportSwitch` so the server pre-renders only the
+// composition the client is most likely to mount, eliminating the
+// "load skeleton, then load real chunk" round-trip on first paint.
+// `useSyncExternalStore` corrects any miss on the client.
+function detectMobileUA(ua: string): boolean {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua);
+}
 
 export default async function Home() {
   const session = await getAuthSession();
@@ -36,6 +44,9 @@ export default async function Home() {
   if (!session?.user?.id) {
     redirect("/login");
   }
+
+  const requestHeaders = await headers();
+  const initialIsMobile = detectMobileUA(requestHeaders.get("user-agent") ?? "");
 
   // Fetch user's active and suspended sessions
   const dbSessions = await db.query.terminalSessions.findMany({
@@ -113,26 +124,18 @@ export default async function Home() {
                                     <ChannelProvider>
                                     <PeerChatProvider>
                                     <MobileViewportSwitch
+                                      initialIsMobile={initialIsMobile}
                                       isGitHubConnected={isGitHubConnected}
                                       initialUser={{
                                         email: session.user.email ?? null,
                                         name: session.user.name ?? null,
                                       }}
-                                    >
-                                      <div className="flex h-screen flex-col bg-background">
-                                        {/* Header - hidden on mobile, shown in sidebar instead */}
-                                        <Header
-                                          isGitHubConnected={isGitHubConnected}
-                                          userEmail={session.user.email || ""}
-                                          onSignOut={async () => {
-                                            "use server";
-                                            await signOut();
-                                          }}
-                                        />
-                                        {/* Main content */}
-                                        <SessionManager isGitHubConnected={isGitHubConnected} />
-                                      </div>
-                                    </MobileViewportSwitch>
+                                      userEmail={session.user.email || ""}
+                                      onSignOut={async () => {
+                                        "use server";
+                                        await signOut();
+                                      }}
+                                    />
                                     </PeerChatProvider>
                                     </ChannelProvider>
                                   </NotificationProvider>
