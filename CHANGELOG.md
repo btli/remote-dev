@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lighthouse mobile perf baseline** (`remote-dev-k583`). Captured a
+  production Lighthouse run for `/` (mobile + desktop) and `/login` (mobile)
+  against `bun run build` + `bun run start`. Mobile `/` scores 72-73, desktop
+  `/` 64, `/login` 82 — all sub-90. Dominant opportunity on every route is
+  `unused-javascript` (~1.95 s simulated savings on `/`); a single 470 KB
+  bundle is 72 % unused on mobile because `MobileViewportSwitch` ships both
+  branches in the same client component tree. FCP 1.1 s, Speed Index 1.1 s,
+  CLS ≈ 0, TBT 220–260 ms — only LCP (6.6–7.2 s on `/`) is red, and is
+  bottlenecked on JS parse, not network or paint. Filed `remote-dev-gj45` to
+  code-split the desktop branch out of the mobile critical path and
+  `remote-dev-tx71` for the same trim on `/login`. Raw reports + writeup
+  under `docs/reports/2026-05-07-lighthouse-mobile/`.
 - **`scripts/worktree-warm.sh`** (`remote-dev-unpj`). Bootstraps a fresh agent
   worktree by cloning the main checkout's `node_modules/` into the worktree
   using APFS `cp -cR` (copy-on-write clonefile), with rsync and `bun install`
