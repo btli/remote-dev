@@ -1,0 +1,4 @@
+storeFile=/absolute/path/to/remote-dev-release.jks
+storePassword=your-keystore-password
+keyAlias=remote-dev
+keyPassword=your-key-password
