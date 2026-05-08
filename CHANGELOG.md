@@ -84,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile terminal disappears on Pixel Fold unfold** (`remote-dev-9rvt`). `MobileShell` now wraps its pass-through path in a bounded-height `h-[100dvh]` container so `MobileSessionView`'s `h-full` keeps a parent to fill when the viewport crosses 768px on a UA-mobile foldable; previously the terminal viewport collapsed to 0px and only the status/input bars rendered.
 - **Terminal focus signal fires per-pane** (`remote-dev-mbup`). Added native
   `focus` / `blur` listeners on xterm's input textarea so primary-client
   election triggers when the user clicks between panels or terminal tabs in
