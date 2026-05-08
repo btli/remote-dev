@@ -56,6 +56,9 @@ vi.mock("@xterm/xterm", () => {
     onScroll() {
       return { dispose: () => {} };
     }
+    onLineFeed() {
+      return { dispose: () => {} };
+    }
     attachCustomKeyEventHandler() {}
     focus() {}
     write() {}

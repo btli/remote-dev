@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/login` mobile Lighthouse perf** (`remote-dev-tx71`). The login route
+  was shipping the same heavy client tree as `/` — NextAuth `SessionProvider`,
+  `AppearanceProvider`, sonner `Toaster`, and `ServiceWorkerRegistration` were
+  all hoisted into the root layout, dragging a 224 KB shared chunk onto a
+  page that's just an email + password form. Moved the page into a new
+  `(auth)` route group, extracted the heavy providers into a lazy-loaded
+  `<AppShell>` client component, and conditionally render it from the root
+  layout based on a new `x-pathname` header set by `proxy.ts`. Mobile
+  Lighthouse on `/login`: performance **0.82 → 0.97**, LCP **5.0 s → 2.6 s**,
+  Time to Interactive **5.0 s → 2.9 s**. FCP/TBT/CLS unchanged. End-to-end
+  credentials login + redirect verified. Reports under
+  `docs/reports/2026-05-08-lighthouse-login-tx71/`.
+
 ### Added
 
 - **Lighthouse mobile perf baseline** (`remote-dev-k583`). Captured a
@@ -69,6 +84,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mobile terminal disappears on Pixel Fold unfold** (`remote-dev-9rvt`). `MobileShell` now wraps its pass-through path in a bounded-height `h-[100dvh]` container so `MobileSessionView`'s `h-full` keeps a parent to fill when the viewport crosses 768px on a UA-mobile foldable; previously the terminal viewport collapsed to 0px and only the status/input bars rendered.
+- **Terminal focus signal fires per-pane** (`remote-dev-mbup`). Added native
+  `focus` / `blur` listeners on xterm's input textarea so primary-client
+  election triggers when the user clicks between panels or terminal tabs in
+  an already-focused window — previously only window-level focus and tab
+  visibility changes sent the signal.
 - **Mobile critical path: defer desktop-only context providers**
   (`remote-dev-c9aq`). Closes the perf gap left by `gj45`: even after the
   viewport switch was code-split, `app/page.tsx` was still wrapping both

@@ -481,11 +481,24 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           dispose: () => document.removeEventListener("visibilitychange", handleVisibilityChange),
         });
 
-        const dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-        const handleDprChange = () => webglAddonRef.current?.clearTextureAtlas();
-        dprMedia.addEventListener("change", handleDprChange);
+        // matchMedia(`(resolution: ${current}dppx)`) only matches the DPR
+        // baked into its query string, so once it fires it never matches
+        // again. Re-arm against the new DPR after each fire so subsequent
+        // display moves keep clearing the atlas.
+        let dprMedia: MediaQueryList | null = null;
+        let handleDprChange: () => void = () => {};
+        const armDprListener = () => {
+          dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+          handleDprChange = () => {
+            webglAddonRef.current?.clearTextureAtlas();
+            dprMedia?.removeEventListener("change", handleDprChange);
+            armDprListener();
+          };
+          dprMedia.addEventListener("change", handleDprChange);
+        };
+        armDprListener();
         terminalDisposablesRef.current.push({
-          dispose: () => dprMedia.removeEventListener("change", handleDprChange),
+          dispose: () => dprMedia?.removeEventListener("change", handleDprChange),
         });
       } catch {
         // WebGL not supported — DOM renderer is used automatically
@@ -1063,6 +1076,25 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           // Ignore send errors — connection might be tearing down
         }
       };
+
+      // Per-terminal focus signal: window/visibilitychange only fire for
+      // coarse browser-level transitions, so they miss clicks between panels
+      // or between terminal tabs in the same window. xterm's textarea is what
+      // receives keyboard input — its focus state is the true per-terminal
+      // signal the server needs to elect a primary client.
+      const xtermTextarea = terminal.textarea;
+      if (xtermTextarea) {
+        const onXtermFocus = () => sendFocusSignal("focus");
+        const onXtermBlur = () => sendFocusSignal("blur");
+        xtermTextarea.addEventListener("focus", onXtermFocus);
+        xtermTextarea.addEventListener("blur", onXtermBlur);
+        terminalDisposablesRef.current.push({
+          dispose: () => {
+            xtermTextarea.removeEventListener("focus", onXtermFocus);
+            xtermTextarea.removeEventListener("blur", onXtermBlur);
+          },
+        });
+      }
 
       // Re-fit when page becomes visible again (returning from background)
       let visibilityTimeout: ReturnType<typeof setTimeout> | null = null;

@@ -3,10 +3,12 @@
 /**
  * MobileShell — top-level wrapper for the mobile composition.
  *
- * Phase 1 of the mobile redesign. Above 768px (Tailwind `md`) the shell is a
- * pass-through: it returns its children unchanged so desktop renders exactly
- * the same as before. Below 768px it provides the three regions every mobile
- * screen needs:
+ * Phase 1 of the mobile redesign. Above 768px (Tailwind `md`) the shell drops
+ * its mobile chrome (tab bar + safe-area insets) but still renders a
+ * bounded-height container so children that rely on `h-full` continue to
+ * fill the viewport — this matters on UA-mobile foldables (e.g. Pixel Fold)
+ * that cross 768px when unfolded. Below 768px it provides the three regions
+ * every mobile screen needs:
  *
  *  1. A top safe-area inset (notch / status bar).
  *  2. A scrollable content region.
@@ -79,7 +81,21 @@ export function MobileShell({
   });
 
   if (!isMobile) {
-    return <>{children}</>;
+    // Above 768px we drop the tab bar + safe-area chrome, but keep a bounded-
+    // height wrapper. MobileApp is the only mount path (UA-mobile only), and
+    // its children (e.g. MobileSessionView) rely on `h-full` to fill an
+    // ancestor — without this, an unfolded foldable that crosses 768px
+    // collapses the terminal viewport to 0px.
+    return (
+      <div
+        className={cn(
+          "flex h-[100dvh] flex-col bg-background text-foreground",
+          className
+        )}
+      >
+        {children}
+      </div>
+    );
   }
 
   return (
