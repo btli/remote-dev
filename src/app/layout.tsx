@@ -6,8 +6,9 @@ import { headers } from "next/headers";
 import dynamicImport from "next/dynamic";
 import "./globals.css";
 
-// Lazy-loaded so the /login bundle never includes NextAuth SessionProvider,
-// AppearanceProvider, sonner Toaster, or ServiceWorkerRegistration.
+// Lazy-loaded so the /login and /m/* bundles never include NextAuth
+// SessionProvider, AppearanceProvider, sonner Toaster, or
+// ServiceWorkerRegistration.
 const AppShell = dynamicImport(() => import("@/components/layout/AppShell"));
 
 const geistSans = Geist({
@@ -54,6 +55,11 @@ export default async function RootLayout({
   const hdrs = await headers();
   const pathname = hdrs.get("x-pathname") ?? "";
   const isLoginRoute = pathname === "/login";
+  // /m/* routes are loaded by the Flutter WebView host and must not
+  // mount the desktop AppShell (which would inject MobileShell with its
+  // bottom tab bar on mobile viewports).
+  const isMobileEmbedRoute = pathname.startsWith("/m/");
+  const skipAppShell = isLoginRoute || isMobileEmbedRoute;
 
   return (
     // suppressHydrationWarning: Theme class is applied client-side by AppearanceProvider
@@ -67,7 +73,7 @@ export default async function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {isLoginRoute ? children : <AppShell>{children}</AppShell>}
+        {skipAppShell ? children : <AppShell>{children}</AppShell>}
       </body>
     </html>
   );
