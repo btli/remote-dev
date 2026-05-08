@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/login` mobile Lighthouse perf** (`remote-dev-tx71`). The login route
+  was shipping the same heavy client tree as `/` — NextAuth `SessionProvider`,
+  `AppearanceProvider`, sonner `Toaster`, and `ServiceWorkerRegistration` were
+  all hoisted into the root layout, dragging a 224 KB shared chunk onto a
+  page that's just an email + password form. Moved the page into a new
+  `(auth)` route group, extracted the heavy providers into a lazy-loaded
+  `<AppShell>` client component, and conditionally render it from the root
+  layout based on a new `x-pathname` header set by `proxy.ts`. Mobile
+  Lighthouse on `/login`: performance **0.82 → 0.97**, LCP **5.0 s → 2.6 s**,
+  Time to Interactive **5.0 s → 2.9 s**. FCP/TBT/CLS unchanged. End-to-end
+  credentials login + redirect verified. Reports under
+  `docs/reports/2026-05-08-lighthouse-login-tx71/`.
+
 ### Added
 
 - **Lighthouse mobile perf baseline** (`remote-dev-k583`). Captured a
