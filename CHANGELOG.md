@@ -20,6 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Bottom rows of the terminal no longer clipped on unfolded foldables (`remote-dev-6ot7`)
+- **Mobile `/` Lighthouse perf — SSR-paint mobile shell** (`remote-dev-ruh0`).
+  After `c9aq` (provider deferral) capped mobile `/` at perf **86–87**, the
+  remaining 3-point gap was structural LCP (~4.0 s) — `MobileApp` rendered
+  `MobileLockScreen` ("Loading…") during SSR + first paint, gated on
+  `useFirstRun()` returning `null` until a `useEffect` consulted
+  `localStorage`. Lighthouse can't credit a spinner placeholder as the LCP
+  candidate, so LCP only fired when the post-hydration content (welcome
+  heading) painted. Switched `useFirstRun()` to `useSyncExternalStore` so
+  the flag resolves synchronously: `getServerSnapshot()` returns `true`
+  (assume first-run), so SSR paints the real `MobileWelcomeScreen` with
+  its `<p text-[22px]>Welcome to Remote Dev.</p>` LCP-eligible heading at
+  FCP time. Removed the `firstRun.isFirstRun === null` lock-screen branch
+  in `MobileApp` (lock screen is still used for the
+  no-`initialUser`/CF-Access-pending paths). Mobile Lighthouse on `/`:
+  performance **0.87 → 0.90–0.92**, simulated LCP **4.0 s → 3.3–3.6 s**
+  (observed LCP **73 ms**, dropped from 122 ms element-render-delay to
+  56 ms), FCP/TBT/CLS unchanged. The simulated-LCP-vs-2.5 s gap is
+  Lantern's network-throttling model rather than a real paint problem;
+  the LCP element is now in the SSR'd HTML stream. Reports under
+  `docs/reports/2026-05-08-lighthouse-mobile-ruh0/`.
 - **`/login` mobile Lighthouse perf** (`remote-dev-tx71`). The login route
   was shipping the same heavy client tree as `/` — NextAuth `SessionProvider`,
   `AppearanceProvider`, sonner `Toaster`, and `ServiceWorkerRegistration` were
