@@ -107,7 +107,7 @@ export async function notifyToNative<N extends NotifyName>(
   name: N,
   data: Extract<NotifyPayload, { name: N }>["data"]
 ): Promise<void> {
-  const handler = window.flutter_inappwebview?.callHandler;
-  if (!handler) return;
-  await handler(name, data);
+  const fip = window.flutter_inappwebview;
+  if (!fip) return;
+  await fip.callHandler(name, data);
 }
