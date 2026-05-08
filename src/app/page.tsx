@@ -10,24 +10,23 @@ import { eq, and, inArray } from "drizzle-orm";
 import { SessionProvider } from "@/contexts/SessionContext";
 import { ProjectTreeProvider } from "@/contexts/ProjectTreeContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
-import { TemplateProvider } from "@/contexts/TemplateContext";
-import { RecordingProvider } from "@/contexts/RecordingContext";
-import { TrashProvider } from "@/contexts/TrashContext";
-import { ScheduleProvider } from "@/contexts/ScheduleContext";
-import { SecretsProvider } from "@/contexts/SecretsContext";
-import { LiteLLMProvider } from "@/contexts/LiteLLMContext";
-import { ProfileProvider } from "@/contexts/ProfileContext";
-import { GitHubStatsProvider } from "@/contexts/GitHubStatsContext";
-import { GitHubIssuesProvider } from "@/contexts/GitHubIssuesContext";
-import { PortProvider } from "@/contexts/PortContext";
-import { SessionMCPProvider } from "@/contexts/SessionMCPContext";
-import { BeadsProvider } from "@/contexts/BeadsContext";
-import { GitHubAccountProvider } from "@/contexts/GitHubAccountContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { PeerChatProvider } from "@/contexts/PeerChatContext";
 import { ChannelProvider } from "@/contexts/ChannelContext";
 import { MobileViewportSwitch } from "@/components/mobile/MobileViewportSwitch";
 import type { TerminalSession } from "@/types/session";
+
+// NOTE (c9aq): Desktop-only context providers (Template, Recording,
+// Trash, Schedule, Secrets, LiteLLM, Profile, GitHubAccount, GitHubStats,
+// GitHubIssues, Port, SessionMCP, Beads) used to be imported and wrapped
+// here. They've moved into `DesktopProviders` (loaded with the dynamic
+// `DesktopApp` chunk) so a mobile viewport never downloads their
+// dependency graphs or runs their mount-time side effects (WebSocket
+// connects, polls, etc.).
+//
+// `ProfileProvider` + `TemplateProvider` are mounted inside the mobile
+// `NewSessionSheet` (which is itself `dynamic(ssr: false)`), so on
+// mobile they only hydrate when the user opens the New Session wizard.
 
 // Quick UA-based mobile hint for SSR. Used as the *initial* branch
 // pick for `MobileViewportSwitch` so the server pre-renders only the
@@ -105,55 +104,30 @@ export default async function Home() {
 
   return (
     <PreferencesProvider>
-        <ProjectTreeProvider>
-        <SecretsProvider>
-          <LiteLLMProvider>
-          <ProfileProvider>
-            <TemplateProvider>
-              <RecordingProvider>
-                <GitHubAccountProvider initialHasAccounts={initialHasGitHubAccounts}>
-                <GitHubStatsProvider isGitHubConnected={isGitHubConnected}>
-                  <GitHubIssuesProvider>
-                    <SessionProvider initialSessions={initialSessions}>
-                        <TrashProvider>
-                          <PortProvider>
-                            <ScheduleProvider>
-                              <BeadsProvider>
-                                <SessionMCPProvider>
-                                  <NotificationProvider>
-                                    <ChannelProvider>
-                                    <PeerChatProvider>
-                                    <MobileViewportSwitch
-                                      initialIsMobile={initialIsMobile}
-                                      isGitHubConnected={isGitHubConnected}
-                                      initialUser={{
-                                        email: session.user.email ?? null,
-                                        name: session.user.name ?? null,
-                                      }}
-                                      userEmail={session.user.email || ""}
-                                      onSignOut={async () => {
-                                        "use server";
-                                        await signOut();
-                                      }}
-                                    />
-                                    </PeerChatProvider>
-                                    </ChannelProvider>
-                                  </NotificationProvider>
-                                </SessionMCPProvider>
-                              </BeadsProvider>
-                            </ScheduleProvider>
-                          </PortProvider>
-                        </TrashProvider>
-                    </SessionProvider>
-                  </GitHubIssuesProvider>
-                </GitHubStatsProvider>
-                </GitHubAccountProvider>
-              </RecordingProvider>
-            </TemplateProvider>
-          </ProfileProvider>
-          </LiteLLMProvider>
-        </SecretsProvider>
-        </ProjectTreeProvider>
+      <ProjectTreeProvider>
+        <SessionProvider initialSessions={initialSessions}>
+          <NotificationProvider>
+            <ChannelProvider>
+              <PeerChatProvider>
+                <MobileViewportSwitch
+                  initialIsMobile={initialIsMobile}
+                  isGitHubConnected={isGitHubConnected}
+                  initialHasGitHubAccounts={initialHasGitHubAccounts}
+                  initialUser={{
+                    email: session.user.email ?? null,
+                    name: session.user.name ?? null,
+                  }}
+                  userEmail={session.user.email || ""}
+                  onSignOut={async () => {
+                    "use server";
+                    await signOut();
+                  }}
+                />
+              </PeerChatProvider>
+            </ChannelProvider>
+          </NotificationProvider>
+        </SessionProvider>
+      </ProjectTreeProvider>
     </PreferencesProvider>
   );
 }

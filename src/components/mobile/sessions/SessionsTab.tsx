@@ -17,7 +17,8 @@
  * on the bottom bar.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
+import dynamic from "next/dynamic";
 import { ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,8 +34,22 @@ import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { ActionSheet, type ActionSheetItem } from "../common/ActionSheet";
 
 import { MobileSessionRow } from "./MobileSessionRow";
-import { NewSessionSheet } from "./NewSessionSheet";
 import { ProjectTreeSheet } from "./ProjectTreeSheet";
+
+// NewSessionSheet wraps the desktop NewSessionWizard — its dependency
+// graph (RepositoryPicker, BranchPicker, ProfileSelector, lucide icon
+// set) is heavy and only loaded when the user taps the "+ New" pill, so
+// defer it via `next/dynamic`. SSR is disabled because the sheet is
+// purely interactive and never part of the first paint.
+const NewSessionSheet = dynamic(
+  () => import("./NewSessionSheet").then((m) => ({ default: m.NewSessionSheet })),
+  { ssr: false }
+) as ComponentType<{
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isGitHubConnected: boolean;
+  onCreated?: (sessionId: string) => void;
+}>;
 
 const RECENT_PROJECTS_STORAGE_KEY = "remote-dev:mobile:recent-projects";
 const RECENT_LIMIT = 3;

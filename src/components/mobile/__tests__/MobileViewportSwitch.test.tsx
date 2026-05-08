@@ -91,6 +91,7 @@ describe("MobileViewportSwitch", () => {
       <MobileViewportSwitch
         initialIsMobile={false}
         isGitHubConnected={false}
+        initialHasGitHubAccounts={false}
         initialUser={null}
         userEmail=""
         onSignOut={() => {}}
@@ -110,6 +111,7 @@ describe("MobileViewportSwitch", () => {
       <MobileViewportSwitch
         initialIsMobile={false}
         isGitHubConnected={false}
+        initialHasGitHubAccounts={false}
         initialUser={null}
         userEmail=""
         onSignOut={() => {}}
@@ -134,6 +136,7 @@ describe("MobileViewportSwitch", () => {
         <MobileViewportSwitch
           initialIsMobile={false}
           isGitHubConnected={false}
+          initialHasGitHubAccounts={false}
           initialUser={null}
           userEmail=""
           onSignOut={() => {}}

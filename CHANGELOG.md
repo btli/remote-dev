@@ -90,6 +90,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   election triggers when the user clicks between panels or terminal tabs in
   an already-focused window — previously only window-level focus and tab
   visibility changes sent the signal.
+- **Mobile critical path: defer desktop-only context providers**
+  (`remote-dev-c9aq`). Closes the perf gap left by `gj45`: even after the
+  viewport switch was code-split, `app/page.tsx` was still wrapping both
+  branches in 18 React context providers, so a mobile viewport
+  downloaded (and ran the mount-time `useEffect` side effects of) the
+  desktop-only context code — Template, Recording, Trash, Schedule,
+  Secrets, LiteLLM, Profile, GitHubAccount, GitHubStats, GitHubIssues,
+  Port, SessionMCP, Beads. Those 13 providers moved into a new
+  `DesktopProviders` component that's mounted *inside* the dynamically
+  imported `DesktopApp` chunk, so they are no longer part of mobile's
+  initial bundle and their WebSocket connects, polls, etc. no longer
+  fire on mobile. Six providers stay at the top level (Preferences,
+  ProjectTree, Session, Channel, Notification, PeerChat) because the
+  mobile tree consumes them directly. Mobile's `NewSessionSheet` —
+  which embeds the shared `NewSessionWizard` and pulls in
+  `ProfileContext` + `TemplateContext` transitively — is now
+  `dynamic(ssr: false)` from `SessionsTab` and re-mounts those two
+  providers locally, so the providers' WebSocket connects + initial
+  fetches only fire when the user taps "+ New". Server-side bootstrap
+  data (`isGitHubConnected`, `initialHasGitHubAccounts`) is threaded
+  through `MobileViewportSwitch` → `DesktopApp` → `DesktopProviders`
+  props instead of via top-level provider props, so the desktop SSR
+  HTML is unchanged.
 - **Mobile critical path: code-split `MobileViewportSwitch` branches**
   (`remote-dev-gj45`). Both `MobileApp` and `DesktopApp` now load via
   `next/dynamic`, so a mobile viewport never downloads the desktop
