@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
 
 class AppRouter {
@@ -27,8 +28,8 @@ class AppRouter {
         ),
         GoRoute(
           path: '/m/session/:id',
-          builder: (context, state) => _PlaceholderScreen(
-            name: 'Session ${state.pathParameters['id']}',
+          builder: (context, state) => SessionRouteHost(
+            sessionId: state.pathParameters['id']!,
           ),
         ),
         GoRoute(
