@@ -481,11 +481,24 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
           dispose: () => document.removeEventListener("visibilitychange", handleVisibilityChange),
         });
 
-        const dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-        const handleDprChange = () => webglAddonRef.current?.clearTextureAtlas();
-        dprMedia.addEventListener("change", handleDprChange);
+        // matchMedia(`(resolution: ${current}dppx)`) only matches the DPR
+        // baked into its query string, so once it fires it never matches
+        // again. Re-arm against the new DPR after each fire so subsequent
+        // display moves keep clearing the atlas.
+        let dprMedia: MediaQueryList | null = null;
+        let handleDprChange: () => void = () => {};
+        const armDprListener = () => {
+          dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+          handleDprChange = () => {
+            webglAddonRef.current?.clearTextureAtlas();
+            dprMedia?.removeEventListener("change", handleDprChange);
+            armDprListener();
+          };
+          dprMedia.addEventListener("change", handleDprChange);
+        };
+        armDprListener();
         terminalDisposablesRef.current.push({
-          dispose: () => dprMedia.removeEventListener("change", handleDprChange),
+          dispose: () => dprMedia?.removeEventListener("change", handleDprChange),
         });
       } catch {
         // WebGL not supported — DOM renderer is used automatically
