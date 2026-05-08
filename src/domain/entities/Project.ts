@@ -9,7 +9,6 @@ export interface ProjectProps {
   collapsed: boolean;
   sortOrder: number;
   isAutoCreated: boolean;
-  legacyFolderId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,7 +36,6 @@ export class Project {
   get collapsed(): boolean { return this.props.collapsed; }
   get sortOrder(): number { return this.props.sortOrder; }
   get isAutoCreated(): boolean { return this.props.isAutoCreated; }
-  get legacyFolderId(): string | null { return this.props.legacyFolderId; }
   get createdAt(): Date { return this.props.createdAt; }
   get updatedAt(): Date { return this.props.updatedAt; }
 

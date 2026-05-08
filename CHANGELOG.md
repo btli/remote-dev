@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`legacy_folder_id` bridge columns + unique indexes** on `project_group` /
+  `project` tables (`remote-dev-lylj`). The transitional bridge from the
+  pre-refactor `folders` schema was retained for back-compat through the
+  previous release; the columns, the `project_group_legacy_user_idx` /
+  `project_legacy_user_idx` unique indexes, and the
+  `translateFolderIdToProjectId` helper are now dropped. Migration:
+  `drizzle/0018_drop_legacy_folder_id_bridge.sql`.
+
 ### Fixed
 
+- Bottom rows of the terminal no longer clipped on unfolded foldables (`remote-dev-6ot7`)
 - **Mobile `/` Lighthouse perf — SSR-paint mobile shell** (`remote-dev-ruh0`).
   After `c9aq` (provider deferral) capped mobile `/` at perf **86–87**, the
   remaining 3-point gap was structural LCP (~4.0 s) — `MobileApp` rendered

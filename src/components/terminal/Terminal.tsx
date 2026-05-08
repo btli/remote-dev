@@ -1135,6 +1135,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       window.addEventListener("focus", handleWindowFocus);
       window.addEventListener("blur", handleWindowBlur);
 
+      // Android Chrome on foldables doesn't always emit a `window.resize` when
+      // the gesture bar appears post-unfold, but `visualViewport` does fire.
+      // Listening here ensures the terminal re-fits whenever the visible area
+      // changes, even if the wrapper's layout height is stable.
+      const handleVisualViewportResize = () => {
+        requestAnimationFrame(handleResize);
+      };
+      const visualViewport =
+        typeof window.visualViewport !== "undefined" ? window.visualViewport : null;
+      if (visualViewport) {
+        visualViewport.addEventListener("resize", handleVisualViewportResize);
+      }
+
       // Use ResizeObserver to detect when terminal container becomes visible
       // This handles the case when switching tabs (hidden -> visible)
       let lastWidth = 0;
@@ -1174,6 +1187,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         document.removeEventListener("visibilitychange", handleVisibilityChange);
         window.removeEventListener("focus", handleWindowFocus);
         window.removeEventListener("blur", handleWindowBlur);
+        if (visualViewport) {
+          visualViewport.removeEventListener("resize", handleVisualViewportResize);
+        }
         terminalRef.current?.removeEventListener("contextmenu", preventContextMenu);
         resizeObserver.disconnect();
         if (resizeTimeout) clearTimeout(resizeTimeout);

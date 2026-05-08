@@ -11,7 +11,6 @@ export function toDomain(row: ProjectGroupRow): ProjectGroup {
     name: row.name,
     collapsed: row.collapsed,
     sortOrder: row.sortOrder,
-    legacyFolderId: row.legacyFolderId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });
@@ -25,7 +24,6 @@ export function toInsert(group: ProjectGroup): typeof projectGroups.$inferInsert
     name: group.name,
     collapsed: group.collapsed,
     sortOrder: group.sortOrder,
-    legacyFolderId: group.legacyFolderId,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
   };

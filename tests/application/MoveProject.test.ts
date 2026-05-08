@@ -13,7 +13,6 @@ function makeGroup(id: string, userId: string): ProjectGroup {
     name: `g-${id}`,
     collapsed: false,
     sortOrder: 0,
-    legacyFolderId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -28,7 +27,6 @@ function makeProject(groupId: string | null): Project {
     collapsed: false,
     sortOrder: 0,
     isAutoCreated: false,
-    legacyFolderId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   });

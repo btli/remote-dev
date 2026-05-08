@@ -10,7 +10,6 @@ describe("Project", () => {
     collapsed: false,
     sortOrder: 0,
     isAutoCreated: false,
-    legacyFolderId: null as string | null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };

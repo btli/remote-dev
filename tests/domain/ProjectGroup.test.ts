@@ -10,7 +10,6 @@ describe("ProjectGroup", () => {
     parentGroupId: null as string | null,
     collapsed: false,
     sortOrder: 0,
-    legacyFolderId: null as string | null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };

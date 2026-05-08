@@ -12,7 +12,6 @@ export function toDomain(row: ProjectRow): Project {
     collapsed: row.collapsed,
     sortOrder: row.sortOrder,
     isAutoCreated: row.isAutoCreated,
-    legacyFolderId: row.legacyFolderId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });
@@ -27,7 +26,6 @@ export function toInsert(p: Project): typeof projects.$inferInsert {
     collapsed: p.collapsed,
     sortOrder: p.sortOrder,
     isAutoCreated: p.isAutoCreated,
-    legacyFolderId: p.legacyFolderId,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
