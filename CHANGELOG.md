@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Archived the Flutter mobile app to `archive/mobile-flutter/` pending mobile
+  redesign (`remote-dev-jt22`). Removed the Flutter Android APK build from CI
+  (`build-android` job in `.github/workflows/release.yml`) and dropped the
+  `tests/mobile/android-release-signing.test.ts` gradle-signing test that only
+  asserted the archived app's config. The `RDV_ANDROID_KEYSTORE_PATH`,
+  `RDV_ANDROID_KEYSTORE_PASSWORD`, `RDV_ANDROID_KEY_ALIAS`, and
+  `RDV_ANDROID_KEY_PASSWORD` env var contract is preserved so the redesign can
+  reuse existing CI secrets without re-provisioning. The unrelated
+  `packages/mobile/` (React Native / Expo) and `src/components/mobile/` (web
+  mobile UI) trees are untouched.
 - **`legacy_folder_id` bridge columns + unique indexes** on `project_group` /
   `project` tables (`remote-dev-lylj`). The transitional bridge from the
   pre-refactor `folders` schema was retained for back-compat through the
