@@ -7,7 +7,6 @@ export interface ProjectGroupProps {
   name: string;
   collapsed: boolean;
   sortOrder: number;
-  legacyFolderId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,7 +28,6 @@ export class ProjectGroup {
   get name(): string { return this.props.name; }
   get collapsed(): boolean { return this.props.collapsed; }
   get sortOrder(): number { return this.props.sortOrder; }
-  get legacyFolderId(): string | null { return this.props.legacyFolderId; }
   get createdAt(): Date { return this.props.createdAt; }
   get updatedAt(): Date { return this.props.updatedAt; }
 

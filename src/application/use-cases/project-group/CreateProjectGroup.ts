@@ -21,7 +21,6 @@ export class CreateProjectGroup {
       name: input.name,
       collapsed: false,
       sortOrder: input.sortOrder ?? 0,
-      legacyFolderId: null,
       createdAt: now,
       updatedAt: now,
     });

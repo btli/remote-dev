@@ -43,7 +43,6 @@ export class CreateProject {
       collapsed: false,
       sortOrder: input.sortOrder ?? 0,
       isAutoCreated: false,
-      legacyFolderId: null,
       createdAt: now,
       updatedAt: now,
     });

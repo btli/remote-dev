@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`legacy_folder_id` bridge columns + unique indexes** on `project_group` /
+  `project` tables (`remote-dev-lylj`). The transitional bridge from the
+  pre-refactor `folders` schema was retained for back-compat through the
+  previous release; the columns, the `project_group_legacy_user_idx` /
+  `project_legacy_user_idx` unique indexes, and the
+  `translateFolderIdToProjectId` helper are now dropped. Migration:
+  `drizzle/0018_drop_legacy_folder_id_bridge.sql`.
+
 ### Fixed
 
 - **`/login` mobile Lighthouse perf** (`remote-dev-tx71`). The login route

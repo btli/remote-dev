@@ -46,8 +46,7 @@ interface Props {
   onSessionStartEdit: (sessionId: string) => void;
   onSessionRename: (sessionId: string, newName: string) => void;
   // Project handlers — all take `projectId` (i.e. the project's `id`, which
-  // is what node-scoped backend APIs key on). This replaces the former
-  // `legacyFolderId` contract; see remote-dev-oqol.4.1 / remote-dev-w1ed.
+  // is what node-scoped backend APIs key on).
   onProjectNewSession: (projectId: string) => void;
   onProjectNewAgent: (projectId: string) => void;
   onProjectResumeClaudeSession: (projectId: string) => void;
@@ -179,7 +178,7 @@ export const ProjectTreeSidebar = forwardRef<
 
   // Predicates — node-keyed by project.id. The backend
   // `node_preferences` / `project_secrets_config` tables are both keyed by
-  // project.id, so we no longer need the legacy_folder_id indirection.
+  // project.id.
   const hasCustomPrefs = (p: ProjectNode): boolean =>
     hasNodePreferences("project", p.id);
 

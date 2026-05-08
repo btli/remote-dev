@@ -42,11 +42,11 @@ export class DrizzleProjectGroupRepository implements ProjectGroupRepository {
     // Use UNION (not UNION ALL) so cycles terminate; depth guard caps pathological data.
     const result = await client.execute({
       sql: `
-        WITH RECURSIVE ancestry(id, parent_group_id, user_id, name, collapsed, sort_order, legacy_folder_id, created_at, updated_at, depth) AS (
-          SELECT id, parent_group_id, user_id, name, collapsed, sort_order, legacy_folder_id, created_at, updated_at, 0
+        WITH RECURSIVE ancestry(id, parent_group_id, user_id, name, collapsed, sort_order, created_at, updated_at, depth) AS (
+          SELECT id, parent_group_id, user_id, name, collapsed, sort_order, created_at, updated_at, 0
             FROM project_group WHERE id = ?
           UNION
-          SELECT pg.id, pg.parent_group_id, pg.user_id, pg.name, pg.collapsed, pg.sort_order, pg.legacy_folder_id, pg.created_at, pg.updated_at, a.depth + 1
+          SELECT pg.id, pg.parent_group_id, pg.user_id, pg.name, pg.collapsed, pg.sort_order, pg.created_at, pg.updated_at, a.depth + 1
             FROM project_group pg JOIN ancestry a ON pg.id = a.parent_group_id
             WHERE a.depth < 128
         )
@@ -62,7 +62,6 @@ export class DrizzleProjectGroupRepository implements ProjectGroupRepository {
         name: r.name as string,
         collapsed: Boolean(r.collapsed),
         sortOrder: Number(r.sort_order),
-        legacyFolderId: (r.legacy_folder_id as string | null) ?? null,
         createdAt: new Date(Number(r.created_at) * 1000),
         updatedAt: new Date(Number(r.updated_at) * 1000),
       })
