@@ -22,7 +22,7 @@ import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { useIsMobileViewport } from "@/hooks/useMobile";
+import { useIsMobileViewport, useVisualViewportHeight } from "@/hooks/useMobile";
 
 import {
   BottomTabBar,
@@ -61,6 +61,12 @@ export function MobileShell({
   bottomInsetClassName,
 }: MobileShellProps) {
   const isMobile = useIsMobileViewport();
+  // Android Chrome on foldables over-reports `100dvh` post-unfold (the gesture
+  // bar's area is included), so the terminal's flex-1 slot extends below the
+  // actually-visible area and its bottom rows render under the input bar.
+  // `visualViewport.height` reflects the truly visible region, so we apply it
+  // as an inline height when available.
+  const vvHeight = useVisualViewportHeight();
   // We use a state-callback ref rather than `useRef` because the scroll
   // element reference must propagate to <BottomTabBar>'s `useEffect` so it
   // can bind a `scroll` listener to the real container. A plain ref is
@@ -92,6 +98,7 @@ export function MobileShell({
           "flex h-[100dvh] flex-col bg-background text-foreground",
           className
         )}
+        style={vvHeight !== null ? { height: `${vvHeight}px` } : undefined}
       >
         {children}
       </div>
