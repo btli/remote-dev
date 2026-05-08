@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
+import '../screens/webview_host/reauth_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
 
@@ -79,7 +80,9 @@ class AppRouter {
         ),
         GoRoute(
           path: '/reauth',
-          builder: (_, __) => const _PlaceholderScreen(name: 'Re-auth'),
+          builder: (context, state) => ReauthScreen(
+            onReauthenticate: () => context.go('/servers'),
+          ),
         ),
       ],
     );
