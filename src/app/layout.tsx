@@ -2,11 +2,13 @@ export const dynamic = "force-dynamic";
 
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { SessionProvider } from "next-auth/react";
-import { AppearanceProvider } from "@/contexts/AppearanceContext";
-import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
-import { Toaster } from "sonner";
+import { headers } from "next/headers";
+import dynamicImport from "next/dynamic";
 import "./globals.css";
+
+// Lazy-loaded so the /login bundle never includes NextAuth SessionProvider,
+// AppearanceProvider, sonner Toaster, or ServiceWorkerRegistration.
+const AppShell = dynamicImport(() => import("@/components/layout/AppShell"));
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -44,11 +46,15 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const hdrs = await headers();
+  const pathname = hdrs.get("x-pathname") ?? "";
+  const isLoginRoute = pathname === "/login";
+
   return (
     // suppressHydrationWarning: Theme class is applied client-side by AppearanceProvider
     // Default to dark to prevent flash of unstyled content
@@ -61,25 +67,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <SessionProvider refetchInterval={5 * 60} refetchOnWindowFocus={true}>
-          <AppearanceProvider>{children}</AppearanceProvider>
-        </SessionProvider>
-        <Toaster
-          position="bottom-center"
-          theme="dark"
-          toastOptions={{
-            classNames: {
-              toast:
-                "bg-popover/95 backdrop-blur-xl border border-border shadow-2xl text-popover-foreground",
-              title: "font-medium text-sm",
-              description: "text-xs text-muted-foreground",
-              actionButton:
-                "bg-primary text-primary-foreground text-xs px-2 py-1 rounded-md",
-              closeButton: "text-muted-foreground hover:text-foreground",
-            },
-          }}
-        />
-        <ServiceWorkerRegistration />
+        {isLoginRoute ? children : <AppShell>{children}</AppShell>}
       </body>
     </html>
   );
