@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bottom rows of the terminal no longer clipped on unfolded foldables (`remote-dev-6ot7`)
 - **`/login` mobile Lighthouse perf** (`remote-dev-tx71`). The login route
   was shipping the same heavy client tree as `/` — NextAuth `SessionProvider`,
   `AppearanceProvider`, sonner `Toaster`, and `ServiceWorkerRegistration` were

@@ -130,3 +130,45 @@ export function usePrefersReducedMotion(): boolean {
     reducedMotionGetServerSnapshot
   );
 }
+
+/**
+ * Tracks `window.visualViewport.height` so layout can shrink when Android
+ * Chrome's gesture bar / browser chrome appears post-fold-transition. CSS
+ * `100dvh` over-reports on foldables — `visualViewport` reflects the area
+ * actually visible to the user.
+ *
+ * Returns `null` when `visualViewport` is unavailable (SSR, older browsers,
+ * happy-dom in tests) so callers can fall back to `100dvh`.
+ */
+function visualViewportSubscribe(callback: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.visualViewport === "undefined") {
+    return () => {};
+  }
+  const vv = window.visualViewport;
+  if (!vv) return () => {};
+  vv.addEventListener("resize", callback);
+  vv.addEventListener("scroll", callback);
+  return () => {
+    vv.removeEventListener("resize", callback);
+    vv.removeEventListener("scroll", callback);
+  };
+}
+
+function visualViewportGetSnapshot(): number | null {
+  if (typeof window === "undefined" || typeof window.visualViewport === "undefined") {
+    return null;
+  }
+  return window.visualViewport?.height ?? null;
+}
+
+function visualViewportGetServerSnapshot(): number | null {
+  return null;
+}
+
+export function useVisualViewportHeight(): number | null {
+  return useSyncExternalStore(
+    visualViewportSubscribe,
+    visualViewportGetSnapshot,
+    visualViewportGetServerSnapshot
+  );
+}
