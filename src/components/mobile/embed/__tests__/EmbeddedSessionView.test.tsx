@@ -8,15 +8,18 @@
  *   4. window.rdvBridge.input forwards into the terminal's sendInput.
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, cleanup } from "@testing-library/react";
 
 import { EmbeddedSessionView } from "../EmbeddedSessionView";
 
-// Mock TerminalWithKeyboard — we just need its ref shape.
-vi.mock("@/components/terminal/TerminalWithKeyboard", () => {
-  const React =
-    require("react") as typeof import("react");
+// Captured spies — re-created per test in `beforeEach` so we can assert
+// against the actual instance the component held in its ref.
+let sendInputSpy: ReturnType<typeof vi.fn>;
+let scrollToBottomSpy: ReturnType<typeof vi.fn>;
+
+vi.mock("@/components/terminal/TerminalWithKeyboard", async () => {
+  const React = await import("react");
   const TerminalWithKeyboard = React.forwardRef<
     {
       sendInput: (s: string) => void;
@@ -27,10 +30,10 @@ vi.mock("@/components/terminal/TerminalWithKeyboard", () => {
     Record<string, unknown>
   >(function MockTerminal(_props, ref) {
     React.useImperativeHandle(ref, () => ({
-      sendInput: vi.fn(),
-      scrollToBottom: vi.fn(),
-      focus: vi.fn(),
-      restartAgent: vi.fn(),
+      sendInput: sendInputSpy as unknown as (s: string) => void,
+      scrollToBottom: scrollToBottomSpy as unknown as () => void,
+      focus: vi.fn() as unknown as () => void,
+      restartAgent: vi.fn() as unknown as () => void,
     }));
     return React.createElement(
       "div",
@@ -47,6 +50,11 @@ const session = {
   tmuxSessionName: "rdv-session-1",
   status: "active" as const,
 };
+
+beforeEach(() => {
+  sendInputSpy = vi.fn();
+  scrollToBottomSpy = vi.fn();
+});
 
 afterEach(() => {
   cleanup();
@@ -80,5 +88,13 @@ describe("EmbeddedSessionView", () => {
     unmount();
 
     expect(window.rdvBridge).toBeUndefined();
+  });
+
+  it("rdvBridge.input forwards to terminal sendInput", () => {
+    render(<EmbeddedSessionView session={session} wsUrl="ws://localhost:6002" />);
+
+    window.rdvBridge?.input("ls -la\n");
+
+    expect(sendInputSpy).toHaveBeenCalledWith("ls -la\n");
   });
 });

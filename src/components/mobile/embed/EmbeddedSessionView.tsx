@@ -115,7 +115,13 @@ export function EmbeddedSessionView({
     const uninstall = installRdvBridge(adapter);
     // Fire onTerminalReady after the terminal ref resolves. Mount order
     // means the ref is populated by this effect's first run.
-    queueMicrotask(() => void notifyToNative("onTerminalReady", {}));
+    queueMicrotask(() => {
+      notifyToNative("onTerminalReady", {}).catch((err) => {
+        // Native-side errors shouldn't crash the WebView; surface in console
+        // for observability while keeping the UI alive.
+        console.error("onTerminalReady notify failed", err);
+      });
+    });
 
     return uninstall;
   }, []);
