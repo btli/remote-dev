@@ -52,8 +52,23 @@ dev_dependencies:
   json_serializable: ^6.8.0
   riverpod_generator: ^2.6.3
 
+  # Native splash screen
+  flutter_native_splash: ^2.4.3
+
   # Test helpers
   mocktail: ^1.0.4
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/splash/
+
+flutter_native_splash:
+  color: "#1A1B26"
+  image: assets/splash/splash_icon.png
+  android_12:
+    color: "#1A1B26"
+    image: assets/splash/splash_icon.png
+  fullscreen: true
+  android_gravity: center
+  ios_content_mode: center
