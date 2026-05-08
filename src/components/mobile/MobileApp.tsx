@@ -337,12 +337,18 @@ export function MobileApp({ isGitHubConnected, initialUser }: MobileAppProps) {
     );
   }
 
-  // First run: gated by the localStorage flag, only shown once we know
-  // it's not been seen. `firstRun.isFirstRun === null` means we haven't
-  // yet read storage; show the lock briefly to avoid a welcome flash.
-  if (firstRun.isFirstRun === null) {
-    return <MobileLockScreen message="Loading" detail="Just a second." />;
-  }
+  // First run: gated by the localStorage flag.
+  //
+  // ruh0: `useFirstRun()` is now `useSyncExternalStore`-backed, so it
+  // resolves synchronously at SSR + first client render — no `null`
+  // intermediate state, no lock-screen placeholder. SSR pessimistically
+  // assumes "first-run user" (no localStorage flag), so the server-
+  // rendered HTML is `MobileWelcomeScreen` whose `<p text-[22px]>Welcome
+  // to Remote Dev.</p>` heading is the LCP-eligible element Lighthouse
+  // credits at FCP time (1.1 s) instead of waiting for hydration (~4 s).
+  // Returning users see the welcome briefly before a single layout-
+  // stable post-hydration swap to the tab shell — see `useFirstRun.ts`
+  // for the full trade-off rationale.
   if (firstRun.isFirstRun) {
     return (
       <MobileWelcomeScreen
