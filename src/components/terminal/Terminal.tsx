@@ -1064,6 +1064,25 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
         }
       };
 
+      // Per-terminal focus signal: window/visibilitychange only fire for
+      // coarse browser-level transitions, so they miss clicks between panels
+      // or between terminal tabs in the same window. xterm's textarea is what
+      // receives keyboard input — its focus state is the true per-terminal
+      // signal the server needs to elect a primary client.
+      const xtermTextarea = terminal.textarea;
+      if (xtermTextarea) {
+        const onXtermFocus = () => sendFocusSignal("focus");
+        const onXtermBlur = () => sendFocusSignal("blur");
+        xtermTextarea.addEventListener("focus", onXtermFocus);
+        xtermTextarea.addEventListener("blur", onXtermBlur);
+        terminalDisposablesRef.current.push({
+          dispose: () => {
+            xtermTextarea.removeEventListener("focus", onXtermFocus);
+            xtermTextarea.removeEventListener("blur", onXtermBlur);
+          },
+        });
+      }
+
       // Re-fit when page becomes visible again (returning from background)
       let visibilityTimeout: ReturnType<typeof setTimeout> | null = null;
       const handleVisibilityChange = () => {

@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminal focus signal fires per-pane** (`remote-dev-mbup`). Added native
+  `focus` / `blur` listeners on xterm's input textarea so primary-client
+  election triggers when the user clicks between panels or terminal tabs in
+  an already-focused window — previously only window-level focus and tab
+  visibility changes sent the signal.
 - **Mobile critical path: code-split `MobileViewportSwitch` branches**
   (`remote-dev-gj45`). Both `MobileApp` and `DesktopApp` now load via
   `next/dynamic`, so a mobile viewport never downloads the desktop
