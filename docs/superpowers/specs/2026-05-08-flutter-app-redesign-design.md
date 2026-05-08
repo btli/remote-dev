@@ -168,7 +168,7 @@ Server already owns `push_token` table + `PushNotificationGateway`. We do not ch
    - `getToken()` → `POST /api/push-tokens` with cookie auth, body `{ token, platform, deviceId }`.
    - Subscribes to `onTokenRefresh` and re-registers.
 2. Sign-out: `DELETE /api/push-tokens/<token>` then clear FCM token locally.
-3. Per-server isolation: `deviceId` is stable per device, `token` is per-app-install; the same device may register against multiple servers.
+3. Per-server isolation: `deviceId` is stable per device, `token` is per-app-install; the same device may register against multiple servers. Each Remote Dev server has its own SQLite database, so the global `uniqueIndex("push_token_fcm_token_idx")` in `src/db/schema.ts` is *per-server*, not cross-server — registering the same FCM token with multiple servers stores one row per server, no conflict.
 4. **iOS foreground presentation:** call `setForegroundNotificationPresentationOptions(alert: true, badge: true, sound: true)` during init. iOS 14+ suppresses foreground notifications by default without this.
 5. **`onTokenRefresh` must re-register with all servers.** FCM issues one token per app installation, not per server. When the token rotates, iterate `serverConfigStore.loadAll()` and POST to each saved server's `/api/push-tokens`. The deprecated app only re-registered with the active server — explicit gap to fix.
 
@@ -357,7 +357,7 @@ The existing `MobileViewportSwitch` should short-circuit cleanly when UA contain
 
 - Bundle id `com.remotedev.app` (preserved from old app).
 - TestFlight first; App Store after Phase 5.
-- Universal Links via `apple-app-site-association` served at `/.well-known/apple-app-site-association` on the Remote Dev server.
+- Universal Links via `apple-app-site-association` served at `/.well-known/apple-app-site-association` on **each** Remote Dev server the user adds. Multi-server implication: a user with two servers (work, personal) must have both domains listed in the app's entitlements (`com.apple.developer.associated-domains`). For v1, ship with a fixed allowlist of common domains in entitlements; arbitrary self-hosted servers fall back to the `remotedev://` custom scheme for deep links.
 - Push entitlements + APNs key uploaded to Firebase.
 - Minimum iOS: 15.0 (matches `flutter_inappwebview` 6.x and modern WKWebView cookie APIs).
 
@@ -365,7 +365,7 @@ The existing `MobileViewportSwitch` should short-circuit cleanly when UA contain
 
 - Package `com.remotedev.app`.
 - Play Internal track first; Play Production after Phase 5.
-- App Links via `assetlinks.json` at `/.well-known/assetlinks.json`.
+- App Links via `assetlinks.json` at `/.well-known/assetlinks.json` on each server. Same multi-server caveat as iOS: arbitrary domains can't be added at runtime, so non-allowlisted servers fall back to `remotedev://`.
 - Signing reuses the preserved env-var contract (no fallback to debug keystore for `release`):
   ```
   RDV_ANDROID_KEYSTORE_PATH
