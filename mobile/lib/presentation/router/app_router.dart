@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../screens/server_picker/add_server_screen.dart';
+import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
 
@@ -20,11 +23,37 @@ class AppRouter {
       routes: [
         GoRoute(
           path: '/servers',
-          builder: (_, __) => const _PlaceholderScreen(name: 'Servers'),
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => ServerPickerScreen(
+              onSelect: (server) async {
+                await ref
+                    .read(serverConfigStoreProvider)
+                    .setActive(server.id);
+                ref.invalidate(activeServerProvider);
+                ref.invalidate(serversListProvider);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Active server: ${server.label}'),
+                    ),
+                  );
+                }
+              },
+              onAdd: () => context.go('/servers/add'),
+            ),
+          ),
         ),
         GoRoute(
           path: '/servers/add',
-          builder: (_, __) => const _PlaceholderScreen(name: 'Add server'),
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => AddServerScreen(
+              onSaved: (server) {
+                ref.invalidate(serversListProvider);
+                ref.invalidate(activeServerProvider);
+                context.go('/servers');
+              },
+            ),
+          ),
         ),
         GoRoute(
           path: '/m/session/:id',
