@@ -113,8 +113,15 @@ export function EmbeddedSessionView({
     };
 
     const uninstall = installRdvBridge(adapter);
-    // Fire onTerminalReady after the terminal ref resolves. Mount order
-    // means the ref is populated by this effect's first run.
+    // onPageMounted-style signal — fires after the embed view has mounted
+    // and the bridge is installed. NOTE: xterm.js + WebSocket init happen
+    // asynchronously inside Terminal.tsx, so this event arrives BEFORE the
+    // terminal is actually ready to accept input. Phase 0 ships with this
+    // looser semantics so the bridge round-trip can be validated in
+    // Phase 1.5; Phase 1 native code that drives input should queue
+    // commands until xterm has connected (the spec mandates a
+    // SessionViewController queue gated on a future "terminal-connected"
+    // event).
     queueMicrotask(() => {
       notifyToNative("onTerminalReady", {}).catch((err) => {
         // Native-side errors shouldn't crash the WebView; surface in console

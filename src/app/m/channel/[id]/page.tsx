@@ -15,6 +15,9 @@ export const dynamic = "force-dynamic";
  *   - ChannelProvider — required by EmbeddedChannelView, which calls
  *     useChannelContextOptional() and renders a "Channels unavailable."
  *     empty state when the provider is missing.
+ *   - PeerChatProvider — required by MobileChannelView, which calls
+ *     usePeerChatContext() unconditionally and throws if the provider
+ *     is absent. Without it, the channel route crashes in any browser.
  *
  * AppearanceProvider is NOT mounted: MobileChannelView never calls
  * useTerminalTheme()/useAppearance(), so the channel surface doesn't
@@ -33,6 +36,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 
 import { ChannelProvider } from "@/contexts/ChannelContext";
+import { PeerChatProvider } from "@/contexts/PeerChatContext";
 import { PreferencesProvider } from "@/contexts/PreferencesContext";
 import { ProjectTreeProvider } from "@/contexts/ProjectTreeContext";
 import { EmbeddedChannelView } from "@/components/mobile/embed/EmbeddedChannelView";
@@ -56,7 +60,9 @@ export default async function MobileChannelPage({ params }: PageProps) {
     <PreferencesProvider>
       <ProjectTreeProvider>
         <ChannelProvider>
-          <EmbeddedChannelView />
+          <PeerChatProvider>
+            <EmbeddedChannelView />
+          </PeerChatProvider>
         </ChannelProvider>
       </ProjectTreeProvider>
     </PreferencesProvider>
