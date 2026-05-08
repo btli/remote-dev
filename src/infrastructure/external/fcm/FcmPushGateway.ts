@@ -15,7 +15,12 @@ import type {
 
 const log = createLogger("FcmPushGateway");
 
-/** Must match the channel ID in mobile/android/app/src/main/AndroidManifest.xml */
+/**
+ * Must match the channel ID declared by the Android client. The legacy Flutter
+ * client lived at `mobile/android/app/src/main/AndroidManifest.xml` (now
+ * archived under `archive/mobile-flutter/`); the redesigned mobile client is
+ * expected to keep the same `rdv_notifications` channel ID.
+ */
 const ANDROID_CHANNEL_ID = "rdv_notifications";
 
 export class FcmPushGateway implements PushNotificationGateway {
