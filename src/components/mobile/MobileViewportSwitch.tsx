@@ -55,6 +55,7 @@ const DesktopApp = dynamic(() => import("../desktop/DesktopApp"), {
   ssr: true,
 }) as ComponentType<{
   isGitHubConnected: boolean;
+  initialHasGitHubAccounts: boolean;
   userEmail: string;
   onSignOut: () => void;
 }>;
@@ -71,6 +72,12 @@ const MobileApp = dynamic(
 
 export interface MobileViewportSwitchProps {
   isGitHubConnected: boolean;
+  /**
+   * Whether the user has any linked GitHub account metadata. Threaded
+   * through to the desktop branch where it bootstraps
+   * `GitHubAccountProvider`. Mobile doesn't consume this provider.
+   */
+  initialHasGitHubAccounts: boolean;
   /**
    * Server-resolved UA-based hint: `true` when the request came from a
    * mobile UA. Drives both the SSR branch pick and the client's first
@@ -96,6 +103,7 @@ export interface MobileViewportSwitchProps {
 export function MobileViewportSwitch({
   initialIsMobile,
   isGitHubConnected,
+  initialHasGitHubAccounts,
   initialUser,
   userEmail,
   onSignOut,
@@ -115,6 +123,7 @@ export function MobileViewportSwitch({
   return (
     <DesktopApp
       isGitHubConnected={isGitHubConnected}
+      initialHasGitHubAccounts={initialHasGitHubAccounts}
       userEmail={userEmail}
       onSignOut={onSignOut}
     />
