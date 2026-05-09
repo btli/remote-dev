@@ -39,6 +39,12 @@ class BridgeController {
   /// Equivalent to `window.rdvBridge.scrollToBottom()`.
   void scrollToBottom() => _exec('window.rdvBridge.scrollToBottom()');
 
+  /// Equivalent to `window.rdvBridge.paste(text)`.
+  void paste(String text) => _exec('window.rdvBridge.paste(${_q(text)})');
+
+  /// Equivalent to `window.rdvBridge.setFontSize(px)`.
+  void setFontSize(int px) => _exec('window.rdvBridge.setFontSize($px)');
+
   void _exec(String js) {
     if (_ready) {
       controller.evaluateJavascript(source: js);
