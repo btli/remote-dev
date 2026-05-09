@@ -1,0 +1,10 @@
+{
+  "_comment": "Placeholder. Real google-services.json is gitignored. Run docs/mobile-firebase-setup.md to obtain.",
+  "project_info": {
+    "project_number": "0",
+    "project_id": "remote-dev-mobile-placeholder",
+    "storage_bucket": "remote-dev-mobile-placeholder.appspot.com"
+  },
+  "client": [],
+  "configuration_version": "1"
+}

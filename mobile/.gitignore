@@ -46,3 +46,7 @@ app.*.map.json
 
 # Android signing — never commit real keystore creds (the .example IS committed)
 /android/key.properties
+
+# Firebase config files (one-time manual setup; see docs/mobile-firebase-setup.md)
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist

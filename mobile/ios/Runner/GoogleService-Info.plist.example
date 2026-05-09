@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Placeholder. Real GoogleService-Info.plist is gitignored. Run docs/mobile-firebase-setup.md to obtain. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>API_KEY</key>
+    <string>placeholder</string>
+    <key>GCM_SENDER_ID</key>
+    <string>0</string>
+    <key>BUNDLE_ID</key>
+    <string>com.remotedev.app</string>
+    <key>PROJECT_ID</key>
+    <string>remote-dev-mobile-placeholder</string>
+</dict>
+</plist>
