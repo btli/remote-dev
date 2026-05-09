@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'infrastructure/deep_link/app_link_listener.dart';
 import 'presentation/router/app_router.dart';
+import 'presentation/screens/biometric/biometric_lock_overlay.dart';
 
 final appRouterProvider = Provider<AppRouter>((ref) => AppRouter());
 
@@ -36,6 +37,11 @@ class RemoteDevApp extends ConsumerWidget {
         scaffoldBackgroundColor: const Color(0xFF1A1B26),
       ),
       routerConfig: router.config,
+      // Layer the lock overlay above every route so backgrounding any
+      // screen still re-locks. Using `builder` (not wrapping `MaterialApp`)
+      // ensures Navigator + Overlay sit above MediaQuery & Theme.
+      builder: (context, child) =>
+          BiometricLockOverlay(child: child ?? const SizedBox()),
     );
   }
 }

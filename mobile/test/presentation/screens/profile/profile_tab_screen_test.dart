@@ -27,6 +27,10 @@ Widget _wrap() {
         builder: (_, __) => const Scaffold(body: Text('servers')),
       ),
       GoRoute(
+        path: '/home/profile/biometric',
+        builder: (_, __) => const Scaffold(body: Text('biometric')),
+      ),
+      GoRoute(
         path: '/home/profile/about',
         builder: (_, __) => const Scaffold(body: Text('about')),
       ),
@@ -39,7 +43,7 @@ Widget _wrap() {
 }
 
 void main() {
-  testWidgets('ProfileTabScreen renders title and 5 settings rows',
+  testWidgets('ProfileTabScreen renders title and 6 settings rows',
       (tester) async {
     await tester.pumpWidget(_wrap());
     await tester.pumpAndSettle();
@@ -49,7 +53,19 @@ void main() {
     expect(find.text('GitHub accounts'), findsOneWidget);
     expect(find.text('Appearance'), findsOneWidget);
     expect(find.text('Servers'), findsOneWidget);
+    expect(find.text('Security'), findsOneWidget);
     expect(find.text('About'), findsOneWidget);
+  });
+
+  testWidgets('ProfileTabScreen tapping Security navigates to biometric',
+      (tester) async {
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Security'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('biometric'), findsOneWidget);
   });
 
   testWidgets('ProfileTabScreen tapping Account navigates to /home/profile/account',

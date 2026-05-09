@@ -36,6 +36,11 @@ class ProfileTabScreen extends ConsumerWidget {
             onTap: () => context.go('/home/profile/servers'),
           ),
           _ProfileRow(
+            icon: Icons.lock_outline,
+            label: 'Security',
+            onTap: () => context.go('/home/profile/biometric'),
+          ),
+          _ProfileRow(
             icon: Icons.info_outline,
             label: 'About',
             onTap: () => context.go('/home/profile/about'),
