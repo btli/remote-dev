@@ -9,5 +9,17 @@ void main() {
   // and don't prevent the UI from launching.
   Future<void>.microtask(() => FcmPushService().initialize());
 
-  runApp(const ProviderScope(child: RemoteDevApp()));
+  // Build a ProviderContainer up-front so we can eagerly start the deep-link
+  // listener before runApp. This ensures custom-scheme links delivered during
+  // cold-start are routed correctly.
+  final container = ProviderContainer();
+  // Read for side effect — kicks off AppLinkListener.start().
+  container.read(appLinkListenerProvider);
+
+  runApp(
+    UncontrolledProviderScope(
+      container: container,
+      child: const RemoteDevApp(),
+    ),
+  );
 }
