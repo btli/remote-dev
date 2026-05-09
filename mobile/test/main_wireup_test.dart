@@ -27,7 +27,7 @@ void main() {
       ProviderScope(
         overrides: [
           serverConfigStoreProvider.overrideWithValue(_StubStore()),
-          ...buildServerScopedOverrides(),
+          ...buildServerScopedOverrides(deviceId: 'test-device-id'),
         ],
         child: const RemoteDevApp(),
       ),
