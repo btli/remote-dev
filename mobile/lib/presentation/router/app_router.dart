@@ -10,6 +10,7 @@ import '../screens/profile/account_screen.dart';
 import '../screens/profile/appearance_screen.dart';
 import '../screens/profile/github_accounts_screen.dart';
 import '../screens/profile/servers_screen.dart';
+import '../screens/recording/recording_screen.dart';
 import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/session_view/session_view_screen.dart';
@@ -131,9 +132,9 @@ class AppRouter {
           ),
         ),
         GoRoute(
-          path: '/m/recording/:id',
-          builder: (context, state) => _PlaceholderScreen(
-            name: 'Recording ${state.pathParameters['id']}',
+          path: '/home/recording/:id',
+          builder: (context, state) => RecordingScreen(
+            recordingId: state.pathParameters['id']!,
           ),
         ),
         GoRoute(
