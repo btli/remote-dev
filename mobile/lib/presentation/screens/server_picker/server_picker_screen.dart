@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/server_config.dart';
+import '../../router/app_router.dart' show pushTokenRegistrarProvider;
 import '../webview_host/session_route_host.dart' show serverConfigStoreProvider;
 
 final serversListProvider = FutureProvider<List<ServerConfig>>((ref) async {
@@ -85,6 +86,17 @@ class ServerPickerScreen extends ConsumerWidget {
                   child: const Icon(Icons.delete, color: Colors.white),
                 ),
                 onDismissed: (_) async {
+                  // P3.7: unregister FCM token from this server before
+                  // dropping it. Best-effort — dev builds without
+                  // Firebase config will throw UnimplementedError from
+                  // the default provider, so swallow and continue.
+                  try {
+                    await ref
+                        .read(pushTokenRegistrarProvider)
+                        .unregisterFromServer(server.id);
+                  } catch (e) {
+                    debugPrint('[Push] unregister on delete failed: $e');
+                  }
                   await ref
                       .read(serverConfigStoreProvider)
                       .remove(server.id);
