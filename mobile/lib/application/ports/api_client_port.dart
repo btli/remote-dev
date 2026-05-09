@@ -5,6 +5,9 @@ abstract class ApiClientPort {
   /// POST to a path with optional JSON body.
   Future<dynamic> post(String path, {Map<String, dynamic>? body});
 
+  /// PATCH a path with optional JSON body.
+  Future<dynamic> patch(String path, {Map<String, dynamic>? body});
+
   /// DELETE a path.
   Future<void> delete(String path);
 }
