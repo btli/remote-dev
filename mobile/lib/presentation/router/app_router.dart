@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../infrastructure/push/push_token_registrar.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
+import '../screens/channels/channel_screen.dart';
 import '../screens/profile/about_screen.dart';
 import '../screens/profile/account_screen.dart';
 import '../screens/profile/appearance_screen.dart';
@@ -85,6 +86,12 @@ class AppRouter {
           ),
         ),
         GoRoute(
+          path: '/home/channel/:id',
+          builder: (context, state) => ChannelScreen(
+            channelId: state.pathParameters['id']!,
+          ),
+        ),
+        GoRoute(
           path: '/home/profile/account',
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => const AccountScreen(),
@@ -121,12 +128,6 @@ class AppRouter {
           path: '/m/session/:id',
           builder: (context, state) => SessionRouteHost(
             sessionId: state.pathParameters['id']!,
-          ),
-        ),
-        GoRoute(
-          path: '/m/channel/:id',
-          builder: (context, state) => _PlaceholderScreen(
-            name: 'Channel ${state.pathParameters['id']}',
           ),
         ),
         GoRoute(
