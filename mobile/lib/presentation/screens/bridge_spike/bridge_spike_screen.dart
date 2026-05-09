@@ -62,72 +62,103 @@ class _BridgeSpikeScreenState extends ConsumerState<BridgeSpikeScreen> {
               style: TextStyle(color: Colors.white),
             ),
           ),
-          body: Column(
-            children: [
-              Expanded(
-                child: const WebViewFactory().build(
-                  initialUrl: url,
-                  policy: NavigationPolicy(serverOrigin: origin),
-                  onLinkOpen: (_) {},
-                  onWebViewCreated: (InAppWebViewController controller) {
-                    // Spec §2.2 rule 1: register handlers in onWebViewCreated.
-                    final bridge = BridgeController(controller: controller);
-                    controller.addJavaScriptHandler(
-                      handlerName: 'onTerminalReady',
-                      callback: (_) {
-                        bridge.markReady();
-                        if (mounted) setState(() => _ready = true);
+          // Spec §4 mandate: WebView height is FIXED regardless of the
+          // keyboard inset. We compute it via LayoutBuilder as
+          // (totalHeight - inputRowHeight) and pass it through an
+          // explicit SizedBox — never `Expanded`. When the keyboard
+          // rises, the bottom of the WebView is occluded by the
+          // keyboard (acceptable: the input bar floats above it via
+          // Stack + Positioned), but the WebView's intrinsic height
+          // does NOT change, so xterm.js never sees a resize event,
+          // never fires SIGWINCH, never reflows the terminal grid.
+          body: LayoutBuilder(
+            builder: (context, outerConstraints) {
+              const inputRowHeight = 56.0;
+              final webViewHeight =
+                  outerConstraints.maxHeight - inputRowHeight;
+              return Stack(
+                children: [
+                  // WebView pinned to the top with an explicit height.
+                  SizedBox(
+                    key: const Key('webview-frame'),
+                    height: webViewHeight,
+                    child: const WebViewFactory().build(
+                      initialUrl: url,
+                      policy: NavigationPolicy(serverOrigin: origin),
+                      onLinkOpen: (_) {},
+                      onWebViewCreated: (InAppWebViewController controller) {
+                        // Spec §2.2 rule 1: register handlers in onWebViewCreated.
+                        final bridge = BridgeController(controller: controller);
+                        controller.addJavaScriptHandler(
+                          handlerName: 'onTerminalReady',
+                          callback: (_) {
+                            bridge.markReady();
+                            if (mounted) setState(() => _ready = true);
+                          },
+                        );
+                        setState(() => _bridge = bridge);
                       },
-                    );
-                    setState(() => _bridge = bridge);
-                  },
-                ),
-              ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: EdgeInsets.only(bottom: keyboardInset),
-                  child: Container(
-                    color: const Color(0xFF24283B),
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _ready
-                                ? const Color(0xFF9ECE6A)
-                                : const Color(0xFFE0AF68),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _inputCtrl,
-                            enabled: _ready,
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                              hintText: _ready
-                                  ? 'send to terminal'
-                                  : 'connecting…',
-                              hintStyle: const TextStyle(color: Colors.white54),
-                              border: InputBorder.none,
-                            ),
-                            onSubmitted: (_) => _send(),
-                          ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.send, color: Colors.white),
-                          onPressed: _ready ? _send : null,
-                        ),
-                      ],
                     ),
                   ),
-                ),
-              ),
-            ],
+                  // Input bar floats above the keyboard via Positioned.
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: keyboardInset,
+                    child: SafeArea(
+                      top: false,
+                      bottom: keyboardInset == 0,
+                      child: SizedBox(
+                        height: inputRowHeight,
+                        child: Container(
+                          color: const Color(0xFF24283B),
+                          padding: const EdgeInsets.all(8),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _ready
+                                      ? const Color(0xFF9ECE6A)
+                                      : const Color(0xFFE0AF68),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: TextField(
+                                  controller: _inputCtrl,
+                                  enabled: _ready,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: InputDecoration(
+                                    hintText: _ready
+                                        ? 'send to terminal'
+                                        : 'connecting…',
+                                    hintStyle: const TextStyle(
+                                      color: Colors.white54,
+                                    ),
+                                    border: InputBorder.none,
+                                  ),
+                                  onSubmitted: (_) => _send(),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.send,
+                                  color: Colors.white,
+                                ),
+                                onPressed: _ready ? _send : null,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         );
       },
