@@ -75,10 +75,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Sessions'), findsWidgets);
     expect(find.text('Channels'), findsWidgets);
-    // 'Notifications' appears both as a bottom-nav label and as the
-    // NotificationsTabScreen AppBar title (rendered in the IndexedStack).
+    // 'Notifications' appears in bottom-nav label + AppBar of NotificationsTabScreen.
     expect(find.text('Notifications'), findsWidgets);
-    expect(find.text('Profile'), findsOneWidget);
+    // 'Profile' appears in bottom-nav label + AppBar of ProfileTabScreen.
+    expect(find.text('Profile'), findsWidgets);
   });
 
   testWidgets('initial body is sessions tab (empty state)', (tester) async {
@@ -93,26 +93,27 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Channels').first);
     await tester.pumpAndSettle();
-    // ChannelsTabScreen renders the empty state when no channels.
     expect(find.text('No channels yet'), findsOneWidget);
   });
 
   testWidgets('tap Notifications switches body', (tester) async {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
-    // The bottom-nav label is the only 'Notifications' Text not inside an
-    // AppBar; tapping it activates the tab.
     await tester.tap(find.text('Notifications').first);
     await tester.pumpAndSettle();
-    // Empty state from the live NotificationsTabScreen.
     expect(find.text('No notifications'), findsOneWidget);
   });
 
-  testWidgets('tap Profile switches body', (tester) async {
+  testWidgets('tap Profile switches body to ProfileTabScreen', (tester) async {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Profile'));
+    await tester.tap(find.text('Profile').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Profile — coming in Phase 4'), findsOneWidget);
+    // ProfileTabScreen renders its 5 settings rows.
+    expect(find.text('Account'), findsOneWidget);
+    expect(find.text('GitHub accounts'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Servers'), findsOneWidget);
+    expect(find.text('About'), findsOneWidget);
   });
 }
