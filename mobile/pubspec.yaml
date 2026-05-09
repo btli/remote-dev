@@ -31,6 +31,9 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.3.3
 
+  # Biometric / device credential auth (Phase 5)
+  local_auth: ^2.3.0
+
   # Connectivity awareness (used in Phase 2 error surface; install now)
   connectivity_plus: ^6.0.5
 

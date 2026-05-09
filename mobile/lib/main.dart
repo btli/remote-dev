@@ -8,9 +8,13 @@ import 'infrastructure/api/notifications_api.dart';
 import 'infrastructure/api/project_tree_api.dart';
 import 'infrastructure/api/remote_dev_client.dart';
 import 'infrastructure/api/sessions_api.dart';
+import 'infrastructure/biometric/biometric_settings_store.dart';
+import 'infrastructure/biometric/local_auth_service.dart';
 import 'infrastructure/push/fcm_push_service.dart';
 import 'infrastructure/push/push_token_registrar.dart';
 import 'presentation/router/app_router.dart' show pushTokenRegistrarProvider;
+import 'presentation/screens/biometric/biometric_lock_overlay.dart'
+    show biometricPortProvider, biometricSettingsStoreProvider;
 import 'presentation/screens/channels/channels_tab_screen.dart'
     show channelsApiProvider;
 import 'presentation/screens/notifications/notifications_tab_screen.dart'
@@ -86,6 +90,10 @@ List<Override> buildServerScopedOverrides() {
         // rotations and reinstalls.
         deviceId: 'placeholder-device-id',
       ),
+    ),
+    biometricPortProvider.overrideWithValue(LocalAuthService()),
+    biometricSettingsStoreProvider.overrideWith(
+      (ref) => BiometricSettingsStore(ref.watch(secureStorageProvider)),
     ),
   ];
 }

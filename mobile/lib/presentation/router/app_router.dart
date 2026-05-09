@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../infrastructure/push/push_token_registrar.dart';
+import '../screens/biometric/biometric_settings_screen.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
 import '../screens/channels/channel_screen.dart';
 import '../screens/profile/about_screen.dart';
@@ -113,6 +114,12 @@ class AppRouter {
           path: '/home/profile/servers',
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => const ServersScreen(),
+          ),
+        ),
+        GoRoute(
+          path: '/home/profile/biometric',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const BiometricSettingsScreen(),
           ),
         ),
         GoRoute(
