@@ -5,7 +5,7 @@ void main() {
   test('AppRoute.toPath maps each variant to the right path', () {
     expect(const AppRoute.serverPicker().toPath(), '/servers');
     expect(const AppRoute.addServer().toPath(), '/servers/add');
-    expect(const AppRoute.session('abc').toPath(), '/m/session/abc');
+    expect(const AppRoute.session('abc').toPath(), '/home/session/abc');
     expect(const AppRoute.channel('xyz').toPath(), '/m/channel/xyz');
     expect(const AppRoute.recording('123').toPath(), '/m/recording/123');
     expect(const AppRoute.notifications().toPath(), '/notifications');
