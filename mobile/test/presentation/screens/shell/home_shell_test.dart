@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_dev/domain/channel.dart';
 import 'package:remote_dev/domain/notification.dart';
 import 'package:remote_dev/domain/session_summary.dart';
+import 'package:remote_dev/infrastructure/api/channels_api.dart';
 import 'package:remote_dev/infrastructure/api/notifications_api.dart';
 import 'package:remote_dev/infrastructure/api/sessions_api.dart';
+import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/notifications/notifications_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/sessions/sessions_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/shell/home_shell.dart';
@@ -37,13 +40,32 @@ class _FakeNotificationsApi extends Fake implements NotificationsApi {
   Future<void> markAllRead() async {}
 }
 
+class _FakeChannelsApi extends Fake implements ChannelsApi {
+  _FakeChannelsApi(this._channels);
+  final List<Channel> _channels;
+
+  @override
+  Future<List<Channel>> list() async => _channels;
+
+  @override
+  Future<void> archive(String id) async {}
+}
+
 void main() {
-  Widget wrap(Widget child, {List<SessionSummary>? sessions}) => ProviderScope(
+  Widget wrap(
+    Widget child, {
+    List<SessionSummary>? sessions,
+    List<Channel>? channels,
+  }) =>
+      ProviderScope(
         overrides: [
           sessionsApiProvider.overrideWithValue(
             _FakeSessionsApi(sessions ?? const []),
           ),
           notificationsApiProvider.overrideWithValue(_FakeNotificationsApi()),
+          channelsApiProvider.overrideWithValue(
+            _FakeChannelsApi(channels ?? const []),
+          ),
         ],
         child: MaterialApp(home: child),
       );
@@ -52,8 +74,8 @@ void main() {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
     expect(find.text('Sessions'), findsWidgets);
-    expect(find.text('Channels'), findsOneWidget);
-    // 'Notifications' now appears both as a bottom-nav label and as the
+    expect(find.text('Channels'), findsWidgets);
+    // 'Notifications' appears both as a bottom-nav label and as the
     // NotificationsTabScreen AppBar title (rendered in the IndexedStack).
     expect(find.text('Notifications'), findsWidgets);
     expect(find.text('Profile'), findsOneWidget);
@@ -65,12 +87,14 @@ void main() {
     expect(find.text('No sessions yet'), findsOneWidget);
   });
 
-  testWidgets('tap Channels switches body', (tester) async {
+  testWidgets('tap Channels switches body to ChannelsTabScreen',
+      (tester) async {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Channels'));
+    await tester.tap(find.text('Channels').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Channels — coming in Phase 4'), findsOneWidget);
+    // ChannelsTabScreen renders the empty state when no channels.
+    expect(find.text('No channels yet'), findsOneWidget);
   });
 
   testWidgets('tap Notifications switches body', (tester) async {
