@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../sessions/sessions_tab_screen.dart';
 import 'adaptive_bottom_bar.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
@@ -22,7 +23,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         child: IndexedStack(
           index: _active.index,
           children: const [
-            _SessionsPlaceholder(),
+            SessionsTabScreen(),
             _ComingSoon(name: 'Channels'),
             _ComingSoon(name: 'Notifications'),
             _ComingSoon(name: 'Profile'),
@@ -32,20 +33,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       bottomNavigationBar: AdaptiveBottomBar(
         activeTab: _active,
         onTabSelected: (tab) => setState(() => _active = tab),
-      ),
-    );
-  }
-}
-
-class _SessionsPlaceholder extends StatelessWidget {
-  const _SessionsPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        'Sessions tab — P2.2 wires the real list',
-        style: TextStyle(color: Colors.white70),
       ),
     );
   }

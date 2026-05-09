@@ -27,4 +27,15 @@ class RemoteDevClient implements ApiClientPort {
     final response = await _dio.get<dynamic>(path);
     return response.data;
   }
+
+  @override
+  Future<dynamic> post(String path, {Map<String, dynamic>? body}) async {
+    final response = await _dio.post<dynamic>(path, data: body);
+    return response.data;
+  }
+
+  @override
+  Future<void> delete(String path) async {
+    await _dio.delete<dynamic>(path);
+  }
 }
