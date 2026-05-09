@@ -1,4 +1,32 @@
-name: Mobile Release (Android)
+# Mobile Release workflow
+#
+# Builds signed Android App Bundle (.aab) and signed iOS IPA (.ipa) on push of
+# a `mobile-v*` tag (or via manual workflow_dispatch).
+#
+# Required GitHub repository secrets:
+#
+#   Android:
+#     RDV_ANDROID_KEYSTORE_BASE64   - base64-encoded JKS keystore
+#     RDV_ANDROID_KEYSTORE_PASSWORD - keystore password
+#     RDV_ANDROID_KEY_ALIAS         - signing key alias
+#     RDV_ANDROID_KEY_PASSWORD      - signing key password
+#
+#   iOS:
+#     APPLE_CERT_BASE64                  - base64-encoded .p12 distribution cert
+#     APPLE_CERT_PASSWORD                - .p12 export password
+#     APPLE_PROVISIONING_PROFILE_BASE64  - base64-encoded .mobileprovision
+#     KEYCHAIN_PASSWORD                  - any string for the temporary build keychain
+#
+#   iOS (future, for TestFlight upload):
+#     APP_STORE_CONNECT_API_KEY_ID
+#     APP_STORE_CONNECT_ISSUER_ID
+#     APP_STORE_CONNECT_API_KEY
+#
+# NOTE: The iOS job will fail until `mobile/ios/ExportOptions.plist` has the
+# real `TEAMID` and provisioning profile name filled in by the team owner,
+# and the Apple Developer account / signing assets are configured.
+
+name: Mobile Release
 
 on:
   push:
@@ -51,4 +79,68 @@ jobs:
         with:
           name: remote-dev-${{ github.ref_name }}.aab
           path: mobile/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+  ios-ipa:
+    name: Build signed iOS IPA
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            mobile/.dart_tool
+          key: pub-${{ runner.os }}-${{ hashFiles('mobile/pubspec.lock') }}
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            mobile/ios/Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('mobile/ios/Podfile.lock') }}
+
+      - name: Install Apple certificate + provisioning profile
+        env:
+          APPLE_CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$APPLE_CERT_BASE64" | base64 --decode > /tmp/cert.p12
+          echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > /tmp/profile.mobileprovision
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: Pub get
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Build IPA
+        working-directory: mobile
+        run: flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+        env:
+          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-dev-${{ github.ref_name }}.ipa
+          path: mobile/build/ios/ipa/*.ipa
           if-no-files-found: error
