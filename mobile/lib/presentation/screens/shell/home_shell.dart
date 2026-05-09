@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../channels/channels_tab_screen.dart';
 import '../sessions/sessions_tab_screen.dart';
 import 'adaptive_bottom_bar.dart';
 
@@ -24,7 +25,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           index: _active.index,
           children: const [
             SessionsTabScreen(),
-            _ComingSoon(name: 'Channels'),
+            ChannelsTabScreen(),
             _ComingSoon(name: 'Notifications'),
             _ComingSoon(name: 'Profile'),
           ],
