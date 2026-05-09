@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../infrastructure/push/push_token_registrar.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
 import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
@@ -10,6 +11,18 @@ import '../screens/shell/home_shell.dart';
 import '../screens/webview_host/reauth_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
+
+/// FCM token registrar wired against the app's PushPort + ServerConfigStore +
+/// API client factory. Default impl throws — `main.dart` overrides this in the
+/// `ProviderScope` after Firebase is initialized (matching the
+/// `sessionsApiProvider` pattern). The server picker reads it best-effort so
+/// dev builds without Firebase config still allow server deletion.
+final pushTokenRegistrarProvider = Provider<PushTokenRegistrar>((ref) {
+  throw UnimplementedError(
+    'pushTokenRegistrarProvider must be overridden in main.dart with '
+    'FcmPushService + clientFactory wiring',
+  );
+});
 
 class AppRouter {
   AppRouter() : _config = _buildRouter();
