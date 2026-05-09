@@ -36,7 +36,9 @@ void main() {
     expect(find.text('Sessions'), findsWidgets);
     expect(find.text('Channels'), findsOneWidget);
     expect(find.text('Notifications'), findsOneWidget);
-    expect(find.text('Profile'), findsOneWidget);
+    // 'Profile' appears in the bottom bar AND in the ProfileTabScreen's
+    // AppBar (since IndexedStack keeps all children in the tree).
+    expect(find.text('Profile'), findsWidgets);
   });
 
   testWidgets('initial body is sessions tab (empty state)', (tester) async {
@@ -64,11 +66,16 @@ void main() {
     );
   });
 
-  testWidgets('tap Profile switches body', (tester) async {
+  testWidgets('tap Profile switches body to ProfileTabScreen', (tester) async {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Profile — coming in Phase 4'), findsOneWidget);
+    // ProfileTabScreen renders its 5 settings rows.
+    expect(find.text('Account'), findsOneWidget);
+    expect(find.text('GitHub accounts'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Servers'), findsOneWidget);
+    expect(find.text('About'), findsOneWidget);
   });
 }
