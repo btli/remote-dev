@@ -8,9 +8,15 @@ import 'infrastructure/api/notifications_api.dart';
 import 'infrastructure/api/project_tree_api.dart';
 import 'infrastructure/api/remote_dev_client.dart';
 import 'infrastructure/api/sessions_api.dart';
+import 'infrastructure/biometric/biometric_settings_store.dart';
+import 'infrastructure/biometric/local_auth_service.dart';
+import 'infrastructure/device/device_id_provider.dart';
 import 'infrastructure/push/fcm_push_service.dart';
 import 'infrastructure/push/push_token_registrar.dart';
+import 'infrastructure/storage/flutter_secure_storage_port.dart';
 import 'presentation/router/app_router.dart' show pushTokenRegistrarProvider;
+import 'presentation/screens/biometric/biometric_lock_overlay.dart'
+    show biometricPortProvider, biometricSettingsStoreProvider;
 import 'presentation/screens/channels/channels_tab_screen.dart'
     show channelsApiProvider;
 import 'presentation/screens/notifications/notifications_tab_screen.dart'
@@ -57,8 +63,12 @@ final _apiClientProvider = Provider<ApiClientPort>((ref) {
 
 /// Overrides for the deferred `*ApiProvider`s and `pushTokenRegistrarProvider`.
 ///
+/// [deviceId] is resolved at app boot via [DeviceIdProvider] so the synchronous
+/// [pushTokenRegistrarProvider] can be wired without converting it to a
+/// FutureProvider. Tests can pass a stable string here.
+///
 /// Exposed so tests can apply the same wiring without duplicating the list.
-List<Override> buildServerScopedOverrides() {
+List<Override> buildServerScopedOverrides({required String deviceId}) {
   return <Override>[
     sessionsApiProvider.overrideWith(
       (ref) => SessionsApi(ref.watch(_apiClientProvider)),
@@ -81,16 +91,25 @@ List<Override> buildServerScopedOverrides() {
           serverId: server.id,
           storage: ref.read(secureStorageProvider),
         ),
-        // TODO(P5): replace with a stable per-device UUID persisted in
-        // secure storage so the server can dedupe devices across token
-        // rotations and reinstalls.
-        deviceId: 'placeholder-device-id',
+        deviceId: deviceId,
       ),
+    ),
+    biometricPortProvider.overrideWithValue(LocalAuthService()),
+    biometricSettingsStoreProvider.overrideWith(
+      (ref) => BiometricSettingsStore(ref.watch(secureStorageProvider)),
     ),
   ];
 }
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Resolve the stable per-device UUID before runApp so the synchronous
+  // pushTokenRegistrarProvider override can read it without going async.
+  // First-call generates + persists; subsequent runs return the cached value.
+  final storage = FlutterSecureStoragePort();
+  final deviceId = await DeviceIdProvider(storage).get();
+
   // Non-blocking push init — runs in the background; failures are logged
   // and don't prevent the UI from launching.
   Future<void>.microtask(() => FcmPushService().initialize());
@@ -99,7 +118,7 @@ void main() {
   // listener before runApp. This ensures custom-scheme links delivered during
   // cold-start are routed correctly.
   final container = ProviderContainer(
-    overrides: buildServerScopedOverrides(),
+    overrides: buildServerScopedOverrides(deviceId: deviceId),
   );
   // Read for side effect — kicks off AppLinkListener.start().
   container.read(appLinkListenerProvider);

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ExportOptions.plist - PLACEHOLDER
+
+  This file is consumed by `flutter build ipa --export-options-plist=...` in the
+  GitHub Actions `ios-ipa` job (see .github/workflows/mobile-release.yml).
+
+  Before the first iOS CI run will succeed, the team owner MUST replace:
+    - `TEAMID` with the Apple Developer Team ID (10-char alphanumeric)
+    - The provisioning profile name ("Remote Dev App Store") with the actual
+      profile name uploaded to Apple Developer Portal.
+    - The bundle identifier ("com.remotedev.app") with the production bundle ID
+      if it differs.
+
+  Also required (configured as GitHub secrets):
+    - APPLE_CERT_BASE64                  (.p12 distribution cert, base64-encoded)
+    - APPLE_CERT_PASSWORD                (.p12 export password)
+    - APPLE_PROVISIONING_PROFILE_BASE64  (.mobileprovision, base64-encoded)
+    - KEYCHAIN_PASSWORD                  (any string for the build keychain)
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>app-store-connect</string>
+    <key>teamID</key>
+    <string>TEAMID</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>com.remotedev.app</key>
+        <string>Remote Dev App Store</string>
+    </dict>
+</dict>
+</plist>

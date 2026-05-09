@@ -17,7 +17,7 @@ sealed class AppRoute {
         HomeRoute() => '/home',
         SessionRoute(:final id) => '/home/session/$id',
         ChannelRoute(:final id) => '/home/channel/$id',
-        RecordingRoute(:final id) => '/m/recording/$id',
+        RecordingRoute(:final id) => '/home/recording/$id',
         NotificationsRoute() => '/notifications',
         ReauthRoute() => '/reauth',
         BridgeSpikeRoute() => '/spike',

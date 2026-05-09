@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../domain/server_config.dart';
 import '../../infrastructure/push/push_token_registrar.dart';
+import '../screens/biometric/biometric_settings_screen.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
 import '../screens/channels/channel_screen.dart';
 import '../screens/profile/about_screen.dart';
@@ -10,7 +12,9 @@ import '../screens/profile/account_screen.dart';
 import '../screens/profile/appearance_screen.dart';
 import '../screens/profile/github_accounts_screen.dart';
 import '../screens/profile/servers_screen.dart';
+import '../screens/recording/recording_screen.dart';
 import '../screens/server_picker/add_server_screen.dart';
+import '../screens/server_picker/edit_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/session_view/session_view_screen.dart';
 import '../screens/shell/home_shell.dart';
@@ -59,6 +63,10 @@ class AppRouter {
                 }
               },
               onAdd: () => context.go('/servers/add'),
+              onEdit: (server) => context.push(
+                '/servers/edit',
+                extra: server,
+              ),
               onTestBridge: () => context.go('/spike'),
             ),
           ),
@@ -74,6 +82,32 @@ class AppRouter {
               },
             ),
           ),
+        ),
+        GoRoute(
+          path: '/servers/edit',
+          builder: (context, state) {
+            final server = state.extra;
+            if (server is! ServerConfig) {
+              // Direct deep-link without state — bounce back to the picker.
+              return _EditMissingExtraScreen(
+                onBack: () => context.go('/servers'),
+              );
+            }
+            return Consumer(
+              builder: (context, ref, _) => EditServerScreen(
+                initial: server,
+                onSaved: (_) {
+                  ref.invalidate(serversListProvider);
+                  ref.invalidate(activeServerProvider);
+                  if (context.canPop()) {
+                    context.pop();
+                  } else {
+                    context.go('/servers');
+                  }
+                },
+              ),
+            );
+          },
         ),
         GoRoute(
           path: '/home',
@@ -116,6 +150,12 @@ class AppRouter {
           ),
         ),
         GoRoute(
+          path: '/home/profile/biometric',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const BiometricSettingsScreen(),
+          ),
+        ),
+        GoRoute(
           path: '/home/profile/about',
           builder: (context, state) => Consumer(
             builder: (context, ref, _) => const AboutScreen(),
@@ -131,9 +171,9 @@ class AppRouter {
           ),
         ),
         GoRoute(
-          path: '/m/recording/:id',
-          builder: (context, state) => _PlaceholderScreen(
-            name: 'Recording ${state.pathParameters['id']}',
+          path: '/home/recording/:id',
+          builder: (context, state) => RecordingScreen(
+            recordingId: state.pathParameters['id']!,
           ),
         ),
         GoRoute(
@@ -170,6 +210,45 @@ class _PlaceholderScreen extends StatelessWidget {
         child: Text(
           name,
           style: const TextStyle(color: Colors.white, fontSize: 18),
+        ),
+      ),
+    );
+  }
+}
+
+class _EditMissingExtraScreen extends StatelessWidget {
+  const _EditMissingExtraScreen({required this.onBack});
+
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1A1B26),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1A1B26),
+        title: const Text(
+          'Edit server',
+          style: TextStyle(color: Colors.white),
+        ),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                'No server selected.',
+                style: TextStyle(color: Colors.white, fontSize: 16),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: onBack,
+                child: const Text('Back to servers'),
+              ),
+            ],
+          ),
         ),
       ),
     );
