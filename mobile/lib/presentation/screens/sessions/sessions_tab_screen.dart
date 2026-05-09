@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../domain/session_summary.dart';
 import '../../../infrastructure/api/sessions_api.dart';
+import 'new_session_sheet.dart';
 
 /// Provider for the sessions API. Must be overridden in main.dart / app.dart
 /// once a [RemoteDevClient] is wired for the active server.
@@ -100,8 +101,13 @@ class _SessionsTabScreenState extends ConsumerState<SessionsTabScreen> {
     );
   }
 
-  void _onNew() {
-    _showSnack('New session sheet — P2.4 wires this');
+  Future<void> _onNew() async {
+    final created = await showNewSessionSheet(context);
+    if (created != null && mounted) {
+      // Refresh the list and navigate to the session view.
+      ref.invalidate(sessionsListProvider);
+      context.go('/home/session/${created.id}');
+    }
   }
 
   void _onTapSession(SessionSummary session) {

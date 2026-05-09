@@ -28,6 +28,33 @@ class SessionsApi implements SessionsPort {
     await _client.delete('/api/sessions/$id');
   }
 
+  @override
+  Future<SessionSummary> create({
+    required String name,
+    required String terminalType,
+    String? projectId,
+    String? initialCommand,
+  }) async {
+    final raw = await _client.post(
+      '/api/sessions',
+      body: {
+        'name': name,
+        'terminalType': terminalType,
+        if (projectId != null) 'projectId': projectId,
+        if (initialCommand != null && initialCommand.isNotEmpty)
+          'initialCommand': initialCommand,
+      },
+    );
+    // Server returns either {session: {...}} wrapped or the raw object.
+    if (raw is Map<String, dynamic>) {
+      final candidate = raw['session'] is Map<String, dynamic>
+          ? raw['session'] as Map<String, dynamic>
+          : raw;
+      return SessionSummary.fromJson(candidate);
+    }
+    throw StateError('Unexpected create-session response: $raw');
+  }
+
   /// Server returns either `{ sessions: [...] }` (current shape) or a bare
   /// array. Accept both for resilience.
   List<Map<String, dynamic>> _extractSessions(dynamic raw) {

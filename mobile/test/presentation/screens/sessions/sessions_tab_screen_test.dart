@@ -144,19 +144,20 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
   });
 
-  testWidgets('appbar + button shows snackbar placeholder', (tester) async {
+  testWidgets('appbar + button opens NewSessionSheet', (tester) async {
     when(() => api.list()).thenAnswer((_) async => <SessionSummary>[]);
 
     await tester.pumpWidget(_wrap(api: api));
     await tester.pumpAndSettle();
 
+    // Before tapping the sheet is not in the tree.
+    expect(find.text('Create'), findsNothing);
+
     // Tap the AppBar add icon (not the empty-state button).
     await tester.tap(find.byIcon(Icons.add).first);
-    await tester.pump();
-    expect(
-      find.text('New session sheet — P2.4 wires this'),
-      findsOneWidget,
-    );
+    await tester.pumpAndSettle();
+    // The sheet renders its Create button.
+    expect(find.text('Create'), findsOneWidget);
   });
 
   testWidgets('pull-to-refresh refetches sessions', (tester) async {
