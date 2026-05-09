@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../channels/channels_tab_screen.dart';
+import '../notifications/notifications_tab_screen.dart';
+import '../profile/profile_tab_screen.dart';
 import '../sessions/sessions_tab_screen.dart';
 import 'adaptive_bottom_bar.dart';
 
@@ -24,34 +27,15 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           index: _active.index,
           children: const [
             SessionsTabScreen(),
-            _ComingSoon(name: 'Channels'),
-            _ComingSoon(name: 'Notifications'),
-            _ComingSoon(name: 'Profile'),
+            ChannelsTabScreen(),
+            NotificationsTabScreen(),
+            ProfileTabScreen(),
           ],
         ),
       ),
       bottomNavigationBar: AdaptiveBottomBar(
         activeTab: _active,
         onTabSelected: (tab) => setState(() => _active = tab),
-      ),
-    );
-  }
-}
-
-class _ComingSoon extends StatelessWidget {
-  const _ComingSoon({required this.name});
-  final String name;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Text(
-          '$name — coming in Phase 4',
-          style: const TextStyle(color: Colors.white54),
-          textAlign: TextAlign.center,
-        ),
       ),
     );
   }

@@ -4,6 +4,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../infrastructure/push/push_token_registrar.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
+import '../screens/channels/channel_screen.dart';
+import '../screens/profile/about_screen.dart';
+import '../screens/profile/account_screen.dart';
+import '../screens/profile/appearance_screen.dart';
+import '../screens/profile/github_accounts_screen.dart';
+import '../screens/profile/servers_screen.dart';
 import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/session_view/session_view_screen.dart';
@@ -79,6 +85,42 @@ class AppRouter {
             sessionId: state.pathParameters['id']!,
           ),
         ),
+        GoRoute(
+          path: '/home/channel/:id',
+          builder: (context, state) => ChannelScreen(
+            channelId: state.pathParameters['id']!,
+          ),
+        ),
+        GoRoute(
+          path: '/home/profile/account',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const AccountScreen(),
+          ),
+        ),
+        GoRoute(
+          path: '/home/profile/github',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const GitHubAccountsScreen(),
+          ),
+        ),
+        GoRoute(
+          path: '/home/profile/appearance',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const AppearanceScreen(),
+          ),
+        ),
+        GoRoute(
+          path: '/home/profile/servers',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const ServersScreen(),
+          ),
+        ),
+        GoRoute(
+          path: '/home/profile/about',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const AboutScreen(),
+          ),
+        ),
         // Legacy WebView-host route, kept for the embedded WebView's own
         // navigation (xterm.js page lives at /m/session/<id> on the
         // server). Direct in-app navigation goes via /home/session/<id>.
@@ -86,12 +128,6 @@ class AppRouter {
           path: '/m/session/:id',
           builder: (context, state) => SessionRouteHost(
             sessionId: state.pathParameters['id']!,
-          ),
-        ),
-        GoRoute(
-          path: '/m/channel/:id',
-          builder: (context, state) => _PlaceholderScreen(
-            name: 'Channel ${state.pathParameters['id']}',
           ),
         ),
         GoRoute(

@@ -45,6 +45,12 @@ class BridgeController {
   /// Equivalent to `window.rdvBridge.setFontSize(px)`.
   void setFontSize(int px) => _exec('window.rdvBridge.setFontSize($px)');
 
+  /// Equivalent to `window.rdvBridge.back()`. Used by native back affordances
+  /// (e.g. ChannelScreen AppBar leading icon) to give the embedded PWA a
+  /// chance to consume the gesture (close an open thread, dismiss a modal,
+  /// etc.) before native pops the route.
+  void back() => _exec('window.rdvBridge.back()');
+
   void _exec(String js) {
     if (_ready) {
       controller.evaluateJavascript(source: js);

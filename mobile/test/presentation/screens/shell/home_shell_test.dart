@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_dev/domain/channel.dart';
+import 'package:remote_dev/domain/notification.dart';
 import 'package:remote_dev/domain/session_summary.dart';
+import 'package:remote_dev/infrastructure/api/channels_api.dart';
+import 'package:remote_dev/infrastructure/api/notifications_api.dart';
 import 'package:remote_dev/infrastructure/api/sessions_api.dart';
+import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
+import 'package:remote_dev/presentation/screens/notifications/notifications_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/sessions/sessions_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/shell/home_shell.dart';
 
@@ -20,11 +26,45 @@ class _FakeSessionsApi extends Fake implements SessionsApi {
   Future<void> close(String id) async {}
 }
 
+class _FakeNotificationsApi extends Fake implements NotificationsApi {
+  @override
+  Future<List<AppNotification>> list({String? filter}) async => const [];
+
+  @override
+  Future<void> markRead(List<String> ids) async {}
+
+  @override
+  Future<void> dismiss(String id) async {}
+
+  @override
+  Future<void> markAllRead() async {}
+}
+
+class _FakeChannelsApi extends Fake implements ChannelsApi {
+  _FakeChannelsApi(this._channels);
+  final List<Channel> _channels;
+
+  @override
+  Future<List<Channel>> list() async => _channels;
+
+  @override
+  Future<void> archive(String id) async {}
+}
+
 void main() {
-  Widget wrap(Widget child, {List<SessionSummary>? sessions}) => ProviderScope(
+  Widget wrap(
+    Widget child, {
+    List<SessionSummary>? sessions,
+    List<Channel>? channels,
+  }) =>
+      ProviderScope(
         overrides: [
           sessionsApiProvider.overrideWithValue(
             _FakeSessionsApi(sessions ?? const []),
+          ),
+          notificationsApiProvider.overrideWithValue(_FakeNotificationsApi()),
+          channelsApiProvider.overrideWithValue(
+            _FakeChannelsApi(channels ?? const []),
           ),
         ],
         child: MaterialApp(home: child),
@@ -34,9 +74,11 @@ void main() {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
     expect(find.text('Sessions'), findsWidgets);
-    expect(find.text('Channels'), findsOneWidget);
-    expect(find.text('Notifications'), findsOneWidget);
-    expect(find.text('Profile'), findsOneWidget);
+    expect(find.text('Channels'), findsWidgets);
+    // 'Notifications' appears in bottom-nav label + AppBar of NotificationsTabScreen.
+    expect(find.text('Notifications'), findsWidgets);
+    // 'Profile' appears in bottom-nav label + AppBar of ProfileTabScreen.
+    expect(find.text('Profile'), findsWidgets);
   });
 
   testWidgets('initial body is sessions tab (empty state)', (tester) async {
@@ -45,30 +87,33 @@ void main() {
     expect(find.text('No sessions yet'), findsOneWidget);
   });
 
-  testWidgets('tap Channels switches body', (tester) async {
+  testWidgets('tap Channels switches body to ChannelsTabScreen',
+      (tester) async {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Channels'));
+    await tester.tap(find.text('Channels').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Channels — coming in Phase 4'), findsOneWidget);
+    expect(find.text('No channels yet'), findsOneWidget);
   });
 
   testWidgets('tap Notifications switches body', (tester) async {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Notifications'));
+    await tester.tap(find.text('Notifications').first);
     await tester.pumpAndSettle();
-    expect(
-      find.textContaining('Notifications — coming in Phase 4'),
-      findsOneWidget,
-    );
+    expect(find.text('No notifications'), findsOneWidget);
   });
 
-  testWidgets('tap Profile switches body', (tester) async {
+  testWidgets('tap Profile switches body to ProfileTabScreen', (tester) async {
     await tester.pumpWidget(wrap(const HomeShell()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Profile'));
+    await tester.tap(find.text('Profile').first);
     await tester.pumpAndSettle();
-    expect(find.textContaining('Profile — coming in Phase 4'), findsOneWidget);
+    // ProfileTabScreen renders its 5 settings rows.
+    expect(find.text('Account'), findsOneWidget);
+    expect(find.text('GitHub accounts'), findsOneWidget);
+    expect(find.text('Appearance'), findsOneWidget);
+    expect(find.text('Servers'), findsOneWidget);
+    expect(find.text('About'), findsOneWidget);
   });
 }

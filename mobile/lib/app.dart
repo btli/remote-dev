@@ -1,9 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'infrastructure/deep_link/app_link_listener.dart';
 import 'presentation/router/app_router.dart';
 
 final appRouterProvider = Provider<AppRouter>((ref) => AppRouter());
+
+/// Boots the [AppLinkListener] eagerly on first read. Read once at startup
+/// (e.g. from `main()` via a `ProviderContainer`) so that custom-scheme deep
+/// links are picked up from cold-start onward.
+final appLinkListenerProvider = Provider<AppLinkListener>((ref) {
+  final router = ref.read(appRouterProvider);
+  final listener = AppLinkListener(router: router);
+  unawaited(listener.start());
+  ref.onDispose(() {
+    unawaited(listener.stop());
+  });
+  return listener;
+});
 
 class RemoteDevApp extends ConsumerWidget {
   const RemoteDevApp({super.key});
