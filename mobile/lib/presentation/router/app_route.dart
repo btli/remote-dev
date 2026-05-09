@@ -16,7 +16,7 @@ sealed class AppRoute {
         AddServerRoute() => '/servers/add',
         HomeRoute() => '/home',
         SessionRoute(:final id) => '/home/session/$id',
-        ChannelRoute(:final id) => '/m/channel/$id',
+        ChannelRoute(:final id) => '/home/channel/$id',
         RecordingRoute(:final id) => '/m/recording/$id',
         NotificationsRoute() => '/notifications',
         ReauthRoute() => '/reauth',

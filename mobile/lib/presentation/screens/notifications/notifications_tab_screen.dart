@@ -106,7 +106,7 @@ class _NotificationsTabScreenState
     if (notif.sessionId != null && notif.sessionId!.isNotEmpty) {
       context.go('/home/session/${notif.sessionId}');
     } else if (notif.channelId != null && notif.channelId!.isNotEmpty) {
-      context.go('/m/channel/${notif.channelId}');
+      context.go('/home/channel/${notif.channelId}');
     }
     // Otherwise remain on the tab.
   }
