@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../screens/bridge_spike/bridge_spike_screen.dart';
 import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
+import '../screens/shell/home_shell.dart';
 import '../screens/webview_host/reauth_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
 import 'app_route.dart';
@@ -34,11 +35,7 @@ class AppRouter {
                 ref.invalidate(activeServerProvider);
                 ref.invalidate(serversListProvider);
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Active server: ${server.label}'),
-                    ),
-                  );
+                  context.go('/home');
                 }
               },
               onAdd: () => context.go('/servers/add'),
@@ -57,6 +54,10 @@ class AppRouter {
               },
             ),
           ),
+        ),
+        GoRoute(
+          path: '/home',
+          builder: (context, state) => const HomeShell(),
         ),
         GoRoute(
           path: '/m/session/:id',
