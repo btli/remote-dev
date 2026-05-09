@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-05-09
+
+### Added
+
+- **New Flutter mobile app** (`mobile/`) — hybrid native + WebView shell that
+  replaces the deprecated `archive/mobile-flutter/`. Native widgets handle the
+  tab bar, server picker, biometric lock, smart-keys / native input bar, deep
+  links, and notification taps; WebView hosts the terminal canvas, channel
+  view, and recording playback against the existing `/m/*` PWA routes.
+  Multi-server (Cloudflare Access) login, FCM push with multi-server token
+  fan-out, three-state ModifierLatch smart keys, pinch-to-zoom, biometric lock
+  via `local_auth`, and `remotedev://` + `https://<server>/m/*` deep-link
+  routing all ship in this release. Bundle id `com.remotedev.app` preserved
+  from the deprecated app. Phase 0 PWA-side embed routes (`/m/session/<id>`,
+  `/m/channel/<id>`, `/m/recording/<id>`) added in `src/components/mobile/embed/`.
+  Tag-driven release workflow at `.github/workflows/mobile-release.yml` builds
+  signed Android App Bundle + iOS IPA on `mobile-v*` tags. Spec at
+  `docs/superpowers/specs/2026-05-08-flutter-app-redesign-design.md`; phase
+  plans under `docs/superpowers/plans/2026-05-08-flutter-app-phase-*.md`.
+
 ### Removed
 
 - Archived the Flutter mobile app to `archive/mobile-flutter/` pending mobile
