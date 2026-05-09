@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../screens/bridge_spike/bridge_spike_screen.dart';
 import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/webview_host/reauth_screen.dart';
@@ -41,6 +42,7 @@ class AppRouter {
                 }
               },
               onAdd: () => context.go('/servers/add'),
+              onTestBridge: () => context.go('/spike'),
             ),
           ),
         ),
@@ -82,6 +84,12 @@ class AppRouter {
           path: '/reauth',
           builder: (context, state) => ReauthScreen(
             onReauthenticate: () => context.go('/servers'),
+          ),
+        ),
+        GoRoute(
+          path: '/spike',
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => const BridgeSpikeScreen(),
           ),
         ),
       ],

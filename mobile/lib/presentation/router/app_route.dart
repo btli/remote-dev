@@ -8,6 +8,7 @@ sealed class AppRoute {
   const factory AppRoute.recording(String id) = RecordingRoute;
   const factory AppRoute.notifications() = NotificationsRoute;
   const factory AppRoute.reauth() = ReauthRoute;
+  const factory AppRoute.bridgeSpike() = BridgeSpikeRoute;
 
   String toPath() => switch (this) {
         ServerPickerRoute() => '/servers',
@@ -17,6 +18,7 @@ sealed class AppRoute {
         RecordingRoute(:final id) => '/m/recording/$id',
         NotificationsRoute() => '/notifications',
         ReauthRoute() => '/reauth',
+        BridgeSpikeRoute() => '/spike',
       };
 }
 
@@ -49,4 +51,8 @@ final class NotificationsRoute extends AppRoute {
 
 final class ReauthRoute extends AppRoute {
   const ReauthRoute();
+}
+
+final class BridgeSpikeRoute extends AppRoute {
+  const BridgeSpikeRoute();
 }
