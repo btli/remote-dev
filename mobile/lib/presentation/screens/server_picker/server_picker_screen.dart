@@ -12,11 +12,13 @@ class ServerPickerScreen extends ConsumerWidget {
   const ServerPickerScreen({
     required this.onSelect,
     required this.onAdd,
+    this.onTestBridge,
     super.key,
   });
 
   final void Function(ServerConfig) onSelect;
   final VoidCallback onAdd;
+  final VoidCallback? onTestBridge;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -27,6 +29,12 @@ class ServerPickerScreen extends ConsumerWidget {
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text('Servers', style: TextStyle(color: Colors.white)),
         actions: [
+          if (onTestBridge != null)
+            IconButton(
+              icon: const Icon(Icons.bug_report, color: Colors.white),
+              tooltip: 'Test bridge',
+              onPressed: onTestBridge,
+            ),
           IconButton(
             icon: const Icon(Icons.add, color: Colors.white),
             onPressed: onAdd,
