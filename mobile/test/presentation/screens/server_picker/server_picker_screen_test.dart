@@ -70,6 +70,90 @@ void main() {
   // verify the `Dismissible` is wired into the row and rely on the
   // unregister/remove ordering being covered by code review + the
   // PushTokenRegistrar unit tests for the behavior of unregisterFromServer.
+  testWidgets('long-press opens action sheet with Edit/Delete', (tester) async {
+    final store = _MockStore();
+    final registrar = _MockRegistrar();
+    final server = ServerConfig(
+      id: 'srv-1',
+      label: 'Work',
+      url: 'https://dev.example.com',
+      lastUsedAt: DateTime(2026, 5, 8),
+    );
+
+    when(store.loadAll).thenAnswer((_) async => [server]);
+
+    ServerConfig? edited;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          serverConfigStoreProvider.overrideWithValue(store),
+          pushTokenRegistrarProvider.overrideWithValue(registrar),
+        ],
+        child: MaterialApp(
+          home: ServerPickerScreen(
+            onSelect: (_) {},
+            onAdd: () {},
+            onEdit: (s) => edited = s,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('Work'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+
+    expect(edited, isNotNull);
+    expect(edited!.id, 'srv-1');
+  });
+
+  testWidgets(
+      'long-press → Delete unregisters push then removes from store',
+      (tester) async {
+    final store = _MockStore();
+    final registrar = _MockRegistrar();
+    final server = ServerConfig(
+      id: 'srv-1',
+      label: 'Work',
+      url: 'https://dev.example.com',
+      lastUsedAt: DateTime(2026, 5, 8),
+    );
+
+    when(store.loadAll).thenAnswer((_) async => [server]);
+    when(() => store.remove('srv-1')).thenAnswer((_) async {});
+    when(() => registrar.unregisterFromServer('srv-1'))
+        .thenAnswer((_) async {});
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          serverConfigStoreProvider.overrideWithValue(store),
+          pushTokenRegistrarProvider.overrideWithValue(registrar),
+        ],
+        child: MaterialApp(
+          home: ServerPickerScreen(onSelect: (_) {}, onAdd: () {}),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.text('Work'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+
+    verifyInOrder([
+      () => registrar.unregisterFromServer('srv-1'),
+      () => store.remove('srv-1'),
+    ]);
+  });
+
   testWidgets(
     'each server row is wired with a Dismissible (swipe-to-delete)',
     (tester) async {
