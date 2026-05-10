@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../domain/notification.dart';
 import '../../../infrastructure/api/notifications_api.dart';
+import '../shell/home_shell.dart';
 
 /// Provider for the notifications API. Must be overridden in main.dart /
 /// app.dart once a [RemoteDevClient] is wired for the active server.
@@ -162,7 +163,7 @@ class _NotificationsTabScreenState
                     // under the host shell's bottom nav bar (or the Android
                     // gesture inset).
                     padding: EdgeInsets.only(
-                      bottom: MediaQuery.paddingOf(context).bottom + 16,
+                      bottom: tabContentBottomPadding(context),
                     ),
                     itemCount: items.length,
                     separatorBuilder: (_, __) => const Divider(

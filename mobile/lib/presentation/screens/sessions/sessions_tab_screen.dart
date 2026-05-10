@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../domain/session_summary.dart';
 import '../../../infrastructure/api/sessions_api.dart';
+import '../shell/home_shell.dart';
 import 'new_session_sheet.dart';
 
 /// Provider for the sessions API. Must be overridden in main.dart / app.dart
@@ -157,7 +158,7 @@ class _SessionsTabScreenState extends ConsumerState<SessionsTabScreen> {
               // Reserve space below the last row so it never tucks under the
               // host shell's bottom nav bar (or the Android gesture inset).
               padding: EdgeInsets.only(
-                bottom: MediaQuery.paddingOf(context).bottom + 16,
+                bottom: tabContentBottomPadding(context),
               ),
               itemCount: sessions.length,
               separatorBuilder: (_, __) => const Divider(

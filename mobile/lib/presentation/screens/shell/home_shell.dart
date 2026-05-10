@@ -7,6 +7,43 @@ import '../profile/profile_tab_screen.dart';
 import '../sessions/sessions_tab_screen.dart';
 import 'adaptive_bottom_bar.dart';
 
+/// Extra logical pixels reserved below the last row of every tab's primary
+/// scrollable so it doesn't visually butt up against the bottom nav bar.
+const double kTabContentBottomPad = 16;
+
+/// Returns the bottom padding tab screens should apply so their last row
+/// clears both the host shell's bottom navigation bar and the system bottom
+/// inset (Android gesture inset / iOS home indicator).
+///
+/// Inside [HomeShell.Scaffold] the system bottom inset is consumed by the
+/// scaffold (because it owns `bottomNavigationBar`), so reading
+/// `MediaQuery.paddingOf(context).bottom` from a tab body returns 0. We
+/// capture the inset above the scaffold and re-expose it via
+/// [_ShellChromeInsets].
+double tabContentBottomPadding(BuildContext context) {
+  return _ShellChromeInsets.of(context) + kTabContentBottomPad;
+}
+
+/// Inherited carrier for the system bottom inset captured above
+/// [HomeShell.Scaffold]. Tab screens read it via [tabContentBottomPadding].
+class _ShellChromeInsets extends InheritedWidget {
+  const _ShellChromeInsets({
+    required this.systemBottomInset,
+    required super.child,
+  });
+
+  final double systemBottomInset;
+
+  static double of(BuildContext context) {
+    final w = context.dependOnInheritedWidgetOfExactType<_ShellChromeInsets>();
+    return w?.systemBottomInset ?? 0;
+  }
+
+  @override
+  bool updateShouldNotify(_ShellChromeInsets old) =>
+      old.systemBottomInset != systemBottomInset;
+}
+
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({this.initialTab, super.key});
 
@@ -24,6 +61,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    // Capture the system bottom inset BEFORE the Scaffold so tab screens can
+    // read it. Once Scaffold owns `bottomNavigationBar`, Flutter zeroes out
+    // the bottom padding on the body's MediaQuery, so the same call inside
+    // a tab screen would always return 0.
+    final systemBottomInset = MediaQuery.paddingOf(context).bottom;
+
     // Intercept system back gesture (Android predictive back / hardware back):
     // when the user is on a non-default tab, pop should switch back to the
     // sessions tab instead of letting go_router pop HomeShell off the stack
@@ -42,14 +85,17 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         backgroundColor: const Color(0xFF1A1B26),
         body: SafeArea(
           bottom: false,
-          child: IndexedStack(
-            index: _active.index,
-            children: const [
-              SessionsTabScreen(),
-              ChannelsTabScreen(),
-              NotificationsTabScreen(),
-              ProfileTabScreen(),
-            ],
+          child: _ShellChromeInsets(
+            systemBottomInset: systemBottomInset,
+            child: IndexedStack(
+              index: _active.index,
+              children: const [
+                SessionsTabScreen(),
+                ChannelsTabScreen(),
+                NotificationsTabScreen(),
+                ProfileTabScreen(),
+              ],
+            ),
           ),
         ),
         bottomNavigationBar: AdaptiveBottomBar(
