@@ -51,7 +51,7 @@ void main() {
     expect(find.byType(ActivityPip), findsOneWidget);
   });
 
-  testWidgets('tap fires onTap', (tester) async {
+  testWidgets('tap on title area fires onTap', (tester) async {
     var taps = 0;
     await tester.pumpWidget(
       wrap(
@@ -64,7 +64,40 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(SessionStatusBar));
+    // Tap the session-name text directly so we hit the InkWell that wraps
+    // the project · session label rather than the leading back-button.
+    await tester.tap(find.text('s'));
     expect(taps, 1);
+  });
+
+  testWidgets('shows leading back button', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        const SessionStatusBar(
+          projectName: 'p',
+          sessionName: 's',
+          activity: SessionActivity.idle,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+  });
+
+  testWidgets('back button fires onBack when supplied', (tester) async {
+    var backs = 0;
+    await tester.pumpWidget(
+      wrap(
+        SessionStatusBar(
+          projectName: 'p',
+          sessionName: 's',
+          activity: SessionActivity.idle,
+          onBack: () => backs++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    expect(backs, 1);
   });
 }

@@ -223,6 +223,7 @@ class _EditMissingExtraScreen extends StatelessWidget {
           'Edit server',
           style: TextStyle(color: Colors.white),
         ),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Center(
         child: Padding(

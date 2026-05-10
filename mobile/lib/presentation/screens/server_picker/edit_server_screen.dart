@@ -71,6 +71,7 @@ class _EditServerScreenState extends ConsumerState<EditServerScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text('Edit server', style: TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Form(
         key: _formKey,
