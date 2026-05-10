@@ -63,12 +63,14 @@ class AppRouter {
                   context.go('/home');
                 }
               },
-              onAdd: () => context.go('/servers/add'),
+              // push sub-routes so the server picker stays on the back
+              // stack and the AppBar shows an implicit back arrow.
+              onAdd: () => context.push('/servers/add'),
               onEdit: (server) => context.push(
                 '/servers/edit',
                 extra: server,
               ),
-              onTestBridge: () => context.go('/spike'),
+              onTestBridge: () => context.push('/spike'),
             ),
           ),
         ),
@@ -79,7 +81,14 @@ class AppRouter {
               onSaved: (server) {
                 ref.invalidate(serversListProvider);
                 ref.invalidate(activeServerProvider);
-                context.go('/servers');
+                // Prefer pop so the picker beneath us survives. Fall back
+                // to go for direct deep-link cold-starts where add is
+                // the root of the stack.
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/servers');
+                }
               },
             ),
           ),

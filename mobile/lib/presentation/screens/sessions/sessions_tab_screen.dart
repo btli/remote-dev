@@ -106,12 +106,14 @@ class _SessionsTabScreenState extends ConsumerState<SessionsTabScreen> {
     if (created != null && mounted) {
       // Refresh the list and navigate to the session view.
       ref.invalidate(sessionsListProvider);
-      context.go('/home/session/${created.id}');
+      // push so the session view has an implicit back arrow that pops
+      // to the Sessions tab inside HomeShell.
+      context.push('/home/session/${created.id}');
     }
   }
 
   void _onTapSession(SessionSummary session) {
-    context.go('/home/session/${session.id}');
+    context.push('/home/session/${session.id}');
   }
 
   @override

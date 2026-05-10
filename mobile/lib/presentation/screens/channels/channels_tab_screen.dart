@@ -82,9 +82,9 @@ class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen> {
   }
 
   void _onTapChannel(Channel channel) {
-    // P4.3 lands the actual /home/channel/:id route; for now we route to it
-    // and the router falls back gracefully if the route is not registered.
-    context.go('/home/channel/${channel.id}');
+    // push so the channel view has an implicit back arrow that pops
+    // to the Channels tab inside HomeShell.
+    context.push('/home/channel/${channel.id}');
   }
 
   @override

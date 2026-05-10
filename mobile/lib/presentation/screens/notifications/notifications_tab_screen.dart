@@ -104,9 +104,11 @@ class _NotificationsTabScreenState
       _markRead(notif);
     }
     if (notif.sessionId != null && notif.sessionId!.isNotEmpty) {
-      context.go('/home/session/${notif.sessionId}');
+      // push so the session view has an implicit back arrow that pops
+      // to the Notifications tab inside HomeShell.
+      context.push('/home/session/${notif.sessionId}');
     } else if (notif.channelId != null && notif.channelId!.isNotEmpty) {
-      context.go('/home/channel/${notif.channelId}');
+      context.push('/home/channel/${notif.channelId}');
     }
     // Otherwise remain on the tab.
   }
