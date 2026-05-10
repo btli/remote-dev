@@ -1,4 +1,4 @@
-# remote_dev (mobile)
+# RemoteDev (mobile)
 
 New Flutter mobile app for Remote Dev — replaces the deprecated `archive/mobile-flutter/`.
 
