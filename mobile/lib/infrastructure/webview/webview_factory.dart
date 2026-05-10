@@ -29,6 +29,10 @@ class WebViewFactory {
         // not exist in flutter_inappwebview 6.1.x.)
         disableInputAccessoryView: true,
         disallowOverScroll: true,
+        // Spec §2.2 Rule 5: shouldOverrideUrlLoading is opt-in on both
+        // platforms in flutter_inappwebview 6.1.x; without this flag the
+        // navigation policy callback never fires and every URL loads inline.
+        useShouldOverrideUrlLoading: true,
         // Spec §4: Android hybrid composition
         useHybridComposition: !kIsWeb,
         applicationNameForUserAgent: 'RemoteDevMobile/0.1.0',
