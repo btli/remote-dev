@@ -8,14 +8,19 @@ import '../sessions/sessions_tab_screen.dart';
 import 'adaptive_bottom_bar.dart';
 
 class HomeShell extends ConsumerStatefulWidget {
-  const HomeShell({super.key});
+  const HomeShell({this.initialTab, super.key});
+
+  /// Tab to display on first build. Defaults to [HomeTab.sessions].
+  /// Used by deep-link / push-notification tap routes that target a specific
+  /// tab inside the shell (e.g. `/notifications` → notifications tab).
+  final HomeTab? initialTab;
 
   @override
   ConsumerState<HomeShell> createState() => _HomeShellState();
 }
 
 class _HomeShellState extends ConsumerState<HomeShell> {
-  HomeTab _active = HomeTab.sessions;
+  late HomeTab _active = widget.initialTab ?? HomeTab.sessions;
 
   @override
   Widget build(BuildContext context) {
