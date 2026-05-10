@@ -7,12 +7,28 @@
 // `context.go` to `context.push`, and remote-dev-q029 audits the AppBars
 // to ensure every pushed screen actually surfaces a back-arrow.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:remote_dev/domain/account.dart';
+import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/infrastructure/api/account_api.dart';
 import 'package:remote_dev/presentation/screens/profile/about_screen.dart';
 import 'package:remote_dev/presentation/screens/profile/account_screen.dart';
+import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
+    show activeServerProvider;
+
+class _StubAccountApi extends Mock implements AccountApi {}
+
+ServerConfig _server() => ServerConfig(
+      id: 'srv-1',
+      label: 'My Server',
+      url: 'https://rdv.example',
+      lastUsedAt: DateTime.utc(2026, 1, 1),
+    );
 
 Widget _wrap({required String pushTarget, required Widget target}) {
   final router = GoRouter(
@@ -33,7 +49,22 @@ Widget _wrap({required String pushTarget, required Widget target}) {
       GoRoute(path: pushTarget, builder: (_, __) => target),
     ],
   );
-  return ProviderScope(child: MaterialApp.router(routerConfig: router));
+  // AccountScreen reads accountApiProvider + activeServerProvider; both
+  // need overrides here or the screen sits in a permanent loading state
+  // and `pumpAndSettle` times out before we can locate the BackButton.
+  final api = _StubAccountApi();
+  when(() => api.me()).thenAnswer(
+    (_) async => const Account(email: 'jane@example.com'),
+  );
+  return ProviderScope(
+    overrides: [
+      accountApiProvider.overrideWithValue(api),
+      activeServerProvider.overrideWith(
+        (ref) => SynchronousFuture<ServerConfig?>(_server()),
+      ),
+    ],
+    child: MaterialApp.router(routerConfig: router),
+  );
 }
 
 void main() {

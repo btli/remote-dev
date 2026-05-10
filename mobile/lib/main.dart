@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart';
 import 'application/ports/api_client_port.dart';
 import 'application/state/reauth_signal_provider.dart';
+import 'infrastructure/api/account_api.dart';
 import 'infrastructure/api/channels_api.dart';
 import 'infrastructure/api/notifications_api.dart';
 import 'infrastructure/api/project_tree_api.dart';
@@ -22,6 +23,8 @@ import 'presentation/screens/channels/channels_tab_screen.dart'
     show channelsApiProvider;
 import 'presentation/screens/notifications/notifications_tab_screen.dart'
     show notificationsApiProvider;
+import 'presentation/screens/profile/account_screen.dart'
+    show accountApiProvider;
 import 'presentation/screens/sessions/project_tree_sheet.dart'
     show projectTreeApiProvider;
 import 'presentation/screens/sessions/sessions_tab_screen.dart'
@@ -83,6 +86,9 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
     ),
     notificationsApiProvider.overrideWith(
       (ref) => NotificationsApi(ref.watch(_apiClientProvider)),
+    ),
+    accountApiProvider.overrideWith(
+      (ref) => AccountApi(ref.watch(_apiClientProvider)),
     ),
     pushTokenRegistrarProvider.overrideWith(
       (ref) => PushTokenRegistrar(
