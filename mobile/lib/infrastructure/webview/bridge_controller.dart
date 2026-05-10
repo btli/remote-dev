@@ -45,11 +45,30 @@ class BridgeController {
   /// Equivalent to `window.rdvBridge.setFontSize(px)`.
   void setFontSize(int px) => _exec('window.rdvBridge.setFontSize($px)');
 
-  /// Equivalent to `window.rdvBridge.back()`. Used by native back affordances
-  /// (e.g. ChannelScreen AppBar leading icon) to give the embedded PWA a
-  /// chance to consume the gesture (close an open thread, dismiss a modal,
-  /// etc.) before native pops the route.
-  void back() => _exec('window.rdvBridge.back()');
+  /// Asks the embedded PWA to handle a back gesture. Returns `true` when
+  /// the PWA reports it consumed the gesture (e.g. closed an open thread,
+  /// dismissed a modal, popped an in-WebView route) and `false` otherwise
+  /// — including when the bridge isn't ready yet, evaluation throws, or
+  /// the PWA-side `back()` returns `void`/`undefined`.
+  ///
+  /// The Dart side is intentionally tolerant: existing PWA bridge builds
+  /// declare `back: () => void`, so until the JS surface is updated to
+  /// return a boolean (tracked separately from this `mobile/`-only PR)
+  /// every call resolves to `false` and native callers simply fall back
+  /// to `Navigator.pop`. Once the PWA returns truthy from `back()`, the
+  /// expression below picks it up automatically.
+  Future<bool> back() async {
+    if (!_ready) return false;
+    try {
+      final result = await controller.evaluateJavascript(
+        source:
+            'window.rdvBridge && window.rdvBridge.back ? !!window.rdvBridge.back() : false',
+      );
+      return result == true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   void _exec(String js) {
     if (_ready) {

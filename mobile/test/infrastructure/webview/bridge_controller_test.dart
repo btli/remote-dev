@@ -63,4 +63,39 @@ void main() {
       ),
     ).called(1);
   });
+
+  test('back returns false when bridge is not ready', () async {
+    final result = await bridge.back();
+    expect(result, isFalse);
+    verifyNever(() => ctl.evaluateJavascript(source: any(named: 'source')));
+  });
+
+  test('back returns true when PWA reports it consumed the gesture', () async {
+    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
+        .thenAnswer((_) async => true);
+    bridge.markReady();
+    final result = await bridge.back();
+    expect(result, isTrue);
+    verify(
+      () => ctl.evaluateJavascript(
+        source:
+            'window.rdvBridge && window.rdvBridge.back ? !!window.rdvBridge.back() : false',
+      ),
+    ).called(1);
+  });
+
+  test('back returns false when JS bridge is missing or returns void',
+      () async {
+    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
+        .thenAnswer((_) async => false);
+    bridge.markReady();
+    expect(await bridge.back(), isFalse);
+  });
+
+  test('back swallows evaluation errors and returns false', () async {
+    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
+        .thenThrow(Exception('webview crashed'));
+    bridge.markReady();
+    expect(await bridge.back(), isFalse);
+  });
 }

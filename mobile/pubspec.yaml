@@ -51,6 +51,9 @@ dependencies:
   # UUID for serverId
   uuid: ^4.5.1
 
+  # Package metadata (About screen)
+  package_info_plus: ^8.1.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

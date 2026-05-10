@@ -51,13 +51,14 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
   }
 
   Future<void> _handleBack() async {
-    // Signal the embedded PWA so it can close any open thread/modal first.
-    // The bridge call queues if the PWA hasn't fired onTerminalReady yet,
-    // so it's safe to invoke unconditionally. We then pop the native route
-    // — the WebView decides whether to consume the gesture before this.
-    _bridge?.back();
-    if (!mounted) return;
-    await Navigator.of(context).maybePop();
+    // Ask the embedded PWA to handle the gesture first — it may close an
+    // open thread/modal instead. If the bridge says it didn't consume the
+    // gesture (or isn't ready / returns `void`), pop the native route.
+    final bridge = _bridge;
+    final handled = bridge == null ? false : await bridge.back();
+    if (!handled && mounted) {
+      await Navigator.of(context).maybePop();
+    }
   }
 
   @override
