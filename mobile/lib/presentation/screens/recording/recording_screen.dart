@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../application/state/appearance_provider.dart';
+import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
@@ -61,6 +63,9 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
       handlerName: 'onTerminalReady',
       callback: (_) {
         bridge.markReady();
+        // Recording embed accepts setFontScale (no-op visually today,
+        // but keeps the bridge surface uniform across routes).
+        bridge.setFontScale(ref.read(appearanceSettingsProvider).fontScale);
         return null;
       },
     );
@@ -81,6 +86,14 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
   @override
   Widget build(BuildContext context) {
     final asyncServer = ref.watch(activeServerProvider);
+    // Recording embed has no terminal, so we skip cursorBlink; we still
+    // forward fontScale so the bridge surface stays uniform across
+    // routes (and so future content scaling on the player can hook in).
+    ref.listen<AppearanceSettings>(appearanceSettingsProvider, (prev, next) {
+      if (prev?.fontScale != next.fontScale) {
+        _bridge?.setFontScale(next.fontScale);
+      }
+    });
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       appBar: AppBar(

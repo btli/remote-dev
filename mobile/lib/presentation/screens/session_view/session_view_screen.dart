@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../application/state/appearance_provider.dart';
+import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
@@ -69,6 +71,13 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
       handlerName: 'onTerminalReady',
       callback: (_) {
         bridge.markReady();
+        // Push the current appearance state on first ready so the PWA
+        // starts in sync without waiting for a user toggle. Reads are
+        // safe here because `_registerBridgeHandlers` runs inside a
+        // ConsumerState build chain.
+        final settings = ref.read(appearanceSettingsProvider);
+        bridge.setFontScale(settings.fontScale);
+        bridge.setCursorBlink(settings.cursorBlink);
         return null;
       },
     );
@@ -159,6 +168,18 @@ class _SessionViewScreenState extends ConsumerState<SessionViewScreen> {
   @override
   Widget build(BuildContext context) {
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    // Push appearance changes into the WebView whenever the user mutates
+    // them. The bridge queues until markReady, so this is safe to fire
+    // pre-load. Compare per-field so a `reduceMotion` toggle doesn't
+    // re-push the font scale.
+    ref.listen<AppearanceSettings>(appearanceSettingsProvider, (prev, next) {
+      if (prev?.fontScale != next.fontScale) {
+        _bridge?.setFontScale(next.fontScale);
+      }
+      if (prev?.cursorBlink != next.cursorBlink) {
+        _bridge?.setCursorBlink(next.cursorBlink);
+      }
+    });
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       // Spec §4: own the layout; never let Scaffold reflow on keyboard.

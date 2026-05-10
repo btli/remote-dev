@@ -135,4 +135,39 @@ void main() {
     bridge.markReady();
     expect(await bridge.back(), isFalse);
   });
+
+  test('setFontScale emits window.rdvBridge.setFontScale(<scale>)', () {
+    bridge.markReady();
+    bridge.setFontScale(1.15);
+    verify(
+      () => ctl.evaluateJavascript(
+        source: 'window.rdvBridge.setFontScale(1.15)',
+      ),
+    ).called(1);
+  });
+
+  test('setCursorBlink emits a literal boolean (no quoting)', () {
+    bridge.markReady();
+    bridge.setCursorBlink(true);
+    bridge.setCursorBlink(false);
+    final captured = verify(
+      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+    ).captured;
+    expect(captured, hasLength(2));
+    expect(captured[0], 'window.rdvBridge.setCursorBlink(true)');
+    expect(captured[1], 'window.rdvBridge.setCursorBlink(false)');
+  });
+
+  test('setFontScale + setCursorBlink queue while not ready', () {
+    bridge.setFontScale(1.2);
+    bridge.setCursorBlink(false);
+    verifyNever(() => ctl.evaluateJavascript(source: any(named: 'source')));
+    bridge.markReady();
+    final captured = verify(
+      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+    ).captured;
+    expect(captured, hasLength(2));
+    expect(captured[0], 'window.rdvBridge.setFontScale(1.2)');
+    expect(captured[1], 'window.rdvBridge.setCursorBlink(false)');
+  });
 }

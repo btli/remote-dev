@@ -19,6 +19,8 @@ function makeAdapter(overrides: Partial<RdvBridgeAdapter> = {}): RdvBridgeAdapte
     key: vi.fn(),
     paste: vi.fn(),
     setFontSize: vi.fn(),
+    setFontScale: vi.fn(),
+    setCursorBlink: vi.fn(),
     scrollToBottom: vi.fn(),
     // back must return boolean per the bridge contract — default
     // false ("not consumed") so native callers fall through to
@@ -93,6 +95,21 @@ describe("rdv-bridge", () => {
       expect(window.rdvBridge).toBeDefined();
       uninstall();
       expect(window.rdvBridge).toBeUndefined();
+    });
+
+    it("exposes setFontScale + setCursorBlink on window.rdvBridge", () => {
+      const adapter = makeAdapter();
+      installRdvBridge(adapter);
+
+      // Surface check: the new bridge methods must be callable.
+      expect(typeof window.rdvBridge?.setFontScale).toBe("function");
+      expect(typeof window.rdvBridge?.setCursorBlink).toBe("function");
+
+      window.rdvBridge?.setFontScale(1.15);
+      window.rdvBridge?.setCursorBlink(false);
+
+      expect(adapter.setFontScale).toHaveBeenCalledWith(1.15);
+      expect(adapter.setCursorBlink).toHaveBeenCalledWith(false);
     });
 
     it("re-installing replaces the previous adapter", () => {

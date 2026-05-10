@@ -40,6 +40,19 @@ export interface RdvBridgeAdapter {
   paste: (text: string) => void;
   /** Set terminal font size in px (session view only). */
   setFontSize: (px: number) => void;
+  /**
+   * Update the in-WebView font scale (0.85–1.30 in practice). Embeds
+   * apply this by writing `--rdv-font-scale` on `<html>` so terminal
+   * + channel content visually scales. Embeds that don't visually
+   * use the variable may treat the call as a no-op.
+   */
+  setFontScale: (scale: number) => void;
+  /**
+   * Toggle the in-WebView terminal cursor blink. Only the session
+   * embed mutates xterm.js's `cursorBlink` option; other embeds may
+   * treat the call as a no-op.
+   */
+  setCursorBlink: (blink: boolean) => void;
   /** Scroll terminal viewport to the bottom (session view only). */
   scrollToBottom: () => void;
   /**
@@ -79,6 +92,8 @@ export function installRdvBridge(adapter: RdvBridgeAdapter): () => void {
     key: (name, mods) => adapter.key(name, mods),
     paste: (text) => adapter.paste(text),
     setFontSize: (px) => adapter.setFontSize(px),
+    setFontScale: (scale) => adapter.setFontScale(scale),
+    setCursorBlink: (blink) => adapter.setCursorBlink(blink),
     scrollToBottom: () => adapter.scrollToBottom(),
     back: () => adapter.back(),
   };

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../application/state/appearance_provider.dart';
+import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
@@ -45,6 +47,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
       handlerName: 'onTerminalReady',
       callback: (_) {
         bridge.markReady();
+        // Channel embed scales markdown text via --rdv-font-scale.
+        bridge.setFontScale(ref.read(appearanceSettingsProvider).fontScale);
         return null;
       },
     );
@@ -64,6 +68,15 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
   @override
   Widget build(BuildContext context) {
     final asyncServer = ref.watch(activeServerProvider);
+    // Channel embed visually scales markdown text via --rdv-font-scale;
+    // push updates whenever the user changes the slider on the profile
+    // appearance screen. cursorBlink is intentionally skipped — no
+    // terminal is hosted on this route.
+    ref.listen<AppearanceSettings>(appearanceSettingsProvider, (prev, next) {
+      if (prev?.fontScale != next.fontScale) {
+        _bridge?.setFontScale(next.fontScale);
+      }
+    });
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       appBar: AppBar(
