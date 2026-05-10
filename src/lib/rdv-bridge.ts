@@ -42,8 +42,21 @@ export interface RdvBridgeAdapter {
   setFontSize: (px: number) => void;
   /** Scroll terminal viewport to the bottom (session view only). */
   scrollToBottom: () => void;
-  /** Native back button pressed — embed view should clean up / leave. */
-  back: () => void;
+  /**
+   * Native back button pressed. Return `true` when the embed view
+   * consumed the gesture (e.g. closed an open thread, dismissed a
+   * modal, popped an in-WebView route) so the native shell knows NOT
+   * to also pop its route. Return `false` when there's nothing to
+   * handle and native should fall back to `Navigator.maybePop()`.
+   *
+   * Must remain synchronous: the Dart side awaits the JS return value
+   * via `evaluateJavascript`, but a Promise return would let
+   * `!!result` resolve to `true` *before* the JS settles, racing the
+   * native pop. If async behavior is ever needed, widen this to
+   * `boolean | Promise<boolean>` and update bridge_controller.dart's
+   * eval source to await the result inside an async IIFE.
+   */
+  back: () => boolean;
 }
 
 /**

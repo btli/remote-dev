@@ -15,16 +15,23 @@ import '../webview_host/session_route_host.dart' show activeServerProvider;
 /// - `onTerminalReady` registered in `onWebViewCreated` (Spec §2.2 rule 1).
 /// - All native→WebView calls go through [BridgeController] (Spec §2.2 rule 2).
 ///
-/// Auth note: this WebView does NOT need to attach the CF_Authorization
-/// cookie itself. `flutter_inappwebview`'s [CookieManager] is a singleton
-/// that bridges to the platform-level cookie store (WKHTTPCookieStore on
-/// iOS, Android `CookieManager`), which is shared across every InAppWebView
-/// instance on the same origin. The cookie is captured by
-/// `CfLoginWebViewScreen` during the Add Server / re-auth flow, persisted
-/// to the platform cookie store, and a fresh recording WebView pointed at
-/// the same origin picks it up automatically. The Dio-side
-/// `CfAuthInterceptor` only attaches to HTTP API calls — it is not in the
-/// WebView's request path and does not need to be.
+/// Cookie sharing across InAppWebView instances:
+///
+/// `flutter_inappwebview`'s `CookieManager` is a Dart singleton that bridges
+/// to the platform cookie store (`WKWebsiteDataStore.default()` on iOS,
+/// `android.webkit.CookieManager.getInstance()` on Android). When two
+/// WebViews use the default persistent data store, the CF cookie persisted
+/// by `CfLoginWebViewScreen` is therefore visible to `RecordingScreen`'s
+/// WebView on the same origin.
+///
+/// Caveats:
+///   - iOS non-persistent / `incognito: true` data stores break sharing.
+///   - Android `incognito: true` wipes cookies.
+///   - Session-only cookies (without an Expires/Max-Age attribute) may
+///     not survive cold restarts.
+///
+/// The Dio-side `CfAuthInterceptor` only attaches to HTTP API calls — it
+/// is not in the WebView's request path and does not need to be.
 class RecordingScreen extends ConsumerStatefulWidget {
   const RecordingScreen({
     required this.recordingId,
@@ -60,12 +67,15 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
   }
 
   Future<void> _handleBack() async {
-    // Signal the embedded PWA so it can close any open modal/overlay first.
-    // The bridge call queues if the PWA hasn't fired onTerminalReady yet,
-    // so it's safe to invoke unconditionally. We then pop the native route.
-    _bridge?.back();
-    if (!mounted) return;
-    await Navigator.of(context).maybePop();
+    // Ask the embedded PWA to handle the gesture first — it may want to
+    // close an open modal/overlay rather than pop the native route. The
+    // bridge resolves to `false` if it isn't ready or the PWA-side
+    // `back()` returns `void`/`undefined`, in which case we pop.
+    final bridge = _bridge;
+    final handled = bridge == null ? false : await bridge.back();
+    if (!handled && mounted) {
+      await Navigator.of(context).maybePop();
+    }
   }
 
   @override

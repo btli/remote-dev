@@ -44,12 +44,16 @@ export function EmbeddedChannelView() {
       scrollToBottom: noop,
       back: () => {
         // Closing an open thread takes priority over leaving the route.
+        // Return true so the native shell knows we consumed the gesture
+        // and skips its own Navigator.maybePop() — otherwise the back
+        // press would close the thread AND pop the route.
         if (openThreadId && closeThread) {
           closeThread();
-          return;
+          return true;
         }
-        // Otherwise this is a no-op; the native shell pops the route
-        // itself based on its own back-stack state.
+        // Otherwise the native shell pops the route itself based on
+        // its own back-stack state.
+        return false;
       },
     };
     return installRdvBridge(adapter);

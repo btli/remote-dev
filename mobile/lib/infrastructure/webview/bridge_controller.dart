@@ -45,11 +45,47 @@ class BridgeController {
   /// Equivalent to `window.rdvBridge.setFontSize(px)`.
   void setFontSize(int px) => _exec('window.rdvBridge.setFontSize($px)');
 
-  /// Equivalent to `window.rdvBridge.back()`. Used by native back affordances
-  /// (e.g. ChannelScreen AppBar leading icon) to give the embedded PWA a
-  /// chance to consume the gesture (close an open thread, dismiss a modal,
-  /// etc.) before native pops the route.
-  void back() => _exec('window.rdvBridge.back()');
+  /// Asks the embedded PWA to handle a back gesture. Returns `true` when
+  /// the PWA reports it consumed the gesture (e.g. closed an open thread,
+  /// dismissed a modal, popped an in-WebView route) and `false` otherwise
+  /// — including when the bridge isn't ready yet, evaluation throws, the
+  /// JS surface is missing, or `back()` returns `undefined`/falsy.
+  ///
+  /// The PWA-side contract is `back: () => boolean` (see
+  /// `src/lib/rdv-bridge.ts`). Implementations MUST return `true` only
+  /// when they actually consumed the gesture so the native shell skips
+  /// its own `Navigator.maybePop()`. Returning `undefined` (the
+  /// pre-fix behavior) coerces to `false` here, which means native pops
+  /// — preserving today's behavior for any bridge build still on the
+  /// old contract.
+  ///
+  /// The eval is wrapped in an async IIFE so that if a future bridge
+  /// build returns `Promise<boolean>` we still resolve the actual
+  /// boolean before signaling Dart, instead of `!!Promise === true`
+  /// racing the JS handler. `flutter_inappwebview`'s
+  /// `evaluateJavascript` awaits returned promises automatically.
+  Future<bool> back() async {
+    if (!_ready) return false;
+    try {
+      final result = await controller.evaluateJavascript(
+        source: '''
+(async () => {
+  if (!window.rdvBridge || !window.rdvBridge.back) return false;
+  try {
+    const r = window.rdvBridge.back();
+    if (r && typeof r.then === 'function') return (await r) === true;
+    return r === true;
+  } catch (_) {
+    return false;
+  }
+})()
+''',
+      );
+      return result == true || result == 'true' || result == 1;
+    } catch (_) {
+      return false;
+    }
+  }
 
   void _exec(String js) {
     if (_ready) {
