@@ -7,14 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mobile**: Account profile screen — replaces the Phase 5 stub. Loads via
+  `accountFutureProvider` against `/api/auth/session`, gates on
+  `activeServerProvider.when()` so loading/error don't conflate with
+  no-active-server, and provides a sign-out flow that scopes cookie
+  deletion to the active server's origin via
+  `CookieManager.deleteCookies(url:)` (no longer wipes other servers'
+  cookies). `Account.fromJson` distinguishes wrapped (`containsKey('user')`)
+  from bare payloads with a `FormatException` for malformed wrapped shapes
+  (remote-dev-raen).
+- **Mobile**: Branded RemoteDev launcher icon — `RD.` monogram in Tokyo
+  Night palette (`#1A1B26` bg, `#C0CAF5` letterforms, `#7AA2F7` prompt-cursor
+  accent). Generated via `flutter_launcher_icons` across 5 Android mipmap
+  densities + iOS `Assets.xcassets/AppIcon.appiconset`. Adaptive icon for
+  Android with `#1A1B26` background + transparent foreground PNG.
+  `remove_alpha_ios: true` for App Store compliance (remote-dev-jav9).
+- **Mobile**: Branded splash screen — RemoteDev logo + "RemoteDev" wordmark
+  on `#1A1B26` background via `flutter_native_splash`. Bottom branding has
+  per-platform padding (`branding_bottom_padding_ios: 34`,
+  `branding_bottom_padding_android: 24`) so the wordmark clears iOS home
+  indicator and Android gesture nav. Android 12 splash uses an 800×320
+  branding asset per Material You docs (remote-dev-9rdc).
+- **Mobile**: Cloudflare Access WebView login flow during Add Server.
+  After URL probe success, a full-screen WebView opens at the server URL
+  and lets the user complete the CF Access challenge inline. The WebView
+  allows CF Access challenges and well-known SSO providers
+  (Google, Microsoft, Okta) and any path on the server origin. On success,
+  harvests `CF_Authorization` cookie via `CookieManager.getCookies()` and
+  persists it to secure storage at `server.<id>.cf_authorization` before
+  saving the server config (remote-dev-hgrq).
+- **Mobile**: Dio cookie injection for CF_Authorization. New
+  `CfAuthInterceptor` reads the active server's stored cookie from secure
+  storage and injects `Cookie: CF_Authorization=<value>` on every outbound
+  request. On 401/403, calls `onReauthNeeded` → bumps
+  `reauthSignalProvider` → `RemoteDevApp.ref.listen` routes to `/reauth`.
+  Case-insensitive Cookie header merge (Dio normalizes to lowercase)
+  (remote-dev-cpti).
+- **Mobile**: Reauth flow embeds the CF Access WebView. When the
+  interceptor receives 401/403, the user lands on `/reauth` which mounts
+  `CfLoginWebViewScreen` directly. On success, persists the fresh cookie,
+  invalidates `activeServerProvider`, and routes to `/home`
+  (remote-dev-d9st).
+
+### Changed
+
+- **Mobile**: User-facing app name renamed from `remote_dev` (snake_case)
+  to **RemoteDev**. Android `android:label`, iOS `CFBundleName`, and iOS
+  `CFBundleDisplayName` all updated. Pubspec name remains `remote_dev`
+  (Dart package convention); bundle id `com.remotedev.app` unchanged
+  (remote-dev-mx6y).
+- **Mobile**: Sub-route navigation uses `context.push()` instead of
+  `context.go()` so go_router builds a back stack. Profile sub-screens
+  (Account, GitHub, Appearance, Servers, Security, About), session/channel
+  drill-downs, and `/servers/add` & `/spike` all push. Top-level
+  navigation (servers ↔ home, reauth, FCM cold-start) stays with `go`
+  (remote-dev-xmbh).
+- **Mobile**: Android system back gesture on a non-default tab now
+  switches to the Sessions tab and consumes the pop, instead of exiting
+  the app. Implemented via `PopScope` (Flutter 3.41+) wrapped around
+  `HomeShell.Scaffold` (remote-dev-5q6p).
+- **Mobile**: AppBar back buttons render correctly on Tokyo Night dark
+  background — added `iconTheme: IconThemeData(color: Colors.white)` to
+  AppBars on biometric, add_server, edit_server, bridge_spike screens.
+  `SessionViewScreen`'s custom `SessionStatusBar` extended with a leading
+  back-arrow `IconButton` (preserves the 44px row height per spec §4)
+  (remote-dev-q029).
+- **Mobile**: `/notifications` deep-link route opens HomeShell with
+  Notifications tab pre-selected (was a placeholder screen). `HomeShell`
+  accepts an optional `initialTab` constructor param. Push-tap deep-links
+  via `NotificationTapHandler` now land on the live notifications tab
+  with bottom nav visible (remote-dev-0jfw).
+- **Mobile**: Channels tab AppBar resolves `#<channel-name>` from cached
+  `channelsListProvider` via an extracted `_ChannelTitle` ConsumerWidget,
+  so list refreshes rebuild only the title — not the WebView subtree
+  (remote-dev-xbes).
+- **Mobile**: Profile sub-screen audit. Servers wraps existing
+  `ServerPickerScreen` (with `canPop`/fallback navigation); About uses
+  real version copy. Account, GitHub Accounts, Appearance stubs filed as
+  follow-ups (remote-dev-w5f5).
+- **Mobile**: Recording screen exposes `webViewFactory` test seam
+  matching `CfLoginWebViewScreen` precedent; smoke test verifies URL
+  matches `<server>/m/recording/<id>` and that the strict
+  `NavigationPolicy` is used (remote-dev-4g38).
+
 ### Fixed
 
 - **Mobile**: Bottom navigation bar no longer occluded by tab page content.
   Each tab's primary scrollable (`SessionsTabScreen`, `ChannelsTabScreen`,
   `NotificationsTabScreen`, `ProfileTabScreen`) now reserves trailing
-  padding equal to `MediaQuery.paddingOf(context).bottom + 16` so the last
-  row clears the host shell's `AdaptiveBottomBar` even on Android
-  edge-to-edge devices with a non-zero gesture inset (remote-dev-5vkq).
+  padding via a centralized `tabContentBottomPadding(context)` helper
+  (`kTabContentBottomPad = 16` + system bottom inset) so the last row
+  clears the host shell's `AdaptiveBottomBar` even on Android
+  edge-to-edge devices. The system inset is captured *above*
+  `HomeShell.Scaffold` and passed via a private `_ShellChromeInsets`
+  InheritedWidget — Scaffolds with `bottomNavigationBar` strip the
+  bottom padding from the body MediaQuery, so reading it inside the
+  body returns 0 (remote-dev-5vkq).
+- **Mobile (critical)**: WebView navigation policy actually runs in
+  production. `webview_factory.dart` was missing
+  `useShouldOverrideUrlLoading: true`, which `flutter_inappwebview` 6.1.5
+  defaults to `false` on both platforms — so `shouldOverrideUrlLoading`
+  was never invoked and the navigation policy was unenforced across every
+  WebView in the app (CF login, recording, channels, session view, bridge
+  spike). Single-line fix in `InAppWebViewSettings` (remote-dev-4g38
+  follow-up).
+- **Mobile**: Bridge-spike entry point (bug icon on Server Picker) wrapped
+  in `kDebugMode`, so it's tree-shaken from release builds. The
+  non-interactive Cloudflare challenge page that previously confused
+  users in production no longer renders (remote-dev-474v).
 
 ## [0.3.8] - 2026-05-09
 
