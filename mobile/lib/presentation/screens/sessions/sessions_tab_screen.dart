@@ -154,6 +154,11 @@ class _SessionsTabScreenState extends ConsumerState<SessionsTabScreen> {
             backgroundColor: const Color(0xFF24283B),
             child: ListView.separated(
               physics: const AlwaysScrollableScrollPhysics(),
+              // Reserve space below the last row so it never tucks under the
+              // host shell's bottom nav bar (or the Android gesture inset).
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.paddingOf(context).bottom + 16,
+              ),
               itemCount: sessions.length,
               separatorBuilder: (_, __) => const Divider(
                 color: Color(0xFF2F334D),

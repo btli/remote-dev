@@ -14,6 +14,11 @@ class ProfileTabScreen extends ConsumerWidget {
         title: const Text('Profile', style: TextStyle(color: Colors.white)),
       ),
       body: ListView(
+        // Reserve space below the last row so it never tucks under the host
+        // shell's bottom nav bar (or the Android gesture inset).
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.paddingOf(context).bottom + 16,
+        ),
         children: [
           _ProfileRow(
             icon: Icons.person,
