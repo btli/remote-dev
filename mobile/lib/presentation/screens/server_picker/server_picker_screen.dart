@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -96,7 +97,10 @@ class ServerPickerScreen extends ConsumerWidget {
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text('Servers', style: TextStyle(color: Colors.white)),
         actions: [
-          if (onTestBridge != null)
+          // Bridge-spike entry point is a Phase 1.5 development POC; in release
+          // builds it shows a non-interactive Cloudflare challenge that confuses
+          // users, so gate it behind kDebugMode at compile time.
+          if (kDebugMode && onTestBridge != null)
             IconButton(
               icon: const Icon(Icons.bug_report, color: Colors.white),
               tooltip: 'Test bridge',
