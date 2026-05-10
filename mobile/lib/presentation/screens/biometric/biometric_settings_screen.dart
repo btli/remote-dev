@@ -68,6 +68,7 @@ class _BiometricSettingsScreenState
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text('Security', style: TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: _buildBody(),
     );

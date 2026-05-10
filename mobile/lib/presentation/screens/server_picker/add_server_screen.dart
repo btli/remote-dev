@@ -205,6 +205,7 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
         title: const Text('Add server', style: TextStyle(color: Colors.white)),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Form(
         key: _formKey,

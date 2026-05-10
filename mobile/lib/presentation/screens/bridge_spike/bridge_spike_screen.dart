@@ -61,6 +61,7 @@ class _BridgeSpikeScreenState extends ConsumerState<BridgeSpikeScreen> {
               'Bridge spike',
               style: TextStyle(color: Colors.white),
             ),
+            iconTheme: const IconThemeData(color: Colors.white),
           ),
           // Spec §4 mandate: WebView height is FIXED regardless of the
           // keyboard inset. We compute it via LayoutBuilder as
