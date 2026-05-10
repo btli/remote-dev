@@ -23,10 +23,22 @@ class Account {
   /// `{user: {...}, expires}` shape (NextAuth default) and a bare `{email,
   /// name, image}` shape, so the call site doesn't have to care.
   ///
-  /// Throws [FormatException] if neither shape contains an `email`.
+  /// Throws [FormatException] if neither shape contains an `email`, or if
+  /// the wrapped payload has a malformed (non-map) `user` field — silently
+  /// falling back to the bare shape there would let bogus payloads pass.
   factory Account.fromJson(Map<String, dynamic> json) {
-    final user = json['user'];
-    final source = user is Map<String, dynamic> ? user : json;
+    final Map<String, dynamic> source;
+    if (json.containsKey('user')) {
+      final user = json['user'];
+      if (user is! Map<String, dynamic>) {
+        throw const FormatException(
+          'Account.fromJson: `user` field must be an object when present',
+        );
+      }
+      source = user;
+    } else {
+      source = json;
+    }
 
     final email = source['email'];
     if (email is! String || email.isEmpty) {

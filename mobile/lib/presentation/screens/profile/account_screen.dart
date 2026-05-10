@@ -88,15 +88,14 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
       final storage = ref.read(secureStorageProvider);
       await storage.delete(server.id, 'cf_authorization');
 
-      // 2. Best-effort: clear WebView cookies so the in-app browser also
-      //    forgets the CF session. `deleteAllCookies()` is broader than
-      //    we strictly need, but it's the supported API on every
-      //    flutter_inappwebview version we ship; tightening to a
-      //    per-origin deletion is a future enhancement.
+      // 2. Best-effort: clear WebView cookies for *this* server's origin
+      //    only. `deleteCookies(url:)` removes every cookie scoped to
+      //    that origin (including the CF auth cookie) without touching
+      //    cookies belonging to other servers the user has linked.
       try {
         final manager =
             ref.read(cookieManagerProvider) ?? CookieManager.instance();
-        await manager.deleteAllCookies();
+        await manager.deleteCookies(url: WebUri(server.url));
       } catch (_) {
         // Cookie-clearing is best-effort. If the platform channel is
         // unavailable (e.g. in widget tests), we still want sign-out to
@@ -125,9 +124,7 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final asyncAccount = ref.watch(accountFutureProvider);
     final asyncServer = ref.watch(activeServerProvider);
-    final server = asyncServer.asData?.value;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
@@ -136,24 +133,42 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
         title: const Text('Account', style: TextStyle(color: Colors.white)),
         iconTheme: const IconThemeData(color: Colors.white),
       ),
-      body: server == null
-          ? const _NoActiveServerView()
-          : asyncAccount.when(
-              loading: () => const Center(
-                child: CupertinoActivityIndicator(color: Colors.white70),
-              ),
-              error: (err, _) => _ErrorView(
-                message: 'Failed to load account',
-                detail: '$err',
-                onRetry: _refresh,
-              ),
-              data: (account) => _AccountBody(
-                account: account,
-                server: server,
-                signingOut: _signingOut,
-                onSignOut: () => _signOut(server),
-              ),
+      // Resolve the active server FIRST. Conflating loading/error with
+      // "no server" would drop the user onto the empty-state CTA every
+      // time the storage layer is still warming up or has actually
+      // failed — both wrong.
+      body: asyncServer.when(
+        loading: () => const Center(
+          child: CupertinoActivityIndicator(color: Colors.white70),
+        ),
+        error: (err, _) => _ErrorView(
+          message: 'Failed to resolve active server',
+          detail: '$err',
+          onRetry: _refresh,
+        ),
+        data: (server) {
+          if (server == null) {
+            return const _NoActiveServerView();
+          }
+          final asyncAccount = ref.watch(accountFutureProvider);
+          return asyncAccount.when(
+            loading: () => const Center(
+              child: CupertinoActivityIndicator(color: Colors.white70),
             ),
+            error: (err, _) => _ErrorView(
+              message: 'Failed to load account',
+              detail: '$err',
+              onRetry: _refresh,
+            ),
+            data: (account) => _AccountBody(
+              account: account,
+              server: server,
+              signingOut: _signingOut,
+              onSignOut: () => _signOut(server),
+            ),
+          );
+        },
+      ),
     );
   }
 }
