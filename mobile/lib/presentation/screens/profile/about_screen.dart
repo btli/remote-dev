@@ -27,7 +27,7 @@ class AboutScreen extends StatelessWidget {
             ),
             SizedBox(height: 8),
             Text(
-              'Phase 4 (development)',
+              'Version 0.1.0 (development build)',
               style: TextStyle(color: Colors.white70),
             ),
             SizedBox(height: 16),

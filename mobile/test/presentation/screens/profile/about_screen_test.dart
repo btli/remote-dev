@@ -10,6 +10,6 @@ void main() {
 
     expect(find.text('About'), findsOneWidget);
     expect(find.text('Remote Dev'), findsOneWidget);
-    expect(find.text('Phase 4 (development)'), findsOneWidget);
+    expect(find.text('Version 0.1.0 (development build)'), findsOneWidget);
   });
 }
