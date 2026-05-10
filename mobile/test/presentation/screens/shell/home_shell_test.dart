@@ -9,6 +9,7 @@ import 'package:remote_dev/infrastructure/api/notifications_api.dart';
 import 'package:remote_dev/infrastructure/api/sessions_api.dart';
 import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/notifications/notifications_tab_screen.dart';
+import 'package:remote_dev/presentation/screens/profile/profile_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/sessions/sessions_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/shell/adaptive_bottom_bar.dart';
 import 'package:remote_dev/presentation/screens/shell/home_shell.dart';
@@ -28,8 +29,12 @@ class _FakeSessionsApi extends Fake implements SessionsApi {
 }
 
 class _FakeNotificationsApi extends Fake implements NotificationsApi {
+  _FakeNotificationsApi([this._notifications = const []]);
+
+  final List<AppNotification> _notifications;
+
   @override
-  Future<List<AppNotification>> list({String? filter}) async => const [];
+  Future<List<AppNotification>> list({String? filter}) async => _notifications;
 
   @override
   Future<void> markRead(List<String> ids) async {}
@@ -189,6 +194,308 @@ void main() {
 
       expect(find.text('No sessions yet'), findsOneWidget);
       expect(find.byType(HomeShell), findsOneWidget);
+    },
+  );
+
+  // Regression — bottom-nav occlusion (remote-dev-5vkq).
+  //
+  // Each tab's primary scrollable must reserve enough bottom padding that
+  // its last row clears the host shell's bottom navigation bar, including
+  // a non-zero Android system gesture inset. We verify this on every tab
+  // that ships its own scrollable list:
+  //
+  //   - Sessions       (long list of sessions)
+  //   - Channels       (long list of channels)
+  //   - Notifications  (long list of notifications)
+  //   - Profile        (static settings list)
+  const double fakeBottomInset = 30;
+  Widget pinViewport(Widget child) => MediaQuery(
+        data: const MediaQueryData(
+          size: Size(360, 800),
+          // Simulate Android edge-to-edge gesture inset.
+          padding: EdgeInsets.only(bottom: fakeBottomInset),
+        ),
+        child: child,
+      );
+
+  SessionSummary mkSession(int i) => SessionSummary(
+        id: 'sess-$i',
+        name: 'Session $i',
+        tmuxSessionName: 'rdv-session-$i',
+        status: SessionStatus.active,
+        activity: AgentActivityStatus.idle,
+      );
+
+  Channel mkChannel(int i) => Channel(
+        id: 'chan-$i',
+        name: 'channel-$i',
+      );
+
+  AppNotification mkNotification(int i) => AppNotification(
+        id: 'notif-$i',
+        title: 'Notification $i',
+        body: 'Body $i',
+        createdAt: DateTime(2026, 1, 1).add(Duration(minutes: i)),
+      );
+
+  // The fix for remote-dev-5vkq adds ~16 logical pixels of trailing padding
+  // PLUS the system bottom inset to each tab's primary scrollable so the
+  // last row never visually butts up against the host shell's bottom nav
+  // bar.
+  //
+  // We verify two things on each scrollable tab:
+  //   1. The ListView declares the FULL expected bottom padding
+  //      (system bottom inset + 16) — guards against the Scaffold body
+  //      MediaQuery bug where the inset is consumed before tab screens
+  //      can read it.
+  //   2. Scrolling to the end of the list still leaves the last row above
+  //      the nav bar (regression smoke check).
+  const double kPadBudget = 16;
+  const double kExpectedBottomPadding = fakeBottomInset + kPadBudget;
+  const double kMinClearancePx = 16;
+
+  double bottomPaddingOf(WidgetTester tester, Finder listView) {
+    final lv = tester.widget<ListView>(listView);
+    final pad = (lv.padding as EdgeInsets?) ?? EdgeInsets.zero;
+    return pad.bottom;
+  }
+
+  testWidgets(
+    'sessions tab: ListView reserves trailing padding for the nav bar',
+    (tester) async {
+      tester.view.physicalSize = const Size(720, 1600);
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      final sessions = List<SessionSummary>.generate(40, mkSession);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionsApiProvider.overrideWithValue(_FakeSessionsApi(sessions)),
+            notificationsApiProvider.overrideWithValue(_FakeNotificationsApi()),
+            channelsApiProvider.overrideWithValue(_FakeChannelsApi(const [])),
+          ],
+          child: MaterialApp(
+            home: pinViewport(const HomeShell()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // (1) Structural: ListView reserves the FULL expected bottom padding
+      // (system bottom inset + 16). A laxer >=16 assertion would silently
+      // pass even if the Scaffold consumed the inset before the tab body
+      // could read it.
+      final lvFinder = find.byType(ListView).first;
+      final lvBottomPad = bottomPaddingOf(tester, lvFinder);
+      expect(
+        lvBottomPad,
+        closeTo(kExpectedBottomPadding, 0.5),
+        reason: 'Sessions ListView must reserve $kExpectedBottomPadding px of '
+            'trailing padding (system inset $fakeBottomInset + $kPadBudget); '
+            'got $lvBottomPad',
+      );
+
+      // (2) Regression: scrolling to the end keeps the last row above the
+      // host nav bar.
+      for (var i = 0; i < 6; i++) {
+        await tester.fling(lvFinder, const Offset(0, -4000), 6000);
+        await tester.pumpAndSettle();
+      }
+      final navBarTop = tester.getRect(find.byType(AdaptiveBottomBar)).top;
+      final lastRow = find.text('Session 39');
+      expect(
+        lastRow,
+        findsOneWidget,
+        reason: 'List should be scrolled to its final item',
+      );
+      final lastRowBottom = tester.getRect(lastRow).bottom;
+      final clearance = navBarTop - lastRowBottom;
+      expect(
+        clearance,
+        greaterThanOrEqualTo(kMinClearancePx),
+        reason: 'Last session row bottom ($lastRowBottom) must clear nav bar '
+            'top ($navBarTop) by >= $kMinClearancePx px (got $clearance)',
+      );
+    },
+  );
+
+  testWidgets(
+    'channels tab: ListView reserves trailing padding for the nav bar',
+    (tester) async {
+      tester.view.physicalSize = const Size(720, 1600);
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      final channels = List<Channel>.generate(40, mkChannel);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionsApiProvider.overrideWithValue(_FakeSessionsApi(const [])),
+            notificationsApiProvider.overrideWithValue(_FakeNotificationsApi()),
+            channelsApiProvider.overrideWithValue(_FakeChannelsApi(channels)),
+          ],
+          child: MaterialApp(
+            home: pinViewport(const HomeShell(initialTab: HomeTab.channels)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final lvFinder = find.byType(ListView).first;
+      final lvBottomPad = bottomPaddingOf(tester, lvFinder);
+      expect(
+        lvBottomPad,
+        closeTo(kExpectedBottomPadding, 0.5),
+        reason: 'Channels ListView must reserve $kExpectedBottomPadding px of '
+            'trailing padding (system inset $fakeBottomInset + $kPadBudget); '
+            'got $lvBottomPad',
+      );
+
+      for (var i = 0; i < 6; i++) {
+        await tester.fling(lvFinder, const Offset(0, -4000), 6000);
+        await tester.pumpAndSettle();
+      }
+      final navBarTop = tester.getRect(find.byType(AdaptiveBottomBar)).top;
+      final lastRow = find.text('channel-39');
+      expect(
+        lastRow,
+        findsOneWidget,
+        reason: 'List should be scrolled to its final item',
+      );
+      final lastRowBottom = tester.getRect(lastRow).bottom;
+      final clearance = navBarTop - lastRowBottom;
+      expect(
+        clearance,
+        greaterThanOrEqualTo(kMinClearancePx),
+        reason: 'Last channel row bottom ($lastRowBottom) must clear nav bar '
+            'top ($navBarTop) by >= $kMinClearancePx px (got $clearance)',
+      );
+    },
+  );
+
+  testWidgets(
+    'notifications tab: ListView reserves trailing padding for the nav bar',
+    (tester) async {
+      // Notifications has a horizontal FilterChipRow that overflows at 360
+      // logical px wide. Use a slightly wider viewport so the chips lay out
+      // cleanly — this test is about ListView padding, not chip layout.
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      final notifications = List<AppNotification>.generate(30, mkNotification);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionsApiProvider.overrideWithValue(_FakeSessionsApi(const [])),
+            notificationsApiProvider.overrideWithValue(
+              _FakeNotificationsApi(notifications),
+            ),
+            channelsApiProvider.overrideWithValue(_FakeChannelsApi(const [])),
+          ],
+          child: MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(
+                size: Size(450, 800),
+                padding: EdgeInsets.only(bottom: fakeBottomInset),
+              ),
+              child: const HomeShell(initialTab: HomeTab.notifications),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // (1) Structural: ListView reserves the FULL expected bottom padding.
+      final lvFinder = find.byType(ListView).first;
+      final lvBottomPad = bottomPaddingOf(tester, lvFinder);
+      expect(
+        lvBottomPad,
+        closeTo(kExpectedBottomPadding, 0.5),
+        reason: 'Notifications ListView must reserve $kExpectedBottomPadding '
+            'px of trailing padding (system inset $fakeBottomInset + '
+            '$kPadBudget); got $lvBottomPad',
+      );
+
+      // (2) Regression: scrolling to the end keeps the last row above the
+      // host nav bar.
+      for (var i = 0; i < 6; i++) {
+        await tester.fling(lvFinder, const Offset(0, -4000), 6000);
+        await tester.pumpAndSettle();
+      }
+      final navBarTop = tester.getRect(find.byType(AdaptiveBottomBar)).top;
+      final lastRow = find.text('Notification 29');
+      expect(
+        lastRow,
+        findsOneWidget,
+        reason: 'List should be scrolled to its final item',
+      );
+      final lastRowBottom = tester.getRect(lastRow).bottom;
+      final clearance = navBarTop - lastRowBottom;
+      expect(
+        clearance,
+        greaterThanOrEqualTo(kMinClearancePx),
+        reason: 'Last notification row bottom ($lastRowBottom) must clear '
+            'nav bar top ($navBarTop) by >= $kMinClearancePx px '
+            '(got $clearance)',
+      );
+    },
+  );
+
+  testWidgets(
+    'profile tab: ListView reserves trailing padding for the nav bar',
+    (tester) async {
+      // Pin a viewport so layout assertions are deterministic.
+      tester.view.physicalSize = const Size(720, 1600);
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sessionsApiProvider.overrideWithValue(_FakeSessionsApi(const [])),
+            notificationsApiProvider.overrideWithValue(_FakeNotificationsApi()),
+            channelsApiProvider.overrideWithValue(_FakeChannelsApi(const [])),
+          ],
+          child: MaterialApp(
+            home: pinViewport(const HomeShell(initialTab: HomeTab.profile)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // (1) Structural: ListView reserves the FULL expected bottom padding.
+      final lvFinder = find.descendant(
+        of: find.byType(ProfileTabScreen),
+        matching: find.byType(ListView),
+      );
+      final lvBottomPad = bottomPaddingOf(tester, lvFinder);
+      expect(
+        lvBottomPad,
+        closeTo(kExpectedBottomPadding, 0.5),
+        reason: 'Profile ListView must reserve $kExpectedBottomPadding px of '
+            'trailing padding (system inset $fakeBottomInset + $kPadBudget); '
+            'got $lvBottomPad',
+      );
+
+      // (2) The visible "About" row sits well above the nav bar.
+      final navBarTop = tester.getRect(find.byType(AdaptiveBottomBar)).top;
+      final aboutBottom = tester.getRect(find.text('About')).bottom;
+      expect(
+        aboutBottom,
+        lessThan(navBarTop),
+        reason: 'Profile "About" row bottom ($aboutBottom) must sit above '
+            'nav bar top ($navBarTop)',
+      );
     },
   );
 }

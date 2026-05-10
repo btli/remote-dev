@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mobile**: Bottom navigation bar no longer occluded by tab page content.
+  Each tab's primary scrollable (`SessionsTabScreen`, `ChannelsTabScreen`,
+  `NotificationsTabScreen`, `ProfileTabScreen`) now reserves trailing
+  padding equal to `MediaQuery.paddingOf(context).bottom + 16` so the last
+  row clears the host shell's `AdaptiveBottomBar` even on Android
+  edge-to-edge devices with a non-zero gesture inset (remote-dev-5vkq).
+
 ## [0.3.8] - 2026-05-09
 
 ### Added

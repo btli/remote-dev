@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../domain/notification.dart';
 import '../../../infrastructure/api/notifications_api.dart';
+import '../shell/home_shell.dart';
 
 /// Provider for the notifications API. Must be overridden in main.dart /
 /// app.dart once a [RemoteDevClient] is wired for the active server.
@@ -158,6 +159,12 @@ class _NotificationsTabScreenState
                   backgroundColor: const Color(0xFF24283B),
                   child: ListView.separated(
                     physics: const AlwaysScrollableScrollPhysics(),
+                    // Reserve space below the last row so it never tucks
+                    // under the host shell's bottom nav bar (or the Android
+                    // gesture inset).
+                    padding: EdgeInsets.only(
+                      bottom: tabContentBottomPadding(context),
+                    ),
                     itemCount: items.length,
                     separatorBuilder: (_, __) => const Divider(
                       color: Color(0xFF2F334D),

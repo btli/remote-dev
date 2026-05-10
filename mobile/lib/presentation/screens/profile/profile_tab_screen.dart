@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../shell/home_shell.dart';
+
 class ProfileTabScreen extends ConsumerWidget {
   const ProfileTabScreen({super.key});
 
@@ -14,6 +16,11 @@ class ProfileTabScreen extends ConsumerWidget {
         title: const Text('Profile', style: TextStyle(color: Colors.white)),
       ),
       body: ListView(
+        // Reserve space below the last row so it never tucks under the host
+        // shell's bottom nav bar (or the Android gesture inset).
+        padding: EdgeInsets.only(
+          bottom: tabContentBottomPadding(context),
+        ),
         children: [
           _ProfileRow(
             icon: Icons.person,
