@@ -14,10 +14,31 @@ import '../webview_host/session_route_host.dart' show activeServerProvider;
 /// - Body is the InAppWebView pointed at `<server>/m/recording/<id>`.
 /// - `onTerminalReady` registered in `onWebViewCreated` (Spec §2.2 rule 1).
 /// - All native→WebView calls go through [BridgeController] (Spec §2.2 rule 2).
+///
+/// Auth note: this WebView does NOT need to attach the CF_Authorization
+/// cookie itself. `flutter_inappwebview`'s [CookieManager] is a singleton
+/// that bridges to the platform-level cookie store (WKHTTPCookieStore on
+/// iOS, Android `CookieManager`), which is shared across every InAppWebView
+/// instance on the same origin. The cookie is captured by
+/// `CfLoginWebViewScreen` during the Add Server / re-auth flow, persisted
+/// to the platform cookie store, and a fresh recording WebView pointed at
+/// the same origin picks it up automatically. The Dio-side
+/// `CfAuthInterceptor` only attaches to HTTP API calls — it is not in the
+/// WebView's request path and does not need to be.
 class RecordingScreen extends ConsumerStatefulWidget {
-  const RecordingScreen({required this.recordingId, super.key});
+  const RecordingScreen({
+    required this.recordingId,
+    this.webViewFactory,
+    super.key,
+  });
 
   final String recordingId;
+
+  /// Test seam — defaults to a real [WebViewFactory]. Tests can substitute
+  /// a fake factory that returns an empty widget (and captures the URL it
+  /// was asked to build) so the unit suite doesn't have to host a real
+  /// WebView.
+  final WebViewFactory? webViewFactory;
 
   @override
   ConsumerState<RecordingScreen> createState() => _RecordingScreenState();
@@ -80,7 +101,8 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
           }
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/recording/${widget.recordingId}');
-          return WebViewFactory().build(
+          final factory = widget.webViewFactory ?? const WebViewFactory();
+          return factory.build(
             initialUrl: url,
             policy: NavigationPolicy(serverOrigin: origin),
             onLinkOpen: (_) {},
