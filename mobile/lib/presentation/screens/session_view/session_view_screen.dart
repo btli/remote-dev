@@ -269,7 +269,10 @@ class _Webview extends ConsumerWidget {
         final url = origin.replace(path: '/m/session/$sessionId');
         return WebViewFactory().build(
           initialUrl: url,
-          policy: NavigationPolicy(serverOrigin: origin),
+          policy: NavigationPolicy(
+            serverOrigin: origin,
+            allowedPathPrefixes: const ['/m/session/'],
+          ),
           onLinkOpen: (uri) {
             debugPrint('External link suppressed: $uri');
           },

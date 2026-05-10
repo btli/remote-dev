@@ -4,8 +4,16 @@ class NavigationPolicy {
   /// Default policy used by the in-session WebView (Phase 2). Locks the
   /// WebView to `<serverOrigin>/m/*` plus the CF Access challenge — every
   /// other URL is intercepted and opened externally.
-  const NavigationPolicy({required this.serverOrigin})
-      : _allowSsoProviders = false;
+  ///
+  /// When [allowedPathPrefixes] is supplied, the `/m/*` allow list is
+  /// further narrowed to paths starting with one of the listed prefixes.
+  /// This lets per-surface hosts (recording, channel, session) pin the
+  /// WebView to a single PWA route so a same-origin redirect to a sister
+  /// surface is intercepted instead of silently navigating in-place.
+  const NavigationPolicy({
+    required this.serverOrigin,
+    this.allowedPathPrefixes,
+  }) : _allowSsoProviders = false;
 
   /// Relaxed policy used during the Add Server / re-auth flow. Allows the
   /// well-known third-party identity providers that CF Access redirects to
@@ -16,9 +24,17 @@ class NavigationPolicy {
   /// could legitimately contain a `https://accounts.google.com/...` link
   /// that we'd then accidentally load in-place.
   const NavigationPolicy.forLogin({required this.serverOrigin})
-      : _allowSsoProviders = true;
+      : _allowSsoProviders = true,
+        allowedPathPrefixes = null;
 
   final Uri serverOrigin;
+
+  /// Optional narrower allow list. When non-null, a same-origin path must
+  /// match one of these prefixes (in addition to the `/m/*` requirement)
+  /// or it is intercepted. Ignored in the [NavigationPolicy.forLogin]
+  /// constructor — the login flow legitimately needs broad origin access.
+  final List<String>? allowedPathPrefixes;
+
   final bool _allowSsoProviders;
 
   NavigationDecision decide(Uri uri) {
@@ -36,6 +52,11 @@ class NavigationPolicy {
     }
     if (!uri.path.startsWith('/m/')) {
       return NavigationDecision.intercept;
+    }
+    final prefixes = allowedPathPrefixes;
+    if (prefixes != null) {
+      final matchesAllowed = prefixes.any(uri.path.startsWith);
+      if (!matchesAllowed) return NavigationDecision.intercept;
     }
     return NavigationDecision.allow;
   }
