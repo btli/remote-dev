@@ -477,7 +477,8 @@ class _GitHubLinkWebView extends StatefulWidget {
 /// one) as the active server. Visible for testing.
 @visibleForTesting
 bool isOAuthCallback(Uri uri, Uri serverOrigin) {
-  // Same origin: host must match exactly.
+  // Same origin: scheme and host must match exactly.
+  if (uri.scheme != serverOrigin.scheme) return false;
   if (uri.host.isEmpty || uri.host != serverOrigin.host) return false;
   // If both sides declare an explicit port, require equality. If only one
   // side does, treat the implicit port as the scheme default — Uri.port

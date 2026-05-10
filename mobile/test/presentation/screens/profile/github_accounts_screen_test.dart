@@ -327,5 +327,15 @@ void main() {
         isFalse,
       );
     });
+
+    test('rejects scheme mismatch (http callback against https origin)', () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('http://rdv.example/api/auth/github/callback'),
+          serverOrigin,
+        ),
+        isFalse,
+      );
+    });
   });
 }
