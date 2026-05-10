@@ -41,6 +41,19 @@ export function EmbeddedChannelView() {
       key: noop,
       paste: noop,
       setFontSize: noop,
+      setFontScale: (scale) => {
+        // Channel view consumes --rdv-font-scale to scale markdown text
+        // in CSS. Applying it on <html> means the rule is in scope for
+        // any descendant — including the thread takeover.
+        if (typeof document !== "undefined") {
+          document.documentElement.style.setProperty(
+            "--rdv-font-scale",
+            String(scale),
+          );
+        }
+      },
+      // No terminal hosted here — accept the call as a no-op.
+      setCursorBlink: noop,
       scrollToBottom: noop,
       back: () => {
         // Closing an open thread takes priority over leaving the route.

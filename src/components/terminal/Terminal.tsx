@@ -91,6 +91,8 @@ export interface TerminalRef {
   sendInput: (data: string) => void;
   /** Scroll the terminal to the bottom (latest output) */
   scrollToBottom: () => void;
+  /** Toggle xterm.js cursor blink at runtime (no remount). */
+  setCursorBlink: (blink: boolean) => void;
 }
 
 interface TerminalProps {
@@ -335,6 +337,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     },
     scrollToBottom: () => {
       xtermRef.current?.scrollToBottom();
+    },
+    setCursorBlink: (blink: boolean) => {
+      const term = xtermRef.current;
+      if (term) {
+        term.options.cursorBlink = blink;
+      }
     },
   }), []);
 

@@ -40,6 +40,16 @@ export function EmbeddedRecordingView({
       key: noop,
       paste: noop,
       setFontSize: noop,
+      setFontScale: (scale) => {
+        if (typeof document !== "undefined") {
+          document.documentElement.style.setProperty(
+            "--rdv-font-scale",
+            String(scale),
+          );
+        }
+      },
+      // Recording embed has no terminal to toggle — no-op.
+      setCursorBlink: noop,
       scrollToBottom: noop,
       // Recording playback has no in-WebView "back" action — return
       // false so the native shell pops the route itself.

@@ -28,6 +28,8 @@ export interface TerminalWithKeyboardRef {
   restartAgent: () => void;
   /** Scroll the underlying xterm.js viewport to the bottom. */
   scrollToBottom: () => void;
+  /** Toggle xterm.js cursor blink at runtime. */
+  setCursorBlink: (blink: boolean) => void;
 }
 
 /**
@@ -163,6 +165,9 @@ export const TerminalWithKeyboard = forwardRef<TerminalWithKeyboardRef, Terminal
     },
     scrollToBottom: () => {
       terminalRef.current?.scrollToBottom();
+    },
+    setCursorBlink: (blink: boolean) => {
+      terminalRef.current?.setCursorBlink(blink);
     },
   }), [useBuiltinMobileChrome]);
 

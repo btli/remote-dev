@@ -105,6 +105,20 @@ export function EmbeddedSessionView({
         // the native pinch gesture; for now we ignore so the bridge
         // method is callable without effect.
       },
+      setFontScale: (scale) => {
+        // Apply scale as a CSS variable on <html>; the terminal embed
+        // doesn't visually consume the variable today but accepts the
+        // call so the native shell can fire it on every screen.
+        if (typeof document !== "undefined") {
+          document.documentElement.style.setProperty(
+            "--rdv-font-scale",
+            String(scale),
+          );
+        }
+      },
+      setCursorBlink: (blink) => {
+        terminalRef.current?.setCursorBlink(blink);
+      },
       scrollToBottom: () => terminalRef.current?.scrollToBottom(),
       back: () => {
         // Session embed has no in-WebView "back" action — let the

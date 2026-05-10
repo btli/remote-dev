@@ -45,6 +45,18 @@ class BridgeController {
   /// Equivalent to `window.rdvBridge.setFontSize(px)`.
   void setFontSize(int px) => _exec('window.rdvBridge.setFontSize($px)');
 
+  /// Equivalent to `window.rdvBridge.setFontScale(scale)`. The PWA listens
+  /// and updates the `--rdv-font-scale` CSS variable so terminal +
+  /// channel content visually scales.
+  void setFontScale(double scale) =>
+      _exec('window.rdvBridge.setFontScale($scale)');
+
+  /// Equivalent to `window.rdvBridge.setCursorBlink(blink)`. Toggles
+  /// xterm.js's `cursorBlink` option inside the session embed; other
+  /// embeds accept the call as a no-op.
+  void setCursorBlink(bool blink) =>
+      _exec('window.rdvBridge.setCursorBlink(${blink ? 'true' : 'false'})');
+
   /// Asks the embedded PWA to handle a back gesture. Returns `true` when
   /// the PWA reports it consumed the gesture (e.g. closed an open thread,
   /// dismissed a modal, popped an in-WebView route) and `false` otherwise
