@@ -193,8 +193,17 @@ class AppRouter {
         ),
         GoRoute(
           path: '/reauth',
-          builder: (context, state) => ReauthScreen(
-            onReauthenticate: () => context.go('/servers'),
+          builder: (context, state) => Consumer(
+            builder: (context, ref, _) => ReauthScreen(
+              onSuccess: () {
+                // Fresh cookie has been persisted; refresh the active
+                // server provider so any consumer that already cached a
+                // null/expired session re-reads, then bounce home.
+                ref.invalidate(activeServerProvider);
+                context.go('/home');
+              },
+              onCancel: () => context.go('/servers'),
+            ),
           ),
         ),
         GoRoute(
