@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +22,19 @@ class _FakeChannelsApi extends Fake implements ChannelsApi {
 
   @override
   Future<List<Channel>> list() async => _channels;
+
+  @override
+  Future<void> archive(String id) async {}
+}
+
+/// Returns a future the test controls so we can assert behavior while the
+/// channels list is still in its loading state.
+class _DelayedChannelsApi extends Fake implements ChannelsApi {
+  _DelayedChannelsApi(this.future);
+  final Future<List<Channel>> future;
+
+  @override
+  Future<List<Channel>> list() => future;
 
   @override
   Future<void> archive(String id) async {}
@@ -96,6 +111,42 @@ void main() {
       // which is what arrives via deep-link before the cache is populated.
       expect(find.text('Channel'), findsAtLeast(1));
       expect(find.text('#general'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'shows fallback "Channel" before list resolves, then "#name" after',
+    (tester) async {
+      // Cold start: deep-link arrives before the channels list has resolved.
+      // The AppBar must show the generic fallback while loading, then upgrade
+      // to "#<name>" once the list completes — without remounting the WebView.
+      final completer = Completer<List<Channel>>();
+      final api = _DelayedChannelsApi(completer.future);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            channelsApiProvider.overrideWithValue(api),
+          ],
+          child: const MaterialApp(
+            home: ChannelScreen(channelId: 'random'),
+          ),
+        ),
+      );
+
+      // One frame — provider is in loading state, fallback should be visible.
+      // We deliberately do NOT pumpAndSettle: InAppWebView never settles.
+      await tester.pump();
+      expect(find.text('Channel'), findsAtLeast(1));
+      expect(find.text('#random'), findsNothing);
+
+      // Resolve the list and let the title rebuild.
+      completer.complete(const [Channel(id: 'random', name: 'random')]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+
+      expect(find.text('#random'), findsOneWidget);
     },
   );
 }
