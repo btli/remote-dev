@@ -10,7 +10,10 @@ import '../webview_host/session_route_host.dart'
 ///
 /// Reuses the boot-time [ServerPickerScreen] so the list, add, edit, and
 /// delete flows stay in lockstep. Selecting a server here switches the
-/// active server and bounces to /home, matching the boot picker behavior.
+/// active server and pops back to the Profile tab when this screen was
+/// pushed onto the stack; if there is nothing to pop (e.g. deep-linked at
+/// boot) we fall back to `/home` so the user lands somewhere sane instead
+/// of stranded on this picker.
 class ServersScreen extends ConsumerWidget {
   const ServersScreen({super.key});
 
@@ -21,7 +24,12 @@ class ServersScreen extends ConsumerWidget {
         await ref.read(serverConfigStoreProvider).setActive(server.id);
         ref.invalidate(activeServerProvider);
         ref.invalidate(serversListProvider);
-        if (context.mounted) {
+        if (!context.mounted) return;
+        // Prefer pop so the Profile tab (HomeShell) stays on the back stack;
+        // only force-navigate to /home when there is no prior route.
+        if (context.canPop()) {
+          context.pop();
+        } else {
           context.go('/home');
         }
       },
