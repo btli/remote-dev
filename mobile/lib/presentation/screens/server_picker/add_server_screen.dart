@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../domain/server_config.dart';
-import '../webview_host/session_route_host.dart' show serverConfigStoreProvider;
+import '../webview_host/session_route_host.dart'
+    show secureStorageProvider, serverConfigStoreProvider;
+import 'cf_login_webview_screen.dart';
 import 'server_picker_screen.dart' show serversListProvider;
 
 /// Probes a candidate server URL with a short-timeout unauthenticated GET
@@ -48,10 +50,19 @@ Future<bool> defaultHealthProbe(String rawUrl) async {
   }
 }
 
+/// Bridge typedef so tests can stub the CF login push without rendering an
+/// actual InAppWebView. Returns the harvested `CF_Authorization` cookie
+/// value, or `null` if the user cancelled.
+typedef CfLoginLauncher = Future<String?> Function(
+  BuildContext context,
+  Uri serverUrl,
+);
+
 class AddServerScreen extends ConsumerStatefulWidget {
   const AddServerScreen({
     required this.onSaved,
     this.healthProbeOverride,
+    this.cfLoginLauncher,
     super.key,
   });
 
@@ -59,6 +70,11 @@ class AddServerScreen extends ConsumerStatefulWidget {
 
   /// Test seam — replaces [defaultHealthProbe] when supplied.
   final Future<bool> Function(String url)? healthProbeOverride;
+
+  /// Test seam — replaces the CF Access WebView push when supplied. In
+  /// production we push [CfLoginWebViewScreen] and resolve with the
+  /// harvested cookie (or `null` if the user backed out).
+  final CfLoginLauncher? cfLoginLauncher;
 
   @override
   ConsumerState<AddServerScreen> createState() => _AddServerScreenState();
@@ -74,6 +90,26 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
   Future<bool> _runProbe(String url) async {
     final probe = widget.healthProbeOverride ?? defaultHealthProbe;
     return probe(url);
+  }
+
+  Future<String?> _runCfLogin(BuildContext context, Uri serverUrl) async {
+    final launcher = widget.cfLoginLauncher ?? _defaultCfLoginLauncher;
+    return launcher(context, serverUrl);
+  }
+
+  static Future<String?> _defaultCfLoginLauncher(
+    BuildContext context,
+    Uri serverUrl,
+  ) {
+    return Navigator.of(context).push<String?>(
+      MaterialPageRoute<String?>(
+        builder: (routeCtx) => CfLoginWebViewScreen(
+          serverUrl: serverUrl,
+          onSuccess: (cookie) => Navigator.of(routeCtx).pop(cookie),
+          onCancel: () => Navigator.of(routeCtx).pop(),
+        ),
+      ),
+    );
   }
 
   Future<void> _save() async {
@@ -96,13 +132,33 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
           return;
         }
       }
-      final store = ref.read(serverConfigStoreProvider);
+
+      // Open the CF Access WebView and wait for the user to either
+      // complete sign-in (we get back a cookie) or cancel (null).
+      if (!mounted) return;
+      final cookie = await _runCfLogin(context, Uri.parse(url));
+      if (!mounted) return;
+      if (cookie == null) {
+        setState(() {
+          _probeError = 'Sign-in cancelled.';
+        });
+        return;
+      }
+
       final config = ServerConfig(
         id: const Uuid().v4(),
         label: _labelCtrl.text.trim(),
         url: url,
         lastUsedAt: DateTime.now(),
       );
+
+      // Persist the cookie BEFORE upserting the server record so that any
+      // listener that reacts to a new server (e.g. Dio building a client
+      // for it) finds the cookie already in place.
+      final storage = ref.read(secureStorageProvider);
+      await storage.write(config.id, 'cf_authorization', cookie);
+
+      final store = ref.read(serverConfigStoreProvider);
       await store.upsert(config);
       await store.setActive(config.id);
       ref.invalidate(serversListProvider);

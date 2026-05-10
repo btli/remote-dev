@@ -2,15 +2,30 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:remote_dev/application/ports/secure_storage_port.dart';
 import 'package:remote_dev/application/ports/server_config_store.dart';
 import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/infrastructure/storage/flutter_secure_storage_port.dart';
 import 'package:remote_dev/presentation/screens/server_picker/add_server_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show serverConfigStoreProvider;
+    show secureStorageProvider, serverConfigStoreProvider;
 
 class _MockStore extends Mock implements ServerConfigStore {}
 
 class _FakeServerConfig extends Fake implements ServerConfig {}
+
+class _FakeStorage extends Fake implements FlutterSecureStoragePort {
+  final Map<String, String> writes = <String, String>{};
+
+  @override
+  Future<void> write(String serverId, String key, String value) async {
+    writes['$serverId/$key'] = value;
+  }
+
+  // The other SecureStoragePort methods aren't exercised by these tests;
+  // delegate to the abstract Fake error-on-call default by leaving them
+  // unimplemented here.
+}
 
 void main() {
   setUpAll(() {
@@ -21,17 +36,24 @@ void main() {
     WidgetTester tester, {
     required _MockStore store,
     required Future<bool> Function(String) probe,
+    required CfLoginLauncher cfLogin,
+    SecureStoragePort? storage,
     void Function(ServerConfig)? onSaved,
   }) {
     return tester.pumpWidget(
       ProviderScope(
         overrides: [
           serverConfigStoreProvider.overrideWithValue(store),
+          if (storage != null)
+            secureStorageProvider.overrideWithValue(
+              storage as FlutterSecureStoragePort,
+            ),
         ],
         child: MaterialApp(
           home: AddServerScreen(
             onSaved: onSaved ?? (_) {},
             healthProbeOverride: probe,
+            cfLoginLauncher: cfLogin,
           ),
         ),
       ),
@@ -39,18 +61,25 @@ void main() {
   }
 
   testWidgets(
-    'happy path: probe returns true, server is upserted + activated',
+    'happy path: probe true, CF login returns cookie, server upserted',
     (tester) async {
       final store = _MockStore();
+      final storage = _FakeStorage();
       when(() => store.upsert(any())).thenAnswer((_) async {});
       when(() => store.setActive(any())).thenAnswer((_) async {});
       when(store.loadAll).thenAnswer((_) async => const []);
 
       ServerConfig? saved;
+      Uri? capturedLoginUrl;
       await pumpAddServer(
         tester,
         store: store,
+        storage: storage,
         probe: (_) async => true,
+        cfLogin: (ctx, url) async {
+          capturedLoginUrl = url;
+          return 'jwt-token';
+        },
         onSaved: (cfg) => saved = cfg,
       );
 
@@ -70,16 +99,17 @@ void main() {
       expect(saved, isNotNull);
       expect(saved!.label, 'Work');
       expect(saved!.url, 'https://dev.example.com');
+      expect(capturedLoginUrl, Uri.parse('https://dev.example.com'));
+      // Cookie was persisted under the new server's id.
+      expect(storage.writes['${saved!.id}/cf_authorization'], 'jwt-token');
     },
   );
 
   testWidgets(
-    'unreachable URL: shows confirm dialog; cancel skips upsert',
-    // Skipped: real Dio timeout (5s) exceeds pumpAndSettle tolerance —
-    // covered by manual smoke test on device.
-    skip: true,
+    'CF login cancelled: server is NOT saved and we surface the cancellation',
     (tester) async {
       final store = _MockStore();
+      final storage = _FakeStorage();
       when(() => store.upsert(any())).thenAnswer((_) async {});
       when(() => store.setActive(any())).thenAnswer((_) async {});
 
@@ -87,7 +117,9 @@ void main() {
       await pumpAddServer(
         tester,
         store: store,
-        probe: (_) async => false,
+        storage: storage,
+        probe: (_) async => true,
+        cfLogin: (_, __) async => null,
         onSaved: (cfg) => saved = cfg,
       );
 
@@ -100,67 +132,22 @@ void main() {
         'Work',
       );
       await tester.tap(find.widgetWithText(ElevatedButton, 'Save'));
-      await tester.pumpAndSettle();
-
-      expect(find.text("Can't reach this server"), findsOneWidget);
-      // Inline error is also shown on the form.
-      expect(
-        find.textContaining("Couldn't reach"),
-        findsWidgets,
-      );
-
-      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
       await tester.pumpAndSettle();
 
       verifyNever(() => store.upsert(any()));
       verifyNever(() => store.setActive(any()));
       expect(saved, isNull);
+      expect(storage.writes, isEmpty);
+      expect(find.text('Sign-in cancelled.'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'unreachable URL: confirm "Save anyway" persists the server',
-    // Skipped: real Dio timeout (5s) exceeds pumpAndSettle tolerance —
-    // covered by manual smoke test on device.
-    skip: true,
-    (tester) async {
-      final store = _MockStore();
-      when(() => store.upsert(any())).thenAnswer((_) async {});
-      when(() => store.setActive(any())).thenAnswer((_) async {});
-
-      ServerConfig? saved;
-      await pumpAddServer(
-        tester,
-        store: store,
-        probe: (_) async => false,
-        onSaved: (cfg) => saved = cfg,
-      );
-
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Server URL'),
-        'https://dev.example.com',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Label'),
-        'Work',
-      );
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Save'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.widgetWithText(TextButton, 'Save anyway'));
-      await tester.pumpAndSettle();
-
-      verify(() => store.upsert(any())).called(1);
-      verify(() => store.setActive(any())).called(1);
-      expect(saved, isNotNull);
-    },
-  );
-
-  testWidgets(
-    'invalid URL fails form validation before probing',
+    'invalid URL fails form validation before probing or launching login',
     (tester) async {
       final store = _MockStore();
       var probeCalls = 0;
+      var loginCalls = 0;
 
       await pumpAddServer(
         tester,
@@ -168,6 +155,10 @@ void main() {
         probe: (_) async {
           probeCalls += 1;
           return true;
+        },
+        cfLogin: (_, __) async {
+          loginCalls += 1;
+          return 'jwt';
         },
       );
 
@@ -187,6 +178,7 @@ void main() {
         findsOneWidget,
       );
       expect(probeCalls, 0);
+      expect(loginCalls, 0);
       verifyNever(() => store.upsert(any()));
     },
   );
