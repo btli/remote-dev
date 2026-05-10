@@ -2,20 +2,27 @@ import 'package:dio/dio.dart';
 
 import '../../application/ports/api_client_port.dart';
 import '../../application/ports/secure_storage_port.dart';
-import 'auth_interceptor.dart';
+import 'cf_auth_interceptor.dart';
 
 class RemoteDevClient implements ApiClientPort {
   RemoteDevClient({
     required this.serverOrigin,
     required this.serverId,
     required SecureStoragePort storage,
+    void Function()? onReauthNeeded,
     Dio? dio,
   }) : _dio = dio ?? Dio() {
     _dio.options
       ..baseUrl = serverOrigin.toString()
       ..connectTimeout = const Duration(seconds: 15)
       ..receiveTimeout = const Duration(seconds: 30);
-    _dio.interceptors.add(AuthInterceptor(storage: storage, serverId: serverId));
+    _dio.interceptors.add(
+      CfAuthInterceptor(
+        serverId: serverId,
+        cookieReader: (id) => storage.read(id, 'cf_authorization'),
+        onReauthNeeded: onReauthNeeded ?? () {},
+      ),
+    );
   }
 
   final Uri serverOrigin;

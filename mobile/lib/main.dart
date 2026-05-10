@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart';
 import 'application/ports/api_client_port.dart';
+import 'application/state/reauth_signal_provider.dart';
 import 'infrastructure/api/channels_api.dart';
 import 'infrastructure/api/notifications_api.dart';
 import 'infrastructure/api/project_tree_api.dart';
@@ -58,6 +59,7 @@ final _apiClientProvider = Provider<ApiClientPort>((ref) {
     serverOrigin: Uri.parse(server.url),
     serverId: server.id,
     storage: storage,
+    onReauthNeeded: () => ref.read(reauthSignalProvider.notifier).request(),
   );
 });
 
@@ -90,6 +92,8 @@ List<Override> buildServerScopedOverrides({required String deviceId}) {
           serverOrigin: Uri.parse(server.url),
           serverId: server.id,
           storage: ref.read(secureStorageProvider),
+          onReauthNeeded: () =>
+              ref.read(reauthSignalProvider.notifier).request(),
         ),
         deviceId: deviceId,
       ),

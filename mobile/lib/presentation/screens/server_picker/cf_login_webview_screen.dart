@@ -41,7 +41,7 @@ bool isCfAccessChallengeHost(Uri uri) {
 ///
 /// Spec §3 — the WebView is the source-of-truth for the cookie; the
 /// caller is responsible for relaying it into `flutter_secure_storage`
-/// for Dio's `_AuthInterceptor` to read on every request.
+/// for Dio's `CfAuthInterceptor` to read on every request.
 class CfLoginWebViewScreen extends ConsumerStatefulWidget {
   const CfLoginWebViewScreen({
     required this.serverUrl,
