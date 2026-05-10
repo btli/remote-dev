@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 8 — mobile bridge + scoping follow-ups)
+
+- **Mobile**: `BridgeController.setFontScale(double)` and
+  `setCursorBlink(bool)` plumb the Phase 7 Appearance settings into the
+  embedded PWA. `RdvBridgeAdapter` extended with matching surface;
+  `EmbeddedSessionView` / `EmbeddedChannelView` / `EmbeddedRecordingView`
+  apply font scale by writing `--rdv-font-scale` on `<html>`. Only the
+  session embed mutates xterm.js's `cursorBlink` option; other embeds
+  treat the call as a no-op. Each WebView host (`SessionViewScreen`,
+  `ChannelScreen`, `RecordingScreen`) `ref.listen<AppearanceSettings>`
+  on change and pushes the initial value in `onTerminalReady`
+  (remote-dev-3pfc, remote-dev-z3p9).
+- **Mobile**: Per-screen WebView path scope. `NavigationPolicy` accepts
+  optional `allowedPathPrefixes` that narrows the same-origin `/m/*`
+  allow list. `RecordingScreen` pins to `/m/recording/`, `ChannelScreen`
+  to `/m/channel/`, `SessionViewScreen` + `SessionRouteHost` to
+  `/m/session/`. A same-origin redirect to a sister surface is now
+  intercepted instead of silently navigating in-place. Login flow
+  (`NavigationPolicy.forLogin`) keeps broad access (remote-dev-bvlw).
+- **Mobile**: `ChannelScreen.bridgeFactoryOverride` constructor seam
+  mirrors the existing `cfLoginLauncherOverride` pattern in
+  `ReauthScreen`, letting widget tests drive `_handleBack` against a
+  mocked `BridgeController` without a live `InAppWebView`. Two new
+  smoke tests verify `bridge.back() == true` keeps the route mounted
+  and `bridge.back() == false` produces a `didPop` (remote-dev-83as).
+
 ### Added (Phase 7 — mobile follow-ups)
 
 - **Mobile**: Appearance profile screen — replaces the Phase 5 stub. Three
