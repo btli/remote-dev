@@ -10,6 +10,7 @@ import 'package:remote_dev/infrastructure/api/sessions_api.dart';
 import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/notifications/notifications_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/sessions/sessions_tab_screen.dart';
+import 'package:remote_dev/presentation/screens/shell/adaptive_bottom_bar.dart';
 import 'package:remote_dev/presentation/screens/shell/home_shell.dart';
 
 class _FakeSessionsApi extends Fake implements SessionsApi {
@@ -116,4 +117,31 @@ void main() {
     expect(find.text('Servers'), findsOneWidget);
     expect(find.text('About'), findsOneWidget);
   });
+
+  testWidgets(
+    'initialTab=notifications opens HomeShell on the notifications tab',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(const HomeShell(initialTab: HomeTab.notifications)),
+      );
+      await tester.pumpAndSettle();
+      // NotificationsTabScreen empty-state copy is visible immediately.
+      expect(find.text('No notifications'), findsOneWidget);
+      // Sessions empty-state should NOT be visible — only the active tab
+      // mounts its primary content.
+      expect(find.text('No sessions yet'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'initialTab=channels opens HomeShell on the channels tab',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(const HomeShell(initialTab: HomeTab.channels)),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('No channels yet'), findsOneWidget);
+      expect(find.text('No sessions yet'), findsNothing);
+    },
+  );
 }

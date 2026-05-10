@@ -17,6 +17,7 @@ import '../screens/server_picker/add_server_screen.dart';
 import '../screens/server_picker/edit_server_screen.dart';
 import '../screens/server_picker/server_picker_screen.dart';
 import '../screens/session_view/session_view_screen.dart';
+import '../screens/shell/adaptive_bottom_bar.dart';
 import '../screens/shell/home_shell.dart';
 import '../screens/webview_host/reauth_screen.dart';
 import '../screens/webview_host/session_route_host.dart';
@@ -178,7 +179,8 @@ class AppRouter {
         ),
         GoRoute(
           path: '/notifications',
-          builder: (_, __) => const _PlaceholderScreen(name: 'Notifications'),
+          builder: (_, __) =>
+              const HomeShell(initialTab: HomeTab.notifications),
         ),
         GoRoute(
           path: '/reauth',
@@ -193,25 +195,6 @@ class AppRouter {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _PlaceholderScreen extends StatelessWidget {
-  const _PlaceholderScreen({required this.name});
-
-  final String name;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1A1B26),
-      body: Center(
-        child: Text(
-          name,
-          style: const TextStyle(color: Colors.white, fontSize: 18),
-        ),
-      ),
     );
   }
 }
