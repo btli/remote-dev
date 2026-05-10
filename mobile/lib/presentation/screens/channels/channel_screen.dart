@@ -6,6 +6,7 @@ import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import '../webview_host/session_route_host.dart' show activeServerProvider;
+import 'channels_tab_screen.dart' show channelsListProvider;
 
 /// Native chrome around the embedded WebView at `/m/channel/<id>`.
 ///
@@ -52,14 +53,44 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
     await Navigator.of(context).maybePop();
   }
 
+  /// Best-effort channel name lookup from the cached channels list.
+  ///
+  /// Returns `null`:
+  /// - while the list is still loading,
+  /// - if the list errored (e.g. no active server, network failure),
+  /// - if the id isn't present in the list (deep-link before cache is
+  ///   populated, recently-archived channel, etc.).
+  ///
+  /// In every "null" case the AppBar shows the generic "Channel" label,
+  /// which is a safe fallback — the WebView remains the source of truth
+  /// for the actual channel content.
+  String? _resolveChannelName() {
+    final asyncChannels = ref.watch(channelsListProvider);
+    // `value` is null while loading and on error; we tolerate both.
+    final channels = asyncChannels.valueOrNull;
+    if (channels == null) return null;
+    for (final c in channels) {
+      if (c.id == widget.channelId) {
+        final name = c.name.trim();
+        return name.isEmpty ? null : name;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final asyncServer = ref.watch(activeServerProvider);
+    final channelName = _resolveChannelName();
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
-        title: const Text('Channel', style: TextStyle(color: Colors.white)),
+        title: Text(
+          channelName == null ? 'Channel' : '#$channelName',
+          style: const TextStyle(color: Colors.white),
+          overflow: TextOverflow.ellipsis,
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
