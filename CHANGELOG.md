@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 9 — mobile final follow-ups)
+
+- **Mobile**: Live unread count refresh on the Channels tab via 30 s
+  polling (`_kChannelPollInterval`). `ChannelsTabScreen` is now a
+  `WidgetsBindingObserver`; a `Timer.periodic` invalidates
+  `channelsListProvider` while the tab is mounted and the app is
+  foregrounded. Lifecycle handler stops polling on
+  `paused/hidden/detached` and restarts (with an immediate refresh) on
+  `resumed`. Trade-off: `IndexedStack` keeps the screen mounted across
+  tab switches, so the timer fires on inactive tabs too — accepted as
+  a cheap GET. Server SSE/websocket would need cross-team backend
+  work; polling is the realistic mobile-only shippable
+  (remote-dev-ph5b).
+- **Mobile**: WebView page-load progress indicator. `WebViewFactory`
+  exposes optional `onProgressChanged: ValueChanged<int>?`;
+  `RecordingScreen` and `ChannelScreen` render a 2 px Tokyo Night
+  `#7AA2F7` `LinearProgressIndicator` in the AppBar `bottom:` until
+  the embed reports complete. `SessionViewScreen` skipped — xterm.js
+  loads via WebSocket, not the page-progress mechanism. Bonus:
+  `WebViewFactory.build(...)` return type widened from
+  `InAppWebView` to `Widget` so test fakes can return
+  `SizedBox.shrink()` without tripping the platform plugin
+  (remote-dev-72dh).
+
 ### Added (Phase 8 — mobile bridge + scoping follow-ups)
 
 - **Mobile**: `BridgeController.setFontScale(double)` and
