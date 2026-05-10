@@ -9,6 +9,7 @@ class _FakeChannelsApi extends Fake implements ChannelsApi {
   _FakeChannelsApi(this._channels);
   final List<Channel> _channels;
   bool _shouldThrow = false;
+  int listCallCount = 0;
 
   void setError() {
     _shouldThrow = true;
@@ -16,6 +17,7 @@ class _FakeChannelsApi extends Fake implements ChannelsApi {
 
   @override
   Future<List<Channel>> list() async {
+    listCallCount += 1;
     if (_shouldThrow) {
       throw StateError('boom');
     }
@@ -84,5 +86,83 @@ void main() {
 
     expect(find.text('Failed to load channels'), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
+  });
+
+  testWidgets('polls channels list every 30s while mounted',
+      (tester) async {
+    final api = _FakeChannelsApi(const [
+      Channel(id: 'c1', name: 'general', unreadCount: 0),
+    ]);
+    await tester.pumpWidget(wrap(const ChannelsTabScreen(), api: api));
+    await tester.pumpAndSettle();
+
+    // Initial load fired exactly once.
+    expect(api.listCallCount, 1);
+
+    // Advance the fake clock past the 30s polling interval and let the
+    // resulting future settle.
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+    expect(api.listCallCount, greaterThan(1));
+
+    // A second tick should fire another refresh.
+    final afterFirstTick = api.listCallCount;
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+    expect(api.listCallCount, greaterThan(afterFirstTick));
+  });
+
+  testWidgets('cancels timer on dispose so no further polls fire',
+      (tester) async {
+    final api = _FakeChannelsApi(const [
+      Channel(id: 'c1', name: 'general', unreadCount: 0),
+    ]);
+    // Mount inside the same ProviderScope (single override), then swap the
+    // child to a benign widget. This unmounts ChannelsTabScreen and triggers
+    // dispose() while keeping the override list shape stable (Riverpod
+    // requires identical override counts across pumpWidget calls).
+    await tester.pumpWidget(wrap(const ChannelsTabScreen(), api: api));
+    await tester.pumpAndSettle();
+    expect(api.listCallCount, 1);
+
+    await tester.pumpWidget(
+      wrap(const SizedBox.shrink(), api: api),
+    );
+    await tester.pumpAndSettle();
+
+    final afterDispose = api.listCallCount;
+    await tester.pump(const Duration(seconds: 60));
+    await tester.pumpAndSettle();
+    // No additional polls should have fired after dispose.
+    expect(api.listCallCount, afterDispose);
+  });
+
+  testWidgets('stops polling when app is backgrounded and resumes on return',
+      (tester) async {
+    final api = _FakeChannelsApi(const [
+      Channel(id: 'c1', name: 'general', unreadCount: 0),
+    ]);
+    await tester.pumpWidget(wrap(const ChannelsTabScreen(), api: api));
+    await tester.pumpAndSettle();
+    expect(api.listCallCount, 1);
+
+    // Background the app — polling should stop.
+    final binding = tester.binding;
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pumpAndSettle();
+
+    final afterPause = api.listCallCount;
+    await tester.pump(const Duration(seconds: 60));
+    await tester.pumpAndSettle();
+    expect(
+      api.listCallCount,
+      afterPause,
+      reason: 'No polling should happen while backgrounded',
+    );
+
+    // Resume the app — should refresh immediately and restart the timer.
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(api.listCallCount, greaterThan(afterPause));
   });
 }
