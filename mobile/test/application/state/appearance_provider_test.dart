@@ -119,4 +119,51 @@ void main() {
     expect(notifier.state.reduceMotion, isTrue);
     expect(notifier.state.cursorBlink, isTrue); // default
   });
+
+  test('user write before hydrate resolves wins (no clobber)', () async {
+    // Seed prefs with non-default values. If hydrate ran unconditionally
+    // it would overwrite the user's tap.
+    SharedPreferences.setMockInitialValues({
+      AppearancePrefsKeys.fontScale: 1.20,
+      AppearancePrefsKeys.reduceMotion: true,
+      AppearancePrefsKeys.cursorBlink: false,
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    // Synchronously (before async hydrate completes) flip a setting.
+    final notifier = container.read(appearanceSettingsProvider.notifier);
+    final pending = notifier.setReduceMotion(false);
+
+    // Now allow hydrate microtasks to flush.
+    await pending;
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    // User's explicit choice must survive — not be replaced by the
+    // hydrated `true` from prefs.
+    expect(
+      container.read(appearanceSettingsProvider).reduceMotion,
+      isFalse,
+    );
+    expect(notifier.isHydrated, isTrue);
+  });
+
+  test('font scale is quantized to 2 decimal places', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final notifier = container.read(appearanceSettingsProvider.notifier);
+    // Slider drift: 1.1500000000000001 → 1.15
+    await notifier.setFontScale(1.1500000000000001);
+
+    expect(container.read(appearanceSettingsProvider).fontScale, 1.15);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble(AppearancePrefsKeys.fontScale), 1.15);
+
+    // 1.234 → 1.23
+    await notifier.setFontScale(1.234);
+    expect(container.read(appearanceSettingsProvider).fontScale, 1.23);
+  });
 }

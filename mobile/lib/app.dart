@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'application/state/appearance_provider.dart';
 import 'application/state/reauth_signal_provider.dart';
 import 'infrastructure/deep_link/app_link_listener.dart';
 import 'presentation/router/app_router.dart';
@@ -36,6 +37,7 @@ class RemoteDevApp extends ConsumerWidget {
       if (previous == null || next == previous) return;
       router.config.go('/reauth');
     });
+    final appearance = ref.watch(appearanceSettingsProvider);
     return MaterialApp.router(
       title: 'Remote Dev',
       theme: ThemeData(
@@ -48,8 +50,23 @@ class RemoteDevApp extends ConsumerWidget {
       // Layer the lock overlay above every route so backgrounding any
       // screen still re-locks. Using `builder` (not wrapping `MaterialApp`)
       // ensures Navigator + Overlay sit above MediaQuery & Theme.
-      builder: (context, child) =>
-          BiometricLockOverlay(child: child ?? const SizedBox()),
+      //
+      // We also override MediaQuery here to honor the user's appearance
+      // preferences app-wide:
+      //   - `disableAnimations` propagates Reduce Motion to every Material
+      //     widget that respects accessibility flags.
+      //   - `textScaler` applies the user's font-scale slider to all text
+      //     in native Flutter chrome (PWA WebView text uses its own bridge).
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+            disableAnimations: mq.disableAnimations || appearance.reduceMotion,
+            textScaler: TextScaler.linear(appearance.fontScale),
+          ),
+          child: BiometricLockOverlay(child: child ?? const SizedBox()),
+        );
+      },
     );
   }
 }
