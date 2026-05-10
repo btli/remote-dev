@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +8,12 @@ import 'package:go_router/go_router.dart';
 import '../../../domain/channel.dart';
 import '../../../infrastructure/api/channels_api.dart';
 import '../shell/home_shell.dart';
+
+/// Polling cadence for live unread refresh while the Channels tab is mounted
+/// and the app is in the foreground. 30s is a deliberate trade-off: short
+/// enough that unread badges feel "live" without push, long enough to be
+/// cheap on battery and metered networks. Tune via this constant.
+const _kChannelPollInterval = Duration(seconds: 30);
 
 /// Provider for the channels API. Must be overridden in main.dart once a
 /// [RemoteDevClient] is wired for the active server (Wave 4 wiring).
@@ -27,7 +35,58 @@ class ChannelsTabScreen extends ConsumerStatefulWidget {
   ConsumerState<ChannelsTabScreen> createState() => _ChannelsTabScreenState();
 }
 
-class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen> {
+class _ChannelsTabScreenState extends ConsumerState<ChannelsTabScreen>
+    with WidgetsBindingObserver {
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startPolling();
+  }
+
+  @override
+  void dispose() {
+    _stopPolling();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause polling while the app is backgrounded; resume when it comes back.
+    // Note: this does NOT pause polling when the user switches to another tab
+    // inside HomeShell — IndexedStack keeps this screen mounted. That's an
+    // acceptable trade-off (one cheap GET every 30s while foregrounded) and
+    // is tracked as a follow-up to wire tab-visibility-aware polling.
+    if (state == AppLifecycleState.resumed) {
+      if (_pollTimer == null) {
+        // Refresh immediately on return-to-foreground so unread counts are
+        // current without waiting a full interval.
+        ref.invalidate(channelsListProvider);
+        _startPolling();
+      }
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      _stopPolling();
+    }
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(_kChannelPollInterval, (_) {
+      if (!mounted) return;
+      ref.invalidate(channelsListProvider);
+    });
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
   Future<void> _refresh() async {
     ref.invalidate(channelsListProvider);
     await ref.read(channelsListProvider.future);
