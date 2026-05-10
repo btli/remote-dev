@@ -41,7 +41,9 @@ export function EmbeddedRecordingView({
       paste: noop,
       setFontSize: noop,
       scrollToBottom: noop,
-      back: noop, // native shell pops the route
+      // Recording playback has no in-WebView "back" action — return
+      // false so the native shell pops the route itself.
+      back: () => false,
     };
     return installRdvBridge(adapter);
   }, []);

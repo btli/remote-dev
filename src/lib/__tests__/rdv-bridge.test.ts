@@ -20,7 +20,10 @@ function makeAdapter(overrides: Partial<RdvBridgeAdapter> = {}): RdvBridgeAdapte
     paste: vi.fn(),
     setFontSize: vi.fn(),
     scrollToBottom: vi.fn(),
-    back: vi.fn(),
+    // back must return boolean per the bridge contract — default
+    // false ("not consumed") so native callers fall through to
+    // Navigator.maybePop().
+    back: vi.fn(() => false),
     ...overrides,
   };
 }
@@ -70,6 +73,18 @@ describe("rdv-bridge", () => {
       expect(adapter.scrollToBottom).toHaveBeenCalledTimes(1);
       expect(adapter.paste).toHaveBeenCalledWith("clip");
       expect(adapter.back).toHaveBeenCalledTimes(1);
+    });
+
+    it("back() returns the adapter's boolean (consumed/not-consumed)", () => {
+      const consumed = makeAdapter({ back: vi.fn(() => true) });
+      installRdvBridge(consumed);
+      // Native (Dart) reads this return value via evaluateJavascript;
+      // truthy means "PWA handled it, don't also Navigator.maybePop".
+      expect(window.rdvBridge?.back()).toBe(true);
+
+      const notConsumed = makeAdapter({ back: vi.fn(() => false) });
+      installRdvBridge(notConsumed);
+      expect(window.rdvBridge?.back()).toBe(false);
     });
 
     it("returns an uninstall function that removes the bridge", () => {

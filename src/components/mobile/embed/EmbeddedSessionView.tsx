@@ -107,8 +107,10 @@ export function EmbeddedSessionView({
       },
       scrollToBottom: () => terminalRef.current?.scrollToBottom(),
       back: () => {
-        // Session embed has no in-WebView "back" action — native shell
-        // pops the route. Stub.
+        // Session embed has no in-WebView "back" action — let the
+        // native shell pop the route. Returning false signals
+        // "not consumed" so the Dart side runs Navigator.maybePop().
+        return false;
       },
     };
 

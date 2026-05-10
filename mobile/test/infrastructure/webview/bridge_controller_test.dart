@@ -76,20 +76,57 @@ void main() {
     bridge.markReady();
     final result = await bridge.back();
     expect(result, isTrue);
-    verify(
-      () => ctl.evaluateJavascript(
-        source:
-            'window.rdvBridge && window.rdvBridge.back ? !!window.rdvBridge.back() : false',
-      ),
-    ).called(1);
+    final captured = verify(
+      () => ctl.evaluateJavascript(source: captureAny(named: 'source')),
+    ).captured.single as String;
+    // Eval is an async IIFE so Promise returns from the PWA bridge
+    // resolve cleanly — see bridge_controller.dart.
+    expect(captured, contains('window.rdvBridge'));
+    expect(captured, contains('window.rdvBridge.back'));
+    expect(captured, contains('async'));
   });
 
-  test('back returns false when JS bridge is missing or returns void',
+  test('back returns false when JS bridge returns false', () async {
+    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
+        .thenAnswer((_) async => false);
+    bridge.markReady();
+    expect(await bridge.back(), isFalse);
+  });
+
+  // Codex finding on PR #272: when the PWA-side `back()` returns
+  // `undefined` (the old `() => void` contract, or a handler that
+  // forgets to `return true`), the eval resolves to `false` and the
+  // native shell falls back to Navigator.maybePop(). Without the
+  // boolean contract, the previous `!!undefined === false` path
+  // unconditionally popped the route even when the PWA had just
+  // consumed the gesture by closing a thread.
+  test('back returns false when PWA returns undefined (regression)',
       () async {
     when(() => ctl.evaluateJavascript(source: any(named: 'source')))
         .thenAnswer((_) async => false);
     bridge.markReady();
     expect(await bridge.back(), isFalse);
+  });
+
+  test('back returns false when only "true"-string (defensive)', () async {
+    // flutter_inappwebview can serialize JS booleans as Dart booleans
+    // on iOS but as strings on some Android API levels — accept both.
+    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
+        .thenAnswer((_) async => 'true');
+    bridge.markReady();
+    expect(await bridge.back(), isTrue);
+  });
+
+  // The async IIFE in bridge_controller.dart awaits Promise returns
+  // before the Dart Future resolves. flutter_inappwebview unwraps the
+  // Promise via the IIFE's `return await r` and surfaces the resolved
+  // boolean to Dart — so a Promise<true> from the PWA still ends up
+  // as `true` here, not `!!Promise === true` racing the handler.
+  test('back resolves Promise<true> from PWA before returning', () async {
+    when(() => ctl.evaluateJavascript(source: any(named: 'source')))
+        .thenAnswer((_) async => true);
+    bridge.markReady();
+    expect(await bridge.back(), isTrue);
   });
 
   test('back swallows evaluation errors and returns false', () async {

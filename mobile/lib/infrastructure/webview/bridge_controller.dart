@@ -48,23 +48,40 @@ class BridgeController {
   /// Asks the embedded PWA to handle a back gesture. Returns `true` when
   /// the PWA reports it consumed the gesture (e.g. closed an open thread,
   /// dismissed a modal, popped an in-WebView route) and `false` otherwise
-  /// — including when the bridge isn't ready yet, evaluation throws, or
-  /// the PWA-side `back()` returns `void`/`undefined`.
+  /// — including when the bridge isn't ready yet, evaluation throws, the
+  /// JS surface is missing, or `back()` returns `undefined`/falsy.
   ///
-  /// The Dart side is intentionally tolerant: existing PWA bridge builds
-  /// declare `back: () => void`, so until the JS surface is updated to
-  /// return a boolean (tracked separately from this `mobile/`-only PR)
-  /// every call resolves to `false` and native callers simply fall back
-  /// to `Navigator.pop`. Once the PWA returns truthy from `back()`, the
-  /// expression below picks it up automatically.
+  /// The PWA-side contract is `back: () => boolean` (see
+  /// `src/lib/rdv-bridge.ts`). Implementations MUST return `true` only
+  /// when they actually consumed the gesture so the native shell skips
+  /// its own `Navigator.maybePop()`. Returning `undefined` (the
+  /// pre-fix behavior) coerces to `false` here, which means native pops
+  /// — preserving today's behavior for any bridge build still on the
+  /// old contract.
+  ///
+  /// The eval is wrapped in an async IIFE so that if a future bridge
+  /// build returns `Promise<boolean>` we still resolve the actual
+  /// boolean before signaling Dart, instead of `!!Promise === true`
+  /// racing the JS handler. `flutter_inappwebview`'s
+  /// `evaluateJavascript` awaits returned promises automatically.
   Future<bool> back() async {
     if (!_ready) return false;
     try {
       final result = await controller.evaluateJavascript(
-        source:
-            'window.rdvBridge && window.rdvBridge.back ? !!window.rdvBridge.back() : false',
+        source: '''
+(async () => {
+  if (!window.rdvBridge || !window.rdvBridge.back) return false;
+  try {
+    const r = window.rdvBridge.back();
+    if (r && typeof r.then === 'function') return (await r) === true;
+    return r === true;
+  } catch (_) {
+    return false;
+  }
+})()
+''',
       );
-      return result == true;
+      return result == true || result == 'true' || result == 1;
     } catch (_) {
       return false;
     }
