@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'application/state/reauth_signal_provider.dart';
 import 'infrastructure/deep_link/app_link_listener.dart';
 import 'presentation/router/app_router.dart';
 import 'presentation/screens/biometric/biometric_lock_overlay.dart';
@@ -28,6 +29,13 @@ class RemoteDevApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
+    // One-shot reauth signal: API interceptor fires on 401/403 and the
+    // shell routes to /reauth here. The signal is a monotonic counter
+    // so every request triggers a listen callback (not just transitions).
+    ref.listen<int>(reauthSignalProvider, (previous, next) {
+      if (previous == null || next == previous) return;
+      router.config.go('/reauth');
+    });
     return MaterialApp.router(
       title: 'Remote Dev',
       theme: ThemeData(
