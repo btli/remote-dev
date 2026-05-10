@@ -127,7 +127,10 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
           final factory = widget.webViewFactory ?? const WebViewFactory();
           return factory.build(
             initialUrl: url,
-            policy: NavigationPolicy(serverOrigin: origin),
+            policy: NavigationPolicy(
+              serverOrigin: origin,
+              allowedPathPrefixes: const ['/m/recording/'],
+            ),
             onLinkOpen: (_) {},
             onWebViewCreated: _onWebViewCreated,
           );

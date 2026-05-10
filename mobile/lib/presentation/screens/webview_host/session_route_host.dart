@@ -70,6 +70,7 @@ class SessionRouteHost extends ConsumerWidget {
         return WebViewHostScreen(
           initialUrl: Uri.parse('${server.url}/m/session/$sessionId'),
           serverOrigin: origin,
+          allowedPathPrefixes: const ['/m/session/'],
         );
       },
     );

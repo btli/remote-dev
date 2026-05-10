@@ -29,9 +29,24 @@ import 'channels_tab_screen.dart' show channelsListProvider;
 /// job is to render the AppBar text. That keeps any list refresh from
 /// rebuilding (and remounting) the WebView subtree below.
 class ChannelScreen extends ConsumerStatefulWidget {
-  const ChannelScreen({required this.channelId, super.key});
+  const ChannelScreen({
+    required this.channelId,
+    this.bridgeFactoryOverride,
+    super.key,
+  });
 
   final String channelId;
+
+  /// Test seam — when supplied, the screen installs the returned
+  /// [BridgeController] immediately on mount instead of waiting for the
+  /// real `onWebViewCreated` (which never fires under `flutter_test`
+  /// because InAppWebView's platform plugin isn't available). The factory
+  /// receives the live [InAppWebViewController] if/when one becomes
+  /// available, or `null` when invoked from `initState` for the test
+  /// seam. Matches the `cfLoginLauncherOverride` pattern from
+  /// `presentation/screens/webview_host/reauth_screen.dart`.
+  final BridgeController Function(InAppWebViewController? controller)?
+      bridgeFactoryOverride;
 
   @override
   ConsumerState<ChannelScreen> createState() => _ChannelScreenState();
@@ -40,8 +55,22 @@ class ChannelScreen extends ConsumerStatefulWidget {
 class _ChannelScreenState extends ConsumerState<ChannelScreen> {
   BridgeController? _bridge;
 
+  @override
+  void initState() {
+    super.initState();
+    // Honor the test seam eagerly so widget tests can drive `_handleBack`
+    // without needing a real `onWebViewCreated` to fire.
+    final override = widget.bridgeFactoryOverride;
+    if (override != null) {
+      _bridge = override(null);
+    }
+  }
+
   void _onWebViewCreated(InAppWebViewController controller) {
-    final bridge = BridgeController(controller: controller);
+    final override = widget.bridgeFactoryOverride;
+    final bridge = override != null
+        ? override(controller)
+        : BridgeController(controller: controller);
     setState(() => _bridge = bridge);
     controller.addJavaScriptHandler(
       handlerName: 'onTerminalReady',
@@ -109,7 +138,10 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           final url = origin.replace(path: '/m/channel/${widget.channelId}');
           return WebViewFactory().build(
             initialUrl: url,
-            policy: NavigationPolicy(serverOrigin: origin),
+            policy: NavigationPolicy(
+              serverOrigin: origin,
+              allowedPathPrefixes: const ['/m/channel/'],
+            ),
             onLinkOpen: (_) {},
             onWebViewCreated: _onWebViewCreated,
           );
