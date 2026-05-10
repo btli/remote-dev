@@ -6,6 +6,7 @@ import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
 import '../webview_host/session_route_host.dart' show activeServerProvider;
+import 'channels_tab_screen.dart' show channelsListProvider;
 
 /// Native chrome around the embedded WebView at `/m/channel/<id>`.
 ///
@@ -18,6 +19,13 @@ import '../webview_host/session_route_host.dart' show activeServerProvider;
 /// Phase 4 scope: AppBar + WebView only. The richer bridge handlers
 /// (`onLinkOpen`, `onSelectionChange`, etc.) land in Phase 5 once the channel
 /// PWA exposes them.
+///
+/// ## Rebuild isolation
+///
+/// `ChannelScreen` itself does NOT watch [channelsListProvider]. The title
+/// is delegated to [_ChannelTitle], a dedicated `ConsumerWidget` whose only
+/// job is to render the AppBar text. That keeps any list refresh from
+/// rebuilding (and remounting) the WebView subtree below.
 class ChannelScreen extends ConsumerStatefulWidget {
   const ChannelScreen({required this.channelId, super.key});
 
@@ -59,7 +67,7 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
       backgroundColor: const Color(0xFF1A1B26),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1A1B26),
-        title: const Text('Channel', style: TextStyle(color: Colors.white)),
+        title: _ChannelTitle(widget.channelId),
         iconTheme: const IconThemeData(color: Colors.white),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -93,6 +101,43 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+/// Resolves the AppBar title from [channelsListProvider] in isolation so
+/// that list refreshes do not rebuild the surrounding [ChannelScreen]
+/// (and, crucially, the WebView body).
+///
+/// Returns the generic "Channel" label whenever the list is loading,
+/// errored, or simply doesn't contain the requested id (e.g. arriving
+/// via deep-link before the cache is populated). The WebView is the
+/// source of truth for actual channel content; the AppBar label is a
+/// best-effort hint.
+class _ChannelTitle extends ConsumerWidget {
+  const _ChannelTitle(this.channelId);
+
+  final String channelId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncChannels = ref.watch(channelsListProvider);
+    // `value` is null while loading and on error; we tolerate both.
+    final channels = asyncChannels.valueOrNull;
+    String? name;
+    if (channels != null) {
+      for (final c in channels) {
+        if (c.id == channelId) {
+          final trimmed = c.name.trim();
+          if (trimmed.isNotEmpty) name = trimmed;
+          break;
+        }
+      }
+    }
+    return Text(
+      name == null ? 'Channel' : '#$name',
+      style: const TextStyle(color: Colors.white),
+      overflow: TextOverflow.ellipsis,
     );
   }
 }
