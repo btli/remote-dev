@@ -144,4 +144,51 @@ void main() {
       expect(find.text('No sessions yet'), findsNothing);
     },
   );
+
+  testWidgets(
+    'system back on non-default tab switches to sessions tab '
+    'and consumes the pop',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(const HomeShell(initialTab: HomeTab.profile)),
+      );
+      await tester.pumpAndSettle();
+      // Profile tab is mounted on entry.
+      expect(find.text('Account'), findsOneWidget);
+      expect(find.text('No sessions yet'), findsNothing);
+
+      // Simulate Android system back gesture. PopScope.canPop is false on
+      // non-default tabs, so the route is NOT popped — onPopInvokedWithResult
+      // fires and HomeShell switches its IndexedStack back to sessions.
+      final popped = await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      // The pop was consumed (not bubbled up to the navigator), so
+      // handlePopRoute reports true (route handled) but HomeShell is still
+      // mounted with the sessions tab active.
+      expect(popped, isTrue);
+      expect(find.text('No sessions yet'), findsOneWidget);
+      // Profile-only content is no longer the active tab body.
+      expect(find.byType(HomeShell), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'system back on sessions tab does NOT switch tabs (allows app exit)',
+    (tester) async {
+      await tester.pumpWidget(wrap(const HomeShell()));
+      await tester.pumpAndSettle();
+      expect(find.text('No sessions yet'), findsOneWidget);
+
+      // On the default tab PopScope.canPop is true, so the system handles
+      // the pop. In a single-route MaterialApp test the navigator can't
+      // actually pop the root, but the key behaviour is: HomeShell does
+      // NOT trap the gesture and stays on sessions.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.text('No sessions yet'), findsOneWidget);
+      expect(find.byType(HomeShell), findsOneWidget);
+    },
+  );
 }

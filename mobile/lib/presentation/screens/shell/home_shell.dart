@@ -24,23 +24,38 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1A1B26),
-      body: SafeArea(
-        bottom: false,
-        child: IndexedStack(
-          index: _active.index,
-          children: const [
-            SessionsTabScreen(),
-            ChannelsTabScreen(),
-            NotificationsTabScreen(),
-            ProfileTabScreen(),
-          ],
+    // Intercept system back gesture (Android predictive back / hardware back):
+    // when the user is on a non-default tab, pop should switch back to the
+    // sessions tab instead of letting go_router pop HomeShell off the stack
+    // (which would exit the app). Only when already on the sessions tab do we
+    // allow the system to handle the pop normally.
+    final canPop = _active == HomeTab.sessions;
+    return PopScope(
+      canPop: canPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_active != HomeTab.sessions) {
+          setState(() => _active = HomeTab.sessions);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF1A1B26),
+        body: SafeArea(
+          bottom: false,
+          child: IndexedStack(
+            index: _active.index,
+            children: const [
+              SessionsTabScreen(),
+              ChannelsTabScreen(),
+              NotificationsTabScreen(),
+              ProfileTabScreen(),
+            ],
+          ),
         ),
-      ),
-      bottomNavigationBar: AdaptiveBottomBar(
-        activeTab: _active,
-        onTabSelected: (tab) => setState(() => _active = tab),
+        bottomNavigationBar: AdaptiveBottomBar(
+          activeTab: _active,
+          onTabSelected: (tab) => setState(() => _active = tab),
+        ),
       ),
     );
   }
