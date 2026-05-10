@@ -65,6 +65,9 @@ dev_dependencies:
   # Native splash screen
   flutter_native_splash: ^2.4.3
 
+  # Launcher icon generation
+  flutter_launcher_icons: ^0.14.1
+
   # Test helpers
   mocktail: ^1.0.4
 
@@ -72,6 +75,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/splash/
+    - assets/icon/
 
 flutter_native_splash:
   color: "#1A1B26"
@@ -82,3 +86,11 @@ flutter_native_splash:
   fullscreen: true
   android_gravity: center
   ios_content_mode: center
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icon/icon.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#1A1B26"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
