@@ -259,4 +259,73 @@ void main() {
     expect(find.text('No active server'), findsOneWidget);
     expect(find.text('No linked GitHub accounts'), findsNothing);
   });
+
+  group('isOAuthCallback', () {
+    final serverOrigin = Uri.parse('https://rdv.example');
+
+    test('rejects callback path on a foreign origin', () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://evil.test/api/auth/github/callback'),
+          serverOrigin,
+        ),
+        isFalse,
+      );
+    });
+
+    test('accepts exact callback path on the active server origin', () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://rdv.example/api/auth/github/callback?code=abc'),
+          serverOrigin,
+        ),
+        isTrue,
+      );
+    });
+
+    test('accepts root with ?github=connected on the active server origin',
+        () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://rdv.example/?github=connected'),
+          serverOrigin,
+        ),
+        isTrue,
+      );
+    });
+
+    test('rejects ?github=connected on a foreign origin', () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://evil.test/?github=connected'),
+          serverOrigin,
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects callback path nested under a different prefix', () {
+      // Same host, but the path is not exactly the callback path — used to
+      // pass the loose substring match.
+      expect(
+        isOAuthCallback(
+          Uri.parse(
+            'https://rdv.example/some/random/path/api/auth/github/callback',
+          ),
+          serverOrigin,
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects mismatched explicit ports on the same host', () {
+      expect(
+        isOAuthCallback(
+          Uri.parse('https://rdv.example:8443/api/auth/github/callback'),
+          Uri.parse('https://rdv.example:443'),
+        ),
+        isFalse,
+      );
+    });
+  });
 }

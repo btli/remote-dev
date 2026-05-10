@@ -468,16 +468,45 @@ class _GitHubLinkWebView extends StatefulWidget {
   State<_GitHubLinkWebView> createState() => _GitHubLinkWebViewState();
 }
 
+/// Strict origin + path/query check for the OAuth completion URL.
+///
+/// Defends against the WebView popping "success" on an attacker-controlled
+/// page that merely contains `/api/auth/github/callback` as a substring or
+/// adds a `?github=connected` query under a different origin. Both signals
+/// must come from the same host (and matching port, when both sides specify
+/// one) as the active server. Visible for testing.
+@visibleForTesting
+bool isOAuthCallback(Uri uri, Uri serverOrigin) {
+  // Same origin: host must match exactly.
+  if (uri.host.isEmpty || uri.host != serverOrigin.host) return false;
+  // If both sides declare an explicit port, require equality. If only one
+  // side does, treat the implicit port as the scheme default — Uri.port
+  // returns the default for the URI's scheme when none is set, so a
+  // straight `port` comparison handles that.
+  if (uri.hasPort != serverOrigin.hasPort) {
+    if (uri.port != serverOrigin.port) return false;
+  } else if (uri.hasPort && uri.port != serverOrigin.port) {
+    return false;
+  }
+  // Exact callback path.
+  if (uri.path == '/api/auth/github/callback') return true;
+  // Or root path with `?github=connected`.
+  if ((uri.path == '/' || uri.path.isEmpty) &&
+      uri.queryParameters['github'] == 'connected') {
+    return true;
+  }
+  return false;
+}
+
 class _GitHubLinkWebViewState extends State<_GitHubLinkWebView> {
   bool _completed = false;
 
   void _maybeFinish(WebUri? url) {
     if (_completed) return;
     if (url == null) return;
-    final raw = url.toString();
-    final isCallback = raw.contains('/api/auth/github/callback');
-    final isConnected = url.queryParameters['github'] == 'connected';
-    if (!isCallback && !isConnected) return;
+    final serverOrigin = Uri.tryParse(widget.server.url);
+    if (serverOrigin == null) return;
+    if (!isOAuthCallback(url, serverOrigin)) return;
     _completed = true;
     if (!mounted) return;
     Navigator.of(context).pop(true);
