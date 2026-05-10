@@ -7,7 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added (Phase 7 — mobile follow-ups)
+
+- **Mobile**: Appearance profile screen — replaces the Phase 5 stub. Three
+  device-local prefs (font scale 0.85x–1.30x slider, reduce motion switch,
+  cursor blink switch) persisted via `shared_preferences` with keys
+  `appearance.fontScale` / `appearance.reduceMotion` / `appearance.cursorBlink`.
+  Hydrate-race guard via `_userTouched` flag so user changes before async
+  hydrate aren't clobbered. Quantizes font scale to 2 decimals on persist.
+  `MaterialApp.builder` reads the provider and applies
+  `MediaQuery.copyWith(disableAnimations:, textScaler: TextScaler.linear(...))`
+  so settings actually affect the chrome (remote-dev-czsf). Two follow-ups
+  filed for WebView-side wiring: `remote-dev-3pfc` (fontScale → CSS via
+  bridge) and `remote-dev-z3p9` (cursorBlink → xterm config).
+- **Mobile**: GitHub Accounts profile screen — replaces the Phase 5 stub.
+  Lists linked accounts (avatar + login + default badge) with tap → set
+  default and long-press → unlink confirmation. Empty-state CTA opens
+  in-app `flutter_inappwebview` at `<server>/api/auth/github/link`. OAuth
+  callback detection uses strict `Uri.tryParse` + scheme/host/port/path
+  validation to reject substring traps and cross-origin redirects.
+  Server's PATCH uses `{action: "set-default"}` discriminator.
+  `GitHubAccount.fromJson` accepts both `id` and `providerAccountId`
+  field names + wrapped/bare list shapes for response tolerance
+  (remote-dev-csb7).
+- **Mobile**: About screen — replaces hardcoded "Version 0.1.0" with
+  dynamic info from `package_info_plus`. Shows `appName`, `version`,
+  `buildNumber`, and `packageName` via a `FutureProvider.autoDispose`
+  with explicit loading/error fallbacks (remote-dev-d2f5).
+
+### Changed (Phase 7)
+
+- **Bridge**: `RdvBridgeAdapter.back()` contract changes from
+  `() => void` to `() => boolean`. PWA-side back handlers now return
+  `true` when they consume the gesture (e.g.
+  `EmbeddedChannelView.back()` returns `true` after `closeThread()`).
+  Native `BridgeController.back()` returns `Future<bool>`, evaluated in
+  an async IIFE that awaits Promise returns to defeat the
+  `!!Promise === true` race if the contract widens later. Native
+  callers (`RecordingScreen._handleBack`, `ChannelScreen._handleBack`)
+  await the result and only invoke `Navigator.maybePop()` when
+  unhandled — fixes the prior double-pop where closing a thread would
+  also pop the route. Backward-compatible: undefined/sync-false
+  returns coerce to `false`, preserving today's behavior for any
+  bridge build still on the old contract (remote-dev-cx0w).
+- **Mobile**: Soften WebView cookie-sharing docstring on
+  `RecordingScreen` to document iOS non-persistent / Android incognito
+  / cold-start session-cookie caveats; the prior copy overstated
+  automatic availability across `InAppWebView` instances
+  (remote-dev-q37o).
+
+### Added (Phase 6 — mobile redesign — backfilled)
 
 - **Mobile**: Account profile screen — replaces the Phase 5 stub. Loads via
   `accountFutureProvider` against `/api/auth/session`, gates on
