@@ -18,32 +18,34 @@ class ProfileTabScreen extends ConsumerWidget {
           _ProfileRow(
             icon: Icons.person,
             label: 'Account',
-            onTap: () => context.go('/home/profile/account'),
+            // push so the AppBar shows an implicit back arrow that pops
+            // to the Profile tab inside HomeShell.
+            onTap: () => context.push('/home/profile/account'),
           ),
           _ProfileRow(
             icon: Icons.code,
             label: 'GitHub accounts',
-            onTap: () => context.go('/home/profile/github'),
+            onTap: () => context.push('/home/profile/github'),
           ),
           _ProfileRow(
             icon: Icons.palette_outlined,
             label: 'Appearance',
-            onTap: () => context.go('/home/profile/appearance'),
+            onTap: () => context.push('/home/profile/appearance'),
           ),
           _ProfileRow(
             icon: Icons.cloud_outlined,
             label: 'Servers',
-            onTap: () => context.go('/home/profile/servers'),
+            onTap: () => context.push('/home/profile/servers'),
           ),
           _ProfileRow(
             icon: Icons.lock_outline,
             label: 'Security',
-            onTap: () => context.go('/home/profile/biometric'),
+            onTap: () => context.push('/home/profile/biometric'),
           ),
           _ProfileRow(
             icon: Icons.info_outline,
             label: 'About',
-            onTap: () => context.go('/home/profile/about'),
+            onTap: () => context.push('/home/profile/about'),
           ),
         ],
       ),
