@@ -32,6 +32,7 @@ class ChannelScreen extends ConsumerStatefulWidget {
   const ChannelScreen({
     required this.channelId,
     this.bridgeFactoryOverride,
+    this.webViewFactory,
     super.key,
   });
 
@@ -48,12 +49,19 @@ class ChannelScreen extends ConsumerStatefulWidget {
   final BridgeController Function(InAppWebViewController? controller)?
       bridgeFactoryOverride;
 
+  /// Test seam — defaults to a real [WebViewFactory]. Tests can substitute
+  /// a fake factory that controls `onProgressChanged` to drive the AppBar
+  /// progress indicator without needing a real WebView.
+  final WebViewFactory? webViewFactory;
+
   @override
   ConsumerState<ChannelScreen> createState() => _ChannelScreenState();
 }
 
 class _ChannelScreenState extends ConsumerState<ChannelScreen> {
   BridgeController? _bridge;
+  // Page-load progress (0-100). 100 hides the AppBar indicator.
+  int _progress = 100;
 
   @override
   void initState() {
@@ -116,6 +124,17 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: _handleBack,
         ),
+        bottom: _progress < 100
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(2),
+                child: LinearProgressIndicator(
+                  value: _progress / 100,
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                  color: const Color(0xFF7AA2F7),
+                ),
+              )
+            : null,
       ),
       body: asyncServer.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -136,7 +155,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           }
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/channel/${widget.channelId}');
-          return WebViewFactory().build(
+          final factory = widget.webViewFactory ?? const WebViewFactory();
+          return factory.build(
             initialUrl: url,
             policy: NavigationPolicy(
               serverOrigin: origin,
@@ -144,6 +164,9 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
             ),
             onLinkOpen: (_) {},
             onWebViewCreated: _onWebViewCreated,
+            onProgressChanged: (p) {
+              if (mounted) setState(() => _progress = p);
+            },
           );
         },
       ),

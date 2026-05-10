@@ -55,6 +55,9 @@ class RecordingScreen extends ConsumerStatefulWidget {
 
 class _RecordingScreenState extends ConsumerState<RecordingScreen> {
   BridgeController? _bridge;
+  // Page-load progress (0-100). 100 means the embedded PWA finished
+  // loading; the AppBar progress indicator is hidden in that state.
+  int _progress = 100;
 
   void _onWebViewCreated(InAppWebViewController controller) {
     final bridge = BridgeController(controller: controller);
@@ -104,6 +107,17 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: _handleBack,
         ),
+        bottom: _progress < 100
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(2),
+                child: LinearProgressIndicator(
+                  value: _progress / 100,
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                  color: const Color(0xFF7AA2F7),
+                ),
+              )
+            : null,
       ),
       body: asyncServer.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -133,6 +147,9 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
             ),
             onLinkOpen: (_) {},
             onWebViewCreated: _onWebViewCreated,
+            onProgressChanged: (p) {
+              if (mounted) setState(() => _progress = p);
+            },
           );
         },
       ),

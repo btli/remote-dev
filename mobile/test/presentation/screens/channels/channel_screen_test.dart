@@ -1,14 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:remote_dev/application/ports/server_config_store.dart';
 import 'package:remote_dev/domain/channel.dart';
+import 'package:remote_dev/domain/server_config.dart';
 import 'package:remote_dev/infrastructure/api/channels_api.dart';
 import 'package:remote_dev/infrastructure/webview/bridge_controller.dart';
+import 'package:remote_dev/infrastructure/webview/navigation_policy.dart';
+import 'package:remote_dev/infrastructure/webview/webview_factory.dart';
 import 'package:remote_dev/presentation/screens/channels/channel_screen.dart';
 import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
+import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
+    show serverConfigStoreProvider;
 
 /// `ChannelScreen` is a thin native wrapper around an embedded WebView
 /// pointed at `<server>/m/channel/<id>` — the real message list, send
@@ -41,6 +48,42 @@ class _DelayedChannelsApi extends Fake implements ChannelsApi {
   @override
   Future<void> archive(String id) async {}
 }
+
+class _MockStore extends Mock implements ServerConfigStore {}
+
+/// Same shape as `_RecordingWebViewFactory` — captures the
+/// `onProgressChanged` callback the screen wires into [WebViewFactory.build]
+/// so the test can simulate page-load progress events.
+class _ChannelWebViewFactory implements WebViewFactory {
+  ValueChanged<int>? capturedOnProgressChanged;
+
+  @override
+  Widget build({
+    required Uri initialUrl,
+    required NavigationPolicy policy,
+    required OnLinkOpen onLinkOpen,
+    void Function(InAppWebViewController controller)? onWebViewCreated,
+    void Function(InAppWebViewController controller, WebUri? url)? onLoadStop,
+    ValueChanged<int>? onProgressChanged,
+  }) {
+    capturedOnProgressChanged = onProgressChanged;
+    // SizedBox stand-in — the real InAppWebView's platform plugin isn't
+    // available under flutter_test and would replace the host subtree
+    // with an ErrorWidget.
+    return const SizedBox.shrink();
+  }
+}
+
+ServerConfig _serverConfig({
+  String id = 'srv-1',
+  String url = 'https://dev.example.com',
+}) =>
+    ServerConfig(
+      id: id,
+      label: 'Work',
+      url: url,
+      lastUsedAt: DateTime.utc(2025, 1, 1),
+    );
 
 void main() {
   testWidgets('ChannelScreen mounts with the channel AppBar', (tester) async {
@@ -239,6 +282,64 @@ void main() {
       },
     );
   });
+
+  testWidgets(
+    'AppBar LinearProgressIndicator shows on partial progress and hides at 100',
+    (tester) async {
+      // bd remote-dev-72dh: WebViewFactory exposes an onProgressChanged hook
+      // that drives a thin progress bar at the AppBar bottom. Partial values
+      // render the indicator; 100 hides it.
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.exceptionAsString().contains('InAppWebViewPlatform')) {
+          return;
+        }
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      final store = _MockStore();
+      when(store.loadActive).thenAnswer((_) async => _serverConfig());
+      final factory = _ChannelWebViewFactory();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            serverConfigStoreProvider.overrideWithValue(store),
+          ],
+          child: MaterialApp(
+            home: ChannelScreen(
+              channelId: 'c-progress',
+              webViewFactory: factory,
+            ),
+          ),
+        ),
+      );
+      // Flush the active-server FutureProvider microtasks so `build` runs.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // Initial: progress=100 → no indicator.
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(factory.capturedOnProgressChanged, isNotNull);
+
+      // Partial progress event → indicator appears with the Tokyo Night blue.
+      factory.capturedOnProgressChanged!(60);
+      await tester.pump();
+      final indicators = tester.widgetList<LinearProgressIndicator>(
+        find.byType(LinearProgressIndicator),
+      );
+      expect(indicators, hasLength(1));
+      expect(indicators.first.value, closeTo(0.6, 1e-9));
+      expect(indicators.first.color, equals(const Color(0xFF7AA2F7)));
+
+      // Completion → indicator hides.
+      factory.capturedOnProgressChanged!(100);
+      await tester.pump();
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+    },
+  );
 
   testWidgets(
     'shows fallback "Channel" before list resolves, then "#name" after',

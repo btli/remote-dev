@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'navigation_policy.dart';
@@ -13,12 +14,16 @@ class WebViewFactory {
   ///   passes their handlers via [onWebViewCreated]; this factory does
   ///   not register handlers itself (Phase 2 wires the bridge).
   /// - Rule 5: navigation policy enforced via shouldOverrideUrlLoading.
-  InAppWebView build({
+  ///
+  /// Returns [Widget] (not [InAppWebView] specifically) so test fakes can
+  /// return a lightweight stand-in without triggering the platform plugin.
+  Widget build({
     required Uri initialUrl,
     required NavigationPolicy policy,
     required OnLinkOpen onLinkOpen,
     void Function(InAppWebViewController controller)? onWebViewCreated,
     void Function(InAppWebViewController controller, WebUri? url)? onLoadStop,
+    ValueChanged<int>? onProgressChanged,
   }) {
     return InAppWebView(
       initialUrlRequest: URLRequest(url: WebUri(initialUrl.toString())),
@@ -39,6 +44,12 @@ class WebViewFactory {
       ),
       onWebViewCreated: onWebViewCreated,
       onLoadStop: onLoadStop,
+      // Page-load progress (0-100). Hosts use this to render a thin
+      // LinearProgressIndicator until the embedded PWA reports complete.
+      // See bd remote-dev-72dh.
+      onProgressChanged: onProgressChanged == null
+          ? null
+          : (controller, progress) => onProgressChanged(progress),
       shouldOverrideUrlLoading: (controller, action) async {
         final uri = action.request.url?.uriValue;
         if (uri == null) return NavigationActionPolicy.CANCEL;
