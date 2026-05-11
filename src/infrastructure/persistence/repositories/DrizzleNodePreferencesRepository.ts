@@ -44,7 +44,6 @@ export class DrizzleNodePreferencesRepository implements NodePreferencesReposito
         .set({
           defaultWorkingDirectory: fields.defaultWorkingDirectory ?? null,
           defaultShell: fields.defaultShell ?? null,
-          startupCommand: fields.startupCommand ?? null,
           theme: fields.theme ?? null,
           fontSize: fields.fontSize ?? null,
           fontFamily: fields.fontFamily ?? null,
@@ -74,7 +73,6 @@ export class DrizzleNodePreferencesRepository implements NodePreferencesReposito
         userId,
         defaultWorkingDirectory: fields.defaultWorkingDirectory ?? null,
         defaultShell: fields.defaultShell ?? null,
-        startupCommand: fields.startupCommand ?? null,
         theme: fields.theme ?? null,
         fontSize: fields.fontSize ?? null,
         fontFamily: fields.fontFamily ?? null,

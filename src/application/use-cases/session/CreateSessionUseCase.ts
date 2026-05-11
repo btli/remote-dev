@@ -31,7 +31,6 @@ export interface CreateSessionInput {
   baseBranch?: string;
   worktreeType?: string;
   // Session options
-  startupCommand?: string;
   environment?: Record<string, string>;
 }
 
@@ -114,7 +113,6 @@ export class CreateSessionUseCase {
       await this.tmuxGateway.createSession({
         sessionName: session.tmuxSessionName.toString(),
         workingDirectory: workingPath ?? undefined,
-        startupCommand: input.startupCommand,
         environment: input.environment,
       });
     } catch (error) {

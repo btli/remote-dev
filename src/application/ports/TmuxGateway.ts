@@ -20,7 +20,6 @@ export interface TmuxSessionInfo {
 export interface CreateTmuxSessionOptions {
   sessionName: string;
   workingDirectory?: string;
-  startupCommand?: string;
   environment?: Record<string, string>;
 }
 

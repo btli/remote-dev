@@ -64,7 +64,6 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   theme: "tokyo-night",
   fontSize: 14,
   fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
-  startupCommand: "",
 } as const;
 
 /**
@@ -159,7 +158,6 @@ export function resolvePreferences(
     theme: "default",
     fontSize: "default",
     fontFamily: "default",
-    startupCommand: "default",
     githubRepoId: "default",
     localRepoPath: "default",
     defaultAgentProvider: "default",
@@ -197,10 +195,6 @@ export function resolvePreferences(
       resolved.fontFamily = userSettings.fontFamily;
       source.fontFamily = "user";
     }
-    if (userSettings.startupCommand !== null) {
-      resolved.startupCommand = userSettings.startupCommand;
-      source.startupCommand = "user";
-    }
     if (userSettings.defaultAgentProvider !== null) {
       resolved.defaultAgentProvider = userSettings.defaultAgentProvider;
       source.defaultAgentProvider = "user";
@@ -235,10 +229,6 @@ export function resolvePreferences(
     if (folderPrefs.fontFamily !== null) {
       resolved.fontFamily = folderPrefs.fontFamily;
       source.fontFamily = folderRef;
-    }
-    if (folderPrefs.startupCommand !== null) {
-      resolved.startupCommand = folderPrefs.startupCommand;
-      source.startupCommand = folderRef;
     }
     // Repository association also inherits
     if (folderPrefs.githubRepoId !== null) {

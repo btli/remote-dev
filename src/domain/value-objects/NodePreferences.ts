@@ -1,7 +1,6 @@
 export interface NodePreferencesFields {
   defaultWorkingDirectory?: string | null;
   defaultShell?: string | null;
-  startupCommand?: string | null;
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;

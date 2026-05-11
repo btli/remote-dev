@@ -42,7 +42,6 @@ interface NewSessionWizardProps {
     worktreeBranch?: string;
     folderId?: string;
     projectId?: string;
-    startupCommand?: string;
     featureDescription?: string;
     createWorktree?: boolean;
     baseBranch?: string;
@@ -121,7 +120,6 @@ export function NewSessionWizard({
   const [featureDescription, setFeatureDescription] = useState("");
   const [generatedBranchName, setGeneratedBranchName] = useState("");
   const [selectedAgent, setSelectedAgent] = useState<AgentPreset>("claude");
-  const [customAgentCommand, setCustomAgentCommand] = useState("");
   const [featureProjectPath, setFeatureProjectPath] = useState("");
   const [featureCreateWorktree, setFeatureCreateWorktree] = useState(false);
   const [worktreeType, setWorktreeType] = useState<WorktreeType>("feature");
@@ -215,7 +213,6 @@ export function NewSessionWizard({
     setFeatureDescription("");
     setGeneratedBranchName("");
     setSelectedAgent("claude");
-    setCustomAgentCommand("");
     setFeatureProjectPath("");
     setFeatureCreateWorktree(false);
     setFeatureBaseBranch("main");
@@ -310,12 +307,14 @@ export function NewSessionWizard({
       const name = expandNamePattern(template.sessionNamePattern, templateCounter);
       setTemplateCounter((c) => c + 1);
 
-      // Create session with template settings
+      // Create session with template settings. Template-level
+      // `startupCommand` is no longer applied — that mechanism was removed
+      // (see CHANGELOG). The DB column is retained for back-compat; future
+      // template UI will translate it into `agentFlags` if needed.
       await onCreate({
         name,
         projectPath: template.projectPath || undefined,
         projectId: template.projectId || undefined,
-        startupCommand: template.startupCommand || undefined,
       });
 
       handleClose();
@@ -443,10 +442,8 @@ export function NewSessionWizard({
     setError(null);
 
     try {
-      // For custom commands, still pass as startupCommand (shell type)
-      // For known agents, use the terminal type system
-      const isKnownAgent = selectedAgent !== "custom";
-
+      // "custom" agent preset was removed — every supported selection now
+      // resolves to a known agent provider.
       await onCreate({
         name: sessionName || featureDescription || "Feature Session",
         projectPath: featureProjectPath || undefined,
@@ -457,14 +454,9 @@ export function NewSessionWizard({
         worktreeBranch: featureCreateWorktree ? generatedBranchName : undefined,
         worktreeType: featureCreateWorktree ? worktreeType : undefined,
         profileId: selectedProfileId || undefined,
-        terminalType: isKnownAgent ? "agent" : "shell",
-        // Map selected agent to provider (claude, codex, gemini, opencode)
-        agentProvider: isKnownAgent
-          ? (selectedAgent as "claude" | "codex" | "gemini" | "opencode")
-          : "none",
-        autoLaunchAgent: isKnownAgent,
-        // For custom commands, pass the command directly
-        startupCommand: !isKnownAgent ? customAgentCommand : undefined,
+        terminalType: "agent",
+        agentProvider: selectedAgent as "claude" | "codex" | "gemini" | "opencode",
+        autoLaunchAgent: true,
       });
       handleClose();
     } catch (err) {
@@ -583,11 +575,6 @@ export function NewSessionWizard({
                         {template.projectPath && (
                           <span className="truncate max-w-[150px]">
                             {template.projectPath}
-                          </span>
-                        )}
-                        {template.startupCommand && (
-                          <span className="truncate max-w-[100px]">
-                            $ {template.startupCommand}
                           </span>
                         )}
                       </div>
@@ -882,27 +869,13 @@ export function NewSessionWizard({
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedAgent("custom")}
-                  className={cn(
-                    "w-full p-3 rounded-lg text-left transition-all border",
-                    selectedAgent === "custom"
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-card/50 hover:border-border/80"
-                  )}
-                >
-                  <p className="font-medium text-foreground text-sm">Custom Command</p>
-                  <p className="text-xs text-muted-foreground">Enter your own command</p>
-                </button>
-                {selectedAgent === "custom" && (
-                  <Input
-                    value={customAgentCommand}
-                    onChange={(e) => setCustomAgentCommand(e.target.value)}
-                    placeholder="e.g., aider --model gpt-4"
-                    className="mt-2 bg-card/50 border-border"
-                  />
-                )}
+                {/*
+                  The "Custom Command" preset was removed when the folder-
+                  level `startupCommand` mechanism was dropped — there's no
+                  remaining transport for an arbitrary string command. Use
+                  one of the four supported providers and configure
+                  per-provider extra flags in Settings → Agents.
+                */}
               </div>
 
               {/* Project Path */}
@@ -1010,7 +983,6 @@ export function NewSessionWizard({
                   onClick={() => setStep("feature-confirm")}
                   disabled={
                     !featureDescription.trim() ||
-                    (selectedAgent === "custom" && !customAgentCommand.trim()) ||
                     (featureCreateWorktree && isGitRepoValid === false)
                   }
                   className="bg-primary hover:bg-primary/90 text-primary-foreground"
@@ -1328,9 +1300,7 @@ export function NewSessionWizard({
                   <div>
                     <p className="text-sm text-muted-foreground">Agent Command</p>
                     <p className="font-medium text-foreground font-mono text-sm">
-                      {selectedAgent === "custom"
-                        ? customAgentCommand
-                        : AGENT_PRESETS.find((a) => a.id === selectedAgent)?.command}
+                      {AGENT_PRESETS.find((a) => a.id === selectedAgent)?.command}
                     </p>
                   </div>
                 </div>

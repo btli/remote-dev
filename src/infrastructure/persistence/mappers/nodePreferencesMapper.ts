@@ -33,7 +33,6 @@ export function toDomain(row: NodePreferencesRow): NodePreferences {
   const fields = {
     defaultWorkingDirectory: row.defaultWorkingDirectory,
     defaultShell: row.defaultShell,
-    startupCommand: row.startupCommand,
     theme: row.theme,
     fontSize: row.fontSize,
     fontFamily: row.fontFamily,

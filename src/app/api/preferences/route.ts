@@ -62,7 +62,6 @@ export const PATCH = withAuth(async (request, { userId }) => {
   const allowedFields = [
     "defaultWorkingDirectory",
     "defaultShell",
-    "startupCommand",
     "theme",
     "fontSize",
     "fontFamily",

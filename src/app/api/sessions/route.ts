@@ -60,7 +60,6 @@ export const POST = withApiAuth(async (request, { userId }) => {
       worktreeBranch?: string;
       folderId?: string;
       projectId?: string;
-      startupCommand?: string;
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
@@ -126,7 +125,6 @@ export const POST = withApiAuth(async (request, { userId }) => {
       // Loop agent config
       loopConfig: body.loopConfig as CreateSessionInput["loopConfig"],
       // Feature session fields
-      startupCommand: body.startupCommand,
       featureDescription: body.featureDescription,
       createWorktree: body.createWorktree,
       baseBranch: body.baseBranch,

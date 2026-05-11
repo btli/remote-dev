@@ -63,8 +63,6 @@ export function createAgentServerPlugin(
         throw new Error(`Invalid agent provider: ${providerId}`);
       }
 
-      // Honor folder/profile-resolved wrapper (e.g. `jclaude`) when present.
-      // Precedence documented on TerminalTypeServerPlugin.createSession.
       // Per-session input.allowDangerousFlags overrides the plugin-level
       // config flag so callers can opt into dangerous flags on a one-off
       // basis (e.g. via project preferences).
@@ -73,7 +71,6 @@ export function createAgentServerPlugin(
         provider,
         input.agentFlags,
         allowDangerous,
-        input.startupCommandOverride
       );
 
       const metadata: AgentSessionMetadata = {
