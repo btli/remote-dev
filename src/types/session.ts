@@ -82,6 +82,8 @@ export interface CreateSessionInput {
   agentProvider?: AgentProviderType;  // Which AI agent to use
   autoLaunchAgent?: boolean;          // Whether to auto-launch the agent CLI
   agentFlags?: string[];              // Additional flags for the agent CLI
+  /** Override the plugin-level allowDangerousFlags for this session. */
+  allowDangerousFlags?: boolean;
   // For file terminal type
   // NOTE: legacy convenience field retained for back-compat. New callers
   // should pass `typeMetadata: { filePath, fileName }` directly instead.

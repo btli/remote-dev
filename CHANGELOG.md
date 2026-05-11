@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agents**: "Pick Agent ▸" submenu in the sidebar `+` dropdown and
+  project context menu, mirroring the existing "New SSH ▸" pattern.
+  Lists all four installed agent providers (Claude Code, OpenAI Codex,
+  Gemini CLI, OpenCode) with install status pulled from
+  `/api/agent-cli/status`; uninstalled providers appear disabled with
+  a "Configure agents…" footer that opens Settings → Agents. Top-level
+  "New Agent" item launches the user's default agent in one click
+  (remote-dev-d2w1).
+- **Agents**: User-level default agent dropdown in Settings → Agents
+  (`user_settings.default_agent_provider`). Falls back to "claude" when
+  unset. Project-level `defaultAgentProvider` (already on
+  `node_preferences`) still overrides per project; the
+  `ProjectPreferencesView` free-text input is now a `<Select>` with an
+  "(inherit)" option.
+- **Agents**: Per-provider default flags (`extraFlags`,
+  `allowDangerous`) persisted in
+  `user_settings.agent_provider_settings` and
+  `node_preferences.agent_provider_settings` JSON columns. Settings →
+  Agents and Project Preferences both expose collapsible per-provider
+  cards (`AgentProviderConfigCard`) with a Bypass-permissions toggle
+  and Extra-flags textarea. `SessionService` merges these into the
+  resolved agent command at session-create time (project replaces user
+  for a given provider; explicit `input.agentFlags` accumulates, explicit
+  `agentProvider` and `allowDangerousFlags` override outright).
+  Dangerous-flag filter is now applied uniformly in both the agent
+  plugin path and the `autoLaunchAgent` fallback path.
+- **Agents**: `CreateSessionInput.allowDangerousFlags` per-session
+  override now honored by the agent plugin.
+
 ## [0.3.9] - 2026-05-10
 
 ### Changed

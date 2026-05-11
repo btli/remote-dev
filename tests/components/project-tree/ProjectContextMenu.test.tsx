@@ -18,6 +18,8 @@ function setup(
   const handlers = {
     onNewTerminal: vi.fn(),
     onNewAgent: vi.fn(),
+    onNewAgentWithProvider: vi.fn(),
+    onOpenAgentSettings: vi.fn(),
     onNewSshSession: vi.fn(),
     onOpenSshSettings: vi.fn(),
     onResume: vi.fn(),

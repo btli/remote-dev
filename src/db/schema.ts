@@ -111,6 +111,11 @@ export const userSettings = sqliteTable("user_settings", {
   notificationsEnabled: integer("notifications_enabled", { mode: "boolean" })
     .notNull()
     .default(true),
+  // Default agent provider when user clicks "New Agent" without picking one
+  defaultAgentProvider: text("default_agent_provider"),
+  // Per-provider agent settings (extra flags, allow dangerous). JSON object
+  // keyed by provider id (claude/codex/gemini/opencode).
+  agentProviderSettings: text("agent_provider_settings", { mode: "json" }),
   // Beads issue tracker sidebar settings
   beadsSidebarCollapsed: integer("beads_sidebar_collapsed", { mode: "boolean" })
     .notNull()
@@ -1742,6 +1747,10 @@ export const nodePreferences = sqliteTable(
     githubRepoId: text("github_repo_id"),
     localRepoPath: text("local_repo_path"),
     defaultAgentProvider: text("default_agent_provider"),
+    // Per-provider agent settings (extra flags, allow dangerous). JSON object
+    // keyed by provider id. Project-level entries REPLACE user-level entries
+    // for the same provider key.
+    agentProviderSettings: text("agent_provider_settings", { mode: "json" }),
     environmentVars: text("environment_vars", { mode: "json" }),
     pinnedFiles: text("pinned_files", { mode: "json" }),
     gitIdentityName: text("git_identity_name"),

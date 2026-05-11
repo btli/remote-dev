@@ -9,8 +9,9 @@ import {
   FolderPlus, Briefcase,
 } from "lucide-react";
 import { DropdownNewSshSubmenu } from "./NewSshSubmenu";
+import { DropdownNewAgentSubmenu } from "./NewAgentSubmenu";
 import { cn } from "@/lib/utils";
-import type { TerminalSession } from "@/types/session";
+import type { TerminalSession, AgentProviderType } from "@/types/session";
 import type { PinnedFile } from "@/types/pinned-files";
 import { Button } from "@/components/ui/button";
 import {
@@ -101,6 +102,13 @@ interface SidebarProps {
   onQuickNewSession: () => void;
   onNewAgent: () => void;
   /**
+   * Create a new agent session with an explicit provider — fired from the
+   * sidebar `+` → "Pick Agent ▸" submenu.
+   */
+  onNewAgentWithProvider: (provider: AgentProviderType) => void;
+  /** Open Settings → Agents so the user can configure per-provider defaults. */
+  onOpenAgentSettings: () => void;
+  /**
    * Create a new SSH session for the given saved connection. Project
    * scope is resolved from the active project.
    */
@@ -114,6 +122,10 @@ interface SidebarProps {
   onProjectSettings: (projectId: string, projectName: string, initialTab?: "general" | "appearance" | "repository" | "environment") => void;
   onProjectNewSession: (projectId: string) => void;
   onProjectNewAgent: (projectId: string) => void;
+  /**
+   * Project-scoped variant for the "Pick Agent" context-menu submenu.
+   */
+  onProjectNewAgentWithProvider: (projectId: string, provider: AgentProviderType) => void;
   onProjectResumeClaudeSession: (projectId: string) => void;
   onProjectAdvancedSession: (projectId: string) => void;
   onProjectNewWorktree: (projectId: string) => void;
@@ -172,11 +184,14 @@ export function Sidebar({
   onNewSession,
   onQuickNewSession,
   onNewAgent,
+  onNewAgentWithProvider,
+  onOpenAgentSettings,
   onNewSshSession,
   onOpenSshSettings,
   onProjectSettings,
   onProjectNewSession,
   onProjectNewAgent,
+  onProjectNewAgentWithProvider,
   onProjectResumeClaudeSession,
   onProjectAdvancedSession,
   onProjectNewWorktree,
@@ -420,6 +435,10 @@ export function Sidebar({
                     <Sparkles className="w-3.5 h-3.5 mr-2" />
                     New Agent
                   </DropdownMenuItem>
+                  <DropdownNewAgentSubmenu
+                    onSelect={onNewAgentWithProvider}
+                    onManage={onOpenAgentSettings}
+                  />
                   <DropdownNewSshSubmenu
                     onSelect={onNewSshSession}
                     onManage={onOpenSshSettings}
@@ -479,6 +498,10 @@ export function Sidebar({
                       <Sparkles className="w-3.5 h-3.5 mr-2" />
                       New Agent
                     </DropdownMenuItem>
+                    <DropdownNewAgentSubmenu
+                      onSelect={onNewAgentWithProvider}
+                      onManage={onOpenAgentSettings}
+                    />
                     <DropdownNewSshSubmenu
                       onSelect={onNewSshSession}
                       onManage={onOpenSshSettings}
@@ -612,6 +635,8 @@ export function Sidebar({
               onSessionRename={onSessionRename}
               onProjectNewSession={onProjectNewSession}
               onProjectNewAgent={onProjectNewAgent}
+              onProjectNewAgentWithProvider={onProjectNewAgentWithProvider}
+              onProjectOpenAgentSettings={onOpenAgentSettings}
               onProjectResumeClaudeSession={onProjectResumeClaudeSession}
               onProjectAdvancedSession={onProjectAdvancedSession}
               onProjectNewWorktree={onProjectNewWorktree}

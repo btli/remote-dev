@@ -39,6 +39,8 @@ vi.mock("@/contexts/NotificationContext", () => ({
 const requiredHandlerProps = {
   onProjectNewSession: vi.fn(),
   onProjectNewAgent: vi.fn(),
+  onProjectNewAgentWithProvider: vi.fn(),
+  onProjectOpenAgentSettings: vi.fn(),
   onProjectResumeClaudeSession: vi.fn(),
   onProjectAdvancedSession: vi.fn(),
   onProjectNewWorktree: vi.fn(),
