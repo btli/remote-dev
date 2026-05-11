@@ -7,7 +7,11 @@ import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
-import '../webview_host/session_route_host.dart' show activeServerProvider;
+import '../webview_host/session_route_host.dart'
+    show
+        activeServerProvider,
+        mobileCredentialsStoreProvider,
+        webViewCookieSeederProvider;
 
 /// Native chrome around the embedded WebView at `/m/recording/<id>`.
 ///
@@ -58,6 +62,33 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
   // Page-load progress (0-100). 100 means the embedded PWA finished
   // loading; the AppBar progress indicator is hidden in that state.
   int _progress = 100;
+  // Seeds the WebView's CookieManager with the persisted CF JWT before
+  // the InAppWebView navigates. Resolved per active server in
+  // initState's async chain. See WebViewCookieSeeder.
+  Future<void>? _seedFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _seedFuture = _seedCookie();
+  }
+
+  Future<void> _seedCookie() async {
+    // Best-effort — see ChannelScreen._seedCookie for rationale.
+    try {
+      final server = await ref.read(activeServerProvider.future);
+      if (server == null) return;
+      final credentials = ref.read(mobileCredentialsStoreProvider);
+      final cfToken = await credentials.readCfToken(server.id);
+      if (cfToken == null || cfToken.isEmpty) return;
+      await ref.read(webViewCookieSeederProvider).seedCfCookie(
+            serverOrigin: Uri.parse(server.url),
+            value: cfToken,
+          );
+    } catch (_) {
+      // intentional: failures are non-fatal.
+    }
+  }
 
   void _onWebViewCreated(InAppWebViewController controller) {
     final bridge = BridgeController(controller: controller);
@@ -139,16 +170,35 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/recording/${widget.recordingId}');
           final factory = widget.webViewFactory ?? const WebViewFactory();
-          return factory.build(
-            initialUrl: url,
-            policy: NavigationPolicy(
-              serverOrigin: origin,
-              allowedPathPrefixes: const ['/m/recording/'],
-            ),
-            onLinkOpen: (_) {},
-            onWebViewCreated: _onWebViewCreated,
-            onProgressChanged: (p) {
-              if (mounted) setState(() => _progress = p);
+          // Gate the WebView mount on cookie-seed completion. The
+          // InAppWebView's initial GET fires the moment it mounts; if we
+          // raced the seed (CookieManager.setCookie hadn't flushed yet),
+          // CF Access would reject the request and the user would be
+          // bounced into /reauth. The placeholder ColoredBox keeps the
+          // frame dark for the brief seed window (typically a few ms).
+          return FutureBuilder<void>(
+            future: _seedFuture,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const ColoredBox(
+                  color: Color(0xFF1A1B26),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              return factory.build(
+                initialUrl: url,
+                policy: NavigationPolicy(
+                  serverOrigin: origin,
+                  allowedPathPrefixes: const ['/m/recording/'],
+                ),
+                onLinkOpen: (_) {},
+                onWebViewCreated: _onWebViewCreated,
+                onProgressChanged: (p) {
+                  if (mounted) setState(() => _progress = p);
+                },
+              );
             },
           );
         },

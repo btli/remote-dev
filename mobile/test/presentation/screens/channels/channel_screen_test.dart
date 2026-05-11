@@ -9,13 +9,18 @@ import 'package:remote_dev/application/ports/server_config_store.dart';
 import 'package:remote_dev/domain/channel.dart';
 import 'package:remote_dev/domain/server_config.dart';
 import 'package:remote_dev/infrastructure/api/channels_api.dart';
+import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/infrastructure/webview/bridge_controller.dart';
 import 'package:remote_dev/infrastructure/webview/navigation_policy.dart';
+import 'package:remote_dev/infrastructure/webview/webview_cookie_seeder.dart';
 import 'package:remote_dev/infrastructure/webview/webview_factory.dart';
 import 'package:remote_dev/presentation/screens/channels/channel_screen.dart';
 import 'package:remote_dev/presentation/screens/channels/channels_tab_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show serverConfigStoreProvider;
+    show
+        mobileCredentialsStoreProvider,
+        serverConfigStoreProvider,
+        webViewCookieSeederProvider;
 
 /// `ChannelScreen` is a thin native wrapper around an embedded WebView
 /// pointed at `<server>/m/channel/<id>` — the real message list, send
@@ -50,6 +55,27 @@ class _DelayedChannelsApi extends Fake implements ChannelsApi {
 }
 
 class _MockStore extends Mock implements ServerConfigStore {}
+
+class _MockCredentialsStore extends Mock implements MobileCredentialsStore {}
+
+class _MockCookieSeeder extends Mock implements WebViewCookieSeeder {}
+
+_MockCredentialsStore _fastCredentials() {
+  final m = _MockCredentialsStore();
+  when(() => m.readCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
+  return m;
+}
+
+_MockCookieSeeder _fastSeeder() {
+  final m = _MockCookieSeeder();
+  when(
+    () => m.seedCfCookie(
+      serverOrigin: any(named: 'serverOrigin'),
+      value: any(named: 'value'),
+    ),
+  ).thenAnswer((_) async => true);
+  return m;
+}
 
 /// Same shape as `_RecordingWebViewFactory` — captures the
 /// `onProgressChanged` callback the screen wires into [WebViewFactory.build]
@@ -86,6 +112,12 @@ ServerConfig _serverConfig({
     );
 
 void main() {
+  setUpAll(() {
+    // mocktail requires a fallback for non-nullable named-args matched
+    // via `any(named: ...)`. `seedCfCookie` takes a non-nullable Uri.
+    registerFallbackValue(Uri.parse('https://fallback.example.com'));
+  });
+
   testWidgets('ChannelScreen mounts with the channel AppBar', (tester) async {
     await tester.pumpWidget(
       const ProviderScope(
@@ -300,12 +332,19 @@ void main() {
 
       final store = _MockStore();
       when(store.loadActive).thenAnswer((_) async => _serverConfig());
+      // After the FutureBuilder gate, the WebView only mounts once the
+      // seed future resolves. Stub credentials + seeder so it resolves
+      // immediately under flutter_test (real platform plugins missing).
+      final credentials = _fastCredentials();
+      final seeder = _fastSeeder();
       final factory = _ChannelWebViewFactory();
 
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
             serverConfigStoreProvider.overrideWithValue(store),
+            mobileCredentialsStoreProvider.overrideWithValue(credentials),
+            webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
           child: MaterialApp(
             home: ChannelScreen(

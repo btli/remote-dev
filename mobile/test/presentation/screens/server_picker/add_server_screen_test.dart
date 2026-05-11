@@ -5,26 +5,38 @@ import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/ports/secure_storage_port.dart';
 import 'package:remote_dev/application/ports/server_config_store.dart';
 import 'package:remote_dev/domain/server_config.dart';
-import 'package:remote_dev/infrastructure/storage/flutter_secure_storage_port.dart';
+import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/presentation/screens/server_picker/add_server_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show secureStorageProvider, serverConfigStoreProvider;
+    show mobileCredentialsStoreProvider, serverConfigStoreProvider;
 
 class _MockStore extends Mock implements ServerConfigStore {}
 
 class _FakeServerConfig extends Fake implements ServerConfig {}
 
-class _FakeStorage extends Fake implements FlutterSecureStoragePort {
-  final Map<String, String> writes = <String, String>{};
+class _FakeStorage implements SecureStoragePort {
+  final Map<String, String?> data = <String, String?>{};
+
+  String _key(String serverId, String key) => 'server.$serverId.$key';
+
+  @override
+  Future<String?> read(String serverId, String key) async =>
+      data[_key(serverId, key)];
 
   @override
   Future<void> write(String serverId, String key, String value) async {
-    writes['$serverId/$key'] = value;
+    data[_key(serverId, key)] = value;
   }
 
-  // The other SecureStoragePort methods aren't exercised by these tests;
-  // delegate to the abstract Fake error-on-call default by leaving them
-  // unimplemented here.
+  @override
+  Future<void> delete(String serverId, String key) async {
+    data.remove(_key(serverId, key));
+  }
+
+  @override
+  Future<void> deleteAll(String serverId) async {
+    data.removeWhere((k, _) => k.startsWith('server.$serverId.'));
+  }
 }
 
 void main() {
@@ -36,24 +48,23 @@ void main() {
     WidgetTester tester, {
     required _MockStore store,
     required Future<bool> Function(String) probe,
-    required CfLoginLauncher cfLogin,
-    SecureStoragePort? storage,
+    required MobileCallbackLauncher callbackLauncher,
+    _FakeStorage? storage,
     void Function(ServerConfig)? onSaved,
   }) {
+    final storeForCreds = storage ?? _FakeStorage();
     return tester.pumpWidget(
       ProviderScope(
         overrides: [
           serverConfigStoreProvider.overrideWithValue(store),
-          if (storage != null)
-            secureStorageProvider.overrideWithValue(
-              storage as FlutterSecureStoragePort,
-            ),
+          mobileCredentialsStoreProvider
+              .overrideWithValue(MobileCredentialsStore(storeForCreds)),
         ],
         child: MaterialApp(
           home: AddServerScreen(
             onSaved: onSaved ?? (_) {},
             healthProbeOverride: probe,
-            cfLoginLauncher: cfLogin,
+            mobileCallbackLauncher: callbackLauncher,
           ),
         ),
       ),
@@ -61,7 +72,7 @@ void main() {
   }
 
   testWidgets(
-    'happy path: probe true, CF login returns cookie, server upserted',
+    'happy path: probe true, callback returns creds, server upserted + creds saved',
     (tester) async {
       final store = _MockStore();
       final storage = _FakeStorage();
@@ -76,9 +87,14 @@ void main() {
         store: store,
         storage: storage,
         probe: (_) async => true,
-        cfLogin: (ctx, url) async {
+        callbackLauncher: (url) async {
           capturedLoginUrl = url;
-          return 'jwt-token';
+          return const MobileCredentials(
+            apiKey: 'sk-abc',
+            cfToken: 'jwt-token',
+            userId: 'u1',
+            email: 'a@b.com',
+          );
         },
         onSaved: (cfg) => saved = cfg,
       );
@@ -100,13 +116,21 @@ void main() {
       expect(saved!.label, 'Work');
       expect(saved!.url, 'https://dev.example.com');
       expect(capturedLoginUrl, Uri.parse('https://dev.example.com'));
-      // Cookie was persisted under the new server's id.
-      expect(storage.writes['${saved!.id}/cf_authorization'], 'jwt-token');
+      // Credentials persisted under the new server's id.
+      expect(storage.data['server.${saved!.id}.api_key'], 'sk-abc');
+      expect(storage.data['server.${saved!.id}.cf_token'], 'jwt-token');
+      // Legacy key mirrored for back-compat.
+      expect(
+        storage.data['server.${saved!.id}.cf_authorization'],
+        'jwt-token',
+      );
+      expect(storage.data['server.${saved!.id}.user_id'], 'u1');
+      expect(storage.data['server.${saved!.id}.user_email'], 'a@b.com');
     },
   );
 
   testWidgets(
-    'CF login cancelled: server is NOT saved and we surface the cancellation',
+    'callback cancelled: server is NOT saved and we surface the cancellation',
     (tester) async {
       final store = _MockStore();
       final storage = _FakeStorage();
@@ -119,7 +143,7 @@ void main() {
         store: store,
         storage: storage,
         probe: (_) async => true,
-        cfLogin: (_, __) async => null,
+        callbackLauncher: (_) async => null,
         onSaved: (cfg) => saved = cfg,
       );
 
@@ -137,17 +161,17 @@ void main() {
       verifyNever(() => store.upsert(any()));
       verifyNever(() => store.setActive(any()));
       expect(saved, isNull);
-      expect(storage.writes, isEmpty);
+      expect(storage.data, isEmpty);
       expect(find.text('Sign-in cancelled.'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'invalid URL fails form validation before probing or launching login',
+    'invalid URL fails form validation before probing or launching callback',
     (tester) async {
       final store = _MockStore();
       var probeCalls = 0;
-      var loginCalls = 0;
+      var callbackCalls = 0;
 
       await pumpAddServer(
         tester,
@@ -156,9 +180,9 @@ void main() {
           probeCalls += 1;
           return true;
         },
-        cfLogin: (_, __) async {
-          loginCalls += 1;
-          return 'jwt';
+        callbackLauncher: (_) async {
+          callbackCalls += 1;
+          return const MobileCredentials(apiKey: 'k');
         },
       );
 
@@ -178,7 +202,7 @@ void main() {
         findsOneWidget,
       );
       expect(probeCalls, 0);
-      expect(loginCalls, 0);
+      expect(callbackCalls, 0);
       verifyNever(() => store.upsert(any()));
     },
   );

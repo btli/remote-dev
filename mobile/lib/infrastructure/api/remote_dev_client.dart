@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../../application/ports/api_client_port.dart';
 import '../../application/ports/secure_storage_port.dart';
+import '../auth/mobile_credentials.dart';
 import 'cf_auth_interceptor.dart';
 
 class RemoteDevClient implements ApiClientPort {
@@ -11,7 +12,8 @@ class RemoteDevClient implements ApiClientPort {
     required SecureStoragePort storage,
     void Function()? onReauthNeeded,
     Dio? dio,
-  }) : _dio = dio ?? Dio() {
+  })  : _dio = dio ?? Dio(),
+        _credentials = MobileCredentialsStore(storage) {
     _dio.options
       ..baseUrl = serverOrigin.toString()
       ..connectTimeout = const Duration(seconds: 15)
@@ -19,7 +21,11 @@ class RemoteDevClient implements ApiClientPort {
     _dio.interceptors.add(
       CfAuthInterceptor(
         serverId: serverId,
-        cookieReader: (id) => storage.read(id, 'cf_authorization'),
+        authReader: (id) async {
+          final apiKey = await _credentials.readApiKey(id);
+          final cfToken = await _credentials.readCfToken(id);
+          return AuthMaterial(apiKey: apiKey, cfCookie: cfToken);
+        },
         onReauthNeeded: onReauthNeeded ?? () {},
       ),
     );
@@ -28,6 +34,7 @@ class RemoteDevClient implements ApiClientPort {
   final Uri serverOrigin;
   final String serverId;
   final Dio _dio;
+  final MobileCredentialsStore _credentials;
 
   @override
   Future<dynamic> get(String path) async {

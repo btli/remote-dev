@@ -7,7 +7,11 @@ import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
-import '../webview_host/session_route_host.dart' show activeServerProvider;
+import '../webview_host/session_route_host.dart'
+    show
+        activeServerProvider,
+        mobileCredentialsStoreProvider,
+        webViewCookieSeederProvider;
 import 'channels_tab_screen.dart' show channelsListProvider;
 
 /// Native chrome around the embedded WebView at `/m/channel/<id>`.
@@ -62,6 +66,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
   BridgeController? _bridge;
   // Page-load progress (0-100). 100 hides the AppBar indicator.
   int _progress = 100;
+  // Seeds CookieManager with the CF JWT pre-mount. See WebViewCookieSeeder.
+  Future<void>? _seedFuture;
 
   @override
   void initState() {
@@ -71,6 +77,29 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
     final override = widget.bridgeFactoryOverride;
     if (override != null) {
       _bridge = override(null);
+    }
+    _seedFuture = _seedCookie();
+  }
+
+  Future<void> _seedCookie() async {
+    // Best-effort: failures here are non-fatal. The WebView will hit a
+    // CF Access challenge instead of an authenticated page, the user
+    // re-auths via /reauth, and we try again. Swallowing exceptions
+    // also keeps widget tests that don't override the credential or
+    // seeder providers from blocking on the platform secure-storage
+    // plugin (which isn't available under flutter_test).
+    try {
+      final server = await ref.read(activeServerProvider.future);
+      if (server == null) return;
+      final credentials = ref.read(mobileCredentialsStoreProvider);
+      final cfToken = await credentials.readCfToken(server.id);
+      if (cfToken == null || cfToken.isEmpty) return;
+      await ref.read(webViewCookieSeederProvider).seedCfCookie(
+            serverOrigin: Uri.parse(server.url),
+            value: cfToken,
+          );
+    } catch (_) {
+      // intentional: see comment above.
     }
   }
 
@@ -156,16 +185,35 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/channel/${widget.channelId}');
           final factory = widget.webViewFactory ?? const WebViewFactory();
-          return factory.build(
-            initialUrl: url,
-            policy: NavigationPolicy(
-              serverOrigin: origin,
-              allowedPathPrefixes: const ['/m/channel/'],
-            ),
-            onLinkOpen: (_) {},
-            onWebViewCreated: _onWebViewCreated,
-            onProgressChanged: (p) {
-              if (mounted) setState(() => _progress = p);
+          // Gate the WebView mount on cookie-seed completion. The
+          // InAppWebView fires its initial GET as soon as it mounts; if
+          // CookieManager.setCookie hadn't flushed yet, that request
+          // would race the seed and CF Access would reject it. The
+          // placeholder ColoredBox keeps the frame dark for the brief
+          // seed window (typically a few ms).
+          return FutureBuilder<void>(
+            future: _seedFuture,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const ColoredBox(
+                  color: Color(0xFF1A1B26),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              return factory.build(
+                initialUrl: url,
+                policy: NavigationPolicy(
+                  serverOrigin: origin,
+                  allowedPathPrefixes: const ['/m/channel/'],
+                ),
+                onLinkOpen: (_) {},
+                onWebViewCreated: _onWebViewCreated,
+                onProgressChanged: (p) {
+                  if (mounted) setState(() => _progress = p);
+                },
+              );
             },
           );
         },

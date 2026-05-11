@@ -8,7 +8,11 @@ import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
-import '../webview_host/session_route_host.dart' show serverConfigStoreProvider;
+import '../webview_host/session_route_host.dart'
+    show
+        mobileCredentialsStoreProvider,
+        serverConfigStoreProvider,
+        webViewCookieSeederProvider;
 import 'activity_pip.dart';
 import 'mobile_input_bar.dart';
 import 'pinch_zoom_wrapper.dart';
@@ -303,9 +307,26 @@ class _Webview extends ConsumerWidget {
     );
   }
 
+  /// Resolves the active server's origin AND best-effort seeds the
+  /// platform CookieManager with the persisted CF JWT before the WebView
+  /// mounts. Seeding failures are swallowed so they don't block the
+  /// WebView (the WebView will hit a CF Access challenge instead, and
+  /// the user re-auths via /reauth).
   Future<Uri?> _resolveOrigin(WidgetRef ref) async {
     final server = await ref.read(serverConfigStoreProvider).loadActive();
     if (server == null) return null;
-    return Uri.parse(server.url);
+    final origin = Uri.parse(server.url);
+    try {
+      final credentials = ref.read(mobileCredentialsStoreProvider);
+      final cfToken = await credentials.readCfToken(server.id);
+      if (cfToken != null && cfToken.isNotEmpty) {
+        await ref
+            .read(webViewCookieSeederProvider)
+            .seedCfCookie(serverOrigin: origin, value: cfToken);
+      }
+    } catch (_) {
+      // intentional: see seeder rationale in ChannelScreen._seedCookie.
+    }
+    return origin;
   }
 }

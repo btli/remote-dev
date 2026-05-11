@@ -8,7 +8,7 @@ import '../../../domain/account.dart';
 import '../../../domain/server_config.dart';
 import '../../../infrastructure/api/account_api.dart';
 import '../webview_host/session_route_host.dart'
-    show activeServerProvider, secureStorageProvider;
+    show activeServerProvider, mobileCredentialsStoreProvider;
 
 /// Provider for the AccountApi. Must be overridden in main.dart's
 /// [buildServerScopedOverrides] once a [RemoteDevClient] is wired for the
@@ -83,10 +83,12 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
     setState(() => _signingOut = true);
 
     try {
-      // 1. Drop the per-server CF auth cookie from secure storage so the
-      //    Dio interceptor can no longer authenticate API calls.
-      final storage = ref.read(secureStorageProvider);
-      await storage.delete(server.id, 'cf_authorization');
+      // 1. Drop the per-server credentials (API key, CF JWT, identity)
+      //    from secure storage so the Dio interceptor can no longer
+      //    authenticate API calls. Also wipes the legacy
+      //    `cf_authorization` key from pre-jch1 installs.
+      final credentials = ref.read(mobileCredentialsStoreProvider);
+      await credentials.clear(server.id);
 
       // 2. Best-effort: clear WebView cookies for *this* server's origin
       //    only. `deleteCookies(url:)` removes every cookie scoped to

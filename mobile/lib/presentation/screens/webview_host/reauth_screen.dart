@@ -1,87 +1,166 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../server_picker/cf_login_webview_screen.dart';
+import '../../../infrastructure/auth/mobile_callback_login_launcher.dart';
+import '../../../infrastructure/auth/mobile_credentials.dart';
+import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import 'session_route_host.dart'
-    show activeServerProvider, secureStorageProvider;
+    show activeServerProvider, mobileCredentialsStoreProvider;
+
+/// Test seam — mirrors [MobileCallbackLauncher] from `AddServerScreen`.
+/// In production this is `null` and we build a real
+/// [MobileCallbackLoginLauncher] against the shared deep-link stream.
+typedef MobileCallbackLauncherForReauth = Future<MobileCredentials?> Function(
+  Uri serverUrl,
+);
 
 /// Screen we land on whenever Dio sees a 401/403 from the active server
-/// (see `CfAuthInterceptor` + `reauthSignalProvider`). It re-runs the
-/// CF Access WebView login flow against the *active* server, persists the
-/// fresh `CF_Authorization` cookie back into secure storage under the same
-/// `cf_authorization` key the Add Server flow uses, then bounces back to
-/// `/home` so the user resumes where they were.
+/// (see [reauthSignalProvider]). Runs the same system-browser flow the
+/// Add Server screen uses — opens `<server>/auth/mobile-callback` in
+/// the platform browser, waits for the `remotedev://auth/callback`
+/// deep link, persists the fresh credentials back into secure storage
+/// under the active server's id, then bounces back to `/home`.
 ///
 /// Two callbacks are accepted so the router can decide where the user
 /// goes after success / cancel:
-///   * [onSuccess] — fired after the new cookie is persisted. Typically
-///     `() => context.go('/home')`.
-///   * [onCancel] — fired when the user backs out of the WebView. Typically
-///     `() => context.go('/servers')` so they can pick a different server.
+///   * [onSuccess] — fired after the new credentials are persisted.
+///     Typically `() => context.go('/home')`.
+///   * [onCancel] — fired when the launcher returns `null` (user
+///     cancel, timeout, malformed callback). Typically
+///     `() => context.go('/servers')` so they can pick a different
+///     server.
 ///
-/// If there is no active server (edge case — e.g. a stale `/reauth` deep
-/// link after the user wiped their server list), we render a small
-/// "no active server" panel that punts to [onCancel].
-class ReauthScreen extends ConsumerWidget {
+/// If there is no active server (edge case — e.g. a stale `/reauth`
+/// deep link after the user wiped their server list), we render a
+/// small "no active server" panel that punts to [onCancel].
+class ReauthScreen extends ConsumerStatefulWidget {
   const ReauthScreen({
     required this.onSuccess,
     required this.onCancel,
-    this.cfLoginLauncherOverride,
+    this.mobileCallbackLauncherOverride,
     super.key,
   });
 
-  /// Called after the new cookie is persisted. The router should navigate
-  /// the user back into the app (`/home`).
+  /// Called after fresh credentials are persisted. The router should
+  /// navigate the user back into the app (`/home`).
   final VoidCallback onSuccess;
 
-  /// Called when the user dismisses the WebView or when there's no active
+  /// Called when the launcher returns null or when there's no active
   /// server to reauth against. The router should send them to `/servers`.
   final VoidCallback onCancel;
 
-  /// Test seam — replaces the embedded [CfLoginWebViewScreen] body with a
-  /// fake widget so unit tests don't have to host a real InAppWebView.
-  /// The override receives the same [serverUrl], [onSuccess], [onCancel]
-  /// callbacks the real WebView would.
-  final Widget Function({
-    required Uri serverUrl,
-    required void Function(String cookieValue) onSuccess,
-    required VoidCallback onCancel,
-  })? cfLoginLauncherOverride;
+  /// Test seam — replaces the system-browser launcher with a stub
+  /// (e.g. one that returns canned [MobileCredentials] or null).
+  final MobileCallbackLauncherForReauth? mobileCallbackLauncherOverride;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ReauthScreen> createState() => _ReauthScreenState();
+}
+
+class _ReauthScreenState extends ConsumerState<ReauthScreen> {
+  bool _running = false;
+  bool _completed = false;
+
+  Future<void> _runLaunch(Uri serverUrl, String serverId) async {
+    if (_running || _completed) return;
+    setState(() => _running = true);
+    final launcher = widget.mobileCallbackLauncherOverride;
+    final result = launcher != null
+        ? await launcher(serverUrl)
+        : await MobileCallbackLoginLauncher(
+            deepLinkStream: ref.read(deepLinkStreamProvider),
+          ).login(serverUrl: serverUrl);
+    if (!mounted) return;
+    if (result == null) {
+      _completed = true;
+      widget.onCancel();
+      return;
+    }
+    final credentials = ref.read(mobileCredentialsStoreProvider);
+    await credentials.save(serverId, result);
+    if (!mounted) return;
+    _completed = true;
+    widget.onSuccess();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final asyncServer = ref.watch(activeServerProvider);
     return asyncServer.when(
       loading: () => const Scaffold(
         backgroundColor: Color(0xFF1A1B26),
         body: Center(child: CircularProgressIndicator()),
       ),
-      error: (e, _) => _NoActiveServer(onCancel: onCancel, message: '$e'),
+      error: (e, _) => _NoActiveServer(onCancel: widget.onCancel, message: '$e'),
       data: (server) {
         if (server == null) {
-          return _NoActiveServer(onCancel: onCancel);
+          return _NoActiveServer(onCancel: widget.onCancel);
         }
-        final serverUrl = Uri.parse(server.url);
-        Future<void> handleSuccess(String cookieValue) async {
-          // Persist the fresh cookie under the same key the Add Server flow
-          // writes to (`cf_authorization`) so `CfAuthInterceptor` picks it
-          // up on its next request.
-          final storage = ref.read(secureStorageProvider);
-          await storage.write(server.id, 'cf_authorization', cookieValue);
-          onSuccess();
-        }
-
-        if (cfLoginLauncherOverride != null) {
-          return cfLoginLauncherOverride!(
-            serverUrl: serverUrl,
-            onSuccess: handleSuccess,
-            onCancel: onCancel,
-          );
-        }
-        return CfLoginWebViewScreen(
-          serverUrl: serverUrl,
-          onSuccess: handleSuccess,
-          onCancel: onCancel,
+        // Fire-and-forget the launch the first time we settle on a
+        // non-null active server. Subsequent rebuilds while the launcher
+        // is in flight are gated by `_running` / `_completed`.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _runLaunch(Uri.parse(server.url), server.id);
+        });
+        return Scaffold(
+          backgroundColor: const Color(0xFF1A1B26),
+          appBar: AppBar(
+            backgroundColor: const Color(0xFF1A1B26),
+            title: Text(
+              'Sign in to ${Uri.parse(server.url).host}',
+              style: const TextStyle(color: Colors.white),
+            ),
+            iconTheme: const IconThemeData(color: Colors.white),
+            leading: IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () {
+                if (_completed) return;
+                _completed = true;
+                widget.onCancel();
+              },
+            ),
+          ),
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.shield_outlined,
+                      size: 64,
+                      color: Color(0xFF7AA2F7),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Re-authenticate',
+                      style: TextStyle(color: Colors.white, fontSize: 22),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Your session expired. Complete the sign-in in '
+                      'your browser to continue.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 32),
+                    if (_running)
+                      const CircularProgressIndicator()
+                    else
+                      ElevatedButton(
+                        onPressed: () => _runLaunch(
+                          Uri.parse(server.url),
+                          server.id,
+                        ),
+                        child: const Text('Open browser again'),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         );
       },
     );

@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../application/ports/server_config_store.dart';
+import '../../../infrastructure/auth/mobile_credentials.dart';
 import '../../../infrastructure/storage/flutter_secure_storage_port.dart';
 import '../../../infrastructure/storage/server_config_store_impl.dart';
+import '../../../infrastructure/webview/webview_cookie_seeder.dart';
 import 'webview_host_screen.dart';
 
 final secureStorageProvider = Provider<FlutterSecureStoragePort>(
@@ -13,6 +15,19 @@ final secureStorageProvider = Provider<FlutterSecureStoragePort>(
 
 final serverConfigStoreProvider = Provider<ServerConfigStore>(
   (ref) => ServerConfigStoreImpl(ref.watch(secureStorageProvider)),
+);
+
+/// Typed helper for reading / writing per-server credentials persisted
+/// by `MobileCallbackLoginLauncher`.
+final mobileCredentialsStoreProvider = Provider<MobileCredentialsStore>(
+  (ref) => MobileCredentialsStore(ref.watch(secureStorageProvider)),
+);
+
+/// Seeds the in-app WebView's `CookieManager` with the persisted CF
+/// JWT before navigation. Overrideable so widget tests can substitute
+/// a fake that records calls instead of touching the platform plugin.
+final webViewCookieSeederProvider = Provider<WebViewCookieSeeder>(
+  (_) => WebViewCookieSeeder(),
 );
 
 final activeServerProvider = FutureProvider.autoDispose((ref) async {

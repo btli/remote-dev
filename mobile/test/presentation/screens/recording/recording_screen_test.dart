@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,13 +7,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:remote_dev/application/ports/server_config_store.dart';
 import 'package:remote_dev/domain/server_config.dart';
+import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/infrastructure/webview/navigation_policy.dart';
+import 'package:remote_dev/infrastructure/webview/webview_cookie_seeder.dart';
 import 'package:remote_dev/infrastructure/webview/webview_factory.dart';
 import 'package:remote_dev/presentation/screens/recording/recording_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show serverConfigStoreProvider;
+    show
+        mobileCredentialsStoreProvider,
+        serverConfigStoreProvider,
+        webViewCookieSeederProvider;
 
 class _MockStore extends Mock implements ServerConfigStore {}
+
+class _MockCredentialsStore extends Mock implements MobileCredentialsStore {}
+
+class _MockCookieSeeder extends Mock implements WebViewCookieSeeder {}
 
 /// Fake WebViewFactory that records what it was asked to build and
 /// returns a `SizedBox` so the unit test runner doesn't need to host a
@@ -53,7 +64,39 @@ ServerConfig _config({
       lastUsedAt: DateTime.utc(2025, 1, 1),
     );
 
+/// Stubs a [MobileCredentialsStore] whose `readCfToken` resolves to a
+/// fixed dummy token. Used to keep tests that don't care about the seed
+/// path from blocking on the real platform secure-storage channel.
+_MockCredentialsStore _fastCredentials() {
+  final m = _MockCredentialsStore();
+  when(() => m.readCfToken(any())).thenAnswer((_) async => 'cf-jwt-stub');
+  return m;
+}
+
+/// Stubs a [WebViewCookieSeeder] whose `seedCfCookie` resolves to `true`
+/// synchronously (next microtask). Used so the FutureBuilder gate
+/// transitions to `ConnectionState.done` immediately and the WebView
+/// mounts in unit tests where the real `CookieManager` method channel
+/// isn't available.
+_MockCookieSeeder _fastSeeder() {
+  final m = _MockCookieSeeder();
+  when(
+    () => m.seedCfCookie(
+      serverOrigin: any(named: 'serverOrigin'),
+      value: any(named: 'value'),
+    ),
+  ).thenAnswer((_) async => true);
+  return m;
+}
+
 void main() {
+  setUpAll(() {
+    // mocktail requires a fallback value for any non-nullable positional /
+    // named argument matched via `any(named: ...)`. `seedCfCookie` takes a
+    // non-nullable `Uri serverOrigin`.
+    registerFallbackValue(Uri.parse('https://fallback.example.com'));
+  });
+
   // InAppWebView's platform plugin isn't available under flutter_test.
   // Suppress its initialization assertion the same way other screen tests
   // in this codebase do (see session_view_screen_test.dart).
@@ -94,12 +137,20 @@ void main() {
       when(store.loadActive).thenAnswer(
         (_) async => _config(url: 'https://dev.example.com'),
       );
+      // After the FutureBuilder gate, the WebView only mounts once the
+      // seed future resolves. Stub the credentials + seeder so it
+      // resolves immediately under flutter_test (the real secure-storage
+      // and CookieManager method channels aren't available).
+      final credentials = _fastCredentials();
+      final seeder = _fastSeeder();
       final factory = _RecordingWebViewFactory();
 
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
             serverConfigStoreProvider.overrideWithValue(store),
+            mobileCredentialsStoreProvider.overrideWithValue(credentials),
+            webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
           child: MaterialApp(
             home: RecordingScreen(
@@ -164,12 +215,17 @@ void main() {
       when(store.loadActive).thenAnswer(
         (_) async => _config(url: 'https://dev.example.com'),
       );
+      // Same seed-gate workaround as the previous test — see comment there.
+      final credentials = _fastCredentials();
+      final seeder = _fastSeeder();
       final factory = _RecordingWebViewFactory();
 
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
             serverConfigStoreProvider.overrideWithValue(store),
+            mobileCredentialsStoreProvider.overrideWithValue(credentials),
+            webViewCookieSeederProvider.overrideWithValue(seeder),
           ],
           child: MaterialApp(
             home: RecordingScreen(
@@ -202,6 +258,103 @@ void main() {
       factory.capturedOnProgressChanged!(100);
       await tester.pump();
       expect(find.byType(LinearProgressIndicator), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'WebView is NOT mounted until the CookieManager seed completes',
+    (tester) async {
+      // Regression guard for the codex review on remote-dev-jch1:
+      //
+      // Before the FutureBuilder gate, the WebView mounted in the same
+      // build pass as the seed kicked off in `initState`. Because the
+      // platform `CookieManager.setCookie` call is async, the
+      // InAppWebView's initial GET to `/m/recording/<id>` could race the
+      // setCookie flush — when it lost, CF Access rejected the request
+      // and the user was bounced into /reauth.
+      //
+      // We verify the gate by hanging `seedCfCookie` on a Completer the
+      // test controls, then asserting that `WebViewFactory.build` is NOT
+      // called while the seed is pending. Completing the seed must allow
+      // the factory to fire.
+      suppressInAppWebViewErrors(tester);
+
+      final store = _MockStore();
+      when(store.loadActive).thenAnswer(
+        (_) async => _config(url: 'https://dev.example.com'),
+      );
+
+      final credentials = _MockCredentialsStore();
+      when(() => credentials.readCfToken(any()))
+          .thenAnswer((_) async => 'cf-jwt-token');
+
+      final seeder = _MockCookieSeeder();
+      final seedCompleter = Completer<bool>();
+      when(
+        () => seeder.seedCfCookie(
+          serverOrigin: any(named: 'serverOrigin'),
+          value: any(named: 'value'),
+        ),
+      ).thenAnswer((_) => seedCompleter.future);
+
+      final factory = _RecordingWebViewFactory();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            serverConfigStoreProvider.overrideWithValue(store),
+            mobileCredentialsStoreProvider.overrideWithValue(credentials),
+            webViewCookieSeederProvider.overrideWithValue(seeder),
+          ],
+          child: MaterialApp(
+            home: RecordingScreen(
+              recordingId: 'rec-race',
+              webViewFactory: factory,
+            ),
+          ),
+        ),
+      );
+      // Flush the activeServerProvider microtask + the initState seed
+      // chain up to (but not past) the pending seedCfCookie future.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // Seed is still pending — the FutureBuilder must be in the waiting
+      // branch and MUST NOT have invoked the factory's `build`.
+      expect(
+        factory.capturedUrl,
+        isNull,
+        reason:
+            'WebViewFactory.build should NOT be invoked while the seed '
+            'future is unresolved — otherwise the WebView races the '
+            'CookieManager.setCookie flush.',
+      );
+      // The placeholder spinner should be visible (the AppBar progress
+      // bar is hidden at progress=100, so any indicator here is the
+      // gate's placeholder, not the progress UI).
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      // Complete the seed → next pump should mount the WebView.
+      seedCompleter.complete(true);
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      expect(
+        factory.capturedUrl,
+        isNotNull,
+        reason:
+            'Once the seed future completes, the FutureBuilder must mount '
+            'the real WebView via WebViewFactory.build.',
+      );
+      expect(factory.capturedUrl!.path, equals('/m/recording/rec-race'));
+      verify(
+        () => seeder.seedCfCookie(
+          serverOrigin: any(named: 'serverOrigin'),
+          value: any(named: 'value'),
+        ),
+      ).called(1);
     },
   );
 }

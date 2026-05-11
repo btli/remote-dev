@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../domain/server_config.dart';
+import '../../../infrastructure/auth/mobile_callback_login_launcher.dart';
+import '../../../infrastructure/auth/mobile_credentials.dart';
+import '../../../infrastructure/deep_link/deep_link_stream_provider.dart';
 import '../webview_host/session_route_host.dart'
-    show secureStorageProvider, serverConfigStoreProvider;
-import 'cf_login_webview_screen.dart';
+    show mobileCredentialsStoreProvider, serverConfigStoreProvider;
 import 'server_picker_screen.dart' show serversListProvider;
 
 /// Probes a candidate server URL with a short-timeout unauthenticated GET
@@ -50,11 +52,11 @@ Future<bool> defaultHealthProbe(String rawUrl) async {
   }
 }
 
-/// Bridge typedef so tests can stub the CF login push without rendering an
-/// actual InAppWebView. Returns the harvested `CF_Authorization` cookie
-/// value, or `null` if the user cancelled.
-typedef CfLoginLauncher = Future<String?> Function(
-  BuildContext context,
+/// Bridge typedef so tests can stub the system-browser callback flow
+/// without launching the platform browser. Returns the credentials
+/// captured from `remotedev://auth/callback`, or `null` if the user
+/// cancelled / the flow timed out.
+typedef MobileCallbackLauncher = Future<MobileCredentials?> Function(
   Uri serverUrl,
 );
 
@@ -62,7 +64,7 @@ class AddServerScreen extends ConsumerStatefulWidget {
   const AddServerScreen({
     required this.onSaved,
     this.healthProbeOverride,
-    this.cfLoginLauncher,
+    this.mobileCallbackLauncher,
     super.key,
   });
 
@@ -71,10 +73,10 @@ class AddServerScreen extends ConsumerStatefulWidget {
   /// Test seam — replaces [defaultHealthProbe] when supplied.
   final Future<bool> Function(String url)? healthProbeOverride;
 
-  /// Test seam — replaces the CF Access WebView push when supplied. In
-  /// production we push [CfLoginWebViewScreen] and resolve with the
-  /// harvested cookie (or `null` if the user backed out).
-  final CfLoginLauncher? cfLoginLauncher;
+  /// Test seam — replaces the system-browser + deep-link callback when
+  /// supplied. In production we construct a [MobileCallbackLoginLauncher]
+  /// against the shared `deepLinkStreamProvider` and url_launcher.
+  final MobileCallbackLauncher? mobileCallbackLauncher;
 
   @override
   ConsumerState<AddServerScreen> createState() => _AddServerScreenState();
@@ -92,24 +94,13 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
     return probe(url);
   }
 
-  Future<String?> _runCfLogin(BuildContext context, Uri serverUrl) async {
-    final launcher = widget.cfLoginLauncher ?? _defaultCfLoginLauncher;
-    return launcher(context, serverUrl);
-  }
-
-  static Future<String?> _defaultCfLoginLauncher(
-    BuildContext context,
-    Uri serverUrl,
-  ) {
-    return Navigator.of(context).push<String?>(
-      MaterialPageRoute<String?>(
-        builder: (routeCtx) => CfLoginWebViewScreen(
-          serverUrl: serverUrl,
-          onSuccess: (cookie) => Navigator.of(routeCtx).pop(cookie),
-          onCancel: () => Navigator.of(routeCtx).pop(),
-        ),
-      ),
+  Future<MobileCredentials?> _runCallbackLogin(Uri serverUrl) async {
+    final override = widget.mobileCallbackLauncher;
+    if (override != null) return override(serverUrl);
+    final launcher = MobileCallbackLoginLauncher(
+      deepLinkStream: ref.read(deepLinkStreamProvider),
     );
+    return launcher.login(serverUrl: serverUrl);
   }
 
   Future<void> _save() async {
@@ -133,12 +124,13 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
         }
       }
 
-      // Open the CF Access WebView and wait for the user to either
-      // complete sign-in (we get back a cookie) or cancel (null).
+      // Open the system browser to <server>/auth/mobile-callback and
+      // wait for the `remotedev://auth/callback` deep link the server
+      // emits after a successful CF Access challenge.
       if (!mounted) return;
-      final cookie = await _runCfLogin(context, Uri.parse(url));
+      final credentials = await _runCallbackLogin(Uri.parse(url));
       if (!mounted) return;
-      if (cookie == null) {
+      if (credentials == null) {
         setState(() {
           _probeError = 'Sign-in cancelled.';
         });
@@ -152,11 +144,11 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
         lastUsedAt: DateTime.now(),
       );
 
-      // Persist the cookie BEFORE upserting the server record so that any
-      // listener that reacts to a new server (e.g. Dio building a client
-      // for it) finds the cookie already in place.
-      final storage = ref.read(secureStorageProvider);
-      await storage.write(config.id, 'cf_authorization', cookie);
+      // Persist credentials BEFORE upserting the server record so that
+      // any listener that reacts to a new server (e.g. Dio building a
+      // client for it) finds the API key + cookie already in place.
+      final credentialsStore = ref.read(mobileCredentialsStoreProvider);
+      await credentialsStore.save(config.id, credentials);
 
       final store = ref.read(serverConfigStoreProvider);
       await store.upsert(config);
@@ -262,3 +254,4 @@ class _AddServerScreenState extends ConsumerState<AddServerScreen> {
     );
   }
 }
+

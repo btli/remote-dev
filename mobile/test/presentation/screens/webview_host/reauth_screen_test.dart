@@ -2,25 +2,45 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:remote_dev/application/ports/secure_storage_port.dart';
 import 'package:remote_dev/application/ports/server_config_store.dart';
 import 'package:remote_dev/domain/server_config.dart';
-import 'package:remote_dev/infrastructure/storage/flutter_secure_storage_port.dart';
+import 'package:remote_dev/infrastructure/auth/mobile_credentials.dart';
 import 'package:remote_dev/presentation/screens/webview_host/reauth_screen.dart';
 import 'package:remote_dev/presentation/screens/webview_host/session_route_host.dart'
-    show secureStorageProvider, serverConfigStoreProvider;
+    show mobileCredentialsStoreProvider, serverConfigStoreProvider;
 
 class _MockStore extends Mock implements ServerConfigStore {}
 
-class _FakeStorage extends Fake implements FlutterSecureStoragePort {
-  final Map<String, String> writes = <String, String>{};
+class _FakeStorage implements SecureStoragePort {
+  final Map<String, String?> data = <String, String?>{};
+
+  String _key(String serverId, String key) => 'server.$serverId.$key';
+
+  @override
+  Future<String?> read(String serverId, String key) async =>
+      data[_key(serverId, key)];
 
   @override
   Future<void> write(String serverId, String key, String value) async {
-    writes['$serverId/$key'] = value;
+    data[_key(serverId, key)] = value;
+  }
+
+  @override
+  Future<void> delete(String serverId, String key) async {
+    data.remove(_key(serverId, key));
+  }
+
+  @override
+  Future<void> deleteAll(String serverId) async {
+    data.removeWhere((k, _) => k.startsWith('server.$serverId.'));
   }
 }
 
-ServerConfig _config({String id = 'srv-1', String url = 'https://dev.example.com'}) =>
+ServerConfig _config({
+  String id = 'srv-1',
+  String url = 'https://dev.example.com',
+}) =>
     ServerConfig(
       id: id,
       label: 'Work',
@@ -35,24 +55,21 @@ void main() {
     _FakeStorage? storage,
     VoidCallback? onSuccess,
     VoidCallback? onCancel,
-    Widget Function({
-      required Uri serverUrl,
-      required void Function(String cookieValue) onSuccess,
-      required VoidCallback onCancel,
-    })? cfLoginLauncherOverride,
+    MobileCallbackLauncherForReauth? launcherOverride,
   }) {
+    final s = storage ?? _FakeStorage();
     return tester.pumpWidget(
       ProviderScope(
         overrides: [
           serverConfigStoreProvider.overrideWithValue(store),
-          if (storage != null)
-            secureStorageProvider.overrideWithValue(storage),
+          mobileCredentialsStoreProvider
+              .overrideWithValue(MobileCredentialsStore(s)),
         ],
         child: MaterialApp(
           home: ReauthScreen(
             onSuccess: onSuccess ?? () {},
             onCancel: onCancel ?? () {},
-            cfLoginLauncherOverride: cfLoginLauncherOverride,
+            mobileCallbackLauncherOverride: launcherOverride,
           ),
         ),
       ),
@@ -81,111 +98,66 @@ void main() {
     },
   );
 
-  testWidgets(
-    'embeds CF login WebView when an active server is present',
-    (tester) async {
-      final store = _MockStore();
-      when(store.loadActive).thenAnswer((_) async => _config());
-
-      Uri? capturedUrl;
-      await pumpReauth(
-        tester,
-        store: store,
-        cfLoginLauncherOverride: ({
-          required Uri serverUrl,
-          required void Function(String) onSuccess,
-          required VoidCallback onCancel,
-        }) {
-          capturedUrl = serverUrl;
-          return const _FakeWebView();
-        },
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.byType(_FakeWebView), findsOneWidget);
-      expect(capturedUrl, Uri.parse('https://dev.example.com'));
-      // The "no active server" UI should NOT be shown.
-      expect(find.text('No active server'), findsNothing);
-    },
-  );
+  // Helper: pump a fixed number of frames to drive futures forward.
+  // The screen renders a `CircularProgressIndicator` while the launcher
+  // is in flight, so `pumpAndSettle` would never return — we drive
+  // discrete frames instead.
+  Future<void> drainFrames(WidgetTester tester) async {
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+  }
 
   testWidgets(
-    'on CF login success, persists cookie under cf_authorization and calls onSuccess',
+    'on callback success, persists credentials and calls onSuccess',
     (tester) async {
       final store = _MockStore();
       final storage = _FakeStorage();
       when(store.loadActive).thenAnswer((_) async => _config(id: 'srv-42'));
 
       var successCount = 0;
-      late void Function(String) capturedOnSuccess;
+      Uri? capturedUrl;
       await pumpReauth(
         tester,
         store: store,
         storage: storage,
         onSuccess: () => successCount++,
-        cfLoginLauncherOverride: ({
-          required Uri serverUrl,
-          required void Function(String) onSuccess,
-          required VoidCallback onCancel,
-        }) {
-          capturedOnSuccess = onSuccess;
-          return const _FakeWebView();
+        launcherOverride: (serverUrl) async {
+          capturedUrl = serverUrl;
+          return const MobileCredentials(
+            apiKey: 'sk-fresh',
+            cfToken: 'fresh-jwt',
+          );
         },
       );
-      await tester.pumpAndSettle();
+      await drainFrames(tester);
 
-      // Simulate the WebView harvesting a fresh cookie.
-      capturedOnSuccess('fresh-jwt');
-      // Allow the async write + onSuccess callback to complete.
-      await tester.pumpAndSettle();
-
-      expect(storage.writes['srv-42/cf_authorization'], 'fresh-jwt');
+      expect(capturedUrl, Uri.parse('https://dev.example.com'));
+      expect(storage.data['server.srv-42.api_key'], 'sk-fresh');
+      expect(storage.data['server.srv-42.cf_token'], 'fresh-jwt');
       expect(successCount, 1);
     },
   );
 
   testWidgets(
-    'on CF login cancel, propagates to onCancel without writing storage',
+    'on callback cancel (null result), propagates to onCancel without writing',
     (tester) async {
       final store = _MockStore();
       final storage = _FakeStorage();
       when(store.loadActive).thenAnswer((_) async => _config());
 
       var cancelled = 0;
-      late VoidCallback capturedOnCancel;
       await pumpReauth(
         tester,
         store: store,
         storage: storage,
         onCancel: () => cancelled++,
-        cfLoginLauncherOverride: ({
-          required Uri serverUrl,
-          required void Function(String) onSuccess,
-          required VoidCallback onCancel,
-        }) {
-          capturedOnCancel = onCancel;
-          return const _FakeWebView();
-        },
+        launcherOverride: (_) async => null,
       );
-      await tester.pumpAndSettle();
-
-      capturedOnCancel();
-      await tester.pumpAndSettle();
+      await drainFrames(tester);
 
       expect(cancelled, 1);
-      expect(storage.writes, isEmpty);
+      expect(storage.data, isEmpty);
     },
   );
-}
-
-class _FakeWebView extends StatelessWidget {
-  const _FakeWebView();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFF1A1B26),
-      body: Center(child: Text('fake-webview')),
-    );
-  }
 }

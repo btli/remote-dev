@@ -44,6 +44,9 @@ dependencies:
   # Deep links (Phase 4)
   app_links: ^6.3.2
 
+  # System browser launcher for CF Access login (remote-dev-jch1)
+  url_launcher: ^6.3.1
+
   # Models
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
