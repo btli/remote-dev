@@ -38,6 +38,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Agents**: `CreateSessionInput.allowDangerousFlags` per-session
   override now honored by the agent plugin.
 
+### Removed
+
+- **Preferences**: Removed the `startupCommand` field from user
+  settings and node preferences. The feature was a brittle string
+  wrapper that frequently overrode an explicitly chosen agent
+  provider (e.g., picking Codex from "Pick Agent ▸" silently ran
+  `claude` if the project had `startupCommand: "claude"` saved).
+  Use `agentFlags` for one-shot per-session flags (e.g.,
+  `--resume xyz`) and shell aliases for wrapper scripts. The DB
+  columns (`user_settings.startup_command`,
+  `node_preferences.startup_command`) are retained as nullable
+  orphans for now and will be dropped in a future migration. The
+  related `CreateSessionInput.startupCommand` /
+  `startupCommandOverride` fields are gone, along with
+  `Preferences.startupCommand` /
+  `FolderPreferences.startupCommand` /
+  `UserSettings.startupCommand` types, the per-provider HOME
+  override (`resolveEffectiveHome`) sniffer, and the UI inputs in
+  Settings → Terminal, Project Preferences, and Group Preferences.
+- **NewSessionWizard**: Dropped the "Custom Command" agent preset —
+  it was the only consumer of the deleted string-level command
+  transport. The feature session flow now requires one of the four
+  supported agent providers; configure extra CLI flags in
+  Settings → Agents instead.
+- **SaveTemplateModal**: Removed the Startup Command input. The
+  `SessionTemplate.startupCommand` DB field is preserved (templates
+  saved before this release will keep their stored value) but is no
+  longer applied when creating a session from a template — future
+  template UI will translate it into `agentFlags` if needed.
+- **ResumeClaudeSession**: Rewrote the resume flow to use
+  `agentFlags: ["--resume", id]` instead of building a startup-command
+  string against the folder's deleted `startupCommand` preference.
+  Resume now always launches `claude --resume <id>` (per-provider
+  extra flags from preferences are still merged in by
+  `SessionService`).
+
 ## [0.3.9] - 2026-05-10
 
 ### Changed

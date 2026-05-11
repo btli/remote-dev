@@ -34,7 +34,6 @@ export function SaveTemplateModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sessionNamePattern, setSessionNamePattern] = useState("");
-  const [startupCommand, setStartupCommand] = useState("");
   const [projectId, setProjectId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +57,6 @@ export function SaveTemplateModal({
     if (isOpen && session) {
       setName(session.name + " Template");
       setSessionNamePattern(`${session.name} \${n}`);
-      setStartupCommand("");
       setError(null);
     }
     if (!isOpen) {
@@ -81,7 +79,6 @@ export function SaveTemplateModal({
         description: description.trim() || undefined,
         sessionNamePattern: sessionNamePattern.trim() || undefined,
         projectPath: session?.projectPath || undefined,
-        startupCommand: startupCommand.trim() || undefined,
         projectId: projectId ?? undefined,
       });
 
@@ -164,22 +161,6 @@ export function SaveTemplateModal({
               </p>
             </div>
           )}
-
-          <div className="space-y-2">
-            <Label htmlFor="startup-command" className="text-sm text-muted-foreground">
-              Startup Command
-            </Label>
-            <Input
-              id="startup-command"
-              value={startupCommand}
-              onChange={(e) => setStartupCommand(e.target.value)}
-              placeholder="npm run dev"
-              className="bg-card/50 border-border focus:border-primary"
-            />
-            <p className="text-xs text-muted-foreground/70">
-              Command to run when session starts
-            </p>
-          </div>
 
           {session?.projectPath && (
             <div className="p-3 rounded-lg bg-card/30 border border-border">

@@ -255,18 +255,13 @@ export async function createSessionWithDedupFlag(
     agentProvider: input.agentProvider ?? "claude",
   };
 
-  // Pre-resolve folder/profile-level startup command so agent-style plugins
-  // can honor wrappers like `jclaude`. Preferences come from the folder tree
-  // first, then user settings. An explicit `input.startupCommand` (e.g. from
-  // the New Session wizard) takes precedence over preferences. The resolved
-  // value is threaded into `plugin.createSession` via `startupCommandOverride`.
+  // Pre-resolve folder/user preferences so we can layer in per-provider
+  // agentProviderSettings below. The legacy folder-level `startupCommand`
+  // wrapper mechanism was removed — there is no string-level override
+  // threaded into plugins anymore.
   const earlyPreferences = input.projectId
     ? await getResolvedPreferences(userId, input.projectId)
     : null;
-  const resolvedStartupCommand =
-    input.startupCommand !== undefined
-      ? input.startupCommand || undefined
-      : earlyPreferences?.startupCommand || undefined;
 
   // Resolve agent-provider settings (extra flags + allowDangerous) for
   // agent-type sessions. Two precedence rules, depending on the field:
@@ -309,14 +304,14 @@ export async function createSessionWithDedupFlag(
   }
 
   // Pass to the plugin via a mutated input copy so agent-style plugins see
-  // the override. Non-agent plugins ignore it. We deliberately mutate a
-  // shallow copy to avoid leaking the override back onto caller state.
+  // the merged provider/flags/allowDangerous. Non-agent plugins ignore the
+  // agent fields. We deliberately mutate a shallow copy to avoid leaking
+  // the merge result back onto caller state.
   const pluginInput: CreateSessionInput = {
     ...input,
     agentProvider: mergedAgentProvider,
     agentFlags: mergedAgentFlags,
     allowDangerousFlags: mergedAllowDangerous,
-    startupCommandOverride: resolvedStartupCommand,
   };
 
   // SessionConfig drives tmux creation + shell command selection below.
@@ -472,21 +467,19 @@ export async function createSessionWithDedupFlag(
     workingPath = result.worktreePath;
   }
 
-  // Determine startup command (explicit override takes precedence)
-  // Mirrors the early resolution above so downstream code still has access.
-  let startupCommand = resolvedStartupCommand;
+  // The startup command (when shell-typed plugins still want one) defaults
+  // to the autoLaunchAgent-built command below, otherwise undefined. There
+  // is no folder-level wrapper override — provider.command is canonical.
+  let startupCommand: string | undefined;
 
-  // Handle agent-aware session: auto-launch the agent CLI
-  // Use the folder's startupCommand as the base command if set (e.g., `jclaude`
-  // wrapper), otherwise fall back to the provider's default command (e.g., `claude`).
-  // The agent command replaces any plain startup command to avoid duplication.
+  // Handle agent-aware session: auto-launch the agent CLI. The command is
+  // derived entirely from the provider + merged flags; per-provider
+  // `allowDangerous` setting controls dangerous-flag filtering.
   //
   // SECURITY: reads from `pluginInput.agentFlags` (the merged flags) — NOT
   // `input.agentFlags` — so the per-provider preference flags are honored
-  // here and the dangerous-flag filter (inside the local `buildAgentCommand`)
-  // sees the same flags the agent plugin would. `mergedAllowDangerous` is
-  // threaded through so dangerous flags are filtered out unless explicitly
-  // permitted by the resolved settings.
+  // and the dangerous-flag filter (inside the local `buildAgentCommand`)
+  // sees the same flags the agent plugin would.
   if (input.agentProvider && input.agentProvider !== "none" && input.autoLaunchAgent) {
     // For loop sessions with Claude, add --output-format stream-json for structured output parsing
     const agentFlags = [...(pluginInput.agentFlags ?? [])];
@@ -496,7 +489,6 @@ export async function createSessionWithDedupFlag(
     const agentCommand = buildAgentCommand(
       input.agentProvider,
       agentFlags,
-      startupCommand,
       mergedAllowDangerous,
     );
     if (agentCommand) {
@@ -616,8 +608,11 @@ export async function createSessionWithDedupFlag(
   if (isAgentRuntime) {
     const configDir = profile?.configDir ?? process.env.HOME;
     if (configDir) {
-      const configDirs = await resolveAgentConfigDirs(configDir, startupCommand, sessionId);
-      await ensureAgentConfig(configDirs, effectiveAgentProvider, sessionId, rdvEnv);
+      // Previously this also sniffed `startupCommand` for an inline `HOME=`
+      // override (e.g. `HOME=/foo claude`) so hooks could be installed in
+      // the wrapped HOME directory. That path is gone with `startupCommand`
+      // — wrapper aliases install their own configs.
+      await ensureAgentConfig(new Set([configDir]), effectiveAgentProvider, sessionId, rdvEnv);
     }
   }
 
@@ -1493,11 +1488,10 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
 }
 
 /**
- * Build the agent CLI command for auto-launch.
+ * Build the agent CLI command for auto-launch. The base command is always
+ * `config.command` — the folder-level wrapper override mechanism was
+ * removed; use shell aliases instead.
  *
- * @param customCommand - Optional folder startup command to use as base
- *   (e.g., `jclaude` wrapper). If it matches the provider's command name,
- *   the custom command is used instead.
  * @param allowDangerous - When false (default), flags listed in
  *   `provider.dangerousFlags` are filtered out before composition. Mirrors
  *   the agent-utils `buildAgentCommand` semantics so the autoLaunchAgent
@@ -1506,21 +1500,12 @@ export function mapDbSessionToSession(dbSession: typeof terminalSessions.$inferS
 function buildAgentCommand(
   provider: AgentProviderType,
   flags?: string[],
-  customCommand?: string,
   allowDangerous = false,
 ): string | null {
   const config = AGENT_PROVIDERS.find((p) => p.id === provider);
   if (!config || !config.command) {
     return null;
   }
-
-  // Use the folder's startup command as the base if it's a simple command name
-  // (e.g., "jclaude" wrapper for the "claude" provider). Only use it if it's
-  // a single word (no flags/args) to avoid double-flag issues.
-  const baseCommand =
-    customCommand && !customCommand.includes(" ")
-      ? customCommand
-      : config.command;
 
   // SECURITY: filter dangerous flags unless explicitly allowed. Matches the
   // shared `buildAgentCommand` in `agent-utils.ts` so both code paths apply
@@ -1532,32 +1517,7 @@ function buildAgentCommand(
   const allFlags = [...config.defaultFlags, ...safeFlags];
   const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
 
-  return `${baseCommand}${flagsStr}`;
-}
-
-/**
- * Resolve all config directories where agent hooks/MCP config should be installed.
- * Includes the primary configDir plus any HOME override detected in the startup command.
- */
-async function resolveAgentConfigDirs(
-  configDir: string,
-  startupCommand: string | undefined,
-  sessionId: string
-): Promise<Set<string>> {
-  const dirs = new Set<string>([configDir]);
-  if (!startupCommand) return dirs;
-
-  try {
-    const effectiveHome = await AgentProfileService.resolveEffectiveHome(startupCommand);
-    if (effectiveHome) {
-      log.debug("Detected HOME override", { sessionId, effectiveHome, configDir });
-      dirs.add(effectiveHome);
-    }
-  } catch (error) {
-    log.warn("Failed to resolve effective HOME", { sessionId, error: String(error) });
-  }
-
-  return dirs;
+  return `${config.command}${flagsStr}`;
 }
 
 /**

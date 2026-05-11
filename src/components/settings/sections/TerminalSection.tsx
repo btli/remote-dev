@@ -38,9 +38,6 @@ function TerminalSectionInner({ userSettings, updateUserSettings }: {
   const [workingDirectory, setWorkingDirectory] = useState(
     userSettings.defaultWorkingDirectory ?? ""
   );
-  const [startupCommand, setStartupCommand] = useState(
-    userSettings.startupCommand ?? ""
-  );
 
   // Local state for sliders (saved on debounced change)
   const [xtermScrollback, setXtermScrollback] = useState(
@@ -95,25 +92,6 @@ function TerminalSectionInner({ userSettings, updateUserSettings }: {
             ))}
           </SelectContent>
         </Select>
-      </div>
-
-      {/* Startup Command */}
-      <div className="space-y-2">
-        <Label className="text-foreground">Startup Command</Label>
-        <Input
-          value={startupCommand}
-          onChange={(e) => setStartupCommand(e.target.value)}
-          onBlur={() =>
-            updateUserSettings({
-              startupCommand: startupCommand || null,
-            })
-          }
-          placeholder="claude"
-          className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-        />
-        <p className="text-xs text-muted-foreground">
-          Command to run when a new session starts (e.g., claude, clauded)
-        </p>
       </div>
 
       {/* Scrollback Buffer Settings */}

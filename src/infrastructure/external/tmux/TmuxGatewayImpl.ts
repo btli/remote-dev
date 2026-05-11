@@ -22,7 +22,7 @@ export class TmuxGatewayImpl implements TmuxGateway {
     await TmuxService.createSession(
       options.sessionName,
       options.workingDirectory,
-      options.startupCommand,
+      undefined,
       options.environment
     );
   }

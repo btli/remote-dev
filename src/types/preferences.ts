@@ -21,7 +21,6 @@ export interface Preferences {
   theme: string;
   fontSize: number;
   fontFamily: string;
-  startupCommand: string;
 }
 
 /**
@@ -90,7 +89,6 @@ export interface UserSettings {
   theme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
-  startupCommand: string | null;
   // Scrollback buffer settings (for performance tuning)
   xtermScrollback: number | null;
   tmuxHistoryLimit: number | null;
@@ -140,7 +138,6 @@ export interface FolderPreferences {
   theme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
-  startupCommand: string | null;
   // Repository association for worktree support
   githubRepoId: string | null;
   localRepoPath: string | null;
@@ -211,7 +208,6 @@ export interface UpdateUserSettingsInput {
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
-  startupCommand?: string | null;
   // Scrollback buffer settings (for performance tuning)
   xtermScrollback?: number | null;
   tmuxHistoryLimit?: number | null;
@@ -239,7 +235,6 @@ export interface UpdateFolderPreferencesInput {
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
-  startupCommand?: string | null;
   // Repository association for worktree support
   githubRepoId?: string | null;
   localRepoPath?: string | null;

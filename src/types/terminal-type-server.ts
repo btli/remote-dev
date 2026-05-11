@@ -88,17 +88,13 @@ export interface TerminalTypeServerPlugin {
    * Called when creating a session of this type.
    * Returns configuration for how the session should be set up.
    *
-   * Startup command precedence (applies to plugins that return a non-null
-   * `shellCommand`):
-   *   1. `input.startupCommandOverride` — pre-resolved by SessionService from
-   *      folder preference + profile (e.g. `jclaude` wrapper). When set and
-   *      compatible with the plugin's CLI, plugins should prefer it over
-   *      their provider default.
-   *   2. Plugin's built-in default (e.g. the agent plugin's
-   *      `buildAgentCommand(provider, flags)`).
+   * For plugins that return a non-null `shellCommand`, the command is
+   * derived entirely from the plugin's built-in defaults (e.g. the agent
+   * plugin's `buildAgentCommand(provider, flags)`). There is no folder-
+   * level string override — use shell aliases for wrappers.
    *
-   * Plugins that don't use a shell (useTmux: false) should keep returning
-   * `shellCommand: null` regardless of the override.
+   * Plugins that don't use a shell (useTmux: false) should return
+   * `shellCommand: null`.
    */
   createSession(
     input: CreateSessionInput,

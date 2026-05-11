@@ -68,7 +68,6 @@ interface ProjectPrefs {
   // Shared (same as group)
   defaultWorkingDirectory?: string | null;
   defaultShell?: string | null;
-  startupCommand?: string | null;
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
@@ -369,19 +368,6 @@ export function ProjectPreferencesView({
                 setPrefs({ ...prefs, defaultShell: e.target.value || null })
               }
               placeholder="/bin/zsh"
-              className="bg-card/50 border-border focus:border-primary"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="project-startup">Startup command</Label>
-            <Input
-              id="project-startup"
-              value={prefs.startupCommand ?? ""}
-              onChange={(e) =>
-                setPrefs({ ...prefs, startupCommand: e.target.value || null })
-              }
-              placeholder="e.g., source .envrc"
               className="bg-card/50 border-border focus:border-primary"
             />
           </div>
