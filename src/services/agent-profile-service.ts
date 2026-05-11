@@ -1131,6 +1131,14 @@ export async function fetchProfileSecrets(
     return null;
   }
 
+  if (!isProviderSupported(config.provider)) {
+    log.warn("Skipping profile secrets fetch: unsupported provider in DB", {
+      profileId,
+      provider: config.provider,
+    });
+    return null;
+  }
+
   const provider = createSecretsProvider({
     provider: config.provider as ProfileSecretsProviderType,
     config: providerConfig,

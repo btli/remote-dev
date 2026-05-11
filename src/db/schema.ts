@@ -975,7 +975,7 @@ export const profileSecretsConfig = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    provider: text("provider").notNull(), // "phase" | "vault" | "aws-secrets-manager" | "1password"
+    provider: text("provider").notNull(), // "phase"
     // Provider-specific config as JSON:
     // Phase: { "app": "my-app", "env": "development", "serviceToken": "pss_..." }
     providerConfig: text("provider_config").notNull(),

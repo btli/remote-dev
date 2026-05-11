@@ -2,7 +2,7 @@
  * Secrets Provider Factory
  *
  * Factory pattern for creating secrets provider instances.
- * Supports Phase.dev with stubs for future providers.
+ * Supports the Phase.dev provider.
  */
 
 import type { SecretsProviderClient, ProviderFactoryInput } from "./types";
@@ -20,27 +20,6 @@ export function createSecretsProvider(input: ProviderFactoryInput): SecretsProvi
     case "phase":
       return new PhaseSecretsProvider(config);
 
-    case "vault":
-      throw new SecretsServiceError(
-        "HashiCorp Vault provider is not yet implemented",
-        "PROVIDER_NOT_IMPLEMENTED",
-        "vault"
-      );
-
-    case "aws-secrets-manager":
-      throw new SecretsServiceError(
-        "AWS Secrets Manager provider is not yet implemented",
-        "PROVIDER_NOT_IMPLEMENTED",
-        "aws-secrets-manager"
-      );
-
-    case "1password":
-      throw new SecretsServiceError(
-        "1Password provider is not yet implemented",
-        "PROVIDER_NOT_IMPLEMENTED",
-        "1password"
-      );
-
     default:
       throw new SecretsServiceError(
         `Unknown secrets provider: ${provider}`,
@@ -51,7 +30,10 @@ export function createSecretsProvider(input: ProviderFactoryInput): SecretsProvi
 }
 
 /**
- * Check if a provider is supported
+ * Check if a provider is supported.
+ *
+ * Retained as a runtime guard for DB drift — old rows could carry a
+ * provider string that is no longer in the type union.
  */
 export function isProviderSupported(provider: string): boolean {
   return provider === "phase";
@@ -62,16 +44,4 @@ export function isProviderSupported(provider: string): boolean {
  */
 export function getSupportedProviders(): SecretsProviderType[] {
   return ["phase"];
-}
-
-/**
- * Get list of all providers including coming soon (for UI)
- */
-export function getAllProviders(): { type: SecretsProviderType; supported: boolean }[] {
-  return [
-    { type: "phase", supported: true },
-    { type: "vault", supported: false },
-    { type: "aws-secrets-manager", supported: false },
-    { type: "1password", supported: false },
-  ];
 }
