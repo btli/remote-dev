@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -187,21 +185,35 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/channel/${widget.channelId}');
           final factory = widget.webViewFactory ?? const WebViewFactory();
-          // Fire-and-forget the seed: it ran in initState and writes the
-          // cookie before any meaningful navigation occurs (the WebView
-          // takes a frame or two to initialize anyway). Blocking the
-          // WebView render on seed completion would add visible jank.
-          unawaited(_seedFuture ?? Future<void>.value());
-          return factory.build(
-            initialUrl: url,
-            policy: NavigationPolicy(
-              serverOrigin: origin,
-              allowedPathPrefixes: const ['/m/channel/'],
-            ),
-            onLinkOpen: (_) {},
-            onWebViewCreated: _onWebViewCreated,
-            onProgressChanged: (p) {
-              if (mounted) setState(() => _progress = p);
+          // Gate the WebView mount on cookie-seed completion. The
+          // InAppWebView fires its initial GET as soon as it mounts; if
+          // CookieManager.setCookie hadn't flushed yet, that request
+          // would race the seed and CF Access would reject it. The
+          // placeholder ColoredBox keeps the frame dark for the brief
+          // seed window (typically a few ms).
+          return FutureBuilder<void>(
+            future: _seedFuture,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const ColoredBox(
+                  color: Color(0xFF1A1B26),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              return factory.build(
+                initialUrl: url,
+                policy: NavigationPolicy(
+                  serverOrigin: origin,
+                  allowedPathPrefixes: const ['/m/channel/'],
+                ),
+                onLinkOpen: (_) {},
+                onWebViewCreated: _onWebViewCreated,
+                onProgressChanged: (p) {
+                  if (mounted) setState(() => _progress = p);
+                },
+              );
             },
           );
         },

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -79,15 +77,29 @@ class _WebViewHostScreenState extends ConsumerState<WebViewHostScreen> {
       serverOrigin: widget.serverOrigin,
       allowedPathPrefixes: widget.allowedPathPrefixes,
     );
-    // Fire-and-forget the seed; see ChannelScreen for rationale.
-    unawaited(_seedFuture ?? Future<void>.value());
     return Scaffold(
       backgroundColor: const Color(0xFF1A1B26),
       body: SafeArea(
-        child: const WebViewFactory().build(
-          initialUrl: widget.initialUrl,
-          policy: policy,
-          onLinkOpen: _onLinkOpen,
+        // Gate the WebView mount on cookie-seed completion so the
+        // InAppWebView's initial GET doesn't race the CookieManager
+        // setCookie call and trip a CF Access challenge.
+        child: FutureBuilder<void>(
+          future: _seedFuture,
+          builder: (context, snap) {
+            if (snap.connectionState != ConnectionState.done) {
+              return const ColoredBox(
+                color: Color(0xFF1A1B26),
+                child: Center(
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            }
+            return WebViewFactory().build(
+              initialUrl: widget.initialUrl,
+              policy: policy,
+              onLinkOpen: _onLinkOpen,
+            );
+          },
         ),
       ),
     );

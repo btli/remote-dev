@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -172,18 +170,35 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/recording/${widget.recordingId}');
           final factory = widget.webViewFactory ?? const WebViewFactory();
-          // Fire-and-forget the seed; see ChannelScreen for rationale.
-          unawaited(_seedFuture ?? Future<void>.value());
-          return factory.build(
-            initialUrl: url,
-            policy: NavigationPolicy(
-              serverOrigin: origin,
-              allowedPathPrefixes: const ['/m/recording/'],
-            ),
-            onLinkOpen: (_) {},
-            onWebViewCreated: _onWebViewCreated,
-            onProgressChanged: (p) {
-              if (mounted) setState(() => _progress = p);
+          // Gate the WebView mount on cookie-seed completion. The
+          // InAppWebView's initial GET fires the moment it mounts; if we
+          // raced the seed (CookieManager.setCookie hadn't flushed yet),
+          // CF Access would reject the request and the user would be
+          // bounced into /reauth. The placeholder ColoredBox keeps the
+          // frame dark for the brief seed window (typically a few ms).
+          return FutureBuilder<void>(
+            future: _seedFuture,
+            builder: (context, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const ColoredBox(
+                  color: Color(0xFF1A1B26),
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              return factory.build(
+                initialUrl: url,
+                policy: NavigationPolicy(
+                  serverOrigin: origin,
+                  allowedPathPrefixes: const ['/m/recording/'],
+                ),
+                onLinkOpen: (_) {},
+                onWebViewCreated: _onWebViewCreated,
+                onProgressChanged: (p) {
+                  if (mounted) setState(() => _progress = p);
+                },
+              );
             },
           );
         },

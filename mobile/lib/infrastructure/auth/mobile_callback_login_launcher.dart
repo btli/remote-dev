@@ -94,8 +94,13 @@ class MobileCallbackLoginLauncher {
 
       final apiKey = callbackUri.queryParameters['apiKey'];
       if (apiKey == null || apiKey.isEmpty) {
+        // Redact the query string before logging — it can carry a
+        // `cfToken` (and any other future query params) we don't want to
+        // leak into release logs. The path alone is sufficient to
+        // diagnose a malformed-callback regression.
         debugPrint(
-          '[MobileCallbackLogin] callback missing apiKey: $callbackUri',
+          '[MobileCallbackLogin] callback missing apiKey at '
+          '${callbackUri.path}',
         );
         return null;
       }
