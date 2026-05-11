@@ -2,7 +2,8 @@
  * Secrets Provider Interface
  *
  * Defines the contract that all secrets providers must implement.
- * This abstraction allows easy addition of new providers (Vault, AWS, 1Password).
+ * Phase.dev is the only supported provider; the interface is retained so
+ * additional providers can be added without rewriting call sites.
  */
 
 import type { SecretValue, SecretsValidationResult } from "@/types/secrets";

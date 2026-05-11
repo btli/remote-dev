@@ -32,7 +32,7 @@ interface ProfileSecretsTabProps {
 
 const PROVIDER_OPTIONS: { value: ProfileSecretsProviderType; label: string }[] =
   SECRETS_PROVIDERS.map((provider) => ({
-    value: provider.type as ProfileSecretsProviderType,
+    value: provider.type,
     label: provider.name,
   }));
 
