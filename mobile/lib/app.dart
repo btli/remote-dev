@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'application/state/appearance_provider.dart';
 import 'application/state/reauth_signal_provider.dart';
 import 'infrastructure/deep_link/app_link_listener.dart';
+import 'infrastructure/deep_link/deep_link_stream_provider.dart';
 import 'presentation/router/app_router.dart';
 import 'presentation/screens/biometric/biometric_lock_overlay.dart';
 
@@ -16,7 +17,10 @@ final appRouterProvider = Provider<AppRouter>((ref) => AppRouter());
 /// links are picked up from cold-start onward.
 final appLinkListenerProvider = Provider<AppLinkListener>((ref) {
   final router = ref.read(appRouterProvider);
-  final listener = AppLinkListener(router: router);
+  final stream = ref.watch(deepLinkStreamProvider);
+  final links = ref.watch(appLinksProvider);
+  final listener =
+      AppLinkListener(router: router, linkStream: stream, links: links);
   unawaited(listener.start());
   ref.onDispose(() {
     unawaited(listener.stop());

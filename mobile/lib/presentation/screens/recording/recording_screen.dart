@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +9,11 @@ import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
-import '../webview_host/session_route_host.dart' show activeServerProvider;
+import '../webview_host/session_route_host.dart'
+    show
+        activeServerProvider,
+        mobileCredentialsStoreProvider,
+        webViewCookieSeederProvider;
 
 /// Native chrome around the embedded WebView at `/m/recording/<id>`.
 ///
@@ -58,6 +64,33 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
   // Page-load progress (0-100). 100 means the embedded PWA finished
   // loading; the AppBar progress indicator is hidden in that state.
   int _progress = 100;
+  // Seeds the WebView's CookieManager with the persisted CF JWT before
+  // the InAppWebView navigates. Resolved per active server in
+  // initState's async chain. See WebViewCookieSeeder.
+  Future<void>? _seedFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _seedFuture = _seedCookie();
+  }
+
+  Future<void> _seedCookie() async {
+    // Best-effort — see ChannelScreen._seedCookie for rationale.
+    try {
+      final server = await ref.read(activeServerProvider.future);
+      if (server == null) return;
+      final credentials = ref.read(mobileCredentialsStoreProvider);
+      final cfToken = await credentials.readCfToken(server.id);
+      if (cfToken == null || cfToken.isEmpty) return;
+      await ref.read(webViewCookieSeederProvider).seedCfCookie(
+            serverOrigin: Uri.parse(server.url),
+            value: cfToken,
+          );
+    } catch (_) {
+      // intentional: failures are non-fatal.
+    }
+  }
 
   void _onWebViewCreated(InAppWebViewController controller) {
     final bridge = BridgeController(controller: controller);
@@ -139,6 +172,8 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/recording/${widget.recordingId}');
           final factory = widget.webViewFactory ?? const WebViewFactory();
+          // Fire-and-forget the seed; see ChannelScreen for rationale.
+          unawaited(_seedFuture ?? Future<void>.value());
           return factory.build(
             initialUrl: url,
             policy: NavigationPolicy(

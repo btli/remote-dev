@@ -6,18 +6,33 @@ import 'package:flutter/foundation.dart';
 import '../../presentation/router/app_router.dart';
 import 'deep_link_router.dart';
 
-/// Listens to incoming deep-links from the [AppLinks] plugin and dispatches
-/// matching [AppRoute] values via [AppRouter.navigateTo].
+/// Listens to incoming deep-links and dispatches matching [AppRoute]
+/// values via [AppRouter.navigateTo].
 ///
 /// Lifecycle:
-///   - [start]: fetch the initial link (cold-start) and subscribe to the
-///     uri-link stream (warm-start).
+///   - [start]: fetch the initial link (cold-start) via [AppLinks] and
+///     subscribe to the shared broadcast [linkStream] for warm-start
+///     events.
 ///   - [stop]: cancel the stream subscription.
+///
+/// Why the stream is injected: the
+/// `MobileCallbackLoginLauncher` also subscribes to the same
+/// `AppLinks().uriLinkStream`. Having both wire up their own [AppLinks]
+/// instance would cause the second listener to miss the initial link
+/// and (on some platforms) duplicate warm-start emissions. Both share
+/// the broadcast stream from `deepLinkStreamProvider`.
 class AppLinkListener {
-  AppLinkListener({required this.router, AppLinks? links})
-      : _links = links ?? AppLinks();
+  AppLinkListener({
+    required this.router,
+    required this.linkStream,
+    AppLinks? links,
+  }) : _links = links ?? AppLinks();
 
   final AppRouter router;
+
+  /// Shared broadcast stream of incoming URIs (from `deepLinkStreamProvider`).
+  final Stream<Uri> linkStream;
+
   final AppLinks _links;
   StreamSubscription<Uri>? _sub;
 
@@ -31,7 +46,7 @@ class AppLinkListener {
       debugPrint('[DeepLink] getInitialLink failed: $e');
     }
     await _sub?.cancel();
-    _sub = _links.uriLinkStream.listen(
+    _sub = linkStream.listen(
       _navigate,
       onError: (Object e) {
         debugPrint('[DeepLink] uriLinkStream error: $e');
@@ -40,6 +55,15 @@ class AppLinkListener {
   }
 
   void _navigate(Uri uri) {
+    // Auth-callback URIs are consumed by the in-flight
+    // `MobileCallbackLoginLauncher` subscription — there is no app route
+    // for them, and routing here would emit a misleading "no route for
+    // ..." debug log. Skip them silently.
+    if (uri.scheme == 'remotedev' &&
+        uri.host == 'auth' &&
+        uri.path == '/callback') {
+      return;
+    }
     final route = DeepLinkRouter.routeFor(uri);
     if (route != null) {
       router.navigateTo(route);

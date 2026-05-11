@@ -16,14 +16,14 @@ void main() {
   });
 
   group('onRequest', () {
-    test('injects CF_Authorization cookie when stored', () async {
+    test('attaches Authorization Bearer when api key is stored', () async {
       final handler = _MockRequestHandler();
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (id) async {
+        authReader: (id) async {
           expect(id, 'srv-1');
-          return 'jwt-token';
+          return const AuthMaterial(apiKey: 'sk-abc');
         },
         onReauthNeeded: () => fail('should not fire on success'),
       );
@@ -31,17 +31,52 @@ void main() {
       final options = RequestOptions(path: '/api/sessions');
       await interceptor.onRequest(options, handler);
 
-      // Default insertion uses HttpHeaders.cookieHeader ('cookie').
+      expect(options.headers['authorization'], 'Bearer sk-abc');
+      expect(options.headers.containsKey('cookie'), isFalse);
+      verify(() => handler.next(options)).called(1);
+    });
+
+    test('attaches CF cookie when cfCookie is stored', () async {
+      final handler = _MockRequestHandler();
+      when(() => handler.next(any())).thenAnswer((_) {});
+      final interceptor = CfAuthInterceptor(
+        serverId: 'srv-1',
+        authReader: (_) async => const AuthMaterial(cfCookie: 'jwt-token'),
+        onReauthNeeded: () {},
+      );
+
+      final options = RequestOptions(path: '/api/sessions');
+      await interceptor.onRequest(options, handler);
+
       expect(options.headers['cookie'], 'CF_Authorization=jwt-token');
+      expect(options.headers.containsKey('authorization'), isFalse);
       verify(() => handler.next(options)).called(1);
     });
 
-    test('does not set Cookie header when no token is stored', () async {
+    test('attaches BOTH bearer key and CF cookie when both are stored',
+        () async {
       final handler = _MockRequestHandler();
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) async => null,
+        authReader: (_) async =>
+            const AuthMaterial(apiKey: 'sk-abc', cfCookie: 'jwt-token'),
+        onReauthNeeded: () {},
+      );
+
+      final options = RequestOptions(path: '/api/sessions');
+      await interceptor.onRequest(options, handler);
+
+      expect(options.headers['authorization'], 'Bearer sk-abc');
+      expect(options.headers['cookie'], 'CF_Authorization=jwt-token');
+    });
+
+    test('does not set any auth header when nothing is stored', () async {
+      final handler = _MockRequestHandler();
+      when(() => handler.next(any())).thenAnswer((_) {});
+      final interceptor = CfAuthInterceptor(
+        serverId: 'srv-1',
+        authReader: (_) async => const AuthMaterial(),
         onReauthNeeded: () {},
       );
 
@@ -49,15 +84,17 @@ void main() {
       await interceptor.onRequest(options, handler);
 
       expect(options.headers.containsKey('cookie'), isFalse);
+      expect(options.headers.containsKey('authorization'), isFalse);
       verify(() => handler.next(options)).called(1);
     });
 
-    test('does not set Cookie header when stored value is empty', () async {
+    test('does not set headers when stored values are empty strings',
+        () async {
       final handler = _MockRequestHandler();
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) async => '',
+        authReader: (_) async => const AuthMaterial(apiKey: '', cfCookie: ''),
         onReauthNeeded: () {},
       );
 
@@ -65,6 +102,7 @@ void main() {
       await interceptor.onRequest(options, handler);
 
       expect(options.headers.containsKey('cookie'), isFalse);
+      expect(options.headers.containsKey('authorization'), isFalse);
     });
 
     test('appends CF cookie to existing Cookie header (case-insensitive)',
@@ -73,7 +111,7 @@ void main() {
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) async => 'jwt-token',
+        authReader: (_) async => const AuthMaterial(cfCookie: 'jwt-token'),
         onReauthNeeded: () {},
       );
 
@@ -86,8 +124,6 @@ void main() {
       );
       await interceptor.onRequest(options, handler);
 
-      // Look up via either casing — both should yield the merged value
-      // and there should be exactly one cookie entry in the map.
       final cookieKeys = options.headers.keys
           .where((k) => k.toLowerCase() == 'cookie')
           .toList();
@@ -98,19 +134,19 @@ void main() {
       );
     });
 
-    test('supports synchronous cookieReader return', () async {
+    test('supports synchronous authReader return', () async {
       final handler = _MockRequestHandler();
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) => 'sync-token',
+        authReader: (_) => const AuthMaterial(apiKey: 'sync-key'),
         onReauthNeeded: () {},
       );
 
       final options = RequestOptions(path: '/api/sessions');
       await interceptor.onRequest(options, handler);
 
-      expect(options.headers['cookie'], 'CF_Authorization=sync-token');
+      expect(options.headers['authorization'], 'Bearer sync-key');
     });
   });
 
@@ -131,7 +167,7 @@ void main() {
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) async => null,
+        authReader: (_) async => const AuthMaterial(),
         onReauthNeeded: () => calls += 1,
       );
 
@@ -148,7 +184,7 @@ void main() {
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) async => null,
+        authReader: (_) async => const AuthMaterial(),
         onReauthNeeded: () => calls += 1,
       );
 
@@ -165,7 +201,7 @@ void main() {
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) async => null,
+        authReader: (_) async => const AuthMaterial(),
         onReauthNeeded: () => calls += 1,
       );
 
@@ -183,7 +219,7 @@ void main() {
       when(() => handler.next(any())).thenAnswer((_) {});
       final interceptor = CfAuthInterceptor(
         serverId: 'srv-1',
-        cookieReader: (_) async => null,
+        authReader: (_) async => const AuthMaterial(),
         onReauthNeeded: () => calls += 1,
       );
 

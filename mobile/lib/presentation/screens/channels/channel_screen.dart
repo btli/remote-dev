@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,7 +9,11 @@ import '../../../domain/appearance_settings.dart';
 import '../../../infrastructure/webview/bridge_controller.dart';
 import '../../../infrastructure/webview/navigation_policy.dart';
 import '../../../infrastructure/webview/webview_factory.dart';
-import '../webview_host/session_route_host.dart' show activeServerProvider;
+import '../webview_host/session_route_host.dart'
+    show
+        activeServerProvider,
+        mobileCredentialsStoreProvider,
+        webViewCookieSeederProvider;
 import 'channels_tab_screen.dart' show channelsListProvider;
 
 /// Native chrome around the embedded WebView at `/m/channel/<id>`.
@@ -62,6 +68,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
   BridgeController? _bridge;
   // Page-load progress (0-100). 100 hides the AppBar indicator.
   int _progress = 100;
+  // Seeds CookieManager with the CF JWT pre-mount. See WebViewCookieSeeder.
+  Future<void>? _seedFuture;
 
   @override
   void initState() {
@@ -71,6 +79,29 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
     final override = widget.bridgeFactoryOverride;
     if (override != null) {
       _bridge = override(null);
+    }
+    _seedFuture = _seedCookie();
+  }
+
+  Future<void> _seedCookie() async {
+    // Best-effort: failures here are non-fatal. The WebView will hit a
+    // CF Access challenge instead of an authenticated page, the user
+    // re-auths via /reauth, and we try again. Swallowing exceptions
+    // also keeps widget tests that don't override the credential or
+    // seeder providers from blocking on the platform secure-storage
+    // plugin (which isn't available under flutter_test).
+    try {
+      final server = await ref.read(activeServerProvider.future);
+      if (server == null) return;
+      final credentials = ref.read(mobileCredentialsStoreProvider);
+      final cfToken = await credentials.readCfToken(server.id);
+      if (cfToken == null || cfToken.isEmpty) return;
+      await ref.read(webViewCookieSeederProvider).seedCfCookie(
+            serverOrigin: Uri.parse(server.url),
+            value: cfToken,
+          );
+    } catch (_) {
+      // intentional: see comment above.
     }
   }
 
@@ -156,6 +187,11 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           final origin = Uri.parse(server.url);
           final url = origin.replace(path: '/m/channel/${widget.channelId}');
           final factory = widget.webViewFactory ?? const WebViewFactory();
+          // Fire-and-forget the seed: it ran in initState and writes the
+          // cookie before any meaningful navigation occurs (the WebView
+          // takes a frame or two to initialize anyway). Blocking the
+          // WebView render on seed completion would add visible jank.
+          unawaited(_seedFuture ?? Future<void>.value());
           return factory.build(
             initialUrl: url,
             policy: NavigationPolicy(
