@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-05-11
+
+### Fixed
+
+- **Build**: `terminal:build` no longer fails on `chromium-bidi`. The
+  bundler was following the dynamic `import("playwright")` in
+  `browser-service.ts` and choking on chromium-bidi's package.json
+  `exports` map. Marked `playwright`, `playwright-core`, and
+  `chromium-bidi` as `--external` so they resolve from `node_modules`
+  at runtime. Unblocks desktop release artifacts for the first time
+  since v0.3.7.
+
 ### Added
 
 - **Agents**: "Pick Agent ▸" submenu in the sidebar `+` dropdown and
