@@ -31,6 +31,8 @@ import {
 } from "lucide-react";
 import type { ProjectNode } from "@/contexts/ProjectTreeContext";
 import { ContextNewSshSubmenu } from "../NewSshSubmenu";
+import { ContextNewAgentSubmenu } from "../NewAgentSubmenu";
+import type { AgentProviderType } from "@/types/session";
 
 interface GroupOption {
   id: string;
@@ -47,6 +49,10 @@ interface ContentProps {
   moveTargetGroups?: GroupOption[];
   onNewTerminal: () => void;
   onNewAgent: () => void;
+  /** Create a new agent session under this project with an explicit provider. */
+  onNewAgentWithProvider: (provider: AgentProviderType) => void;
+  /** Open Settings → Agents from the project context menu. */
+  onOpenAgentSettings: () => void;
   /** Create a new SSH session under this project for the chosen connection. */
   onNewSshSession: (connectionId: string) => void;
   /** Open Settings → SSH so the user can manage saved connections. */
@@ -85,6 +91,8 @@ export function ProjectContextMenuContent({
   moveTargetGroups,
   onNewTerminal,
   onNewAgent,
+  onNewAgentWithProvider,
+  onOpenAgentSettings,
   onNewSshSession,
   onOpenSshSettings,
   onResume,
@@ -113,6 +121,20 @@ export function ProjectContextMenuContent({
       </button>
       <button role="menuitem" onClick={onNewAgent}>
         <Sparkles className="mr-2 h-4 w-4" /> New Agent
+      </button>
+      <button
+        role="menuitem"
+        data-testid="project-new-agent-claude"
+        onClick={() => onNewAgentWithProvider("claude")}
+      >
+        <Sparkles className="mr-2 h-4 w-4" /> Pick Agent
+      </button>
+      <button
+        role="menuitem"
+        data-testid="project-configure-agents"
+        onClick={onOpenAgentSettings}
+      >
+        <Sparkles className="mr-2 h-4 w-4" /> Configure agents…
       </button>
       <button
         role="menuitem"
@@ -260,6 +282,8 @@ export function ProjectContextMenu({
   moveTargetGroups,
   onNewTerminal,
   onNewAgent,
+  onNewAgentWithProvider,
+  onOpenAgentSettings,
   onNewSshSession,
   onOpenSshSettings,
   onResume,
@@ -288,6 +312,10 @@ export function ProjectContextMenu({
         <ContextMenuItem onSelect={onNewAgent}>
           <Sparkles className="mr-2 h-4 w-4" /> New Agent
         </ContextMenuItem>
+        <ContextNewAgentSubmenu
+          onSelect={onNewAgentWithProvider}
+          onManage={onOpenAgentSettings}
+        />
         <ContextNewSshSubmenu
           onSelect={onNewSshSession}
           onManage={onOpenSshSettings}
