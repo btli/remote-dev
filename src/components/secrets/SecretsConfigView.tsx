@@ -38,7 +38,7 @@ import { useSecretsContext } from "@/contexts/SecretsContext";
 import { usePreferencesContext } from "@/contexts/PreferencesContext";
 import { useProjectTree } from "@/contexts/ProjectTreeContext";
 import {
-  SUPPORTED_SECRETS_PROVIDERS,
+  SECRETS_PROVIDERS,
   getProviderInfo,
   type SecretsProviderType,
   type SecretsValidationResult,
@@ -398,7 +398,7 @@ export function SecretsConfigView({ initialFolderId, onClose }: SecretsConfigVie
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-card border-border">
-                      {SUPPORTED_SECRETS_PROVIDERS.map((p) => (
+                      {SECRETS_PROVIDERS.map((p) => (
                         <SelectItem
                           key={p.type}
                           value={p.type}

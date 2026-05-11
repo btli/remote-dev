@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Secrets**: Collapsed secrets provider surface area to Phase only —
+  removed unused type members, config interfaces, and factory branches
+  for `vault`, `aws-secrets-manager`, and `1password`. The UI was
+  already restricted in commit 39e5c23; this removes the corresponding
+  dead backend surface so the type system reflects what actually works.
+  `SUPPORTED_SECRETS_PROVIDERS` alias dropped; callers now import
+  `SECRETS_PROVIDERS` directly. Closes #175.
+
 ### Added (Phase 9 — mobile final follow-ups)
 
 - **Mobile**: Live unread count refresh on the Channels tab via 30 s

@@ -2,13 +2,13 @@
  * Secrets Management Type Definitions
  *
  * Implements a provider abstraction for external secrets managers.
- * Supports Phase.dev initially, with extensibility for Vault, AWS, 1Password.
+ * Phase.dev is the only supported provider.
  */
 
 /**
  * Supported secrets providers
  */
-export type SecretsProviderType = "phase" | "vault" | "aws-secrets-manager" | "1password";
+export type SecretsProviderType = "phase";
 
 /**
  * Individual secret value
@@ -27,34 +27,6 @@ export interface PhaseProviderConfig {
   path?: string;
   serviceToken: string;
 }
-
-export interface VaultProviderConfig {
-  url: string;
-  path: string;
-  token: string;
-}
-
-export interface AWSSecretsProviderConfig {
-  region: string;
-  secretId: string;
-  accessKeyId?: string;
-  secretAccessKey?: string;
-}
-
-export interface OnePasswordProviderConfig {
-  vault: string;
-  item: string;
-  serviceAccountToken: string;
-}
-
-/**
- * Union of all provider configs
- */
-export type ProviderConfig =
-  | { provider: "phase"; config: PhaseProviderConfig }
-  | { provider: "vault"; config: VaultProviderConfig }
-  | { provider: "aws-secrets-manager"; config: AWSSecretsProviderConfig }
-  | { provider: "1password"; config: OnePasswordProviderConfig };
 
 /**
  * Generic provider config for storage
@@ -114,7 +86,6 @@ export interface SecretsProviderInfo {
   name: string;
   description: string;
   icon: string;
-  supported: boolean;
   configFields: SecretsConfigField[];
 }
 
@@ -140,7 +111,6 @@ export const SECRETS_PROVIDERS: SecretsProviderInfo[] = [
     name: "Phase",
     description: "End-to-end encrypted secrets management",
     icon: "shield",
-    supported: true,
     configFields: [
       {
         key: "serviceToken",
@@ -179,108 +149,7 @@ export const SECRETS_PROVIDERS: SecretsProviderInfo[] = [
       },
     ],
   },
-  {
-    type: "vault",
-    name: "HashiCorp Vault",
-    description: "Manage secrets and protect sensitive data",
-    icon: "lock",
-    supported: false,
-    configFields: [
-      {
-        key: "url",
-        label: "Vault URL",
-        type: "text",
-        placeholder: "https://vault.example.com",
-        required: true,
-      },
-      {
-        key: "token",
-        label: "Token",
-        type: "password",
-        placeholder: "hvs.xxxxx",
-        required: true,
-      },
-      {
-        key: "path",
-        label: "Secret Path",
-        type: "text",
-        placeholder: "secret/data/myapp",
-        required: true,
-      },
-    ],
-  },
-  {
-    type: "aws-secrets-manager",
-    name: "AWS Secrets Manager",
-    description: "Rotate, manage, and retrieve database credentials and secrets",
-    icon: "cloud",
-    supported: false,
-    configFields: [
-      {
-        key: "region",
-        label: "AWS Region",
-        type: "text",
-        placeholder: "us-east-1",
-        required: true,
-      },
-      {
-        key: "secretId",
-        label: "Secret ID/ARN",
-        type: "text",
-        placeholder: "my-app/production",
-        required: true,
-      },
-      {
-        key: "accessKeyId",
-        label: "Access Key ID",
-        type: "password",
-        placeholder: "AKIA...",
-        required: false,
-        helpText: "Optional: Uses default credentials if not provided",
-      },
-      {
-        key: "secretAccessKey",
-        label: "Secret Access Key",
-        type: "password",
-        required: false,
-      },
-    ],
-  },
-  {
-    type: "1password",
-    name: "1Password",
-    description: "Enterprise password management",
-    icon: "key",
-    supported: false,
-    configFields: [
-      {
-        key: "serviceAccountToken",
-        label: "Service Account Token",
-        type: "password",
-        placeholder: "ops_...",
-        required: true,
-      },
-      {
-        key: "vault",
-        label: "Vault Name",
-        type: "text",
-        placeholder: "Development",
-        required: true,
-      },
-      {
-        key: "item",
-        label: "Item Name",
-        type: "text",
-        placeholder: "API Keys",
-        required: true,
-      },
-    ],
-  },
 ];
-
-export const SUPPORTED_SECRETS_PROVIDERS = SECRETS_PROVIDERS.filter(
-  (provider) => provider.supported
-);
 
 /**
  * Get provider info by type

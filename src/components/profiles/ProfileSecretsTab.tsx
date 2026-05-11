@@ -24,14 +24,14 @@ import {
 } from "lucide-react";
 import { useProfileContext } from "@/contexts/ProfileContext";
 import type { ProfileSecretsProviderType, ProfileSecretsConfig } from "@/types/agent";
-import { SUPPORTED_SECRETS_PROVIDERS } from "@/types/secrets";
+import { SECRETS_PROVIDERS } from "@/types/secrets";
 
 interface ProfileSecretsTabProps {
   profileId: string;
 }
 
 const PROVIDER_OPTIONS: { value: ProfileSecretsProviderType; label: string }[] =
-  SUPPORTED_SECRETS_PROVIDERS.map((provider) => ({
+  SECRETS_PROVIDERS.map((provider) => ({
     value: provider.type as ProfileSecretsProviderType,
     label: provider.name,
   }));

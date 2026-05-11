@@ -169,7 +169,7 @@ export interface ProfileCredentials {
 /**
  * Secrets provider type (matches SecretsProviderType from secrets module).
  */
-export type ProfileSecretsProviderType = "phase" | "vault" | "aws-secrets-manager" | "1password";
+export type ProfileSecretsProviderType = "phase";
 
 /**
  * Profile-level secrets configuration.
