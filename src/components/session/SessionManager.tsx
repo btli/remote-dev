@@ -28,7 +28,7 @@ import {
 } from "@/hooks/useEnvironmentWithSecrets";
 import type { FolderRepoStats } from "./Sidebar";
 import type { PinnedFile } from "@/types/pinned-files";
-import { WORKTREE_TYPES, type WorktreeType, type TerminalSession } from "@/types/session";
+import { WORKTREE_TYPES, type WorktreeType, type TerminalSession, type AgentProviderType } from "@/types/session";
 import { sanitizeBranchName } from "@/lib/git-utils";
 import { Terminal as TerminalIcon, Plus, GitBranch } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -576,7 +576,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       worktreeBranch?: string;
       folderId?: string;
       projectId?: string;
-      startupCommand?: string;
       featureDescription?: string;
       createWorktree?: boolean;
       baseBranch?: string;
@@ -631,13 +630,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
   const handleQuickNewSession = useCallback(async () => {
     const folderId = activeProject.folderId || undefined;
     const name = generateSessionName(folderId);
-    // Pass empty startupCommand to get a plain shell (no agent/startup command)
+    // Shell plugin returns shellCommand: null → tmux launches its default
+    // shell. The legacy `startupCommand: ""` opt-out is no longer needed
+    // since folder-level startup commands have been removed entirely.
     try {
       await createSession({
         name,
         projectPath: currentPreferences.defaultWorkingDirectory || undefined,
         projectId: folderId,
-        startupCommand: "", // Explicitly skip startup command for plain terminal
       });
       maybeAutoFollowFolder(folderId ?? null);
     } catch (error) {
@@ -1112,13 +1112,13 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     async (folderId: string) => {
       const prefs = resolvePreferencesForFolder(folderId);
       const name = generateSessionName(folderId);
-      // Pass empty startupCommand to get a plain shell (no agent/startup command)
+      // Shell plugin returns shellCommand: null → tmux launches its default
+      // shell. No startupCommand override path exists anymore.
       try {
         await createSession({
           name,
           projectPath: prefs.defaultWorkingDirectory || undefined,
           projectId: folderId,
-          startupCommand: "", // Explicitly skip startup command for plain terminal
         });
         setActiveFolder(folderId);
       } catch (error) {
@@ -1188,16 +1188,23 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setIsWizardOpen(true);
   }, [activeProject.folderId]);
 
-  // Handler for creating a new agent session using folder's startupCommand
+  // Handler for creating a new agent session. Resolves the effective default
+  // provider (folder override > user setting > hard-coded "claude") so a
+  // one-click "New Agent" honors the user's configured default.
   const handleNewAgent = useCallback(async () => {
     const folderId = activeProject.folderId || undefined;
     const name = generateSessionName(folderId);
+    const provider: AgentProviderType =
+      currentPreferences.defaultAgentProvider ??
+      userSettings?.defaultAgentProvider ??
+      "claude";
     try {
       await createSession({
         name,
         projectPath: currentPreferences.defaultWorkingDirectory || undefined,
         projectId: folderId,
         terminalType: "agent",
+        agentProvider: provider,
       });
       maybeAutoFollowFolder(folderId ?? null);
     } catch (error) {
@@ -1207,13 +1214,82 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     createSession,
     generateSessionName,
     currentPreferences.defaultWorkingDirectory,
+    currentPreferences.defaultAgentProvider,
+    userSettings?.defaultAgentProvider,
     activeProject.folderId,
     logSessionError,
     maybeAutoFollowFolder,
   ]);
 
+  // Explicit-provider variant for the "Pick Agent" submenu.
+  // Mirrors `handleNewSshSession`: uses `maybeAutoFollowFolder` (not an
+  // unconditional setActiveFolder) so the user's auto-follow preference is
+  // honored. The project-scoped variant `handleFolderNewAgentWithProvider`
+  // intentionally calls `setActiveFolder` unconditionally since right-clicking
+  // a specific project signals strong user intent to switch context.
+  const handleNewAgentWithProvider = useCallback(
+    async (provider: AgentProviderType) => {
+      const folderId = activeProject.folderId || undefined;
+      const name = generateSessionName(folderId);
+      try {
+        await createSession({
+          name,
+          projectPath: currentPreferences.defaultWorkingDirectory || undefined,
+          projectId: folderId,
+          terminalType: "agent",
+          agentProvider: provider,
+        });
+        maybeAutoFollowFolder(folderId ?? null);
+      } catch (error) {
+        logSessionError("create agent session", error);
+      }
+    },
+    [
+      createSession,
+      generateSessionName,
+      currentPreferences.defaultWorkingDirectory,
+      activeProject.folderId,
+      logSessionError,
+      maybeAutoFollowFolder,
+    ]
+  );
+
   const handleFolderNewAgent = useCallback(
     async (folderId: string) => {
+      const prefs = resolvePreferencesForFolder(folderId);
+      const name = generateSessionName(folderId);
+      const provider: AgentProviderType =
+        prefs.defaultAgentProvider ??
+        userSettings?.defaultAgentProvider ??
+        "claude";
+      try {
+        const newSession = await createSession({
+          name,
+          projectPath: prefs.defaultWorkingDirectory || undefined,
+          projectId: folderId,
+          terminalType: "agent",
+          agentProvider: provider,
+        });
+        if (newSession) {
+          setActiveFolder(folderId);
+        }
+      } catch (error) {
+        logSessionError("create agent session", error);
+      }
+    },
+    [
+      createSession,
+      generateSessionName,
+      resolvePreferencesForFolder,
+      setActiveFolder,
+      logSessionError,
+      userSettings?.defaultAgentProvider,
+    ]
+  );
+
+  // Explicit-provider variant for the project context-menu "Pick Agent" submenu.
+  const handleFolderNewAgentWithProvider = useCallback(
+    async (folderId: string, provider: AgentProviderType) => {
       const prefs = resolvePreferencesForFolder(folderId);
       const name = generateSessionName(folderId);
       try {
@@ -1222,6 +1298,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           projectPath: prefs.defaultWorkingDirectory || undefined,
           projectId: folderId,
           terminalType: "agent",
+          agentProvider: provider,
         });
         if (newSession) {
           setActiveFolder(folderId);
@@ -1315,16 +1392,14 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
     setResumeModalFolderId(null);
   }, []);
 
-  // Handler to resume a specific Claude Code session
+  // Handler to resume a specific Claude Code session.
+  // Uses `agentFlags: ["--resume", id]` instead of the legacy string-built
+  // `startupCommand` so the agent plugin owns command assembly. The folder-
+  // level wrapper override mechanism (e.g. `jclaude`) was removed.
   const handleResumeClaudeSession = useCallback(
     async (claudeSessionId: string) => {
       const folderId = resumeModalFolderId ?? undefined;
-
-      // Build startup command using folder's base command (or default "claude") with --resume flag
-      const prefs = folderId ? resolvePreferencesForFolder(folderId) : undefined;
-      const baseCommand = prefs?.startupCommand || "claude";
       const sanitizedId = claudeSessionId.replace(/[^a-zA-Z0-9\-_]/g, "");
-      const startupCommand = `${baseCommand} --resume ${sanitizedId}`;
 
       try {
         const newSession = await createSession({
@@ -1333,8 +1408,7 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
           projectId: folderId,
           terminalType: "agent",
           agentProvider: "claude",
-          autoLaunchAgent: false,
-          startupCommand,
+          agentFlags: ["--resume", sanitizedId],
           profileId: resumeModalProfileId || undefined,
         });
         if (newSession && folderId) {
@@ -1349,7 +1423,6 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
       resumeModalFolderId,
       resumeModalProjectPath,
       resumeModalProfileId,
-      resolvePreferencesForFolder,
       createSession,
       setActiveFolder,
       logSessionError,
@@ -2026,6 +2099,12 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onNewSession={handleOpenWizard}
             onQuickNewSession={handleQuickNewSession}
             onNewAgent={handleNewAgent}
+            onNewAgentWithProvider={(provider) => {
+              void handleNewAgentWithProvider(provider);
+            }}
+            onOpenAgentSettings={() => {
+              void openSettingsSession("agents");
+            }}
             onNewSshSession={(connectionId) => {
               void handleNewSshSession(connectionId);
             }}
@@ -2035,6 +2114,9 @@ export function SessionManager({ isGitHubConnected = false }: SessionManagerProp
             onProjectSettings={handleFolderSettings}
             onProjectNewSession={handleFolderNewSession}
             onProjectNewAgent={handleFolderNewAgent}
+            onProjectNewAgentWithProvider={(projectId, provider) => {
+              void handleFolderNewAgentWithProvider(projectId, provider);
+            }}
             onProjectResumeClaudeSession={handleFolderResumeClaudeSession}
             onProjectAdvancedSession={handleFolderAdvancedSession}
             onProjectNewWorktree={handleFolderNewWorktree}

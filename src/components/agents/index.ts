@@ -1,5 +1,6 @@
 export { AgentCLIStatusPanel } from "./AgentCLIStatusPanel";
 export { AgentProfileAppearanceSettings } from "./AgentProfileAppearanceSettings";
+export { AgentProviderConfigCard } from "./AgentProviderConfigCard";
 
 // Shared configuration editor components
 export {

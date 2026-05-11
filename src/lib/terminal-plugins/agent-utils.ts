@@ -18,20 +18,19 @@ export function getProviderConfig(
  * Build the agent command string.
  * Filters dangerous flags unless explicitly allowed.
  *
- * When `override` is provided (e.g. folder-resolved `jclaude` wrapper), it
- * replaces `provider.command` as the base. If the override already contains
- * spaces it's treated as a complete command and returned as-is, avoiding
- * double-appending flags when callers pre-composed flag strings.
+ * The base command is always `provider.command`. There is no string-level
+ * override — callers that need a wrapper script (e.g. `jclaude` for HOME
+ * isolation) should define a shell alias instead. A previous mechanism that
+ * let a folder-level `startupCommand` override `provider.command` was
+ * removed because it silently shadowed the explicitly chosen provider
+ * (e.g., "Pick Agent ▸ Codex" would run `claude` when the folder had
+ * `startupCommand: "claude"` saved).
  */
 export function buildAgentCommand(
   provider: AgentProviderConfig,
   flags: string[] = [],
   allowDangerous = false,
-  override?: string
 ): string {
-  if (override && override.includes(" ")) return override;
-
-  const baseCommand = override || provider.command;
   const safeFlags = allowDangerous
     ? flags
     : flags.filter((f) => !provider.dangerousFlags?.includes(f));
@@ -39,5 +38,5 @@ export function buildAgentCommand(
   const allFlags = [...provider.defaultFlags, ...safeFlags];
   const flagsStr = allFlags.length > 0 ? ` ${allFlags.join(" ")}` : "";
 
-  return `${baseCommand}${flagsStr}`;
+  return `${provider.command}${flagsStr}`;
 }

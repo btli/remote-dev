@@ -132,7 +132,6 @@ describe("CreateSessionUseCase", () => {
         userId: "user-123",
         name: "My Session",
         projectPath: "/home/user/project",
-        startupCommand: "npm run dev",
         environment: { NODE_ENV: "development" },
       };
 
@@ -141,7 +140,6 @@ describe("CreateSessionUseCase", () => {
       expect(mockTmuxGateway.createSession).toHaveBeenCalledWith(
         expect.objectContaining({
           workingDirectory: "/home/user/project",
-          startupCommand: "npm run dev",
           environment: { NODE_ENV: "development" },
         })
       );

@@ -64,7 +64,6 @@ export const DEFAULT_PREFERENCES: Readonly<Preferences> = {
   theme: "tokyo-night",
   fontSize: 14,
   fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
-  startupCommand: "",
 } as const;
 
 /**
@@ -159,10 +158,10 @@ export function resolvePreferences(
     theme: "default",
     fontSize: "default",
     fontFamily: "default",
-    startupCommand: "default",
     githubRepoId: "default",
     localRepoPath: "default",
     defaultAgentProvider: "default",
+    agentProviderSettings: "default",
   };
 
   // Start with defaults (extended to include repo and agent fields)
@@ -171,6 +170,7 @@ export function resolvePreferences(
     githubRepoId: null,
     localRepoPath: null,
     defaultAgentProvider: null,
+    agentProviderSettings: null,
   };
 
   // Layer 1: Apply user settings
@@ -195,9 +195,13 @@ export function resolvePreferences(
       resolved.fontFamily = userSettings.fontFamily;
       source.fontFamily = "user";
     }
-    if (userSettings.startupCommand !== null) {
-      resolved.startupCommand = userSettings.startupCommand;
-      source.startupCommand = "user";
+    if (userSettings.defaultAgentProvider !== null) {
+      resolved.defaultAgentProvider = userSettings.defaultAgentProvider;
+      source.defaultAgentProvider = "user";
+    }
+    if (userSettings.agentProviderSettings !== null) {
+      resolved.agentProviderSettings = userSettings.agentProviderSettings;
+      source.agentProviderSettings = "user";
     }
   }
 
@@ -226,10 +230,6 @@ export function resolvePreferences(
       resolved.fontFamily = folderPrefs.fontFamily;
       source.fontFamily = folderRef;
     }
-    if (folderPrefs.startupCommand !== null) {
-      resolved.startupCommand = folderPrefs.startupCommand;
-      source.startupCommand = folderRef;
-    }
     // Repository association also inherits
     if (folderPrefs.githubRepoId !== null) {
       resolved.githubRepoId = folderPrefs.githubRepoId;
@@ -242,6 +242,14 @@ export function resolvePreferences(
     if (folderPrefs.defaultAgentProvider !== null) {
       resolved.defaultAgentProvider = folderPrefs.defaultAgentProvider;
       source.defaultAgentProvider = folderRef;
+    }
+    // Project-level agentProviderSettings REPLACE user-level entries as a
+    // whole-object replace (no per-provider merge). The decision was made
+    // upstream: a project that overrides settings for one provider takes
+    // ownership of the entire map at that level.
+    if (folderPrefs.agentProviderSettings !== null) {
+      resolved.agentProviderSettings = folderPrefs.agentProviderSettings;
+      source.agentProviderSettings = folderRef;
     }
   }
 

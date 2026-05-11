@@ -31,7 +31,7 @@ import {
   sessionsForProject,
   type RepoStats,
 } from "@/lib/project-tree-session-utils";
-import type { TerminalSession } from "@/types/session";
+import type { TerminalSession, AgentProviderType } from "@/types/session";
 import type { GroupNode, ProjectNode } from "@/contexts/ProjectTreeContext";
 
 interface Props {
@@ -49,6 +49,10 @@ interface Props {
   // is what node-scoped backend APIs key on).
   onProjectNewSession: (projectId: string) => void;
   onProjectNewAgent: (projectId: string) => void;
+  /** Explicit-provider variant fired from the "Pick Agent" submenu. */
+  onProjectNewAgentWithProvider: (projectId: string, provider: AgentProviderType) => void;
+  /** Open Settings → Agents from the project context menu. */
+  onProjectOpenAgentSettings: () => void;
   onProjectResumeClaudeSession: (projectId: string) => void;
   onProjectAdvancedSession: (projectId: string) => void;
   onProjectNewWorktree: (projectId: string) => void;
@@ -694,6 +698,10 @@ export const ProjectTreeSidebar = forwardRef<
         }
         onNewTerminal={() => props.onProjectNewSession(p.id)}
         onNewAgent={() => props.onProjectNewAgent(p.id)}
+        onNewAgentWithProvider={(provider) =>
+          props.onProjectNewAgentWithProvider(p.id, provider)
+        }
+        onOpenAgentSettings={() => props.onProjectOpenAgentSettings()}
         onNewSshSession={(connectionId) =>
           props.onProjectNewSshSession(p.id, connectionId)
         }

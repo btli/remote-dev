@@ -26,7 +26,6 @@ interface Props {
 interface GroupPrefs {
   defaultWorkingDirectory?: string | null;
   defaultShell?: string | null;
-  startupCommand?: string | null;
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
@@ -153,17 +152,6 @@ export function GroupPreferencesView({ groupId, groupName, onClose, showHeader =
               value={prefs.defaultShell ?? ""}
               onChange={(e) => setPrefs({ ...prefs, defaultShell: e.target.value || null })}
               placeholder="/bin/zsh"
-              className="bg-card/50 border-border focus:border-primary"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="group-startup">Startup command</Label>
-            <Input
-              id="group-startup"
-              value={prefs.startupCommand ?? ""}
-              onChange={(e) => setPrefs({ ...prefs, startupCommand: e.target.value || null })}
-              placeholder="e.g., source .envrc"
               className="bg-card/50 border-border focus:border-primary"
             />
           </div>

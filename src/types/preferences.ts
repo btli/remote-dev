@@ -21,8 +21,37 @@ export interface Preferences {
   theme: string;
   fontSize: number;
   fontFamily: string;
-  startupCommand: string;
 }
+
+/**
+ * Per-provider runtime settings used to assemble the agent command line.
+ * Stored as a partial map keyed by provider id at both user-level and
+ * project-level. Project-level entries REPLACE user-level entries for
+ * the same provider key (no per-provider merge).
+ */
+export interface AgentProviderSettings {
+  /** Extra CLI flags appended after the provider's defaultFlags. */
+  extraFlags: string[];
+  /** When true, dangerous flags are not filtered out of the final command. */
+  allowDangerous: boolean;
+}
+
+/**
+ * Placeholder default for unsaved per-provider settings. Returned to UI
+ * editors as the initial value when no entry exists in the map.
+ */
+export const DEFAULT_AGENT_PROVIDER_SETTINGS: AgentProviderSettings = {
+  extraFlags: [],
+  allowDangerous: false,
+};
+
+/**
+ * Map of agent-provider settings keyed by provider id. The "none" provider
+ * is intentionally excluded because it has no CLI to launch.
+ */
+export type AgentProviderSettingsMap = Partial<
+  Record<Exclude<AgentProviderType, "none">, AgentProviderSettings>
+>;
 
 /**
  * Extended preferences including repository association
@@ -32,6 +61,7 @@ export interface ExtendedPreferences extends Preferences {
   githubRepoId: string | null;
   localRepoPath: string | null;
   defaultAgentProvider: AgentProviderType | null;
+  agentProviderSettings: AgentProviderSettingsMap | null;
 }
 
 /**
@@ -59,7 +89,6 @@ export interface UserSettings {
   theme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
-  startupCommand: string | null;
   // Scrollback buffer settings (for performance tuning)
   xtermScrollback: number | null;
   tmuxHistoryLimit: number | null;
@@ -69,6 +98,10 @@ export interface UserSettings {
   pinnedNodeType: "group" | "project" | null;
   autoFollowActiveSession: boolean;
   notificationsEnabled: boolean;
+  // Default agent provider for one-click "New Agent"
+  defaultAgentProvider: AgentProviderType | null;
+  // Per-provider settings (extra flags, allow dangerous) keyed by provider id
+  agentProviderSettings: AgentProviderSettingsMap | null;
   // Beads issue tracker sidebar settings
   beadsSidebarCollapsed: boolean;
   beadsSidebarWidth: number | null;
@@ -105,12 +138,13 @@ export interface FolderPreferences {
   theme: string | null;
   fontSize: number | null;
   fontFamily: string | null;
-  startupCommand: string | null;
   // Repository association for worktree support
   githubRepoId: string | null;
   localRepoPath: string | null;
   // Default agent provider for issue worktrees
   defaultAgentProvider: AgentProviderType | null;
+  // Per-provider agent settings (replaces user-level entries by provider key)
+  agentProviderSettings: AgentProviderSettingsMap | null;
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars: EnvironmentVariables | null;
@@ -174,7 +208,6 @@ export interface UpdateUserSettingsInput {
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
-  startupCommand?: string | null;
   // Scrollback buffer settings (for performance tuning)
   xtermScrollback?: number | null;
   tmuxHistoryLimit?: number | null;
@@ -184,6 +217,8 @@ export interface UpdateUserSettingsInput {
   pinnedNodeType?: "group" | "project" | null;
   autoFollowActiveSession?: boolean;
   notificationsEnabled?: boolean;
+  defaultAgentProvider?: AgentProviderType | null;
+  agentProviderSettings?: AgentProviderSettingsMap | null;
   // Beads issue tracker sidebar settings
   beadsSidebarCollapsed?: boolean;
   beadsSidebarWidth?: number | null;
@@ -200,12 +235,13 @@ export interface UpdateFolderPreferencesInput {
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
-  startupCommand?: string | null;
   // Repository association for worktree support
   githubRepoId?: string | null;
   localRepoPath?: string | null;
   // Default agent provider for issue worktrees
   defaultAgentProvider?: AgentProviderType | null;
+  // Per-provider agent settings override (replaces user-level entries)
+  agentProviderSettings?: AgentProviderSettingsMap | null;
   // Environment variables (stored as JSON in database)
   // Use "__DISABLED__" value to explicitly disable an inherited variable
   environmentVars?: EnvironmentVariables | null;

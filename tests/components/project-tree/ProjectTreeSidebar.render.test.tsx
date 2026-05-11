@@ -58,6 +58,8 @@ const project: ProjectNode = {
 const requiredHandlerProps = {
   onProjectNewSession: vi.fn(),
   onProjectNewAgent: vi.fn(),
+  onProjectNewAgentWithProvider: vi.fn(),
+  onProjectOpenAgentSettings: vi.fn(),
   onProjectResumeClaudeSession: vi.fn(),
   onProjectAdvancedSession: vi.fn(),
   onProjectNewWorktree: vi.fn(),
@@ -257,6 +259,8 @@ describe("delete confirmation gate", () => {
           hasWorkingDirectory={false}
           onNewTerminal={() => {}}
           onNewAgent={() => {}}
+          onNewAgentWithProvider={() => {}}
+          onOpenAgentSettings={() => {}}
           onNewSshSession={() => {}}
           onOpenSshSettings={() => {}}
           onResume={() => {}}
@@ -287,6 +291,8 @@ describe("delete confirmation gate", () => {
           hasWorkingDirectory={false}
           onNewTerminal={() => {}}
           onNewAgent={() => {}}
+          onNewAgentWithProvider={() => {}}
+          onOpenAgentSettings={() => {}}
           onNewSshSession={() => {}}
           onOpenSshSettings={() => {}}
           onResume={() => {}}

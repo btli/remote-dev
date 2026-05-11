@@ -16,7 +16,9 @@ import type {
   ResolvedPreferences,
   UpdateUserSettingsInput,
   UpdateFolderPreferencesInput,
+  AgentProviderSettingsMap,
 } from "@/types/preferences";
+import type { AgentProviderType } from "@/types/session";
 import type { PortValidationResult } from "@/types/environment";
 import { BEADS_SECTION_EXPAND_DEFAULTS, type BeadsSectionExpandDefaults } from "@/types/preferences";
 import { safeJsonParse } from "@/lib/utils";
@@ -106,6 +108,12 @@ export async function updateUserSettings(
     dbUpdates.beadsSectionExpanded = updates.beadsSectionExpanded
       ? JSON.stringify(updates.beadsSectionExpanded)
       : null;
+  }
+  // agent_provider_settings is a JSON-mode column; pass it through as-is.
+  // The drizzle JSON mode handles stringification, but normalize null vs
+  // undefined so an explicit clear works.
+  if (updates.agentProviderSettings !== undefined) {
+    dbUpdates.agentProviderSettings = updates.agentProviderSettings ?? null;
   }
 
   const [updated] = await db
@@ -506,6 +514,25 @@ export async function getFolderGitIdentity(
 // Database Mappers
 // ============================================================================
 
+/**
+ * Parse the agent_provider_settings JSON column into a typed map. Tolerates
+ * both already-parsed object values (libsql JSON mode) and string values
+ * (defensive for migration paths). Returns null on parse failure rather than
+ * throwing — corrupt rows shouldn't block the rest of the settings flow.
+ */
+function parseAgentProviderSettings(raw: unknown): AgentProviderSettingsMap | null {
+  if (raw == null) return null;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as AgentProviderSettingsMap;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === "object") return raw as AgentProviderSettingsMap;
+  return null;
+}
+
 function mapDbUserSettings(
   db: typeof userSettings.$inferSelect
 ): UserSettings {
@@ -514,7 +541,6 @@ function mapDbUserSettings(
     userId: db.userId,
     defaultWorkingDirectory: db.defaultWorkingDirectory,
     defaultShell: db.defaultShell,
-    startupCommand: db.startupCommand,
     xtermScrollback: db.xtermScrollback,
     tmuxHistoryLimit: db.tmuxHistoryLimit,
     theme: db.theme,
@@ -526,6 +552,8 @@ function mapDbUserSettings(
     pinnedNodeType: (db.pinnedNodeType as "group" | "project" | null) ?? null,
     autoFollowActiveSession: db.autoFollowActiveSession ?? true,
     notificationsEnabled: db.notificationsEnabled ?? true,
+    defaultAgentProvider: (db.defaultAgentProvider as AgentProviderType | null) ?? null,
+    agentProviderSettings: parseAgentProviderSettings(db.agentProviderSettings),
     beadsSidebarCollapsed: db.beadsSidebarCollapsed ?? true,
     beadsSidebarWidth: db.beadsSidebarWidth ?? 320,
     beadsClosedRetentionDays: db.beadsClosedRetentionDays ?? 7,
@@ -547,13 +575,13 @@ function mapDbFolderPreferences(
     userId: dbRow.userId,
     defaultWorkingDirectory: dbRow.defaultWorkingDirectory,
     defaultShell: dbRow.defaultShell,
-    startupCommand: dbRow.startupCommand,
     theme: dbRow.theme,
     fontSize: dbRow.fontSize,
     fontFamily: dbRow.fontFamily,
     githubRepoId: dbRow.githubRepoId,
     localRepoPath: dbRow.localRepoPath,
     defaultAgentProvider: (dbRow.defaultAgentProvider as import("@/types/session").AgentProviderType | null) ?? null,
+    agentProviderSettings: parseAgentProviderSettings(dbRow.agentProviderSettings),
     environmentVars: parseEnvironmentVars(typeof dbRow.environmentVars === "string" ? dbRow.environmentVars : dbRow.environmentVars == null ? null : JSON.stringify(dbRow.environmentVars)),
     pinnedFiles: parsePinnedFiles(typeof dbRow.pinnedFiles === "string" ? dbRow.pinnedFiles : dbRow.pinnedFiles == null ? null : JSON.stringify(dbRow.pinnedFiles)),
     gitIdentityName: dbRow.gitIdentityName ?? null,

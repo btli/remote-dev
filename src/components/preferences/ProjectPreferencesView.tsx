@@ -17,11 +17,27 @@
  */
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { AgentProviderConfigCard } from "@/components/agents";
+import { AGENT_PROVIDERS, type AgentProviderType } from "@/types/session";
+import {
+  DEFAULT_AGENT_PROVIDER_SETTINGS,
+  type AgentProviderSettingsMap,
+} from "@/types/preferences";
 import type { PinnedFile } from "@/types/pinned-files";
+
+const INHERIT_VALUE = "__inherit__";
+type ConfigurableProvider = Exclude<AgentProviderType, "none">;
 
 export type ProjectPrefsInitialTab =
   | "general"
@@ -52,7 +68,6 @@ interface ProjectPrefs {
   // Shared (same as group)
   defaultWorkingDirectory?: string | null;
   defaultShell?: string | null;
-  startupCommand?: string | null;
   theme?: string | null;
   fontSize?: number | null;
   fontFamily?: string | null;
@@ -64,6 +79,7 @@ interface ProjectPrefs {
   githubRepoId?: string | null;
   localRepoPath?: string | null;
   defaultAgentProvider?: string | null;
+  agentProviderSettings?: AgentProviderSettingsMap | null;
   pinnedFiles?: PinnedFile[] | null;
 }
 
@@ -79,6 +95,7 @@ export function ProjectPreferencesView({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [agentOverridesOpen, setAgentOverridesOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,18 +210,88 @@ export function ProjectPreferencesView({
 
             <div className="space-y-2">
               <Label htmlFor="project-agent">Default agent provider</Label>
-              <Input
-                id="project-agent"
-                value={prefs.defaultAgentProvider ?? ""}
-                onChange={(e) =>
+              <Select
+                value={prefs.defaultAgentProvider ?? INHERIT_VALUE}
+                onValueChange={(value) =>
                   setPrefs({
                     ...prefs,
-                    defaultAgentProvider: e.target.value || null,
+                    defaultAgentProvider:
+                      value === INHERIT_VALUE ? null : value,
                   })
                 }
-                placeholder="claude | codex | gemini | opencode"
-                className="bg-card/50 border-border focus:border-primary"
-              />
+              >
+                <SelectTrigger
+                  id="project-agent"
+                  className="bg-card/50 border-border focus:border-primary"
+                >
+                  <SelectValue placeholder="(inherit)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT_VALUE}>(inherit)</SelectItem>
+                  {AGENT_PROVIDERS.filter((p) => p.id !== "none").map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setAgentOverridesOpen((v) => !v)}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {agentOverridesOpen ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+                Per-agent overrides
+                {prefs.agentProviderSettings && (
+                  <span className="ml-1 text-[10px] text-primary">Custom</span>
+                )}
+              </button>
+              {agentOverridesOpen && (
+                <div className="space-y-3 pt-1">
+                  <p className="text-[11px] text-muted-foreground">
+                    Project-level entries replace the user-level entry for the
+                    same provider key.
+                  </p>
+                  {AGENT_PROVIDERS.filter(
+                    (p): p is typeof p & { id: ConfigurableProvider } =>
+                      p.id !== "none"
+                  ).map((provider) => (
+                    <AgentProviderConfigCard
+                      key={provider.id}
+                      provider={provider}
+                      settings={
+                        prefs.agentProviderSettings?.[provider.id] ??
+                        DEFAULT_AGENT_PROVIDER_SETTINGS
+                      }
+                      onChange={(next) => {
+                        const map = {
+                          ...(prefs.agentProviderSettings ?? {}),
+                          [provider.id]: next,
+                        };
+                        setPrefs({ ...prefs, agentProviderSettings: map });
+                      }}
+                    />
+                  ))}
+                  {prefs.agentProviderSettings && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        setPrefs({ ...prefs, agentProviderSettings: null })
+                      }
+                    >
+                      Clear all overrides (use user defaults)
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -281,19 +368,6 @@ export function ProjectPreferencesView({
                 setPrefs({ ...prefs, defaultShell: e.target.value || null })
               }
               placeholder="/bin/zsh"
-              className="bg-card/50 border-border focus:border-primary"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="project-startup">Startup command</Label>
-            <Input
-              id="project-startup"
-              value={prefs.startupCommand ?? ""}
-              onChange={(e) =>
-                setPrefs({ ...prefs, startupCommand: e.target.value || null })
-              }
-              placeholder="e.g., source .envrc"
               className="bg-card/50 border-border focus:border-primary"
             />
           </div>

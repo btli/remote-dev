@@ -35,7 +35,6 @@ const hoisted = vi.hoisted(() => {
     findManyTabOrder: vi.fn<(args: unknown) => Promise<Row[]>>(),
     getResolvedPreferences: vi.fn(async () => ({
       defaultWorkingDirectory: "/tmp",
-      startupCommand: undefined as string | undefined,
     })),
   };
 });
@@ -278,7 +277,6 @@ describe("SessionService.createSession — plugin dispatch", () => {
     ]);
     hoisted.getResolvedPreferences.mockResolvedValue({
       defaultWorkingDirectory: "/tmp",
-      startupCommand: undefined,
     });
   });
 
@@ -366,25 +364,31 @@ describe("SessionService.createSession — plugin dispatch", () => {
     expect(shellCmd).toBe("fake-cli");
   });
 
-  it("threads folder-resolved startupCommand into plugin.createSession via startupCommandOverride (F1)", async () => {
-    // Folder preference supplies a wrapper command like `jclaude`.
+  it("does NOT thread any folder-level wrapper command into plugin input (regression for removed startupCommand mechanism)", async () => {
+    // Even if a (hypothetical) future preference shape leaked a
+    // `startupCommand` into the resolved prefs, the service must not
+    // forward it to plugins as an override — `startupCommandOverride` is
+    // gone from CreateSessionInput entirely.
+    // Cast through unknown because the test deliberately sneaks a stale
+    // `startupCommand` field into the resolved prefs object to prove the
+    // service ignores it (the field is no longer on the typed schema).
     hoisted.getResolvedPreferences.mockResolvedValueOnce({
       defaultWorkingDirectory: "/tmp",
       startupCommand: "jclaude",
-    });
+    } as unknown as { defaultWorkingDirectory: string });
 
-    // Record what the plugin sees in its createSession input.
-    let seenOverride: string | undefined;
+    type MaybeOverride = { startupCommandOverride?: unknown };
+    let seenOverrideKey = false;
     const plugin: TerminalTypeServerPlugin = {
       type: "fake",
       priority: 0,
       useTmux: true,
       createSession: (pluginInput) => {
-        seenOverride = pluginInput.startupCommandOverride;
+        // `startupCommandOverride` is removed from the type; the runtime
+        // object must not carry it either.
+        seenOverrideKey = "startupCommandOverride" in (pluginInput as MaybeOverride);
         return {
-          // Emulate an agent-style plugin: use the override as the shell
-          // command so SessionService passes it to tmux.
-          shellCommand: pluginInput.startupCommandOverride ?? "provider-default",
+          shellCommand: "provider-default",
           shellArgs: [],
           environment: {},
           useTmux: true,
@@ -397,7 +401,7 @@ describe("SessionService.createSession — plugin dispatch", () => {
 
     await createSession("user-1", baseInput());
 
-    expect(seenOverride).toBe("jclaude");
+    expect(seenOverrideKey).toBe(false);
     expect(tmuxCreate).toHaveBeenCalledTimes(1);
     const [, , shellCmd] = tmuxCreate.mock.calls[0] as unknown as [
       string,
@@ -405,8 +409,7 @@ describe("SessionService.createSession — plugin dispatch", () => {
       string | undefined,
       Record<string, string> | undefined,
     ];
-    // Wrapper wins over the plugin's provider default.
-    expect(shellCmd).toBe("jclaude");
+    expect(shellCmd).toBe("provider-default");
   });
 
   it("throws SessionServiceError when the plugin's validateInput returns an error", async () => {
