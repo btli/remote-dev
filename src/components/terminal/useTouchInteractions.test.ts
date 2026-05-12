@@ -63,6 +63,8 @@ interface Harness {
     clientY: number;
     screenX: number;
     screenY: number;
+    detail: number;
+    composed: boolean;
     target: EventTarget | null;
   }>;
   copies: string[];
@@ -141,6 +143,8 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
     clientY: number;
     screenX: number;
     screenY: number;
+    detail: number;
+    composed: boolean;
     target: EventTarget | null;
   }> = [];
   const copies: string[] = [];
@@ -169,6 +173,8 @@ function makeHarness(opts: { mouseMode?: FakeXTerm["modes"]["mouseTrackingMode"]
         clientY: ev.clientY,
         screenX: ev.screenX,
         screenY: ev.screenY,
+        detail: ev.detail,
+        composed: ev.composed,
         target,
       });
     },
@@ -472,30 +478,35 @@ describe("synthesizeTap dispatch target", () => {
     document.body.innerHTML = "";
   });
 
-  it("dispatches mousedown+mouseup on the .xterm-screen element (xterm wires its mouse listeners there)", () => {
-    // We deliberately target .xterm-screen (the stable mouse-listener host
-    // in xterm v6) rather than an inner canvas. WebGL builds paint into
-    // multiple canvases and the listener isn't on any of them; the screen
-    // div is the consistent mouse-input surface.
+  it("dispatches mousedown on terminal.element (xterm's bindMouse listener host) and mouseup on the owning document", () => {
+    // xterm v6 registers its mousedown listener on `terminal.element`
+    // (`.terminal.xterm`), not `.xterm-screen`. It then registers a mouseup
+    // listener on `_document` from inside that mousedown handler so it can
+    // capture lifts outside the terminal element. We mirror that here:
+    // mousedown on the element, mouseup on the document. iOS Safari in
+    // standalone PWA mode was not reliably bubbling events from
+    // `.xterm-screen` up to the parent listener — dispatching on the actual
+    // listener host removes that dependency.
     const h = makeHarness();
     h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
     h.advanceTime(50);
     h.fireTouch("touchend", []);
     expect(h.mouseEvents).toHaveLength(2);
-    for (const e of h.mouseEvents) {
-      expect(e.target).toBe(h.screen);
-    }
+    expect(h.mouseEvents[0].type).toBe("mousedown");
+    expect(h.mouseEvents[0].target).toBe(h.xterm.element);
+    expect(h.mouseEvents[1].type).toBe("mouseup");
+    expect(h.mouseEvents[1].target).toBe(h.xterm.element.ownerDocument);
   });
 
-  it("falls back to terminal.element when .xterm-screen is missing", () => {
+  it("synthesized events carry detail=1 and composed=true so SelectionService click-count + shadow-DOM crossing work", () => {
     const h = makeHarness();
-    h.screen.remove();
     h.fireTouch("touchstart", [{ x: 200, y: 100 }]);
     h.advanceTime(50);
     h.fireTouch("touchend", []);
     expect(h.mouseEvents).toHaveLength(2);
     for (const e of h.mouseEvents) {
-      expect(e.target).toBe(h.xterm.element);
+      expect(e.detail).toBe(1);
+      expect(e.composed).toBe(true);
     }
   });
 });
