@@ -43,6 +43,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defaults so SSR and first client render agree, and `localStorage` is
   read in a mount-only `useEffect` with plain setters (not `setStoredX`,
   which dispatch a `CustomEvent` the component subscribes to).
+- **Web**: BeadsSidebar no longer clobbers the user's `localStorage`
+  sidebar preferences when `userSettings` finishes loading after mount.
+  The previous DB-sync `useEffect`s used `collapsedSyncMounted` /
+  `widthSyncMounted` refs that only skipped the very first render, so
+  when `userSettings` arrived asynchronously and `dbCollapsed` /
+  `dbWidth` flipped from the hardcoded defaults to real DB values, the
+  sync effect fired and wrote the DB value into `localStorage` (plus
+  broadcast a cross-tab `CustomEvent` other tabs reacted to). A new
+  `userSettingsLoaded` boolean is plumbed through `BeadsContext` and the
+  sync effects gate on it, skipping the first run AFTER load (the load
+  transition itself) and propagating every subsequent change — so the
+  Settings-page-edit flow still works (closes remote-dev-8y2n).
 - **Mobile/Terminal**: PWA tap-to-click now reliably reaches xterm.js
   mouse-mode TUIs (Claude Code clickable buttons, vim, less, lazygit,
   tmux mouse). The previous implementation dispatched synthesized

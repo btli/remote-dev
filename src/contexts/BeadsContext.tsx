@@ -58,6 +58,14 @@ interface BeadsContextValue {
   beadsSidebarWidth: number;
   beadsClosedRetentionDays: number;
   beadsSectionExpanded: BeadsSectionExpandDefaults;
+  /**
+   * True once `userSettings` has been fetched from the server. Until then,
+   * the sidebar-related fields above expose hardcoded defaults that consumers
+   * must not treat as authoritative (e.g. don't write them back to
+   * localStorage on first paint — that would clobber the user's stored
+   * preference from a prior session).
+   */
+  userSettingsLoaded: boolean;
 }
 
 const BeadsContext = createContext<BeadsContextValue | null>(null);
@@ -89,6 +97,7 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
 
   const { currentPreferences, userSettings } = usePreferencesContext();
   const projectPath = currentPreferences.defaultWorkingDirectory || null;
+  const userSettingsLoaded = userSettings !== null;
 
   // Beads display settings from user preferences
   const beadsSidebarCollapsed = userSettings?.beadsSidebarCollapsed ?? true;
@@ -218,9 +227,10 @@ export function BeadsProvider({ children }: BeadsProviderProps) {
       beadsSidebarWidth,
       beadsClosedRetentionDays,
       beadsSectionExpanded,
+      userSettingsLoaded,
     }),
     [issues, computedStats, loading, error, initialized, projectPath, refreshIssues, debouncedRefresh,
-     beadsSidebarCollapsed, beadsSidebarWidth, beadsClosedRetentionDays, beadsSectionExpanded]
+     beadsSidebarCollapsed, beadsSidebarWidth, beadsClosedRetentionDays, beadsSectionExpanded, userSettingsLoaded]
   );
 
   return (
